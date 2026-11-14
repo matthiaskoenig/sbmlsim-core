@@ -8,11 +8,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: 1.100.0
-          components: rustfmt, clippy
-          targets: wasm32-unknown-unknown
+      - name: Install the toolchain of rust-toolchain.toml
+        run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
