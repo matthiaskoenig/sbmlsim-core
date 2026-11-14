@@ -1,0 +1,12 @@
+[package]
+name = "sbmlsim-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "sbmlsim-core"
+path = "src/main.rs"
+
+[dependencies]

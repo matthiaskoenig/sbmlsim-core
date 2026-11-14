@@ -1,0 +1,316 @@
+//! The contracts of sbmlsim-core: `model/1` and `simulation/1`.
+//!
+//! A compiled model is a WebAssembly module which imports its linear memory and exports the
+//! functions below. Every pointer is an `i32` offset into the imported memory and every value
+//! is an `f64`, unless stated otherwise. `p` is the vector of the parameters (including the
+//! compartments and species references), `y` the vector of the states, `t` the time.
+//!
+//! - `model_defaults(p, y)` writes the SBML values of the parameters and states.
+//! - `model_init(t, p, y, fixed)` evaluates the initial assignments and the initial values of
+//!   assignment rules in dependency order; `fixed` is a byte per entity (parameters, then
+//!   states), a fixed entity keeps its value.
+//! - `model_rhs(t, y, p, ydot)` is the right hand side of the ODEs.
+//! - `model_jac(t, y, p, values)` writes the values of the Jacobian in CSC order of the pattern.
+//! - `model_roots(t, y, p, g)` writes one root function per strict or non-strict comparison of
+//!   each trigger, in the order listed in [`EventInfo`].
+//! - `model_trigger(i, t, y, p) -> i32` is the trigger of event `i`.
+//! - `model_priority(i, t, y, p) -> f64` is the priority of event `i`.
+//! - `model_delay(i, t, y, p) -> f64` is the delay of event `i`.
+//! - `model_event_values(i, t, y, p, out)` evaluates the assignments of event `i`.
+//! - `model_event_apply(i, values, y, p)` applies the evaluated assignments of event `i`.
+//! - `model_selections(t, y, p, out)` writes every value of [`ModelDescription::selections`],
+//!   in its order.
+//! - `model_assign(t, y, p)` writes the current values of the targets of assignment rules into
+//!   `p` and `y` (after a change or an event).
+
+mod request;
+
+use std::collections::BTreeMap;
+
+use serde::{Deserialize, Serialize};
+
+pub use request::*;
+
+/// The version of the description of a compiled model.
+pub const MODEL_CONTRACT: &str = "model/1";
+/// The version of the request and the result of a simulation.
+pub const SIMULATION_CONTRACT: &str = "simulation/1";
+
+/// Export name of `model_defaults`.
+pub const DEFAULTS: &str = "model_defaults";
+/// Export name of `model_init`.
+pub const INIT: &str = "model_init";
+/// Export name of `model_rhs`.
+pub const RHS: &str = "model_rhs";
+/// Export name of `model_jac`.
+pub const JAC: &str = "model_jac";
+/// Export name of `model_roots`.
+pub const ROOTS: &str = "model_roots";
+/// Export name of `model_trigger`.
+pub const TRIGGER: &str = "model_trigger";
+/// Export name of `model_priority`.
+pub const PRIORITY: &str = "model_priority";
+/// Export name of `model_delay`.
+pub const DELAY: &str = "model_delay";
+/// Export name of `model_event_values`.
+pub const EVENT_VALUES: &str = "model_event_values";
+/// Export name of `model_event_apply`.
+pub const EVENT_APPLY: &str = "model_event_apply";
+/// Export name of `model_selections`.
+pub const SELECTIONS: &str = "model_selections";
+/// Export name of `model_assign`.
+pub const ASSIGN: &str = "model_assign";
+
+/// A contract version which is not the expected one.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("contract mismatch: found {found}, expected {expected}")]
+pub struct ContractError {
+    /// The version found in the data.
+    pub found: String,
+    /// The version this build supports.
+    pub expected: String,
+}
+
+/// Checks that a contract version is the expected one.
+pub fn check_contract(found: &str, expected: &str) -> Result<(), ContractError> {
+    if found == expected {
+        Ok(())
+    } else {
+        Err(ContractError {
+            found: found.to_string(),
+            expected: expected.to_string(),
+        })
+    }
+}
+
+/// The description of a compiled model, next to its WebAssembly module.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelDescription {
+    /// The contract, [`MODEL_CONTRACT`].
+    pub contract: String,
+    /// The id of the model.
+    pub id: String,
+    /// The states, in the order of the state vector.
+    pub states: Vec<Entity>,
+    /// The parameters, in the order of the parameter vector.
+    pub parameters: Vec<Entity>,
+    /// The values `model_selections` writes, in its order.
+    pub selections: Vec<Selection>,
+    /// The Jacobian of the model.
+    pub jacobian: JacobianKind,
+    /// The events of the model.
+    pub events: Vec<EventInfo>,
+    /// The unit expression of every entity id.
+    pub units: BTreeMap<String, String>,
+}
+
+/// A state or a parameter of a model.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Entity {
+    /// The SBML id.
+    pub id: String,
+    /// What the entity is.
+    pub kind: EntityKind,
+    /// The initial value as loaded.
+    pub initial: f64,
+    /// Whether a change may set it.
+    pub settable: bool,
+}
+
+/// The kind of an [`Entity`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EntityKind {
+    /// A species.
+    Species {
+        /// The compartment of the species.
+        compartment: String,
+        /// The `hasOnlySubstanceUnits` attribute.
+        has_only_substance_units: bool,
+    },
+    /// A compartment.
+    Compartment,
+    /// A parameter.
+    Parameter,
+    /// A species reference.
+    SpeciesReference,
+}
+
+/// A value `model_selections` writes at `index`; `[S]` is the id of a concentration selection.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Selection {
+    /// The id of the selection.
+    pub id: String,
+    /// The position in the output of `model_selections`.
+    pub index: u32,
+}
+
+/// A sparsity pattern in compressed sparse column form.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SparsityPattern {
+    /// The dimension of the square matrix.
+    pub n: u32,
+    /// The start of every column in `row_idx`, `n + 1` entries.
+    pub col_ptr: Vec<u32>,
+    /// The row of every entry.
+    pub row_idx: Vec<u32>,
+}
+
+/// How the Jacobian is provided.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum JacobianKind {
+    /// `model_jac` computes it on the pattern.
+    Analytic(SparsityPattern),
+    /// Difference quotients over the colors of the columns of the pattern.
+    ColoredDifference {
+        /// The pattern.
+        pattern: SparsityPattern,
+        /// The color of every column.
+        colors: Vec<u32>,
+    },
+}
+
+/// What the engine needs to know of an event.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EventInfo {
+    /// The id of the event.
+    pub id: String,
+    /// Whether the event has a delay.
+    pub has_delay: bool,
+    /// Whether the event has a priority.
+    pub has_priority: bool,
+    /// Whether the trigger is persistent.
+    pub persistent: bool,
+    /// The initial value of the trigger.
+    pub initial_value: bool,
+    /// Whether the assignments use the values at the time of the trigger.
+    pub use_values_from_trigger_time: bool,
+    /// The number of assignments.
+    pub n_assignments: u32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn full_request() -> SimulationRequest {
+        SimulationRequest {
+            contract: SIMULATION_CONTRACT.to_string(),
+            start: -1.0,
+            end: 10.5,
+            output: Output::Times(vec![0.0, 1.0, 2.5]),
+            preinit: vec![("k".to_string(), 2.0)],
+            changes: vec![Change {
+                time: 3.0,
+                values: vec![("dose".to_string(), 100.0), ("V".to_string(), 1.5)],
+            }],
+            steady_state: Some(SteadyState {
+                preinit: vec![("x".to_string(), 1.0)],
+                absolute_tolerance: 1e-9,
+                relative_tolerance: 1e-7,
+                max_time: 1e6,
+            }),
+            selections: vec!["time".to_string(), "[S]".to_string()],
+            settings: IntegratorSettings {
+                relative_tolerance: 1e-8,
+                absolute_tolerance: Tolerance::PerState(vec![1e-12, 1e-10]),
+                maximum_num_steps: 500,
+                maximum_time_step: 0.5,
+                initial_time_step: 1e-6,
+                stiff: false,
+                linear_solver: LinearSolver::Klu,
+                jacobian: JacobianChoice::DifferenceQuotient,
+            },
+            seed: 42,
+        }
+    }
+
+    #[test]
+    fn request_roundtrips_as_json() {
+        let request = full_request();
+        let json = serde_json::to_string(&request).unwrap();
+        let back: SimulationRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(request, back);
+        for output in [Output::Uniform { steps: 7 }, Output::IntegratorSteps] {
+            let r = SimulationRequest {
+                output,
+                ..full_request()
+            };
+            let back: SimulationRequest =
+                serde_json::from_str(&serde_json::to_string(&r).unwrap()).unwrap();
+            assert_eq!(r, back);
+        }
+    }
+
+    #[test]
+    fn misspelled_field_is_an_error() {
+        let mut value = serde_json::to_value(full_request()).unwrap();
+        value["sed"] = serde_json::json!(1);
+        assert!(serde_json::from_value::<SimulationRequest>(value).is_err());
+    }
+
+    #[test]
+    fn contract_mismatch_names_both() {
+        let message = check_contract("model/2", MODEL_CONTRACT)
+            .unwrap_err()
+            .to_string();
+        assert!(message.contains("model/2") && message.contains("model/1"));
+        assert!(check_contract(MODEL_CONTRACT, MODEL_CONTRACT).is_ok());
+    }
+
+    #[test]
+    fn settings_default_to_roadrunner() {
+        let s = IntegratorSettings::default();
+        assert_eq!(s.relative_tolerance, 1e-6);
+        assert_eq!(s.absolute_tolerance, Tolerance::Scalar(1e-12));
+        assert_eq!(s.maximum_num_steps, 20000);
+        assert_eq!(s.maximum_time_step, 0.0);
+        assert_eq!(s.initial_time_step, 0.0);
+        assert!(s.stiff);
+        assert_eq!(s.linear_solver, LinearSolver::Auto);
+        assert_eq!(s.jacobian, JacobianChoice::Auto);
+        let t = SteadyState::default();
+        assert_eq!(
+            (t.absolute_tolerance, t.relative_tolerance, t.max_time),
+            (1e-8, 1e-6, 1e8)
+        );
+    }
+
+    #[test]
+    fn description_roundtrips_as_json() {
+        let d = ModelDescription {
+            contract: MODEL_CONTRACT.to_string(),
+            id: "m".to_string(),
+            states: vec![Entity {
+                id: "S".to_string(),
+                kind: EntityKind::Species {
+                    compartment: "c".to_string(),
+                    has_only_substance_units: false,
+                },
+                initial: 1.0,
+                settable: true,
+            }],
+            parameters: vec![],
+            selections: vec![Selection {
+                id: "[S]".to_string(),
+                index: 0,
+            }],
+            jacobian: JacobianKind::Analytic(SparsityPattern {
+                n: 1,
+                col_ptr: vec![0, 1],
+                row_idx: vec![0],
+            }),
+            events: vec![],
+            units: BTreeMap::new(),
+        };
+        let back: ModelDescription =
+            serde_json::from_str(&serde_json::to_string(&d).unwrap()).unwrap();
+        assert_eq!(d, back);
+    }
+}
