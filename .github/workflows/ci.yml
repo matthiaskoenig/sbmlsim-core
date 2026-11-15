@@ -15,3 +15,5 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
       - run: cargo build -p sbmlsim-abi --target wasm32-unknown-unknown
+      - run: cargo build -p sbmlsim-mathlib --target wasm32-unknown-unknown --release
+      - run: cargo test -p sbmlsim-mathlib wasm_has_no_imports

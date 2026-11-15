@@ -5,4 +5,12 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
+[lib]
+name = "sbmlsim_mathlib"
+crate-type = ["cdylib", "rlib"]
+
 [dependencies]
+libm = "0.2"
+
+[dev-dependencies]
+wasmparser = "0.230"
