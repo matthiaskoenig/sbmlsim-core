@@ -127,11 +127,36 @@ def prepare(case: SemanticCase, out: Path) -> str | None:
     return message
 
 
+BASELINE = Path(__file__).resolve().parent.parent / "testdata" / "testsuite_baseline.json"
+
+
+def check_commit(baseline: Path) -> str | None:
+    """Compare the suite commit of sbmlsim with the one of the baseline.
+
+    Returns:
+        The message of a mismatch, else `None`.
+    """
+    recorded = json.loads(baseline.read_text(encoding="utf-8"))["suite_commit"]
+    if recorded != SUITE_COMMIT:
+        return (
+            f"the installed sbmlsim pins the suite commit {SUITE_COMMIT}, the baseline "
+            f"{baseline} records {recorded}: update the baseline deliberately "
+            f"(`sbmlsim-core testsuite --write-baseline`) before preparing other cases"
+        )
+    return None
+
+
 def main() -> int:
     """Run the command line."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--out", type=Path, default=Path("testdata/cases"))
+    parser.add_argument("--baseline", type=Path, default=BASELINE)
     args = parser.parse_args()
+
+    mismatch = check_commit(args.baseline)
+    if mismatch is not None:
+        print(f"error: {mismatch}", file=sys.stderr)
+        return 1
 
     suite = SemanticSuite.load(SUITE_COMMIT)
     args.out.mkdir(parents=True, exist_ok=True)

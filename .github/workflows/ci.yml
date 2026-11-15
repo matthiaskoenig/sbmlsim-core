@@ -68,11 +68,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: astral-sh/setup-uv@v5
       - name: Cache the prepared cases
-        # the script pins the suite commit through the release of sbmlsim it asks for
+        # the script refuses a suite commit other than the baseline's, so the baseline keys the cases
         uses: actions/cache@v4
         with:
           path: testdata/cases
-          key: testsuite-cases-${{ hashFiles('scripts/prepare_testsuite.py') }}
+          key: testsuite-cases-${{ hashFiles('scripts/prepare_testsuite.py', 'testdata/testsuite_baseline.json') }}
       - name: Prepare the cases
         run: test -f testdata/cases/SUITE_COMMIT || uv run scripts/prepare_testsuite.py --out testdata/cases
       - run: cargo test -p sbmlsim-cli

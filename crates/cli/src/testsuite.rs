@@ -136,6 +136,9 @@ pub struct CaseSettings {
     /// Set when the model was not converted by the preparation: the message.
     #[serde(default)]
     pub not_converted: Option<String>,
+    /// The commit of the suite the case was prepared from.
+    #[serde(default)]
+    pub suite_commit: String,
 }
 
 /// A table of numbers, row major, `time` in the first column.
@@ -273,6 +276,36 @@ pub fn compare(
     }
 }
 
+/// The message when the expected results do not have `time` and one column per selection.
+pub fn check_columns(expected: &Table, settings: &CaseSettings) -> Option<String> {
+    (expected.n_cols != settings.selections.len()).then(|| {
+        format!(
+            "the expected results have {} columns, the case {} selections",
+            expected.n_cols,
+            settings.selections.len()
+        )
+    })
+}
+
+/// Checks that every case was prepared from the suite commit of the baseline.
+pub fn check_commits(dirs: &[PathBuf], baseline_commit: &str) -> anyhow::Result<()> {
+    for dir in dirs {
+        let bytes = fs::read(dir.join("case.json"))
+            .with_context(|| format!("cannot read {}", dir.join("case.json").display()))?;
+        let settings: CaseSettings = serde_json::from_slice(&bytes)
+            .with_context(|| format!("cannot read {}", dir.join("case.json").display()))?;
+        anyhow::ensure!(
+            settings.suite_commit == baseline_commit,
+            "the case {} was prepared from the suite commit '{}', the baseline records '{}'; \
+             prepare the cases again (scripts/prepare_testsuite.py) or update the baseline deliberately",
+            dir.display(),
+            settings.suite_commit,
+            baseline_commit
+        );
+    }
+    Ok(())
+}
+
 /// The hook of the repeat checks (a simulation of the loaded model again, after half the
 /// duration, and a steady state must equal the first one bitwise): not implemented yet, so
 /// every case which agrees with its expected results has no repeat difference. Returns the
@@ -373,6 +406,9 @@ fn run_case_inner(runtime: &Runtime, dir: &Path, cid: &str) -> CaseResult {
             );
         }
     };
+    if let Some(message) = check_columns(&expected, &settings) {
+        return CaseResult::new(cid, Status::MissingVariable, message);
+    }
     match compare(
         &expected,
         &observed,
@@ -558,13 +594,6 @@ fn case_dirs(dir: &Path, selection: Option<&[(u32, u32)]>) -> anyhow::Result<Vec
     Ok(dirs)
 }
 
-/// The suite commit the cases were prepared from.
-fn suite_commit(dir: &Path) -> String {
-    fs::read_to_string(dir.join("SUITE_COMMIT"))
-        .map(|s| s.trim().to_string())
-        .unwrap_or_default()
-}
-
 /// The command `testsuite`; `Ok(true)` when the run has no differences.
 pub fn run(args: &TestsuiteArgs) -> anyhow::Result<bool> {
     let selection = args.cases.as_deref().map(parse_selection).transpose()?;
@@ -578,6 +607,18 @@ pub fn run(args: &TestsuiteArgs) -> anyhow::Result<bool> {
         "no case in {}, run scripts/prepare_testsuite.py",
         args.cases_dir.display()
     );
+    // the cases must be those of the suite commit of the baseline, before anything runs
+    let baseline: Option<Baseline> = if args.write_baseline {
+        None
+    } else {
+        let baseline: Baseline =
+            serde_json::from_slice(&fs::read(&args.baseline).with_context(|| {
+                format!("cannot read the baseline {}", args.baseline.display())
+            })?)
+            .with_context(|| format!("cannot read the baseline {}", args.baseline.display()))?;
+        check_commits(&dirs, &baseline.suite_commit)?;
+        Some(baseline)
+    };
     let runtime = Runtime::embedded()?;
     let mut builder = rayon::ThreadPoolBuilder::new();
     if let Some(jobs) = args.jobs {
@@ -599,9 +640,17 @@ pub fn run(args: &TestsuiteArgs) -> anyhow::Result<bool> {
     }
     print!("{summary}");
 
-    let commit = suite_commit(&args.cases_dir);
     if args.write_baseline {
-        let baseline = baseline_of(&results, &commit);
+        let first = dirs
+            .first()
+            .map(|d| fs::read(d.join("case.json")))
+            .transpose()?
+            .map(|b| serde_json::from_slice::<CaseSettings>(&b))
+            .transpose()?
+            .map(|s| s.suite_commit)
+            .unwrap_or_default();
+        check_commits(&dirs, &first)?;
+        let baseline = baseline_of(&results, &first);
         fs::write(
             &args.baseline,
             serde_json::to_string_pretty(&baseline)? + "\n",
@@ -613,24 +662,14 @@ pub fn run(args: &TestsuiteArgs) -> anyhow::Result<bool> {
             baseline.n_passed,
             baseline.n_cases
         );
-        write_json(args, &commit, &results, &[])?;
+        write_json(args, &first, &results, &[])?;
         return Ok(true);
     }
 
-    let baseline: Baseline = serde_json::from_slice(
-        &fs::read(&args.baseline)
-            .with_context(|| format!("cannot read the baseline {}", args.baseline.display()))?,
-    )
-    .with_context(|| format!("cannot read the baseline {}", args.baseline.display()))?;
-    if !commit.is_empty() && commit != baseline.suite_commit {
-        println!(
-            "note: the cases are of the suite commit {commit}, the baseline of {}",
-            baseline.suite_commit
-        );
-    }
+    let baseline = baseline.expect("read above");
     let found = differences(&results, &baseline, selection.is_none());
     report_differences(&found);
-    write_json(args, &commit, &results, &found)?;
+    write_json(args, &baseline.suite_commit, &results, &found)?;
     Ok(found.is_empty())
 }
 

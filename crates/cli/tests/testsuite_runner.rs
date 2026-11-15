@@ -8,7 +8,8 @@ use std::process::Command;
 
 use sbmlsim_abi::SimulationResult;
 use sbmlsim_cli::testsuite::{
-    Baseline, CaseResult, Expected, Status, Table, compare, differences, run_case,
+    Baseline, CaseResult, CaseSettings, Expected, Status, Table, check_columns, check_commits,
+    compare, differences, run_case,
 };
 
 fn result(columns: &[&str], rows: &[&[f64]]) -> SimulationResult {
@@ -141,6 +142,80 @@ fn baseline(listed: &[(&str, &str)]) -> Baseline {
 }
 
 #[test]
+fn expected_csv_tokens_and_line_endings() {
+    let text = "time,a,b\r\n0,NaN,NAN\r\n1,nan,INF\r\n2,Inf,-INF\r\n3,-Inf,1.5e-005\r\n";
+    let table = Table::from_csv(text).unwrap();
+    assert_eq!(table.n_cols, 3);
+    assert_eq!(table.values.len(), 12);
+    let v = &table.values;
+    assert!(v[1].is_nan() && v[2].is_nan() && v[4].is_nan());
+    assert_eq!(v[5], f64::INFINITY);
+    assert_eq!(v[7], f64::INFINITY);
+    assert_eq!(v[8], f64::NEG_INFINITY);
+    assert_eq!(v[10], f64::NEG_INFINITY);
+    assert_eq!(v[11], 1.5e-5);
+    assert_eq!(v[9], 3.0);
+    // a row with another number of columns and a word which is no number are errors
+    assert!(Table::from_csv("time,a\n0,1,2\n").is_err());
+    assert!(Table::from_csv("time,a\n0,x\n").is_err());
+}
+
+fn settings(selections: &[&str], commit: &str) -> CaseSettings {
+    serde_json::from_value(serde_json::json!({
+        "cid": "00001", "start": 0.0, "duration": 1.0, "steps": 1,
+        "selections": selections, "absolute_tolerance": 1e-9, "relative_tolerance": 1e-6,
+        "suite_commit": commit,
+    }))
+    .unwrap()
+}
+
+#[test]
+fn column_count_mismatch_is_reported() {
+    let table = Table::from_csv("time,a\n0,1\n").unwrap();
+    assert!(check_columns(&table, &settings(&["time", "a"], "c")).is_none());
+    let message = check_columns(&table, &settings(&["time", "a", "b"], "c")).unwrap();
+    assert!(message.contains("2 columns"), "{message}");
+}
+
+#[test]
+fn suite_commit_mismatch_fails_the_run() {
+    let root = std::env::temp_dir().join(format!("sbmlsim-commit-{}", std::process::id()));
+    let case = root.join("00001");
+    std::fs::create_dir_all(&case).unwrap();
+    let json = serde_json::to_vec(&serde_json::json!({
+        "cid": "00001", "start": 0.0, "duration": 1.0, "steps": 1, "selections": ["time"],
+        "absolute_tolerance": 1e-9, "relative_tolerance": 1e-6, "suite_commit": "old",
+    }))
+    .unwrap();
+    std::fs::write(case.join("case.json"), json).unwrap();
+    assert!(check_commits(std::slice::from_ref(&case), "old").is_ok());
+    let error = check_commits(std::slice::from_ref(&case), "new")
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("'old'") && error.contains("'new'"),
+        "{error}"
+    );
+    // and the command refuses to run
+    let baseline = root.join("baseline.json");
+    std::fs::write(
+        &baseline,
+        r#"{"suite_commit":"new","n_cases":1,"n_passed":1,"expected_failures":{}}"#,
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_sbmlsim-core"))
+        .arg("testsuite")
+        .arg(&root)
+        .arg("--baseline")
+        .arg(&baseline)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("suite commit"));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn baseline_both_directions() {
     let results = vec![
         outcome("00001", Status::Pass),
@@ -249,7 +324,12 @@ fn command_writes_a_result_per_case() {
             .contains(&r["status"].as_str().unwrap())
         );
     }
-    // a partial run reports no listed case as missing
+    // every case is not compiled now: the 5 cases are listed or regressions, never missing
+    assert_eq!(output.status.code(), Some(1));
+    let n_differences = written["differences"].as_array().unwrap().len();
+    let n_listed = written["results"].as_array().unwrap().len() - n_differences;
+    assert!(n_differences <= 5 && n_listed <= 5);
+    assert_eq!(n_differences, 5 - n_listed);
     assert!(String::from_utf8_lossy(&output.stdout).contains("not_compiled"));
 }
 
