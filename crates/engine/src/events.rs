@@ -48,9 +48,10 @@
 //! ([`Probe::Change`]: the events the change makes true, with their priorities, persistence
 //! and values, as sbmlsim's `fire_events`), then the output of the state after the change is
 //! written, then the executions which were pending at its time and the strict comparisons
-//! execute ([`Probe::After`]). An event triggered by a change which has a delay is pending as
-//! any other: a known difference to sbmlsim, whose executor reports such an event and does
-//! not fire it (ruling R34).
+//! execute ([`Probe::After`]). An event with a delay which a change makes true (also through
+//! the events the change executes) is not simulated as sbmlsim simulates it, whose executors
+//! report such an event and do not fire it: the request is refused with
+//! [`EngineError::Request`] naming the event and the time ([`DELAYED_AT_CHANGE`]).
 //!
 //! Both windows are relative: the absolute window is the rtol times the magnitude of the time
 //! scale of the simulation, `max(|start|, |end|, end - start)` (1 when that is 0), so a
@@ -83,6 +84,22 @@ pub const PROBE_RTOL: f64 = 1e-12;
 /// sbmlsim's `_event_at_the_end` has it (the events of a period which CVODE locates a little
 /// late each, case 00967, end there).
 pub const END_RTOL: f64 = 1e-9;
+
+/// What the engine does with an event with a delay whose trigger a change makes true.
+#[allow(dead_code)] // the alternatives to the refusal, one switch away
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DelayedAtChange {
+    /// The request is refused with [`EngineError::Request`]: sbmlsim does not fire such an
+    /// event, and the engine refuses what it does not simulate as sbmlsim does.
+    Refuse,
+    /// The event is pending at the time of the change plus its delay (SBML).
+    Schedule,
+    /// The event is not triggered (sbmlsim's executors, without their report).
+    Skip,
+}
+
+/// The choice of [`DelayedAtChange`] of the engine.
+pub(crate) const DELAYED_AT_CHANGE: DelayedAtChange = DelayedAtChange::Refuse;
 
 /// The magnitude of the times of an integration from `start` to `end` (1 when it is 0 or not
 /// finite), the scale of the resolutions [`PROBE_RTOL`] and [`END_RTOL`].
@@ -359,6 +376,20 @@ impl<'a> Events<'a> {
                     continue;
                 }
                 let event = &self.info[i];
+                if event.has_delay && probe == Probe::Change {
+                    match DELAYED_AT_CHANGE {
+                        DelayedAtChange::Refuse => {
+                            return Err(EngineError::Request(format!(
+                                "the change at t = {t} makes the trigger of the event {} with a \
+                                 delay true; sbmlsim does not fire such an event, so the engine \
+                                 refuses the request",
+                                self.name(i)
+                            )));
+                        }
+                        DelayedAtChange::Skip => continue,
+                        DelayedAtChange::Schedule => {}
+                    }
+                }
                 let time = if event.has_delay {
                     let delay = model.delay(i as u32, t, y, p);
                     if delay.is_nan() || delay < 0.0 {

@@ -54,6 +54,10 @@
 //!   libroadrunner has no such bound (the ball falls through; the sliding mode runs to its
 //!   `max_output_rows`). A chatter whose stops are further apart than the resolution is bounded
 //!   by the limit of the output only.
+//! - A change of the request which makes the trigger of an event with a delay true (also through
+//!   the events it executes) is refused with [`EngineError::Request`] naming the event and the
+//!   time (`events`, ruling R52): sbmlsim reports such an event and does not fire it,
+//!   libroadrunner schedules it (SBML).
 //! - libroadrunner's count of roots close together (`strikes`) ignores the events of an ignored
 //!   root as well; here it decides the restarts at the roots of discontinuities only, and the
 //!   events execute whatever it counts.

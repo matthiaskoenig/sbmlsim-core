@@ -23,14 +23,16 @@
 //! The pre-initialization takes the same ids (`resolve_values`, sbmlsim's selections), set
 //! before `init` (see `initial_values` of the crate).
 //!
-//! Known differences to sbmlsim (rulings R34, R35): an event with a delay which a change makes
-//! true is pending as any other, sbmlsim reports it and does not fire it (a limitation of its
-//! executor); a change which sets a state exactly to the threshold of a strict comparison
-//! triggers its event right after the change (as sbmlsim's executors of COPASI and AMICI, not
-//! its roadrunner, whose CVODE ignores a root which is 0 at the start of a segment); the
-//! variable of an assignment rule without math is settable (the rule is ignored, as
-//! libroadrunner does), sbmlsim refuses to change it; an entity named `time` is set as an
-//! entity, sbmlsim sets the clock of roadrunner.
+//! An event with a delay which a change makes true is refused (ruling R52, `events`): sbmlsim
+//! reports such an event and does not fire it (a limitation of its executor), so the engine
+//! refuses the request with [`EngineError::Request`] instead of simulating it otherwise.
+//!
+//! Known differences to sbmlsim (ruling R35): a change which sets a state exactly to the
+//! threshold of a strict comparison triggers its event right after the change (as sbmlsim's
+//! executors of COPASI and AMICI, not its roadrunner, whose CVODE ignores a root which is 0 at
+//! the start of a segment); the variable of an assignment rule without math is settable (the
+//! rule is ignored, as libroadrunner does), sbmlsim refuses to change it; an entity named
+//! `time` is set as an entity, sbmlsim sets the clock of roadrunner.
 //!
 //! A parameter which an assignment rule of a compartment reads and a concentration `[S]` in
 //! that compartment set by one change: the concentration is converted with the size of the

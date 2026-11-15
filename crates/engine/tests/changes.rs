@@ -304,6 +304,62 @@ fn events_and_changes() {
 }
 
 #[test]
+fn a_change_which_triggers_a_delayed_event_is_refused() {
+    // sbmlsim's executors report an event with a delay which a change makes true and do not
+    // fire it; the engine refuses the request, at a change after the start and at the start,
+    // in both outputs, also when an event the change executes makes it true
+    let x_delayed = TestEvent {
+        assignments: vec![(Target::State(0), (|_, _, _| 50.0) as Fun)],
+        initial_value: false,
+        delay: Some(|_, _, _| 1.0),
+        ..TestEvent::new(
+            "x_delayed",
+            |_, _, p| p[1] > 0.5,
+            vec![|_, _, p| p[1] - 0.5],
+        )
+    };
+    let x_above = TestEvent {
+        assignments: vec![(Target::Param(0), (|_, _, _| 10.0) as Fun)],
+        initial_value: false,
+        ..TestEvent::new("x_above", |_, _, p| p[1] > 0.5, vec![|_, _, p| p[1] - 0.5])
+    };
+    let b_delayed = TestEvent {
+        assignments: vec![(Target::State(0), (|_, _, _| 50.0) as Fun)],
+        initial_value: false,
+        delay: Some(|_, _, _| 1.0),
+        ..TestEvent::new(
+            "b_delayed",
+            |_, _, p| p[0] > 5.0,
+            vec![|_, _, p| p[0] - 5.0],
+        )
+    };
+    for (model, id) in [
+        (relax(vec![x_delayed.clone()]), "x_delayed"),
+        (relax(vec![x_above, b_delayed]), "b_delayed"),
+    ] {
+        for at in [5.0, 0.0] {
+            for output in [Output::Uniform { steps: 2 }, Output::IntegratorSteps] {
+                let mut req = request(0.0, 10.0, output);
+                req.changes = vec![change(at, &[("x", 1.0)])];
+                match events(&model, &req) {
+                    Err(EngineError::Request(message)) => {
+                        assert!(message.contains(id), "{message}");
+                        assert!(message.contains(&format!("t = {at}")), "{message}");
+                    }
+                    other => panic!("{other:?}"),
+                }
+            }
+        }
+    }
+    // the same event triggered by the pre-initialization (at the start): pending, y = 50 at 1
+    let mut req = request(0.0, 10.0, Output::Uniform { steps: 2 });
+    req.preinit = vec![("x".to_string(), 1.0)];
+    let result = events(&relax(vec![x_delayed]), &req).unwrap();
+    let y = column(&result, "y");
+    assert!(close(y[1], 1.0 + 49.0 * (-4.0f64).exp()), "{y:?}");
+}
+
+#[test]
 fn a_model_without_states_is_changed() {
     let model = EventModel {
         states: vec![],
