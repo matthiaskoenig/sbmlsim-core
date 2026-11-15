@@ -463,10 +463,30 @@ fn unknown_elements_are_named() {
         panic!()
     };
     assert!(m.contains("vector"), "{m}");
-    assert!(matches!(
-        bad_math(r#"<csymbol definitionURL="urn:other">x</csymbol>"#),
-        ReadError::Xml(_)
-    ));
+    // a csymbol is named by the text of its definitionURL (not `Some("...")`)
+    let ReadError::Xml(m) = bad_math(r#"<csymbol definitionURL="urn:other">x</csymbol>"#) else {
+        panic!()
+    };
+    assert!(m.contains("csymbol of the definitionURL urn:other"), "{m}");
+    assert!(!m.contains("Some("), "{m}");
+    let ReadError::Xml(m) = bad_math(
+        r#"<apply><csymbol definitionURL="http://www.sbml.org/sbml/symbols/time">t</csymbol><ci>x</ci></apply>"#,
+    ) else {
+        panic!()
+    };
+    assert!(
+        m.contains(
+            "csymbol of the definitionURL http://www.sbml.org/sbml/symbols/time cannot be applied"
+        ),
+        "{m}"
+    );
+    let ReadError::Xml(m) = bad_math("<apply><csymbol>f</csymbol><ci>x</ci></apply>") else {
+        panic!()
+    };
+    assert!(
+        m.contains("csymbol without a definitionURL cannot be applied"),
+        "{m}"
+    );
     assert!(matches!(read("<notxml"), Err(ReadError::Xml(_))));
 }
 

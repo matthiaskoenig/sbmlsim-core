@@ -11,7 +11,7 @@
 
 use std::collections::HashMap;
 
-use sbmlsim_sbml::math::{Node, Op as MathOp};
+use sbmlsim_sbml::math::{MAX_MATH_DEPTH, Node, Op as MathOp};
 
 use crate::CompileError;
 
@@ -148,6 +148,29 @@ impl Expr {
         }
     }
 
+    /// The depth of the expression (a number or a symbol is 1), counted without recursion.
+    pub fn depth(&self) -> usize {
+        let mut deepest = 0;
+        let mut stack = vec![(self, 1)];
+        while let Some((e, depth)) = stack.pop() {
+            deepest = deepest.max(depth);
+            match e {
+                Expr::Number(_) | Expr::Bool(_) | Expr::Symbol(_) => {}
+                Expr::Apply { args, .. } => stack.extend(args.iter().map(|a| (a, depth + 1))),
+                Expr::Piecewise { pieces, otherwise } => {
+                    for (value, condition) in pieces {
+                        stack.push((value, depth + 1));
+                        stack.push((condition, depth + 1));
+                    }
+                    if let Some(o) = otherwise {
+                        stack.push((o, depth + 1));
+                    }
+                }
+            }
+        }
+        deepest
+    }
+
     /// The symbols the expression reads, each once, in the order of their first appearance.
     pub fn symbols(&self) -> Vec<Symbol> {
         let mut out = Vec::new();
@@ -203,12 +226,34 @@ fn unsupported(feature: &str, element: &str) -> CompileError {
     }
 }
 
-/// The expression of a math node in a scope.
+/// The deepest an expression may be, also after the function definitions it calls are inlined:
+/// the reader's [`MAX_MATH_DEPTH`] (the passes of the compiler recurse over the expressions).
+pub const MAX_EXPR_DEPTH: usize = MAX_MATH_DEPTH;
+
+/// Refuses an expression deeper than [`MAX_EXPR_DEPTH`].
+fn check_depth(e: &Expr, element: &str) -> Result<(), CompileError> {
+    if e.depth() > MAX_EXPR_DEPTH {
+        return Err(CompileError::Invalid(format!(
+            "the math of {element} is nested deeper than {MAX_EXPR_DEPTH} levels with the \
+             function definitions it calls inlined"
+        )));
+    }
+    Ok(())
+}
+
+/// The expression of a math node in a scope, at most [`MAX_EXPR_DEPTH`] deep.
 pub(crate) fn build(
     node: &Node,
     cx: &mut dyn Context,
     scope: &Scope,
 ) -> Result<Expr, CompileError> {
+    let e = build_node(node, cx, scope)?;
+    check_depth(&e, scope.element)?;
+    Ok(e)
+}
+
+/// The expression of a math node in a scope (the recursion of [`build`]).
+fn build_node(node: &Node, cx: &mut dyn Context, scope: &Scope) -> Result<Expr, CompileError> {
     Ok(match node {
         Node::Number(x) => Expr::Number(*x),
         Node::True => Expr::Bool(true),
@@ -247,12 +292,15 @@ pub(crate) fn build(
             pieces: pieces
                 .iter()
                 .map(|(value, condition)| {
-                    Ok((build(value, cx, scope)?, build(condition, cx, scope)?))
+                    Ok((
+                        build_node(value, cx, scope)?,
+                        build_node(condition, cx, scope)?,
+                    ))
                 })
                 .collect::<Result<_, CompileError>>()?,
             otherwise: otherwise
                 .as_ref()
-                .map(|o| build(o, cx, scope).map(Box::new))
+                .map(|o| build_node(o, cx, scope).map(Box::new))
                 .transpose()?,
         },
         Node::Apply { op, args } => match op {
@@ -284,7 +332,7 @@ pub(crate) fn build(
                 op: operator(other),
                 args: args
                     .iter()
-                    .map(|a| build(a, cx, scope))
+                    .map(|a| build_node(a, cx, scope))
                     .collect::<Result<_, _>>()?,
             },
         },
@@ -333,12 +381,13 @@ fn inline(
     }
     let mut bvars = HashMap::new();
     for (param, arg) in params.iter().zip(args) {
-        bvars.insert(param.clone(), build(arg, cx, scope)?);
+        bvars.insert(param.clone(), build_node(arg, cx, scope)?);
     }
     let mut inlining = scope.inlining.to_vec();
     inlining.push(id.to_string());
-    // the body sees its bound variables and the model, not the local parameters of the caller
-    build(
+    // the body sees its bound variables and the model, not the local parameters of the caller;
+    // its depth is checked here already, so nested calls never build (and clone) a deeper one
+    let e = build_node(
         &body,
         cx,
         &Scope {
@@ -347,7 +396,9 @@ fn inline(
             bvars: Some(&bvars),
             inlining: &inlining,
         },
-    )
+    )?;
+    check_depth(&e, element)?;
+    Ok(e)
 }
 
 fn operator(op: &MathOp) -> Op {

@@ -54,5 +54,82 @@ pub struct Document {
 
 /// Reads the text of an SBML Level 3 Version 2 document.
 pub fn read(sbml: &str) -> Result<Document, ReadError> {
+    if deeper_than(sbml, MAX_XML_DEPTH).is_some() {
+        return Err(ReadError::Xml(format!(
+            "the document is nested deeper than {MAX_XML_DEPTH} elements"
+        )));
+    }
     model::read_document(sbml)
+}
+
+/// The deepest nesting of elements a document may have: the structure of SBML around a math
+/// (`sbml`, `model`, a list, an element, a part of it such as `trigger`, `math`), annotations
+/// and notes, and [`math::MAX_MATH_DEPTH`] below the math. The XML parser recurses once per
+/// element, so a deeper document is refused before it is parsed.
+pub const MAX_XML_DEPTH: usize = math::MAX_MATH_DEPTH + 64;
+
+/// The depth of the first element of `xml` deeper than `limit`, scanning its tags without
+/// recursion; `None` when there is none (or when the text is no XML the scan understands, which
+/// the parser then refuses).
+fn deeper_than(xml: &str, limit: usize) -> Option<usize> {
+    let bytes = xml.as_bytes();
+    // the position after the first occurrence of `end` at or after `from`
+    let after = |from: usize, end: &[u8]| {
+        bytes[from..]
+            .windows(end.len())
+            .position(|w| w == end)
+            .map(|i| from + i + end.len())
+    };
+    let mut depth = 0usize;
+    let mut i = 0;
+    while let Some(lt) = bytes[i..].iter().position(|&b| b == b'<') {
+        let at = i + lt;
+        let rest = &bytes[at..];
+        i = if rest.starts_with(b"<!--") {
+            after(at, b"-->")?
+        } else if rest.starts_with(b"<![CDATA[") {
+            after(at, b"]]>")?
+        } else if rest.starts_with(b"<?") {
+            after(at, b"?>")?
+        } else if rest.starts_with(b"<!") {
+            // a document type declaration, with an internal subset in brackets
+            let mut brackets = 0usize;
+            let mut j = at + 2;
+            loop {
+                match bytes.get(j)? {
+                    b'[' => brackets += 1,
+                    b']' => brackets = brackets.saturating_sub(1),
+                    b'>' if brackets == 0 => break j + 1,
+                    _ => {}
+                }
+                j += 1;
+            }
+        } else if rest.starts_with(b"</") {
+            depth = depth.saturating_sub(1);
+            after(at, b">")?
+        } else {
+            // a start tag: up to its `>` outside of the quotes of its attributes
+            let mut quote = None;
+            let mut j = at + 1;
+            let end = loop {
+                let b = *bytes.get(j)?;
+                match quote {
+                    Some(q) if b == q => quote = None,
+                    Some(_) => {}
+                    None if b == b'"' || b == b'\'' => quote = Some(b),
+                    None if b == b'>' => break j,
+                    None => {}
+                }
+                j += 1;
+            };
+            if bytes[end - 1] != b'/' {
+                depth += 1;
+                if depth > limit {
+                    return Some(depth);
+                }
+            }
+            end + 1
+        };
+    }
+    None
 }

@@ -115,6 +115,14 @@ pub enum Node {
     Empty,
 }
 
+/// The `definitionURL` of a `csymbol` in a message: the URL, or that it has none.
+fn definition_url(url: Option<&str>) -> String {
+    match url {
+        Some(url) => format!("of the definitionURL {url}"),
+        None => "without a definitionURL".to_string(),
+    }
+}
+
 fn err(message: String) -> ReadError {
     ReadError::Xml(message)
 }
@@ -201,8 +209,49 @@ fn check_ns(n: X) -> Result<(), ReadError> {
     }
 }
 
-/// Reads a `<math>` element: its first element child is the expression.
+/// The deepest nesting of elements a `<math>` element may have below it.
+///
+/// The reader, the passes of the compiler (which recurse over the expressions: the derivatives
+/// of the Jacobian, the optimizer, the code generation) and the drop of an expression use the
+/// stack once per level, and the compiler is meant to run in a browser too, where the stack of
+/// a wasm module is about 1 MiB (the shadow stack Rust links, V8's native stack). Measured with
+/// the compiler built for wasm32-wasip1 in wasmtime with both stacks at 1 MiB: nested binary
+/// operators of a state (whose derivatives recurse deepest) exhaust the stack at about 1600
+/// levels, nested unary functions at about 1850, nested `piecewise` at about 2000 elements; the
+/// limit leaves a margin of 4. The models of the SBML Test Suite and of the benchmark nest at
+/// most 10 elements.
+pub const MAX_MATH_DEPTH: usize = 400;
+
+/// The depth of the deepest element below `math` (its children are at depth 1), counted
+/// without recursion up to `MAX_MATH_DEPTH + 1`.
+fn element_depth(math: X) -> usize {
+    let mut deepest = 0;
+    let mut stack: Vec<(X, usize)> = elements(math).map(|c| (c, 1)).collect();
+    while let Some((n, depth)) = stack.pop() {
+        deepest = deepest.max(depth);
+        if deepest > MAX_MATH_DEPTH {
+            break;
+        }
+        stack.extend(elements(n).map(|c| (c, depth + 1)));
+    }
+    deepest
+}
+
+/// Reads a `<math>` element: its first element child is the expression. A math nested deeper
+/// than [`MAX_MATH_DEPTH`] elements is refused before it is read.
 pub(crate) fn read_math(math: X) -> Result<Node, ReadError> {
+    if element_depth(math) > MAX_MATH_DEPTH {
+        let owner = math.parent_element().map_or(String::new(), |p| {
+            let name = ["id", "variable", "symbol"]
+                .iter()
+                .find_map(|a| p.attribute(*a))
+                .map_or(String::new(), |v| format!(" {v}"));
+            format!(" of <{}>{name}", p.tag_name().name())
+        });
+        return Err(err(format!(
+            "the math{owner} is nested deeper than {MAX_MATH_DEPTH} elements"
+        )));
+    }
     match elements(math).next() {
         Some(first) => expr(first),
         None => Ok(Node::Empty),
@@ -258,7 +307,7 @@ fn expr(n: X) -> Result<Node, ReadError> {
             Some(AVOGADRO_URL) => Ok(Node::CsymbolAvogadro),
             Some(DELAY_URL) => Ok(Node::CsymbolDelay),
             Some(RATEOF_URL) => Ok(Node::CsymbolRateOf),
-            other => Err(err(format!("unknown csymbol definitionURL {other:?}"))),
+            other => Err(err(format!("unknown csymbol {}", definition_url(other)))),
         },
         "true" => Ok(Node::True),
         "false" => Ok(Node::False),
@@ -296,7 +345,12 @@ fn apply(n: X) -> Result<Node, ReadError> {
         "csymbol" => match head.attribute("definitionURL") {
             Some(DELAY_URL) => Op::Delay,
             Some(RATEOF_URL) => Op::RateOf,
-            other => return Err(err(format!("csymbol {other:?} cannot be applied"))),
+            other => {
+                return Err(err(format!(
+                    "csymbol {} cannot be applied",
+                    definition_url(other)
+                )));
+            }
         },
         _ => operator(hname).ok_or_else(|| err(format!("unknown MathML function <{hname}>")))?,
     };
