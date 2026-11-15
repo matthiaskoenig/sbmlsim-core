@@ -304,10 +304,11 @@ fn events_and_changes() {
 }
 
 #[test]
-fn a_change_which_triggers_a_delayed_event_is_refused() {
-    // sbmlsim's executors report an event with a delay which a change makes true and do not
-    // fire it; the engine refuses the request, at a change after the start and at the start,
-    // in both outputs, also when an event the change executes makes it true
+fn a_delayed_event_which_a_change_triggers_is_skipped() {
+    // as sbmlsim's fire_events: an event with a delay which a change makes true is not pending
+    // and assigns nothing, at a change after the start and at the start, in both outputs, also
+    // when an event the change executes makes it true; its trigger stays true afterwards and
+    // the event never executes (y relaxes to b and never becomes 50)
     let x_delayed = TestEvent {
         assignments: vec![(Target::State(0), (|_, _, _| 50.0) as Fun)],
         initial_value: false,
@@ -333,21 +334,31 @@ fn a_change_which_triggers_a_delayed_event_is_refused() {
             vec![|_, _, p| p[0] - 5.0],
         )
     };
-    for (model, id) in [
-        (relax(vec![x_delayed.clone()]), "x_delayed"),
-        (relax(vec![x_above, b_delayed]), "b_delayed"),
+    for (model, b_after) in [
+        (relax(vec![x_delayed.clone()]), 1.0),
+        (relax(vec![x_above, b_delayed]), 10.0),
     ] {
         for at in [5.0, 0.0] {
-            for output in [Output::Uniform { steps: 2 }, Output::IntegratorSteps] {
-                let mut req = request(0.0, 10.0, output);
+            for output in [Output::Uniform { steps: 10 }, Output::IntegratorSteps] {
+                let mut req = request(0.0, 10.0, output.clone());
                 req.changes = vec![change(at, &[("x", 1.0)])];
-                match events(&model, &req) {
-                    Err(EngineError::Request(message)) => {
-                        assert!(message.contains(id), "{message}");
-                        assert!(message.contains(&format!("t = {at}")), "{message}");
-                    }
-                    other => panic!("{other:?}"),
-                }
+                let result = events(&model, &req).unwrap();
+                let (time, y, b) = (
+                    column(&result, "time"),
+                    column(&result, "y"),
+                    column(&result, "b"),
+                );
+                assert!(y.iter().all(|v| *v < 10.0 + 1e-9), "{at} {output:?} {y:?}");
+                assert_eq!(*b.last().unwrap(), b_after, "{at} {output:?}");
+                // y at the end: the relaxation to b from the change on, without the event
+                let start = if at == 5.0 {
+                    1.0 - (-5.0f64).exp()
+                } else {
+                    0.0
+                };
+                let end = b_after + (start - b_after) * (-(10.0 - at)).exp();
+                assert!(close(*y.last().unwrap(), end), "{at} {output:?} {y:?}");
+                assert_eq!(*time.last().unwrap(), 10.0);
             }
         }
     }
@@ -357,6 +368,39 @@ fn a_change_which_triggers_a_delayed_event_is_refused() {
     let result = events(&relax(vec![x_delayed]), &req).unwrap();
     let y = column(&result, "y");
     assert!(close(y[1], 1.0 + 49.0 * (-4.0f64).exp()), "{y:?}");
+}
+
+#[test]
+fn a_skipped_delayed_event_executes_after_its_trigger_falls_and_rises_again() {
+    // y < 0.5 with a delay of 1 sets x = 7 (true initially, initial value true: no execution at
+    // the start); y rises past 0.5 at ln 2; the change at 2 sets y = 0 and makes the trigger
+    // true: skipped; y rises past 0.5 again (the trigger falls); the change at 4 sets b = -1,
+    // and y falls through 0.5 in the integration (the trigger rises): pending, x = 7 one time
+    // unit later
+    let y_below = TestEvent {
+        assignments: vec![(Target::Param(1), (|_, _, _| 7.0) as Fun)],
+        initial_value: true,
+        delay: Some(|_, _, _| 1.0),
+        ..TestEvent::new("y_below", |_, y, _| y[0] < 0.5, vec![|_, y, _| 0.5 - y[0]])
+    };
+    let model = relax(vec![y_below]);
+    for output in [Output::Uniform { steps: 10 }, Output::IntegratorSteps] {
+        let mut req = request(0.0, 10.0, output.clone());
+        req.changes = vec![change(2.0, &[("y", 0.0)]), change(4.0, &[("b", -1.0)])];
+        let result = events(&model, &req).unwrap();
+        let (time, x) = (column(&result, "time"), column(&result, "x"));
+        // y(4) = 1 - e^-2, then y = -1 + (2 - e^-2) e^-(t - 4) crosses 0.5 at 4 + ln((2 -
+        // e^-2) / 1.5), x = 7 one later
+        let cross = 4.0 + ((2.0 - (-2.0f64).exp()) / 1.5).ln();
+        for (t, v) in time.iter().zip(&x) {
+            if *t < cross + 1.0 - 1e-6 {
+                assert_eq!(*v, 0.0, "{output:?} {t}");
+            } else if *t > cross + 1.0 + 1e-6 {
+                assert_eq!(*v, 7.0, "{output:?} {t}");
+            }
+        }
+        assert_eq!(*x.last().unwrap(), 7.0, "{output:?}");
+    }
 }
 
 #[test]

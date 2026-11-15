@@ -41,23 +41,23 @@
 //!   `x' = piecewise(-1, x > 0, 1)` at rtol 1e-3, atol 1e-6: 28.6 million steps in
 //!   libroadrunner, `CV_TOO_MUCH_WORK` within 20000 steps of one output interval here).
 //! - The executions of events within the relative tolerance (as a distance in time) of the last
-//!   applied root share the budget of steps towards one output time (`roots`, ruling R53), so
+//!   applied root share the budget of steps towards one output time (`roots`), so
 //!   events which accumulate end in `CV_TOO_MUCH_WORK`: the bouncing ball (`x' = v`,
 //!   `v' = -10`, the event `x < 0`: `v = -0.5 v`, `x = 0`), whose bounces accumulate at
 //!   t = 1.3416, fails there within `maximum_num_steps` steps; libroadrunner lets the ball fall
 //!   through (a bounce it does not locate any more) and continues.
 //! - The output of the steps of the integrator ends with `CV_TOO_MUCH_WORK` after
 //!   `maximum_num_steps` consecutive stops (steps, roots, stop times) within the resolution of
-//!   the time, 1e-9 times the magnitude of the times of the simulation (`roots`, ruling R53): the
+//!   the time, 1e-9 times the magnitude of the times of the simulation (`roots`): the
 //!   bouncing ball at its accumulation point, a sliding mode which creeps up to its switch
 //!   (`x' = piecewise(-1, x > 0, 1)` at rtol 1e-6, atol 1e-12, at t = 1.0000000016).
 //!   libroadrunner has no such bound (the ball falls through; the sliding mode runs to its
 //!   `max_output_rows`). A chatter whose stops are further apart than the resolution is bounded
 //!   by the limit of the output only.
-//! - A change of the request which makes the trigger of an event with a delay true (also through
-//!   the events it executes) is refused with [`EngineError::Request`] naming the event and the
-//!   time (`events`, ruling R52): sbmlsim reports such an event and does not fire it,
-//!   libroadrunner schedules it (SBML).
+//! - An event with a delay whose trigger a change of the request makes true (also through the
+//!   events the change executes) is skipped, as sbmlsim skips it (`events`): it is not pending,
+//!   assigns nothing, and its trigger is armed, so it executes again only after the trigger
+//!   falls and rises again. SBML would schedule it.
 //! - libroadrunner's count of roots close together (`strikes`) ignores the events of an ignored
 //!   root as well; here it decides the restarts at the roots of discontinuities only, and the
 //!   events execute whatever it counts.

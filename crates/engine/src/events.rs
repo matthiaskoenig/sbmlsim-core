@@ -49,9 +49,10 @@
 //! and values, as sbmlsim's `fire_events`), then the output of the state after the change is
 //! written, then the executions which were pending at its time and the strict comparisons
 //! execute ([`Probe::After`]). An event with a delay which a change makes true (also through
-//! the events the change executes) is not simulated as sbmlsim simulates it, whose executors
-//! report such an event and do not fire it: the request is refused with
-//! [`EngineError::Request`] naming the event and the time ([`DELAYED_AT_CHANGE`]).
+//! the events the change executes) is skipped, as sbmlsim's `fire_events` skips it: it is not
+//! pending and assigns nothing, and its trigger is armed (true), so it executes again only
+//! after its trigger falls and rises again ([`DELAYED_AT_CHANGE`]). One which the
+//! pre-initialization or the integration makes true is pending as any other.
 //!
 //! Both windows are relative: the absolute window is the rtol times the magnitude of the time
 //! scale of the simulation, `max(|start|, |end|, end - start)` (1 when that is 0), so a
@@ -86,20 +87,21 @@ pub const PROBE_RTOL: f64 = 1e-12;
 pub const END_RTOL: f64 = 1e-9;
 
 /// What the engine does with an event with a delay whose trigger a change makes true.
-#[allow(dead_code)] // the alternatives to the refusal, one switch away
+#[allow(dead_code)] // the alternatives to skipping, one switch away
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DelayedAtChange {
-    /// The request is refused with [`EngineError::Request`]: sbmlsim does not fire such an
-    /// event, and the engine refuses what it does not simulate as sbmlsim does.
+    /// The request is refused with [`EngineError::Request`] naming the event and the time.
     Refuse,
     /// The event is pending at the time of the change plus its delay (SBML).
     Schedule,
-    /// The event is not triggered (sbmlsim's executors, without their report).
+    /// The event is skipped, as sbmlsim's `fire_events` skips it (which reports it): not
+    /// pending, nothing assigned, its trigger armed, so it executes again only after its
+    /// trigger falls and rises again.
     Skip,
 }
 
-/// The choice of [`DelayedAtChange`] of the engine.
-pub(crate) const DELAYED_AT_CHANGE: DelayedAtChange = DelayedAtChange::Refuse;
+/// The choice of [`DelayedAtChange`] of the engine: sbmlsim's.
+pub(crate) const DELAYED_AT_CHANGE: DelayedAtChange = DelayedAtChange::Skip;
 
 /// The magnitude of the times of an integration from `start` to `end` (1 when it is 0 or not
 /// finite), the scale of the resolutions [`PROBE_RTOL`] and [`END_RTOL`].
@@ -386,6 +388,8 @@ impl<'a> Events<'a> {
                                 self.name(i)
                             )));
                         }
+                        // not pending; `armed` takes the trigger after the loop, so the event
+                        // does not execute while its trigger stays true
                         DelayedAtChange::Skip => continue,
                         DelayedAtChange::Schedule => {}
                     }
