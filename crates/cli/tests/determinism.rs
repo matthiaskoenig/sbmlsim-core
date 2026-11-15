@@ -11,6 +11,11 @@ use sbmlsim_compiler::{CompileOptions, Limits, compile, compile_with_limits};
 fn cases() -> Option<Vec<PathBuf>> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/cases");
     if !dir.join("00001/case.json").exists() {
+        assert!(
+            std::env::var_os("SBMLSIM_CORE_REQUIRE_CASES").is_none(),
+            "{} is absent and SBMLSIM_CORE_REQUIRE_CASES is set",
+            dir.display()
+        );
         eprintln!("note: {} is absent; skipped", dir.display());
         return None;
     }

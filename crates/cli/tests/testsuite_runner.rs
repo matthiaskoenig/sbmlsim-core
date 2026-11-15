@@ -1,7 +1,8 @@
 //! The runner of the SBML Test Suite: the comparison rule, the baseline, and the prepared cases.
 //!
 //! The tests over `testdata/cases` need `uv run scripts/prepare_testsuite.py` and skip with a
-//! note when the directory is absent.
+//! note when the directory is absent, unless `SBMLSIM_CORE_REQUIRE_CASES` is set (the jobs of
+//! the suite in CI), where they fail.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -252,6 +253,11 @@ fn cases_dir() -> Option<PathBuf> {
     if dir.join("00001/case.json").exists() {
         Some(dir)
     } else {
+        assert!(
+            std::env::var_os("SBMLSIM_CORE_REQUIRE_CASES").is_none(),
+            "{} is absent and SBMLSIM_CORE_REQUIRE_CASES is set",
+            dir.display()
+        );
         eprintln!(
             "note: {} is absent, run `uv run scripts/prepare_testsuite.py`; skipped",
             dir.display()

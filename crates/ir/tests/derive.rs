@@ -618,6 +618,11 @@ fn factorial_falls_back() {
 fn suite_models() -> Vec<(String, Model)> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/cases");
     let Ok(entries) = std::fs::read_dir(&dir) else {
+        assert!(
+            std::env::var_os("SBMLSIM_CORE_REQUIRE_CASES").is_none(),
+            "{} is absent and SBMLSIM_CORE_REQUIRE_CASES is set",
+            dir.display()
+        );
         eprintln!("note: {} is absent; skipped", dir.display());
         return vec![];
     };

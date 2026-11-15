@@ -97,9 +97,16 @@ export function readModel(dir) {
 /** The decay model of the tests of the wasmtime host. */
 export const DECAY = path.join(ROOT, "crates", "host", "tests", "decay-model");
 
-/** Whether the prepared cases of the SBML Test Suite exist. */
+/**
+ * Whether the prepared cases of the SBML Test Suite exist; with `SBMLSIM_CORE_REQUIRE_CASES` set
+ * (the jobs of the suite in CI) their absence is an error instead of a skip.
+ */
 export function haveCases() {
-  return existsSync(path.join(ROOT, "testdata", "cases", "00001", "case.json"));
+  const present = existsSync(path.join(ROOT, "testdata", "cases", "00001", "case.json"));
+  if (!present && process.env.SBMLSIM_CORE_REQUIRE_CASES) {
+    throw new Error("testdata/cases is absent and SBMLSIM_CORE_REQUIRE_CASES is set");
+  }
+  return present;
 }
 
 /** A request of the contract `simulation/1`. */

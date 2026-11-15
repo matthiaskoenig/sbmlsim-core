@@ -495,7 +495,11 @@ fn unknown_elements_are_named() {
 fn reads_all_cases() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/cases");
     if !root.is_dir() {
-        println!("testdata/cases absent, run the preparation of Task 10");
+        assert!(
+            std::env::var_os("SBMLSIM_CORE_REQUIRE_CASES").is_none(),
+            "testdata/cases is absent and SBMLSIM_CORE_REQUIRE_CASES is set"
+        );
+        println!("testdata/cases absent, run `uv run scripts/prepare_testsuite.py`");
         return;
     }
     let mut n = 0;

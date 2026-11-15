@@ -62,6 +62,9 @@ jobs:
     # the JavaScript loader in Node: its tests, and every passing case of the SBML Test Suite
     # gives in Node the CSV of the wasmtime host byte for byte (js/test/same_bits.test.mjs)
     runs-on: ubuntu-latest
+    env:
+      # the tests over the prepared cases fail without them instead of skipping
+      SBMLSIM_CORE_REQUIRE_CASES: "1"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -88,17 +91,60 @@ jobs:
           key: testsuite-cases-${{ hashFiles('scripts/prepare_testsuite.py', 'testdata/testsuite_baseline.json') }}
       - name: Prepare the cases
         run: test -f testdata/cases/SUITE_COMMIT || uv run scripts/prepare_testsuite.py --out testdata/cases
+      - name: The prepared cases are present
+        run: test -f testdata/cases/00001/case.json
       - run: cargo build --release -p sbmlsim-cli
-      - name: Export every passing case with the outputs of the wasmtime host
+      - name: Export every passing case with the outputs of the wasmtime host (the parity is the job testsuite-parity)
         run: target/release/sbmlsim-core testsuite testdata/cases --export "$RUNNER_TEMP/export"
       - name: The tests of the loader in Node
         run: node --test js/test
         env:
           SBMLSIM_CORE_CLI: ${{ github.workspace }}/target/release/sbmlsim-core
           SBMLSIM_CORE_EXPORT: ${{ runner.temp }}/export
+  testsuite-parity:
+    # the whole SBML Test Suite against the baseline (testdata/testsuite_baseline.json), with the
+    # repeat checks, in the three modes of the Jacobian and the optimizer: a case which passes or
+    # fails otherwise than the baseline says fails the job
+    runs-on: ubuntu-latest
+    env:
+      SBMLSIM_CORE_REQUIRE_CASES: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Install the toolchain of rust-toolchain.toml
+        run: rustup show active-toolchain || rustup toolchain install
+      - name: Install wasi-sdk
+        run: |
+          mkdir -p "$HOME/tools" && cd "$HOME/tools"
+          sdk="wasi-sdk-${WASI_SDK_VERSION}-x86_64-linux"
+          curl -sSLO "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-${WASI_SDK_VERSION%%.*}/${sdk}.tar.gz"
+          echo "${WASI_SDK_SHA256}  ${sdk}.tar.gz" | sha256sum -c -
+          tar xzf "${sdk}.tar.gz"
+          echo "WASI_SDK_PATH=$HOME/tools/${sdk}" >> "$GITHUB_ENV"
+      - uses: Swatinem/rust-cache@v2
+      - uses: astral-sh/setup-uv@v5
+      - name: Cache the prepared cases
+        uses: actions/cache@v4
+        with:
+          path: testdata/cases
+          key: testsuite-cases-${{ hashFiles('scripts/prepare_testsuite.py', 'testdata/testsuite_baseline.json') }}
+      - name: Prepare the cases
+        run: test -f testdata/cases/SUITE_COMMIT || uv run scripts/prepare_testsuite.py --out testdata/cases
+      - name: The prepared cases are present
+        run: test -f testdata/cases/00001/case.json
+      - run: cargo build --release -p sbmlsim-cli
+      - name: testsuite parity (analytic Jacobian)
+        run: target/release/sbmlsim-core testsuite testdata/cases
+      - name: testsuite parity (difference Jacobian)
+        run: target/release/sbmlsim-core testsuite testdata/cases --jacobian difference
+      - name: testsuite parity (without the optimizer)
+        run: target/release/sbmlsim-core testsuite testdata/cases --no-optimize
   testsuite-cases:
     # the prepared cases of the SBML Test Suite and the tests of the runner which read them
     runs-on: ubuntu-latest
+    env:
+      SBMLSIM_CORE_REQUIRE_CASES: "1"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -123,4 +169,7 @@ jobs:
           key: testsuite-cases-${{ hashFiles('scripts/prepare_testsuite.py', 'testdata/testsuite_baseline.json') }}
       - name: Prepare the cases
         run: test -f testdata/cases/SUITE_COMMIT || uv run scripts/prepare_testsuite.py --out testdata/cases
-      - run: cargo test -p sbmlsim-cli
+      - name: The prepared cases are present
+        run: test -f testdata/cases/00001/case.json
+      # the tests of the runner and of the reader, the IR and the compiler over the cases
+      - run: cargo test -p sbmlsim-cli -p sbmlsim-sbml -p sbmlsim-ir

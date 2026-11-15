@@ -31,8 +31,9 @@ User-level installs only, no system packages.
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 source $HOME/.cargo/env
 rustup target add wasm32-wasip1 wasm32-unknown-unknown
-cargo install wasmtime-cli
-# wasi-sdk: unpack the latest release from https://github.com/WebAssembly/wasi-sdk/releases to ~/opt/wasi-sdk
+cargo install wasmtime-cli --version 50.0.1 --locked
+# wasi-sdk 34 (the version of CI and of the build scripts): unpack
+# https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-34/wasi-sdk-34.0-x86_64-linux.tar.gz to ~/opt/wasi-sdk
 export WASI_SDK_PATH=$HOME/opt/wasi-sdk
 ```
 
