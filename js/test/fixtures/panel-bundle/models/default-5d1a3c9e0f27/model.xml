@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The model of the panel bundle of the tests (js/test/panels.test.mjs): A -> B -> (out), as an
+     export of sbmlsim writes a model with a derived target: the knob parameters
+     panel_knob__speed and panel_knob__renal and the initial assignment of the derived target k.
+     A renal function of 0 makes k infinite, a point which does not integrate. -->
+<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2">
+  <model id="toy" timeUnits="minute">
+    <listOfCompartments>
+      <compartment id="c" size="2" constant="true"/>
+    </listOfCompartments>
+    <listOfSpecies>
+      <species id="A" compartment="c" initialAmount="0" hasOnlySubstanceUnits="false" boundaryCondition="false" constant="false"/>
+      <species id="B" compartment="c" initialAmount="0" hasOnlySubstanceUnits="true" boundaryCondition="false" constant="false"/>
+    </listOfSpecies>
+    <listOfParameters>
+      <parameter id="dose" value="10" constant="true"/>
+      <parameter id="kbase" value="0.1" constant="true"/>
+      <parameter id="k" constant="true"/>
+      <parameter id="panel_knob__speed" value="0.1" constant="true"/>
+      <parameter id="panel_knob__renal" value="100" constant="true"/>
+    </listOfParameters>
+    <listOfInitialAssignments>
+      <initialAssignment symbol="A">
+        <math xmlns="http://www.w3.org/1998/Math/MathML"><ci>dose</ci></math>
+      </initialAssignment>
+      <initialAssignment symbol="k">
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+          <apply><divide/><apply><times/><ci>panel_knob__speed</ci><cn>100</cn></apply><ci>panel_knob__renal</ci></apply>
+        </math>
+      </initialAssignment>
+    </listOfInitialAssignments>
+    <listOfReactions>
+      <reaction id="R1" reversible="false">
+        <listOfReactants><speciesReference species="A" stoichiometry="1" constant="true"/></listOfReactants>
+        <listOfProducts><speciesReference species="B" stoichiometry="1" constant="true"/></listOfProducts>
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML"><apply><times/><ci>k</ci><ci>c</ci><ci>A</ci></apply></math>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R2" reversible="false">
+        <listOfReactants><speciesReference species="B" stoichiometry="1" constant="true"/></listOfReactants>
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML"><apply><times/><ci>kbase</ci><cn>0.1</cn><ci>B</ci></apply></math>
+        </kineticLaw>
+      </reaction>
+    </listOfReactions>
+  </model>
+</sbml>

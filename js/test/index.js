@@ -2,6 +2,8 @@
 // file of the loader; `node --test "js/test/*.test.mjs"` runs them in processes of their own.
 import "./loader.test.mjs";
 import "./workers.test.mjs";
+import "./pool.test.mjs";
+import "./panels.test.mjs";
 import "./large.test.mjs";
 import "./stack.test.mjs";
 import "./same_bits.test.mjs";

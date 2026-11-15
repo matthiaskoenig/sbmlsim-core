@@ -1,0 +1,77 @@
+[project]
+site_name = "sbmlsim-core"
+site_url = "https://matthiaskoenig.github.io/sbmlsim-core/"
+site_description = "An SBML to WebAssembly compiler and a CVODE/KLU simulation engine, with the bits of every host"
+site_author = "Matthias König"
+
+copyright = 'Copyright &copy; 2026 <a href="https://livermetabolism.com">Matthias König</a>'
+
+repo_url = "https://github.com/matthiaskoenig/sbmlsim-core"
+repo_name = "matthiaskoenig/sbmlsim-core"
+edit_uri = "edit/develop/docs/"
+extra_css = ["stylesheets/extra.css"]
+
+nav = [
+  { "Overview" = "index.md" },
+  { "Installation" = "installation.md" },
+  { "Compiling a model" = "compiling.md" },
+  { "Simulating" = "simulating.md" },
+  { "JavaScript" = "javascript.md" },
+  { "Semantics" = "semantics.md" },
+  { "Test suite and benchmark" = "testsuite.md" },
+  { "Licenses" = "licenses.md" },
+]
+
+[project.theme]
+language = "en"
+features = [
+  "content.action.edit",
+  "content.code.copy",
+  "navigation.footer",
+  "navigation.instant",
+  "navigation.top",
+  "navigation.tracking",
+  "search.highlight",
+  "search.suggest",
+  "toc.follow",
+]
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme)"
+toggle.icon = "lucide/sun-moon"
+toggle.name = "Switch to light mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: light)"
+scheme = "default"
+primary = "indigo"
+accent = "indigo"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: dark)"
+scheme = "slate"
+primary = "indigo"
+accent = "indigo"
+toggle.icon = "lucide/moon"
+toggle.name = "Switch to system preference"
+
+[[project.extra.social]]
+icon = "fontawesome/brands/github"
+link = "https://github.com/matthiaskoenig/sbmlsim-core"
+
+[project.markdown_extensions]
+admonition = {}
+attr_list = {}
+def_list = {}
+md_in_html = {}
+tables = {}
+toc.permalink = true
+pymdownx.details = {}
+pymdownx.highlight.anchor_linenums = true
+pymdownx.highlight.line_spans = "__span"
+pymdownx.highlight.pygments_lang_class = true
+pymdownx.inlinehilite = {}
+pymdownx.superfences = {}
+pymdownx.tabbed.alternate_style = true

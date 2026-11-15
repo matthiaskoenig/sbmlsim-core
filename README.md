@@ -2,6 +2,8 @@
 
 An SBML to WebAssembly compiler and a CVODE/KLU simulation engine, written in Rust. The two contracts `model/1` (the description and the exports of a compiled model) and `simulation/1` (the request and the result of a simulation) are defined in `crates/abi`.
 
+Documentation: https://matthiaskoenig.github.io/sbmlsim-core/ (built from `docs/` with Zensical: `uvx --from zensical==0.1.0 zensical build --clean`).
+
 ## What the core is
 
 - The compiler (`crates/compiler`, built on `sbml`, `ir` and `codegen`) turns an SBML Level 3 Version 2 core model (flat, no packages) into `model.wasm`, with analytic sparse Jacobians, and `model.json`, its description.
@@ -95,6 +97,8 @@ const runtime = await createRuntime({ engine, mathlib }); // WebAssembly.Modules
 const instance = await runtime.instantiate(modelWasm, modelJson);
 const { columns, nRows, values } = instance.simulate(request); // values: a Float64Array, row major
 ```
+
+`js/pool.mjs` runs simulations in a pool of Web Workers (worker threads in Node, `js/worker.mjs`) with the bits of the main thread, and `js/panels.mjs` (`createPanelEndpoint`) answers the routes of the panel service of sbmlsim (`python -m sbmlsim.serve`) inside a page from an exported bundle (`panelbundle/1`), so an app of panels is a static page; see the [JavaScript page](https://matthiaskoenig.github.io/sbmlsim-core/javascript/) of the documentation.
 
 The tests (`node --test js/test`) build the command line (`SBMLSIM_CORE_CLI` names a built one) and compare every passing case of the prepared SBML Test Suite with the wasmtime host (`SBMLSIM_CORE_EXPORT` names the output of `sbmlsim-core testsuite <cases> --export <dir>`).
 

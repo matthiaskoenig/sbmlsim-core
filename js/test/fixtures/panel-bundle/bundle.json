@@ -1,0 +1,887 @@
+{
+  "contract": "panelbundle/1",
+  "model": "toy",
+  "title": "Toy model",
+  "sbmlsim": "0.24.1.dev0",
+  "created": "2026-11-15T12:00:00Z",
+  "answers": {
+    "": {
+      "app": {
+        "contract": "app/1",
+        "title": "Toy model",
+        "subtitle": "A to B",
+        "pages": [
+          {
+            "id": "main",
+            "title": "Main",
+            "panels": [
+              "amount",
+              "conc"
+            ],
+            "scenarios": [
+              {
+                "id": "impaired",
+                "label": "Impaired",
+                "values": {
+                  "renal": 30.0
+                }
+              }
+            ]
+          }
+        ],
+        "variants": [],
+        "citation": "",
+        "doi": "",
+        "licenses": [],
+        "shared": {
+          "main": [
+            {
+              "knob": {
+                "id": "dose",
+                "label": "Dose",
+                "target": "dose",
+                "unit": "g",
+                "kind": "range",
+                "min": 0.005,
+                "max": 0.02,
+                "steps": 4,
+                "choices": [],
+                "default": 0.01
+              },
+              "panels": [
+                {
+                  "id": "amount",
+                  "title": "Amount of B"
+                },
+                {
+                  "id": "conc",
+                  "title": "Concentration of A"
+                }
+              ]
+            }
+          ]
+        },
+        "heads": {
+          "main": [
+            {
+              "id": "amount",
+              "title": "Amount of B",
+              "subtitle": ""
+            },
+            {
+              "id": "conc",
+              "title": "Concentration of A",
+              "subtitle": ""
+            }
+          ]
+        },
+        "variant": "default"
+      },
+      "panels": {
+        "amount": {
+          "declaration": {
+            "contract": "panel/1",
+            "panel": {
+              "id": "amount",
+              "title": "Amount of B",
+              "subtitle": "",
+              "x_label": "time",
+              "y_label": "",
+              "y_min": null,
+              "y_max": null,
+              "x_max": null
+            },
+            "axes": [
+              {
+                "id": "dose",
+                "label": "Dose",
+                "target": "dose",
+                "unit": "g",
+                "kind": "range",
+                "min": 0.005,
+                "max": 0.02,
+                "steps": 4,
+                "choices": [],
+                "default": 0.01
+              },
+              {
+                "id": "renal",
+                "label": "Renal function",
+                "target": null,
+                "unit": "ml/min",
+                "kind": "range",
+                "min": 0.0,
+                "max": 150.0,
+                "steps": 4,
+                "choices": [
+                  {
+                    "label": "impaired",
+                    "value": 30.0
+                  },
+                  {
+                    "label": "normal",
+                    "value": 100.0
+                  }
+                ],
+                "default": 100.0
+              },
+              {
+                "id": "speed",
+                "label": "Speed",
+                "target": "kbase",
+                "unit": "1/min",
+                "kind": "choice",
+                "min": null,
+                "max": null,
+                "steps": 5,
+                "choices": [
+                  {
+                    "label": "slow",
+                    "value": 0.05
+                  },
+                  {
+                    "label": "normal",
+                    "value": 0.1
+                  },
+                  {
+                    "label": "fast",
+                    "value": 0.2
+                  }
+                ],
+                "default": 0.1
+              }
+            ],
+            "curves": [
+              {
+                "id": "B",
+                "label": "B",
+                "unit": "mmol",
+                "scale": "linear"
+              }
+            ],
+            "data": [
+              {
+                "id": "study1",
+                "label": "Study 1",
+                "curve": "B",
+                "dataset": "study1_fig1",
+                "x": "time",
+                "y": "B",
+                "yerr": null,
+                "sel": null,
+                "at": null,
+                "conversion": null,
+                "unit": null
+              }
+            ],
+            "simulation": {
+              "variant": null,
+              "end": 30.0,
+              "points": 6,
+              "x_unit": "hr",
+              "preinit": {
+                "c": 1.5
+              },
+              "derived": {
+                "k": "speed * 100 / renal"
+              }
+            },
+            "limits": {
+              "end": 10000,
+              "points": 2000,
+              "knobs": 8,
+              "grid": 64,
+              "curves": 16
+            }
+          },
+          "data": {
+            "contract": "paneldata/1",
+            "series": [
+              {
+                "id": "study1",
+                "label": "Study 1",
+                "x": [
+                  0.1,
+                  0.3
+                ],
+                "y": [
+                  2.0,
+                  5.0
+                ],
+                "yerr": null,
+                "x_unit": "hr",
+                "unit": "mmol",
+                "count": null
+              }
+            ]
+          },
+          "run": {
+            "variant": "default",
+            "model": "default-5d1a3c9e0f27",
+            "model_sha256": "f48e28a94186fb6b687a53d8a39bd515a7713f5fc2487c313f0bc10d29b1d9ae",
+            "start": 0.0,
+            "end": 30.0,
+            "points": 6,
+            "x": [
+              0.0,
+              0.08333333333333333,
+              0.16666666666666666,
+              0.25,
+              0.3333333333333333,
+              0.4166666666666667,
+              0.5
+            ],
+            "units": {
+              "x": "hr",
+              "B": "mmol"
+            },
+            "curves": {
+              "B": {
+                "selection": "B",
+                "factor": 1.0
+              }
+            },
+            "preinit": [
+              [
+                "c",
+                1.5
+              ]
+            ],
+            "knobs": {
+              "dose": {
+                "target": "dose",
+                "factor": 1000.0,
+                "parameter": null,
+                "unit": "g"
+              },
+              "renal": {
+                "target": null,
+                "factor": null,
+                "parameter": "panel_knob__renal",
+                "unit": "ml/min"
+              },
+              "speed": {
+                "target": "kbase",
+                "factor": 1.0,
+                "parameter": "panel_knob__speed",
+                "unit": "1/min"
+              }
+            }
+          }
+        },
+        "conc": {
+          "declaration": {
+            "contract": "panel/1",
+            "panel": {
+              "id": "conc",
+              "title": "Concentration of A",
+              "subtitle": "",
+              "x_label": "time",
+              "y_label": "",
+              "y_min": null,
+              "y_max": null,
+              "x_max": null
+            },
+            "axes": [
+              {
+                "id": "dose",
+                "label": "Dose",
+                "target": "dose",
+                "unit": "g",
+                "kind": "range",
+                "min": 0.005,
+                "max": 0.02,
+                "steps": 4,
+                "choices": [],
+                "default": 0.01
+              },
+              {
+                "id": "renal",
+                "label": "Renal function",
+                "target": null,
+                "unit": "ml/min",
+                "kind": "range",
+                "min": 0.0,
+                "max": 150.0,
+                "steps": 4,
+                "choices": [
+                  {
+                    "label": "impaired",
+                    "value": 30.0
+                  },
+                  {
+                    "label": "normal",
+                    "value": 100.0
+                  }
+                ],
+                "default": 100.0
+              },
+              {
+                "id": "speed",
+                "label": "Speed",
+                "target": "kbase",
+                "unit": "1/min",
+                "kind": "choice",
+                "min": null,
+                "max": null,
+                "steps": 5,
+                "choices": [
+                  {
+                    "label": "slow",
+                    "value": 0.05
+                  },
+                  {
+                    "label": "normal",
+                    "value": 0.1
+                  },
+                  {
+                    "label": "fast",
+                    "value": 0.2
+                  }
+                ],
+                "default": 0.1
+              }
+            ],
+            "curves": [
+              {
+                "id": "[A]",
+                "label": "A",
+                "unit": "µM",
+                "scale": "log"
+              }
+            ],
+            "data": [],
+            "simulation": {
+              "variant": null,
+              "end": 30.0,
+              "points": 6,
+              "x_unit": "hr",
+              "preinit": {
+                "c": 1.5
+              },
+              "derived": {
+                "k": "speed * 100 / renal"
+              }
+            },
+            "limits": {
+              "end": 10000,
+              "points": 2000,
+              "knobs": 8,
+              "grid": 64,
+              "curves": 16
+            }
+          },
+          "data": {
+            "contract": "paneldata/1",
+            "series": []
+          },
+          "run": {
+            "variant": "default",
+            "model": "default-5d1a3c9e0f27",
+            "model_sha256": "f48e28a94186fb6b687a53d8a39bd515a7713f5fc2487c313f0bc10d29b1d9ae",
+            "start": 0.0,
+            "end": 30.0,
+            "points": 6,
+            "x": [
+              0.0,
+              0.08333333333333333,
+              0.16666666666666666,
+              0.25,
+              0.3333333333333333,
+              0.4166666666666667,
+              0.5
+            ],
+            "units": {
+              "x": "hr",
+              "[A]": "µM"
+            },
+            "curves": {
+              "[A]": {
+                "selection": "[A]",
+                "factor": 1000.0
+              }
+            },
+            "preinit": [
+              [
+                "c",
+                1.5
+              ]
+            ],
+            "knobs": {
+              "dose": {
+                "target": "dose",
+                "factor": 1000.0,
+                "parameter": null,
+                "unit": "g"
+              },
+              "renal": {
+                "target": null,
+                "factor": null,
+                "parameter": "panel_knob__renal",
+                "unit": "ml/min"
+              },
+              "speed": {
+                "target": "kbase",
+                "factor": 1.0,
+                "parameter": "panel_knob__speed",
+                "unit": "1/min"
+              }
+            }
+          }
+        }
+      }
+    },
+    "default": {
+      "app": {
+        "contract": "app/1",
+        "title": "Toy model",
+        "subtitle": "A to B",
+        "pages": [
+          {
+            "id": "main",
+            "title": "Main",
+            "panels": [
+              "amount",
+              "conc"
+            ],
+            "scenarios": [
+              {
+                "id": "impaired",
+                "label": "Impaired",
+                "values": {
+                  "renal": 30.0
+                }
+              }
+            ]
+          }
+        ],
+        "variants": [],
+        "citation": "",
+        "doi": "",
+        "licenses": [],
+        "shared": {
+          "main": [
+            {
+              "knob": {
+                "id": "dose",
+                "label": "Dose",
+                "target": "dose",
+                "unit": "g",
+                "kind": "range",
+                "min": 0.005,
+                "max": 0.02,
+                "steps": 4,
+                "choices": [],
+                "default": 0.01
+              },
+              "panels": [
+                {
+                  "id": "amount",
+                  "title": "Amount of B"
+                },
+                {
+                  "id": "conc",
+                  "title": "Concentration of A"
+                }
+              ]
+            }
+          ]
+        },
+        "heads": {
+          "main": [
+            {
+              "id": "amount",
+              "title": "Amount of B",
+              "subtitle": ""
+            },
+            {
+              "id": "conc",
+              "title": "Concentration of A",
+              "subtitle": ""
+            }
+          ]
+        },
+        "variant": "default"
+      },
+      "panels": {
+        "amount": {
+          "declaration": {
+            "contract": "panel/1",
+            "panel": {
+              "id": "amount",
+              "title": "Amount of B",
+              "subtitle": "",
+              "x_label": "time",
+              "y_label": "",
+              "y_min": null,
+              "y_max": null,
+              "x_max": null
+            },
+            "axes": [
+              {
+                "id": "dose",
+                "label": "Dose",
+                "target": "dose",
+                "unit": "g",
+                "kind": "range",
+                "min": 0.005,
+                "max": 0.02,
+                "steps": 4,
+                "choices": [],
+                "default": 0.01
+              },
+              {
+                "id": "renal",
+                "label": "Renal function",
+                "target": null,
+                "unit": "ml/min",
+                "kind": "range",
+                "min": 0.0,
+                "max": 150.0,
+                "steps": 4,
+                "choices": [
+                  {
+                    "label": "impaired",
+                    "value": 30.0
+                  },
+                  {
+                    "label": "normal",
+                    "value": 100.0
+                  }
+                ],
+                "default": 100.0
+              },
+              {
+                "id": "speed",
+                "label": "Speed",
+                "target": "kbase",
+                "unit": "1/min",
+                "kind": "choice",
+                "min": null,
+                "max": null,
+                "steps": 5,
+                "choices": [
+                  {
+                    "label": "slow",
+                    "value": 0.05
+                  },
+                  {
+                    "label": "normal",
+                    "value": 0.1
+                  },
+                  {
+                    "label": "fast",
+                    "value": 0.2
+                  }
+                ],
+                "default": 0.1
+              }
+            ],
+            "curves": [
+              {
+                "id": "B",
+                "label": "B",
+                "unit": "mmol",
+                "scale": "linear"
+              }
+            ],
+            "data": [
+              {
+                "id": "study1",
+                "label": "Study 1",
+                "curve": "B",
+                "dataset": "study1_fig1",
+                "x": "time",
+                "y": "B",
+                "yerr": null,
+                "sel": null,
+                "at": null,
+                "conversion": null,
+                "unit": null
+              }
+            ],
+            "simulation": {
+              "variant": null,
+              "end": 30.0,
+              "points": 6,
+              "x_unit": "hr",
+              "preinit": {
+                "c": 1.5
+              },
+              "derived": {
+                "k": "speed * 100 / renal"
+              }
+            },
+            "limits": {
+              "end": 10000,
+              "points": 2000,
+              "knobs": 8,
+              "grid": 64,
+              "curves": 16
+            }
+          },
+          "data": {
+            "contract": "paneldata/1",
+            "series": [
+              {
+                "id": "study1",
+                "label": "Study 1",
+                "x": [
+                  0.1,
+                  0.3
+                ],
+                "y": [
+                  2.0,
+                  5.0
+                ],
+                "yerr": null,
+                "x_unit": "hr",
+                "unit": "mmol",
+                "count": null
+              }
+            ]
+          },
+          "run": {
+            "variant": "default",
+            "model": "default-5d1a3c9e0f27",
+            "model_sha256": "f48e28a94186fb6b687a53d8a39bd515a7713f5fc2487c313f0bc10d29b1d9ae",
+            "start": 0.0,
+            "end": 30.0,
+            "points": 6,
+            "x": [
+              0.0,
+              0.08333333333333333,
+              0.16666666666666666,
+              0.25,
+              0.3333333333333333,
+              0.4166666666666667,
+              0.5
+            ],
+            "units": {
+              "x": "hr",
+              "B": "mmol"
+            },
+            "curves": {
+              "B": {
+                "selection": "B",
+                "factor": 1.0
+              }
+            },
+            "preinit": [
+              [
+                "c",
+                1.5
+              ]
+            ],
+            "knobs": {
+              "dose": {
+                "target": "dose",
+                "factor": 1000.0,
+                "parameter": null,
+                "unit": "g"
+              },
+              "renal": {
+                "target": null,
+                "factor": null,
+                "parameter": "panel_knob__renal",
+                "unit": "ml/min"
+              },
+              "speed": {
+                "target": "kbase",
+                "factor": 1.0,
+                "parameter": "panel_knob__speed",
+                "unit": "1/min"
+              }
+            }
+          }
+        },
+        "conc": {
+          "declaration": {
+            "contract": "panel/1",
+            "panel": {
+              "id": "conc",
+              "title": "Concentration of A",
+              "subtitle": "",
+              "x_label": "time",
+              "y_label": "",
+              "y_min": null,
+              "y_max": null,
+              "x_max": null
+            },
+            "axes": [
+              {
+                "id": "dose",
+                "label": "Dose",
+                "target": "dose",
+                "unit": "g",
+                "kind": "range",
+                "min": 0.005,
+                "max": 0.02,
+                "steps": 4,
+                "choices": [],
+                "default": 0.01
+              },
+              {
+                "id": "renal",
+                "label": "Renal function",
+                "target": null,
+                "unit": "ml/min",
+                "kind": "range",
+                "min": 0.0,
+                "max": 150.0,
+                "steps": 4,
+                "choices": [
+                  {
+                    "label": "impaired",
+                    "value": 30.0
+                  },
+                  {
+                    "label": "normal",
+                    "value": 100.0
+                  }
+                ],
+                "default": 100.0
+              },
+              {
+                "id": "speed",
+                "label": "Speed",
+                "target": "kbase",
+                "unit": "1/min",
+                "kind": "choice",
+                "min": null,
+                "max": null,
+                "steps": 5,
+                "choices": [
+                  {
+                    "label": "slow",
+                    "value": 0.05
+                  },
+                  {
+                    "label": "normal",
+                    "value": 0.1
+                  },
+                  {
+                    "label": "fast",
+                    "value": 0.2
+                  }
+                ],
+                "default": 0.1
+              }
+            ],
+            "curves": [
+              {
+                "id": "[A]",
+                "label": "A",
+                "unit": "µM",
+                "scale": "log"
+              }
+            ],
+            "data": [],
+            "simulation": {
+              "variant": null,
+              "end": 30.0,
+              "points": 6,
+              "x_unit": "hr",
+              "preinit": {
+                "c": 1.5
+              },
+              "derived": {
+                "k": "speed * 100 / renal"
+              }
+            },
+            "limits": {
+              "end": 10000,
+              "points": 2000,
+              "knobs": 8,
+              "grid": 64,
+              "curves": 16
+            }
+          },
+          "data": {
+            "contract": "paneldata/1",
+            "series": []
+          },
+          "run": {
+            "variant": "default",
+            "model": "default-5d1a3c9e0f27",
+            "model_sha256": "f48e28a94186fb6b687a53d8a39bd515a7713f5fc2487c313f0bc10d29b1d9ae",
+            "start": 0.0,
+            "end": 30.0,
+            "points": 6,
+            "x": [
+              0.0,
+              0.08333333333333333,
+              0.16666666666666666,
+              0.25,
+              0.3333333333333333,
+              0.4166666666666667,
+              0.5
+            ],
+            "units": {
+              "x": "hr",
+              "[A]": "µM"
+            },
+            "curves": {
+              "[A]": {
+                "selection": "[A]",
+                "factor": 1000.0
+              }
+            },
+            "preinit": [
+              [
+                "c",
+                1.5
+              ]
+            ],
+            "knobs": {
+              "dose": {
+                "target": "dose",
+                "factor": 1000.0,
+                "parameter": null,
+                "unit": "g"
+              },
+              "renal": {
+                "target": null,
+                "factor": null,
+                "parameter": "panel_knob__renal",
+                "unit": "ml/min"
+              },
+              "speed": {
+                "target": "kbase",
+                "factor": 1.0,
+                "parameter": "panel_knob__speed",
+                "unit": "1/min"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "models": {
+    "default-5d1a3c9e0f27": {
+      "sbml": "models/default-5d1a3c9e0f27/model.xml",
+      "compiled": "models/default-5d1a3c9e0f27",
+      "variant": "default",
+      "selections": [
+        "B",
+        "[A]"
+      ],
+      "settings": {
+        "relative_tolerance": 1e-08,
+        "absolute_tolerance": {
+          "scalar": 1e-10
+        },
+        "maximum_num_steps": 20000,
+        "maximum_time_step": 0.0,
+        "initial_time_step": 0.0,
+        "stiff": true,
+        "linear_solver": "auto",
+        "jacobian": "auto"
+      },
+      "absolute_tolerances": {
+        "A": 1e-14
+      }
+    }
+  }
+}

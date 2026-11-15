@@ -1,0 +1,119 @@
+# Simulating
+
+A compiled model (`model.wasm` and `model.json`) is simulated with a request of the contract `simulation/1`. The engine answers with a table: the column `time` and the selections of the request, row major.
+
+## The command line
+
+`sbmlsim-core simulate` runs a model directory in wasmtime with a request and writes the result as CSV (to stdout without `-o`):
+
+```bash
+sbmlsim-core simulate crates/host/tests/decay-model crates/host/tests/decay-model/request.json [-o out.csv]
+```
+
+The CSV has the names of the columns in its first line, then one line per row; a number is written as the shortest decimal which reads back as the same double, without an exponent, and `NaN`, `inf` and `-inf`. `node js/simulate.mjs` writes the same CSV byte for byte in Node (see [JavaScript](javascript.md)).
+
+## The request, `simulation/1`
+
+```json
+{
+  "contract": "simulation/1",
+  "start": 0.0,
+  "end": 10.0,
+  "output": { "uniform": { "steps": 10 } },
+  "preinit": [["k", 0.7]],
+  "changes": [{ "time": 5.0, "values": [["y", 2.0]] }],
+  "steady_state": null,
+  "selections": ["time", "y"],
+  "settings": {
+    "relative_tolerance": 1e-10,
+    "absolute_tolerance": { "scalar": 1e-12 },
+    "maximum_num_steps": 20000,
+    "maximum_time_step": 0.0,
+    "initial_time_step": 0.0,
+    "stiff": false,
+    "linear_solver": "auto",
+    "jacobian": "auto"
+  },
+  "seed": 1
+}
+```
+
+| field | what it holds |
+|---|---|
+| `contract` | `"simulation/1"` |
+| `start` | the start time; negative times are allowed |
+| `end` | the end time |
+| `output` | the times of the output: `{"times": [t, ...]}` the given times, `{"uniform": {"steps": n}}` `n` equal intervals from the start to the end (`n + 1` rows), `"integrator_steps"` the steps of the integrator |
+| `preinit` | values set before the initialization, as `[id, value]` pairs; the ids are selections: `S` is the amount of a species, `[S]` its concentration (converted with the size of its compartment as loaded, or as an earlier value of the pre-initialization sets it), any other id the value of its entity. The initial assignments see them |
+| `changes` | changes at absolute times in `[start, end]`, in non-decreasing order of the time: `{"time": t, "values": [[id, value], ...]}`, see below |
+| `steady_state` | `null`, or a steady state reached before the start: `{"preinit", "absolute_tolerance", "relative_tolerance", "max_time"}` (defaults `[]`, `1e-8`, `1e-6`, `1e8`), see below |
+| `selections` | the ids of the columns after `time`; a leading `"time"` is that column (not repeated), a later `"time"` another copy of the time of the row; empty is `time` followed by every selection of the model |
+| `settings` | the settings of the integrator, below; the defaults of the engine are the ones of roadrunner |
+| `seed` | the seed of the random generator which orders simultaneous events; 1 when it is absent |
+
+The settings of the integrator:
+
+| field | default | what it sets |
+|---|---|---|
+| `relative_tolerance` | `1e-6` | the relative tolerance |
+| `absolute_tolerance` | `{"scalar": 1e-12}` | `{"scalar": x}` one tolerance for every state, `{"per_state": [x, ...]}` one per state in the order of the state vector (the `states` of `model.json`) |
+| `maximum_num_steps` | `20000` | the most steps of one call of CVODE; in an output of times (and in a horizon of a steady state) the steps towards one output time, summed over the returns of CVODE at roots without an execution of an event and its restarts at the roots of discontinuities |
+| `maximum_time_step` | `0.0` | the largest step in time, `0.0` for none |
+| `initial_time_step` | `0.0` | the first step in time, `0.0` for CVODE's choice |
+| `stiff` | `true` | BDF (`true`) or Adams (`false`) |
+| `linear_solver` | `"auto"` | `"auto"` (dense below 16 states, KLU from 16), `"dense"` or `"klu"` |
+| `jacobian` | `"auto"` | `"auto"`, `"analytic"` (refused for a model without one) or `"difference_quotient"` (the sparse difference quotient over the colors of the columns of the pattern, also for a model with an analytic Jacobian) |
+
+**Initialization.** The model gets its SBML values, then the pre-initialization values of the request and of its steady state, then its initial assignments and the initial values of its assignment rules are evaluated at the time 0, whatever the start of the simulation (as sbmlsim initializes roadrunner at its time 0). The integration runs in absolute time from the start, in segments between the changes.
+
+**Changes.** The values of a change are set at once (the changes of one time are one change): a compartment keeps the concentrations of the species of a concentration in it (not of an amount, not of an assignment rule, not of one the change sets), and the assignment rules follow. A change at the start is applied after the initialization (and after the steady state) and before the output of the start; a change after the start ends a segment of the integration, and the output has the state before it and the state after it at its time (two rows: in the steps of the integrator always, in an output of times when its time is one of them). The events a change triggers execute with it; an event at its time executes after it.
+
+**Steady state.** The model is initialized once, with the pre-initialization of the request and of the steady state together (an id in both is refused), and integrated from the time 0, events active, until every state has `|dx/dt| <= absolute_tolerance + relative_tolerance * |x|` at the end of a horizon (1, 10, 100, ... time units), at most `max_time`; the simulation starts from that state at its start. A steady state which is not reached is an error of the integration.
+
+## The result
+
+`{columns, n_rows, values}`: the names of the columns (`time` first), the number of rows and `n_rows * columns.length` values, row major. A result does not depend on the simulations before it on the same instance.
+
+An error of the engine has a kind: `load` (the description is refused), `request` (the request is invalid, e.g. a tolerance which is not positive or an output beyond the limit of the values of a result), `unsupported`, `integration` (CVODE failed, with its `flag` and the `time`), or, in the hosts, `internal` (a trap of the engine or the model). The command line prints it, e.g. `integration failed at t = 0 (flag -4): ...`; the JavaScript loader throws an `EngineError`.
+
+The counters of the integrator of the last simulation (steps, calls of the right hand side and of the Jacobian, setups of the linear solver, error test and convergence failures, calls of the root functions, (re)initializations of CVODE, the calls of the probes of the triggers and of the criterion of a steady state) are `Instance::stats` in wasmtime and `instance.stats()` in JavaScript; they are diagnostics, no part of a result.
+
+## The description, `model/1`
+
+`model.json` describes the compiled model next to its `model.wasm`. The engine compares the sizes of the description with the ones `model.wasm` reports when it loads the model, so a description which does not belong to its module is an error.
+
+| field | what it holds |
+|---|---|
+| `contract` | `"model/1"` |
+| `compiler` | the compiler and its version, e.g. `"sbmlsim-compiler 0.1.0"` |
+| `id` | the id of the model |
+| `states` | the states, in the order of the state vector (the order of a `per_state` tolerance) |
+| `parameters` | the parameters (with the compartments, the species which are not states and the species references), in the order of the parameter vector |
+| `selections` | the ids a request can select, `{"id", "index"}`; `[S]` is the concentration of a species |
+| `jacobian` | `{"analytic": pattern}` or `{"colored_difference": {"pattern", "colors", "reason"}}`; a pattern is compressed sparse column (`n`, `col_ptr`, `row_idx`) |
+| `events` | per event `id` (empty for an event without one), `has_delay`, `has_priority`, `persistent`, `initial_value`, `use_values_from_trigger_time`, `n_assignments` |
+| `n_roots` | the number of root functions of the model, those of the triggers first |
+| `n_discontinuity_roots` | the number of root functions of the discontinuities of the math (the branches of `piecewise`), the last of the `n_roots` |
+| `units` | the unit expression of every entity id |
+
+An entity of `states` and `parameters` is `{"id", "kind", "initial", "settable"}`: its SBML id; its kind, `"compartment"`, `"parameter"`, `"species_reference"` or `{"species": {"compartment", "has_only_substance_units", "stores_concentration"}}`; its initial value as loaded (a value which is not finite is the string `"NaN"`, `"inf"` or `"-inf"`, since JSON has no such numbers); and whether a change may set it (the target of an assignment rule may not).
+
+```json
+{
+  "contract": "model/1",
+  "compiler": "sbmlsim-compiler 0.1.0",
+  "id": "toy",
+  "states": [
+    { "id": "A", "kind": { "species": { "compartment": "c", "has_only_substance_units": false, "stores_concentration": false } }, "initial": 20.0, "settable": true }
+  ],
+  "parameters": [{ "id": "c", "kind": "compartment", "initial": 2.0, "settable": true }],
+  "selections": [{ "id": "c", "index": 0 }, { "id": "A", "index": 1 }, { "id": "[A]", "index": 2 }],
+  "jacobian": { "analytic": { "n": 1, "col_ptr": [0, 1], "row_idx": [0] } },
+  "events": [],
+  "n_roots": 0,
+  "n_discontinuity_roots": 0,
+  "units": {}
+}
+```
+
+The exports of `model.wasm` (`model_defaults`, `model_init`, `model_rhs`, `model_jac`, `model_roots`, `model_trigger`, `model_priority`, `model_delay`, `model_event_values`, `model_event_apply`, `model_selections`, `model_assign`, `model_sizes`, `model_event_sizes`) and their arguments are documented in `crates/abi/src/lib.rs`; the exports of `engine.wasm` and the layout of its output in `crates/engine/src/exports.rs`.
