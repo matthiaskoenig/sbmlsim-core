@@ -17,8 +17,9 @@
 //! (CVODE, started at a zero of a root function with a first step below the rounding of the
 //! time, returns the same zero again), and in the output of times the steps towards one output
 //! time, summed over the returns at roots without an execution and the restarts at
-//! discontinuities, are bounded by `maximum_num_steps` (CVODE counts the steps of one call, which
-//! every return at a root ends), so roots which chatter end in a result or in
+//! discontinuities close to the last applied root, are bounded by `maximum_num_steps` (CVODE
+//! counts the steps of one call, which every return at a root ends; a restart far from the last
+//! applied root, an execution, an output time and a change start the budget again), so roots which chatter end in a result or in
 //! [`EngineError::Integration`] with CVODE's flag `CV_TOO_MUCH_WORK`. The output of the steps of
 //! the integrator writes the rows of every restart and is bounded by the limit of the output.
 
@@ -84,22 +85,29 @@ impl RootGuard {
     }
 
     /// A return of CVODE at a zero of a root function at `t`; `discontinuity` is whether it is
-    /// a zero of a root function of a discontinuity. Returns whether CVODE starts again for it.
-    pub fn root(&mut self, t: f64, discontinuity: bool) -> bool {
-        let applied = if self.count {
+    /// a zero of a root function of a discontinuity, `steps` is [`Cvode::steps`] now. Returns
+    /// whether CVODE starts again for it. A restart at a root far from the last applied one
+    /// (where the count starts again) starts the budget of steps again too, so well separated
+    /// roots do not share one budget; roots which chatter, within the tolerance of each other,
+    /// do.
+    pub fn root(&mut self, t: f64, discontinuity: bool, steps: u64) -> bool {
+        let (applied, far) = if self.count {
             let far = (t - self.last).abs() > self.close;
             self.strikes = if far { STRIKES } else { self.strikes - 1 };
             let applied = far || self.strikes > 0;
             if applied {
                 self.last = t;
             }
-            applied
+            (applied, far)
         } else {
-            true
+            (true, false)
         };
         let restart = discontinuity && applied && t != self.restarted_at;
         if restart {
             self.restarted_at = t;
+            if far {
+                self.executed(steps);
+            }
         }
         restart
     }
@@ -145,34 +153,34 @@ mod tests {
         let mut g = guard(true);
         // far from the start: applied; two close ones: applied (strikes 2, 1), the third: not,
         // nor any later close one (the last applied root stays at 1 + 2e-7)
-        assert!(g.root(1.0, true));
-        assert!(g.root(1.0 + 1e-7, true));
-        assert!(g.root(1.0 + 2e-7, true));
-        assert!(!g.root(1.0 + 3e-7, true));
-        assert!(!g.root(1.0 + 1.1e-6, true));
+        assert!(g.root(1.0, true, 0));
+        assert!(g.root(1.0 + 1e-7, true, 0));
+        assert!(g.root(1.0 + 2e-7, true, 0));
+        assert!(!g.root(1.0 + 3e-7, true, 0));
+        assert!(!g.root(1.0 + 1.1e-6, true, 0));
         // further than the tolerance from the last applied root: the count starts again
-        assert!(g.root(1.0 + 1.3e-6, true));
+        assert!(g.root(1.0 + 1.3e-6, true, 0));
         // a new interval starts the count again
-        assert!(g.root(1.0 + 1.4e-6, true));
-        assert!(g.root(1.0 + 1.5e-6, true));
+        assert!(g.root(1.0 + 1.4e-6, true, 0));
+        assert!(g.root(1.0 + 1.5e-6, true, 0));
         g.interval(0);
-        assert!(g.root(1.0 + 1.6e-6, true));
+        assert!(g.root(1.0 + 1.6e-6, true, 0));
         // every return at a root counts, also one of a trigger, which restarts nothing: the
         // next close root is the third
-        assert!(!g.root(1.0 + 1.7e-6, false));
-        assert!(!g.root(1.0 + 1.8e-6, true));
+        assert!(!g.root(1.0 + 1.7e-6, false, 0));
+        assert!(!g.root(1.0 + 1.8e-6, true, 0));
     }
 
     #[test]
     fn the_steps_of_the_integrator_restart_at_every_root_but_one_at_the_same_time() {
         let mut g = guard(false);
         for k in 0..10 {
-            assert!(g.root(1.0 + f64::from(k) * 1e-9, true));
+            assert!(g.root(1.0 + f64::from(k) * 1e-9, true, 0));
         }
         // CVODE returned the zero where it started again
-        assert!(!g.root(1.0 + 9e-9, true));
+        assert!(!g.root(1.0 + 9e-9, true, 0));
         let mut g = guard(true);
-        assert!(g.root(2.0, true));
-        assert!(!g.root(2.0, true));
+        assert!(g.root(2.0, true, 0));
+        assert!(!g.root(2.0, true, 0));
     }
 }

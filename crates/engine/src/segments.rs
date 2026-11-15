@@ -617,7 +617,7 @@ pub(crate) fn integrate_events(
         // the time of the last one)
         let discontinuity = root && {
             let found = cvode.at_discontinuity(problem)?;
-            guard.root(tret, found)
+            guard.root(tret, found, cvode.steps())
         };
         if steps && !root && flag != CV_TSTOP_RETURN && tret <= previous {
             return Err(stalled(tret, previous));

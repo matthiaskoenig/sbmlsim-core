@@ -155,7 +155,7 @@ fn with_events(
             // there (unless the guard of the restarts ignores it)
             if flag == CV_ROOT_RETURN {
                 let found = cvode.at_discontinuity(problem)?;
-                if guard.root(t, found) {
+                if guard.root(t, found, cvode.steps()) {
                     started = false;
                 }
             }

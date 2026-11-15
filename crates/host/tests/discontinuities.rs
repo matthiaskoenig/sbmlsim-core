@@ -444,3 +444,33 @@ fn the_steady_state_starts_the_integrator_again_at_a_discontinuity() {
     let x = column(&result, "x");
     assert!(x[0].abs() < 1e-6, "{x:?}");
 }
+
+#[test]
+fn well_separated_switches_do_not_share_the_budget_of_steps() {
+    // x' = piecewise(1, sin(time) > 0, 0) over about 16 periods, output only at the start and
+    // the end: a restart at a root far from the last one starts the budget of steps again (as
+    // libroadrunner's count of steps of one call of CVODE), so maximum_num_steps bounds the
+    // steps between two such roots and not the steps of the whole interval; x(100) = 16 pi
+    let rate = step(&ap("gt", &[&ap("sin", &[TIME]), &cn("0")]));
+    let compiled = model(&rate, "");
+    assert_eq!(compiled.description.n_discontinuity_roots, 1);
+    // (a step no longer than 0.5, so no step crosses two roots, whose signs would cancel)
+    let mut req = request(100.0, Output::Uniform { steps: 1 });
+    req.settings.maximum_num_steps = MAX_STEPS;
+    req.settings.maximum_time_step = 0.5;
+    let mut instance = runtime()
+        .instantiate(&compiled.wasm, &compiled.description)
+        .unwrap();
+    let result = instance.simulate(&req).unwrap();
+    let stats = instance.stats().unwrap();
+    assert!(stats.steps > u64::from(MAX_STEPS), "{stats:?}");
+    // the start and a start again at each of the 31 roots k pi
+    assert_eq!(stats.integrations, 32, "{stats:?}");
+    let x = column(&result, "x")[1];
+    let exact = 16.0 * std::f64::consts::PI;
+    assert!((x - exact).abs() <= 1e-12 + 1e-7 * exact, "{x} {exact}");
+}
+
+/// The steps between two roots of `well_separated_switches_do_not_share_the_budget_of_steps`
+/// are fewer, the steps of the whole interval more.
+const MAX_STEPS: u32 = 200;
