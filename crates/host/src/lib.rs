@@ -17,8 +17,8 @@
 //! store, as `StoreLimits`; the JavaScript loader gives its memory the same `maximum`), so a
 //! `memory.grow` beyond it fails in the engine. A result which does not fit is the error
 //! `request` of the engine, which allocates the result with `try_reserve`, and not an abort of
-//! its allocator. Every `memory.grow` is a call into the host for wasmtime's call hook; the
-//! limiter counts them, and [`Instance::wasi_calls`] leaves them out.
+//! its allocator. Every `memory.grow` (and `table.grow`) is a call into the host for wasmtime's
+//! call hook; the limiter counts them, and [`Instance::wasi_calls`] leaves them out.
 
 use anyhow::{Context, anyhow, bail, ensure};
 use sbmlsim_abi::{
@@ -67,8 +67,8 @@ struct HostState {
     memory: MemoryLimit,
 }
 
-/// The limit of the memory of a store, which counts the growths of the memory (each a call
-/// into the host for the call hook).
+/// The limit of the memory of a store, which counts the growths of the memory and of the tables
+/// (each a call into the host for the call hook).
 struct MemoryLimit {
     max_bytes: usize,
     grows: u64,
@@ -91,12 +91,14 @@ impl ResourceLimiter for MemoryLimit {
         _desired: usize,
         _maximum: Option<usize>,
     ) -> wasmtime::Result<bool> {
+        // a `table.grow` is a call into the host for the call hook as a `memory.grow` is
+        self.grows += 1;
         Ok(true)
     }
 }
 
 impl HostState {
-    /// The calls into the host but the growths of the memory: the WASI calls.
+    /// The calls into the host but the growths of the memory and the tables: the WASI calls.
     fn wasi_calls(&self) -> u64 {
         self.host_calls - self.memory.grows
     }

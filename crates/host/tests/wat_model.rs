@@ -447,3 +447,45 @@ fn decay_model_dir_is_current() {
         "request.json {stale}"
     );
 }
+
+/// `decay.wat` whose `model_rhs` calls itself without end: the stack of the host is exhausted
+/// when the engine integrates.
+fn recursive_wasm() -> Vec<u8> {
+    let rhs = "(func (export \"model_rhs\") (param $t f64) (param $y i32) (param $p i32) (param $ydot i32)";
+    let wat = decay_wat();
+    assert!(wat.contains(rhs));
+    let wat = wat.replace(
+        rhs,
+        "(func $rhs (export \"model_rhs\") (param $t f64) (param $y i32) (param $p i32) \
+         (param $ydot i32)\n    (call $rhs (local.get $t) (local.get $y) (local.get $p) \
+         (local.get $ydot))",
+    );
+    wat::parse_str(wat).unwrap()
+}
+
+/// The exhaustion of the stack in a model is an internal error, after which the instance is not
+/// used again; `js/test/fixtures/recursive-model` is this model (with its description), which
+/// the JavaScript loader maps alike (`SBMLSIM_CORE_WRITE_FIXTURES=1` writes it again).
+#[test]
+fn a_stack_exhausted_by_the_model_is_an_internal_error() {
+    let wasm = recursive_wasm();
+    let mut json = serde_json::to_vec_pretty(&description()).unwrap();
+    json.push(b'\n');
+    let fixture = tests_dir().join("../../../js/test/fixtures/recursive-model");
+    if std::env::var_os("SBMLSIM_CORE_WRITE_FIXTURES").is_some() {
+        std::fs::create_dir_all(&fixture).unwrap();
+        std::fs::write(fixture.join("model.wasm"), &wasm).unwrap();
+        std::fs::write(fixture.join("model.json"), &json).unwrap();
+    }
+    assert_eq!(std::fs::read(fixture.join("model.wasm")).unwrap(), wasm);
+    assert_eq!(std::fs::read(fixture.join("model.json")).unwrap(), json);
+    let mut instance = runtime().instantiate(&wasm, &description()).unwrap();
+    match instance.simulate(&request()) {
+        Err(EngineError::Internal(message)) => assert!(message.contains("trapped"), "{message}"),
+        other => panic!("{other:?}"),
+    }
+    assert!(matches!(
+        instance.simulate(&request()),
+        Err(EngineError::Internal(m)) if m.contains("not used again")
+    ));
+}

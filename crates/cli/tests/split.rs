@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use rayon::prelude::*;
 use sbmlsim_abi::{JacobianChoice, JacobianKind};
 use sbmlsim_cli::testsuite::{Baseline, CaseSettings, case_request, repeat_difference};
-use sbmlsim_compiler::{CompileOptions, Limits, compile, compile_with_limits};
+use sbmlsim_compiler::{CompileOptions, Limits, compile, compile_with_limits, is_above_the_limits};
 use sbmlsim_host::Runtime;
 
 fn runtime() -> &'static Runtime {
@@ -93,7 +93,8 @@ fn split_exports(wasm: &[u8]) -> Vec<String> {
 }
 
 /// How a case compiled with `limits` differs from the case compiled with the default limits
-/// (`Err` when a statement of the case is above `limits`), and the exports which are split.
+/// (`Err` when a statement of the case is above `limits`; any other error of the compiler
+/// fails the test), and the exports which are split.
 fn compare(
     dir: &Path,
     optimize: bool,
@@ -119,7 +120,11 @@ fn compare(
         JacobianKind::ColoredDifference { .. } => JacobianChoice::DifferenceQuotient,
     };
     let options = CompileOptions { optimize, jacobian };
-    let split = compile_with_limits(&sbml, &options, limits).map_err(|e| e.to_string())?;
+    let split = match compile_with_limits(&sbml, &options, limits) {
+        Ok(split) => split,
+        Err(error) if is_above_the_limits(&error) => return Err(error.to_string()),
+        Err(error) => panic!("{cid}: {error}"),
+    };
     wasmparser::Validator::new()
         .validate_all(&split.wasm)
         .unwrap_or_else(|e| panic!("{cid}: {e}"));

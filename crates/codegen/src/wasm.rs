@@ -33,8 +33,8 @@ pub const MAX_LOCALS: usize = 20_000;
 /// The feature of the error of a function above the limits ([`Body::finish`]).
 pub(crate) const ABOVE_THE_LIMITS: &str = "a function above the limits of WebAssembly engines";
 
-/// Whether an error is the one of a function above the limits.
-pub(crate) fn is_above_the_limits(error: &CompileError) -> bool {
+/// Whether an error is the one of a function (a statement of it) above the limits.
+pub fn is_above_the_limits(error: &CompileError) -> bool {
     matches!(error, CompileError::Unsupported { feature, .. } if feature.starts_with(ABOVE_THE_LIMITS))
 }
 

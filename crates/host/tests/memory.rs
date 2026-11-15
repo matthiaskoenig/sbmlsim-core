@@ -130,6 +130,29 @@ fn a_result_without_memory_is_an_error_of_the_request() {
     assert_eq!(again, first);
 }
 
+/// The steps of the integrator stop at the limit of the output with the flag -1000 whatever the
+/// number of columns: with two columns the room of the header is 8 slots, a power of two, and a
+/// growth by doubling of the result would ask for twice the limit while the old block is alive.
+#[test]
+fn the_steps_stop_at_the_limit_of_the_output() {
+    let runtime = Runtime::embedded().unwrap();
+    for selections in [vec!["time", "y"], vec!["time", "y", "t_half"]] {
+        let mut instance = decay(&runtime);
+        let mut steps = request(1e9, Output::IntegratorSteps);
+        steps.selections = selections.iter().map(|s| s.to_string()).collect();
+        steps.settings.maximum_time_step = 1.0;
+        steps.settings.maximum_num_steps = 1_000_000_000;
+        match instance.simulate(&steps) {
+            Err(EngineError::Integration { flag, .. }) => {
+                assert_eq!(flag, sbmlsim_engine::OUTPUT_LIMIT_FLAG, "{selections:?}")
+            }
+            other => panic!("{selections:?}: {other:?}"),
+        }
+        assert!(instance.memory_bytes() <= MAX_MEMORY_BYTES);
+        assert_eq!(instance.wasi_calls(), 0);
+    }
+}
+
 #[test]
 fn the_memory_limit_is_2_gib() {
     assert_eq!(MAX_MEMORY_BYTES, 32768 * 65536);

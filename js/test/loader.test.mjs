@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 
-import { EngineError, MAX_MEMORY_PAGES, WasiExit, formatNumber, toCsv, wasiImports } from "../loader.mjs";
+import { EngineError, MAX_MEMORY_PAGES, WasiExit, formatNumber, toCsv, trapError, wasiImports } from "../loader.mjs";
 import { DECAY, ROOT, loaderRuntime, readModel, request, runCli, runtimeDir } from "./helpers.mjs";
 
 test("numbers are written as the CSV of the command line", () => {
@@ -191,4 +191,30 @@ test("a result without memory is an error of the request", async () => {
   assert.equal(instance.wasiCalls(), 0);
   assert.ok(instance.memoryBytes() <= 512 * 65536);
   assert.deepEqual(instance.simulate(small), first);
+});
+
+test("whatever a call of the engine throws is an EngineError internal, as a trap of wasmtime", async () => {
+  // the mapping: a trap, the exhaustion of the stack of V8 (a RangeError, a trap in wasmtime)
+  // and an error of a WASI stub
+  const trap = trapError(new WebAssembly.RuntimeError("unreachable"), "index out of bounds");
+  assert.equal(trap.kind, "internal");
+  assert.match(trap.message, /trapped: unreachable \(index out of bounds\)/);
+  for (const error of [new RangeError("Maximum call stack size exceeded"), new Error("engine.wasm called WASI clock_time_get")]) {
+    const mapped = trapError(error);
+    assert.ok(mapped instanceof EngineError);
+    assert.equal(mapped.kind, "internal");
+    assert.equal(mapped.cause, error);
+    assert.match(mapped.message, new RegExp(error.message));
+  }
+  // decay.wat whose model_rhs calls itself without end (js/test/fixtures/recursive-model, made
+  // and checked by sbmlsim-host's `a_stack_exhausted_by_the_model_is_an_internal_error`)
+  const runtime = await loaderRuntime();
+  const { wasm, json } = readModel(path.join(ROOT, "js", "test", "fixtures", "recursive-model"));
+  const instance = await runtime.instantiate(wasm, json);
+  const req = request({ selections: ["time", "y"], settings: { ...request().settings, stiff: false } });
+  assert.throws(
+    () => instance.simulate(req),
+    (e) => e instanceof EngineError && e.kind === "internal" && e.cause instanceof RangeError,
+  );
+  assert.throws(() => instance.simulate(req), (e) => e.kind === "internal" && /not used again/.test(e.detail));
 });

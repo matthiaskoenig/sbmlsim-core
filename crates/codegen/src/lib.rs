@@ -64,7 +64,7 @@ use wasm_encoder::ValType::{F64, I32};
 
 use split::{Branch, End, Signature, Stmt, Tail};
 use wasm::{Ctx, ModuleBuilder};
-pub use wasm::{Limits, MAX_FUNCTION_BYTES, MAX_LOCALS};
+pub use wasm::{Limits, MAX_FUNCTION_BYTES, MAX_LOCALS, is_above_the_limits};
 
 /// The reason of a difference quotient which was asked for.
 pub const DIFFERENCE_REQUESTED: &str = "the difference quotient was requested";

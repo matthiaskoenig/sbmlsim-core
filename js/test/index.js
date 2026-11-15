@@ -3,4 +3,5 @@
 import "./loader.test.mjs";
 import "./workers.test.mjs";
 import "./large.test.mjs";
+import "./stack.test.mjs";
 import "./same_bits.test.mjs";

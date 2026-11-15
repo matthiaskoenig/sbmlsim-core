@@ -6,7 +6,7 @@
 //
 //   import { createRuntime } from "./loader.mjs";
 //   const runtime = await createRuntime({ engine, mathlib }); // WebAssembly.Modules or bytes
-//   const instance = await runtime.instantiate(modelWasm, modelJson); // a Module or bytes, the
+//   const instance = await runtime.instantiate(modelWasm, modelJson); // a Promise; a Module or bytes, the
 //                                                                     // text of model.json or
 //                                                                     // its object
 //   const { columns, nRows, values } = instance.simulate(request); // values: a Float64Array
@@ -250,6 +250,8 @@ export async function createRuntime({
     /**
      * Instantiates a model (a `WebAssembly.Module` or the bytes of `model.wasm`) with its
      * description (the text of `model.json` or its object) and loads it into a new engine.
+     * Asynchronous (a Promise of the instance): bytes compile with `WebAssembly.compile`, which
+     * browsers require for modules above a few KB on the main thread.
      */
     async instantiate(modelWasm, description) {
       const descText = jsonText(description);
@@ -349,24 +351,24 @@ class Instance {
     return code;
   }
 
-  /** Runs a call of the engine; a trap marks the instance and is an `EngineError` `internal`. */
+  /**
+   * Runs a call of the engine; whatever it throws marks the instance and is an `EngineError`
+   * `internal` ([`trapError`]), as a trap of the wasmtime host, but `WasiExit`.
+   */
   guard(call) {
     try {
       return call();
     } catch (error) {
-      if (error instanceof WasiExit || !(error instanceof WebAssembly.RuntimeError)) {
-        this.trapped = true;
-        throw error;
-      }
       this.trapped = true;
-      let panic = "";
+      if (error instanceof WasiExit) throw error;
+      let panic = null;
       try {
         const { error: e } = this.output();
-        if (e?.kind === "panic") panic = ` (${e.detail})`;
+        if (e?.engineKind === "panic") panic = e.detail;
       } catch {
         // no output to read
       }
-      throw new EngineError("internal", `engine.wasm trapped: ${error.message}${panic}`);
+      throw trapError(error, panic);
     }
   }
 
@@ -413,6 +415,22 @@ class Instance {
     }
     return { header, table: { columns, nRows, values } };
   }
+}
+
+/**
+ * The `EngineError` of what a call of the engine threw, as the wasmtime host maps a trap: a
+ * trap of the engine or the model (`WebAssembly.RuntimeError`), the exhaustion of the stack of
+ * the host (V8 throws a `RangeError`, wasmtime traps) and an error a WASI stub threw are all of
+ * the kind `internal`, with the message of a panic of the engine when it wrote one; the error is
+ * the `cause`. (`WasiExit`, the engine calling `proc_exit`, stays an error of its own, which
+ * `guard` throws as it is.)
+ */
+export function trapError(error, panic = null) {
+  const what = error instanceof WebAssembly.RuntimeError ? "trapped" : `failed (${error?.name ?? "Error"})`;
+  const message = `engine.wasm ${what}: ${error?.message ?? String(error)}${panic ? ` (${panic})` : ""}`;
+  const mapped = new EngineError("internal", message);
+  mapped.cause = error;
+  return mapped;
 }
 
 /**

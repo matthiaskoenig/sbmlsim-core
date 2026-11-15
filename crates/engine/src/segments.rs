@@ -83,6 +83,22 @@ impl<'a> Recorder<'a> {
             .map_err(|_| out_of_memory(self.values.len() - self.prefix + n))
     }
 
+    /// Makes room for `k` more values: by doubling (the steps of the integrator), but never
+    /// beyond the prefix and the cap, so the growth of a result at the cap is never twice the cap
+    /// (which, while the old block is alive, would not fit into the memory and be an error of
+    /// the memory instead of the limit of the output). A growth which finds no memory is an
+    /// error and not an abort of the allocator, which would write to stderr.
+    fn grow(&mut self, k: usize) -> Result<(), EngineError> {
+        let (len, capacity) = (self.values.len(), self.values.capacity());
+        if capacity - len >= k {
+            return Ok(());
+        }
+        let new = (2 * capacity).max(len + k).min(self.prefix + self.cap);
+        self.values
+            .try_reserve_exact(new - len)
+            .map_err(|_| out_of_memory(len - self.prefix + k))
+    }
+
     /// Appends the row of the time `t`, the state `y` and the parameters `p`.
     ///
     /// Fails with [`OUTPUT_LIMIT_FLAG`] when the row would exceed the cap of values of the
@@ -108,13 +124,7 @@ impl<'a> Recorder<'a> {
         self.model.assign(t, &mut self.y, &mut self.p);
         self.model
             .selections(t, &self.y, &self.p, &mut self.selections);
-        // the growth of the values (by doubling, for the steps of the integrator) may find no
-        // memory: an error and not an abort of the allocator, which would write to stderr
-        if self.values.capacity() - self.values.len() < k {
-            self.values
-                .try_reserve(k)
-                .map_err(|_| out_of_memory(self.values.len() - self.prefix + k))?;
-        }
+        self.grow(k)?;
         for column in &self.columns {
             self.values.push(match column {
                 Column::Time => t,
@@ -645,6 +655,33 @@ mod tests {
         let (result, recorder) = run(1 << 20);
         result.unwrap();
         assert!(recorder.n_rows > 20, "{}", recorder.n_rows);
+        // the growth by doubling never reserves beyond the prefix and the cap, also when the
+        // prefix is a power of two (the header of `engine.wasm` is 8 slots for two columns)
+        for (prefix, cap) in [(8, 40), (8, 64), (8, 56), (3, 40), (0, 40), (16, 1000)] {
+            let columns = vec![Column::Time, Column::Selection(0)];
+            let mut recorder = Recorder::new(&model, columns, 2, cap, prefix).unwrap();
+            let mut seen = 0;
+            loop {
+                match recorder.row(0.0, &y0, &p) {
+                    Ok(()) => {
+                        let capacity = recorder.values.capacity();
+                        assert!(capacity <= prefix + cap, "{prefix} {cap}: {capacity}");
+                        seen = seen.max(capacity);
+                    }
+                    Err(EngineError::Integration { flag, .. }) => {
+                        assert_eq!(flag, OUTPUT_LIMIT_FLAG);
+                        break;
+                    }
+                    Err(other) => panic!("{other:?}"),
+                }
+            }
+            assert_eq!(
+                recorder.values.len(),
+                prefix + cap / 2 * 2,
+                "{prefix} {cap}"
+            );
+            assert!(seen <= prefix + cap);
+        }
         match run(40) {
             (
                 Err(EngineError::Integration {
