@@ -35,7 +35,10 @@ fn reads_minimal_model() {
     assert_eq!(m.substance_units.as_deref(), Some("mole"));
     assert_eq!(m.time_units.as_deref(), Some("second"));
     assert_eq!(m.unit_definitions[0].id, "mmol_per_min");
-    assert_eq!(m.unit_definitions[0].expression, "1e-3*mole*60*second**-1");
+    assert_eq!(
+        m.unit_definitions[0].expression,
+        "0.001*mole*(60*second)**-1"
+    );
     assert_eq!(m.compartments[0].id, "c");
     assert_eq!(m.compartments[0].size, Some(2.0));
     assert!(m.compartments[0].constant);
@@ -93,6 +96,64 @@ fn number_is_double_of_text() {
     assert!(matches!(bad_math("<cn>abc</cn>"), ReadError::Xml(_)));
 }
 
+fn unit_expr(units: &str) -> String {
+    let xml = format!(
+        r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2"><model>
+<listOfUnitDefinitions><unitDefinition id="u"><listOfUnits>{units}</listOfUnits></unitDefinition></listOfUnitDefinitions></model></sbml>"#
+    );
+    read(&xml).unwrap().model.unit_definitions[0]
+        .expression
+        .clone()
+}
+
+#[test]
+fn unit_expressions() {
+    let u = |k: &str, e: &str, s: &str, m: &str| {
+        format!(r#"<unit kind="{k}" exponent="{e}" scale="{s}" multiplier="{m}"/>"#)
+    };
+    assert_eq!(unit_expr(&u("second", "-1", "0", "60")), "(60*second)**-1");
+    assert_eq!(
+        unit_expr(&(u("mole", "1", "-3", "1") + &u("second", "-1", "0", "60"))),
+        "0.001*mole*(60*second)**-1"
+    );
+    assert_eq!(unit_expr(&u("litre", "1", "-3", "1")), "0.001*litre");
+    assert_eq!(unit_expr(&u("gram", "1", "-3", "1")), "0.001*gram");
+    assert_eq!(unit_expr(&u("mole", "1", "-6", "1")), "0.000001*mole");
+    // mg/dL: scale and exponent -1
+    assert_eq!(
+        unit_expr(&(u("gram", "1", "-3", "1") + &u("litre", "-1", "-1", "1"))),
+        "0.001*gram*(0.1*litre)**-1"
+    );
+    assert_eq!(unit_expr(&u("metre", "2", "0", "1")), "metre**2");
+    assert_eq!(unit_expr(&u("mole", "1", "0", "1")), "mole");
+    assert_eq!(unit_expr(""), "dimensionless");
+}
+
+#[test]
+fn elements_keep_their_ids() {
+    let xml = r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" xmlns:m="http://www.w3.org/1998/Math/MathML" level="3" version="2"><model>
+<listOfInitialAssignments><initialAssignment id="ia" symbol="a"><m:math><m:cn>1</m:cn></m:math></initialAssignment></listOfInitialAssignments>
+<listOfRules><assignmentRule id="ar" variable="a"><m:math><m:cn>1</m:cn></m:math></assignmentRule><rateRule id="rr" variable="b"><m:math><m:cn>1</m:cn></m:math></rateRule><algebraicRule id="al"><m:math><m:cn>1</m:cn></m:math></algebraicRule></listOfRules>
+<listOfReactions><reaction id="r" reversible="false" fast="false"><kineticLaw id="kl"><m:math><m:cn>1</m:cn></m:math></kineticLaw></reaction></listOfReactions>
+<listOfEvents><event><trigger id="tr" initialValue="true" persistent="true"><m:math><m:true/></m:math></trigger><priority id="pr"><m:math><m:cn>1</m:cn></m:math></priority><delay id="de"><m:math><m:cn>1</m:cn></m:math></delay>
+<listOfEventAssignments><eventAssignment id="ea" variable="a"><m:math><m:cn>1</m:cn></m:math></eventAssignment></listOfEventAssignments></event></listOfEvents>
+</model></sbml>"#;
+    let m = read(xml).unwrap().model;
+    assert_eq!(m.initial_assignments[0].id.as_deref(), Some("ia"));
+    assert!(matches!(&m.rules[0], Rule::Assignment { id, .. } if id.as_deref() == Some("ar")));
+    assert!(matches!(&m.rules[1], Rule::Rate { id, .. } if id.as_deref() == Some("rr")));
+    assert!(matches!(&m.rules[2], Rule::Algebraic { id, .. } if id.as_deref() == Some("al")));
+    assert_eq!(
+        m.reactions[0].kinetic_law.as_ref().unwrap().id.as_deref(),
+        Some("kl")
+    );
+    let e = &m.events[0];
+    assert_eq!(e.trigger.id.as_deref(), Some("tr"));
+    assert_eq!(e.priority_id.as_deref(), Some("pr"));
+    assert_eq!(e.delay_id.as_deref(), Some("de"));
+    assert_eq!(e.assignments[0].id.as_deref(), Some("ea"));
+}
+
 #[test]
 fn refuses_level_2() {
     assert_eq!(
@@ -129,7 +190,10 @@ fn csymbols() {
             args: vec![Node::CsymbolTime, Node::CsymbolAvogadro]
         }
     );
-    let Rule::Assignment { variable, math: mm } = &m.rules[0] else {
+    let Rule::Assignment {
+        variable, math: mm, ..
+    } = &m.rules[0]
+    else {
         panic!()
     };
     assert_eq!(variable, "b");
@@ -140,7 +204,10 @@ fn csymbols() {
             args: vec![Node::Symbol("c".into())]
         }
     );
-    let Rule::Rate { variable, math: mm } = &m.rules[1] else {
+    let Rule::Rate {
+        variable, math: mm, ..
+    } = &m.rules[1]
+    else {
         panic!()
     };
     assert_eq!(variable, "c");

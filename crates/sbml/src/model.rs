@@ -7,7 +7,7 @@ use roxmltree::Node as X;
 /// The namespace of SBML Level 3 Version 2 core.
 pub const SBML_NS: &str = "http://www.sbml.org/sbml/level3/version2/core";
 
-/// A unit definition as a unit expression, e.g. `1e-3*mole*60*second**-1`.
+/// A unit definition as a unit expression, e.g. `0.001*mole*(60*second)**-1`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct UnitDefinition {
     /// The id.
@@ -90,6 +90,8 @@ pub struct LocalParameter {
 /// An initial assignment.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InitialAssignment {
+    /// The id.
+    pub id: Option<String>,
     /// The assigned symbol.
     pub symbol: String,
     /// The math.
@@ -101,6 +103,8 @@ pub struct InitialAssignment {
 pub enum Rule {
     /// `variable = math`.
     Assignment {
+        /// The id.
+        id: Option<String>,
         /// The variable.
         variable: String,
         /// The math.
@@ -108,6 +112,8 @@ pub enum Rule {
     },
     /// `d variable / dt = math`.
     Rate {
+        /// The id.
+        id: Option<String>,
         /// The variable.
         variable: String,
         /// The math.
@@ -115,6 +121,8 @@ pub enum Rule {
     },
     /// `0 = math`.
     Algebraic {
+        /// The id.
+        id: Option<String>,
         /// The math.
         math: Node,
     },
@@ -145,6 +153,8 @@ pub struct ModifierSpeciesReference {
 /// A kinetic law.
 #[derive(Debug, Clone, PartialEq)]
 pub struct KineticLaw {
+    /// The id.
+    pub id: Option<String>,
     /// The math.
     pub math: Option<Node>,
     /// The local parameters.
@@ -175,6 +185,8 @@ pub struct Reaction {
 /// The trigger of an event.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Trigger {
+    /// The id.
+    pub id: Option<String>,
     /// The value of the trigger before the time 0.
     pub initial_value: bool,
     /// Whether the trigger is persistent.
@@ -186,6 +198,8 @@ pub struct Trigger {
 /// An assignment of an event.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EventAssignment {
+    /// The id.
+    pub id: Option<String>,
     /// The variable.
     pub variable: String,
     /// The math.
@@ -201,8 +215,12 @@ pub struct Event {
     pub use_values_from_trigger_time: bool,
     /// The trigger.
     pub trigger: Trigger,
+    /// The id of the delay.
+    pub delay_id: Option<String>,
     /// The delay.
     pub delay: Option<Node>,
+    /// The id of the priority.
+    pub priority_id: Option<String>,
     /// The priority.
     pub priority: Option<Node>,
     /// The assignments.
@@ -321,31 +339,37 @@ fn req_math(n: X) -> Result<Node, ReadError> {
     math_of(n)?.ok_or_else(|| err(format!("<{}> without math", n.tag_name().name())))
 }
 
-fn unit_factor(f: f64) -> String {
-    if f.fract() == 0.0 && f.abs() < 1e15 {
-        format!("{}", f as i64)
-    } else {
-        format!("{f:e}")
-    }
+/// A unit as `kind`, `factor*kind`, `kind**e` or `(factor*kind)**e`, the factor the double of
+/// the text `{multiplier}e{scale}`.
+fn unit_term(u: X) -> Result<String, ReadError> {
+    let kind = req(u, "kind")?;
+    let text = |name: &str, default: &str| {
+        u.attribute(name)
+            .map(|v| v.trim().to_string())
+            .unwrap_or_else(|| default.to_string())
+    };
+    let (multiplier, scale) = (text("multiplier", "1"), text("scale", "0"));
+    let factor = format!("{multiplier}e{scale}")
+        .parse::<f64>()
+        .map_err(|_| {
+            err(format!(
+                "<unit> multiplier {multiplier:?} or scale {scale:?} is no number"
+            ))
+        })?;
+    let exponent = double(u, "exponent")?.unwrap_or(1.0);
+    Ok(match (factor == 1.0, exponent == 1.0) {
+        (true, true) => kind,
+        (false, true) => format!("{factor}*{kind}"),
+        (true, false) => format!("{kind}**{exponent}"),
+        (false, false) => format!("({factor}*{kind})**{exponent}"),
+    })
 }
 
 fn unit_definition(n: X) -> Result<UnitDefinition, ReadError> {
-    let mut terms = Vec::new();
-    for u in items(n, "listOfUnits", "unit") {
-        let kind = req(u, "kind")?;
-        let exponent = double(u, "exponent")?.unwrap_or(1.0);
-        let scale = double(u, "scale")?.unwrap_or(0.0);
-        let multiplier = double(u, "multiplier")?.unwrap_or(1.0);
-        let factor = multiplier * 10f64.powf(scale);
-        if factor != 1.0 {
-            terms.push(unit_factor(factor));
-        }
-        terms.push(if exponent == 1.0 {
-            kind
-        } else {
-            format!("{kind}**{}", unit_factor(exponent))
-        });
-    }
+    let terms = items(n, "listOfUnits", "unit")
+        .into_iter()
+        .map(unit_term)
+        .collect::<Result<Vec<_>, _>>()?;
     let expression = if terms.is_empty() {
         "dimensionless".to_string()
     } else {
@@ -386,6 +410,7 @@ fn reaction(n: X) -> Result<Reaction, ReadError> {
                 })
                 .collect::<Result<_, ReadError>>()?;
             Ok(KineticLaw {
+                id: opt(k, "id"),
                 math: math_of(k)?,
                 local_parameters,
             })
@@ -422,16 +447,20 @@ fn event(n: X) -> Result<Event, ReadError> {
         id: opt(n, "id"),
         use_values_from_trigger_time: flag(n, "useValuesFromTriggerTime", true)?,
         trigger: Trigger {
+            id: opt(t, "id"),
             initial_value: flag(t, "initialValue", true)?,
             persistent: flag(t, "persistent", true)?,
             math: req_math(t)?,
         },
+        delay_id: child(n, "delay").and_then(|d| opt(d, "id")),
         delay: wrapped_math(n, "delay")?,
+        priority_id: child(n, "priority").and_then(|d| opt(d, "id")),
         priority: wrapped_math(n, "priority")?,
         assignments: items(n, "listOfEventAssignments", "eventAssignment")
             .into_iter()
             .map(|a| {
                 Ok(EventAssignment {
+                    id: opt(a, "id"),
                     variable: req(a, "variable")?,
                     math: req_math(a)?,
                 })
@@ -443,14 +472,19 @@ fn event(n: X) -> Result<Event, ReadError> {
 fn rule(n: X) -> Result<Rule, ReadError> {
     Ok(match n.tag_name().name() {
         "assignmentRule" => Rule::Assignment {
+            id: opt(n, "id"),
             variable: req(n, "variable")?,
             math: req_math(n)?,
         },
         "rateRule" => Rule::Rate {
+            id: opt(n, "id"),
             variable: req(n, "variable")?,
             math: req_math(n)?,
         },
-        _ => Rule::Algebraic { math: req_math(n)? },
+        _ => Rule::Algebraic {
+            id: opt(n, "id"),
+            math: req_math(n)?,
+        },
     })
 }
 
@@ -521,6 +555,7 @@ fn read_model(m: X) -> Result<Model, ReadError> {
             .into_iter()
             .map(|a| {
                 Ok(InitialAssignment {
+                    id: opt(a, "id"),
                     symbol: req(a, "symbol")?,
                     math: req_math(a)?,
                 })

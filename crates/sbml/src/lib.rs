@@ -10,10 +10,7 @@
 //! must be flattened before); a package with `required="false"` (layout, render, fbc
 //! annotations, ...) is ignored.
 //!
-//! Units pass through as text and nothing is computed with them. A unit definition becomes a
-//! unit expression a unit registry such as pint parses, the units joined by `*`, each as its
-//! kind with `**exponent` (when not 1), preceded by the factor `multiplier * 10^scale` when not
-//! 1, e.g. `mmol/min` as `1e-3*mole*60*second**-1` (the multiplier belongs to its own unit).
+//! Units pass through as text and nothing is computed with them. A unit definition becomes a unit expression a unit registry such as pint parses, the units joined by `*`; a unit is `(multiplier * 10^scale * kind)^exponent`, written as `kind`, `factor*kind`, `kind**e` or `(factor*kind)**e` where the factor is the double of the text `{multiplier}e{scale}`, e.g. `mmol/min` as `0.001*mole*(60*second)**-1`.
 
 mod model;
 
