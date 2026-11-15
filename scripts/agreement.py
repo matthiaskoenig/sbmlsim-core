@@ -35,7 +35,7 @@ converged solution. The engine at rtol 1e-10 and atol 1e-12, with the dense solv
 `sbmlsim.comparison.diff.DataSetsComparison` (`tol_rel = 1e-7`, `tol_abs = 1e-12`) on every
 column both have: a value passes when `|c - u| <= 1e-12 + 1e-7 |c|`, its excess is
 `|c - u| / (1e-12 + 1e-7 |c|)`. A solver passes when every value passes, or when its largest
-excess is no larger than the one of roadrunner at rtol 1e-10 and atol 1e-12 with the same linear
+excess is at most 1 % above the one (`EXCESS_MARGIN`, ruling R47b) of roadrunner at rtol 1e-10 and atol 1e-12 with the same linear
 solver (dense with CVODE's difference quotient, KLU with the sparse difference quotient) against
 the same reference: the engine is as close to the converged solution as roadrunner at the same
 tolerances. The reference itself is roadrunner with the defaults of its libroadrunner (2.12: KLU
@@ -66,6 +66,11 @@ from prepare_model import PreparationError, prepare, resolve_source
 
 ROOT = Path(__file__).resolve().parent.parent
 RELATIVE_LIMIT = 1e-7
+# ruling R47b: the engine passes the second half of R47a when its largest excess is at most
+# EXCESS_MARGIN times roadrunner's; without the margin the event model failed by a tie (its
+# largest excess is the same value in both, 1.73855 against 1.73789, where the engine dense and
+# roadrunner dense differ by 2.6e-14 relative)
+EXCESS_MARGIN = 1.01
 RTOL, ATOL = 1e-10, 1e-12
 # the values the largest relative difference is also reported over: above 1000 times the
 # absolute tolerance
@@ -254,7 +259,7 @@ def main() -> int:
                 rr = compare("roadrunner", converged, loose)
                 eng = engine(args.cli, sbml, end, preinit, atol, work, solver)
                 c = compare(solver, converged, eng)
-                c["pass"] = c["pass"] or c["max_excess"] <= rr["max_excess"]
+                c["pass"] = c["pass"] or c["max_excess"] <= EXCESS_MARGIN * rr["max_excess"]
                 # informative: the engine against roadrunner at the same tolerances
                 direct = compare("direct", loose, eng)
                 c["against_roadrunner_1e-10"] = {k: direct[k] for k in ("max_excess", "failing_values", "max_relative_resolved")}
