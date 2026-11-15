@@ -18,11 +18,17 @@ pub(crate) struct Runtime {
 
 #[pymethods]
 impl Runtime {
-    /// The runtime of the embedded engine.
+    /// The runtime of the embedded engine. `max_memory_bytes` bounds the memory an instance
+    /// grows to (the default of the host without it); a result which does not fit is a
+    /// `RequestError`.
     #[new]
-    fn new() -> PyResult<Runtime> {
-        let runtime = sbmlsim_host::Runtime::embedded()
+    #[pyo3(signature = (max_memory_bytes=None))]
+    fn new(max_memory_bytes: Option<usize>) -> PyResult<Runtime> {
+        let mut runtime = sbmlsim_host::Runtime::embedded()
             .map_err(|error| SbmlsimCoreError::new_err(format!("{error:#}")))?;
+        if let Some(bytes) = max_memory_bytes {
+            runtime = runtime.with_max_memory(bytes);
+        }
         Ok(Runtime { runtime })
     }
 

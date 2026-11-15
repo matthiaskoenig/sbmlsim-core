@@ -80,7 +80,9 @@ class LoadedModel:
 class Runtime:
     """`engine.wasm` and `mathlib.wasm`, compiled once, which load models."""
 
-    def __init__(self) -> None: ...
+    def __init__(self, max_memory_bytes: int | None = None) -> None:
+        """The memory of an instance grows to at most `max_memory_bytes`, if given."""
+
     def load(self, wasm: bytes, description: dict[str, Any]) -> LoadedModel:
         """Loads `model.wasm` with its description."""
 

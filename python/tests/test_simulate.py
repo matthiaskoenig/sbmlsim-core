@@ -171,3 +171,14 @@ def test_load_refuses_bytes_which_are_no_module(runtime):
     )
     with pytest.raises(sbmlsim_core.SbmlsimCoreError):
         runtime.load(b"not wasm", compiled.description)
+
+
+def test_a_result_which_does_not_fit_is_a_request_error():
+    # an output of 3 million rows of 4 columns, 96 MB, into an instance of at most 32 MiB
+    runtime = sbmlsim_core.Runtime(max_memory_bytes=32 * 1024 * 1024)
+    sbml = (ROOT / "crates/host/tests/decay.xml").read_text(encoding="utf-8")
+    instance = loaded(runtime, sbml).instance()
+    with pytest.raises(sbmlsim_core.RequestError, match="does not fit into the memory"):
+        instance.simulate(request(end=1.0, steps=3_000_000))
+    # the instance answers the next request
+    assert instance.simulate(request(end=1.0, steps=10)).values.shape == (11, 4)
