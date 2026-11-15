@@ -1,22 +1,62 @@
 {
   "name": "sbmlsim-core",
   "version": "0.1.0",
-  "description": "The JavaScript host of sbmlsim-core: engine.wasm, mathlib.wasm and a compiled model.wasm in Node and browsers, a pool of workers and the panel endpoint",
+  "description": "Simulate SBML models compiled to WebAssembly in browsers and Node: the JavaScript host of sbmlsim-core with its engine (CVODE, KLU), a pool of workers and the panel endpoint of sbmlsim",
+  "keywords": [
+    "sbml",
+    "systems-biology",
+    "simulation",
+    "webassembly",
+    "wasm",
+    "cvode",
+    "ode",
+    "pharmacokinetics",
+    "web-worker"
+  ],
+  "homepage": "https://matthiaskoenig.github.io/sbmlsim-core/",
+  "bugs": {
+    "url": "https://github.com/matthiaskoenig/sbmlsim-core/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/matthiaskoenig/sbmlsim-core.git",
+    "directory": "js"
+  },
+  "author": "Matthias König",
   "license": "MIT AND BSD-3-Clause AND LGPL-2.1-or-later",
-  "private": true,
   "type": "module",
   "exports": {
     ".": "./loader.mjs",
     "./pool": "./pool.mjs",
-    "./panels": "./panels.mjs"
+    "./panels": "./panels.mjs",
+    "./worker": "./worker.mjs",
+    "./runtime/engine.wasm": "./runtime/engine.wasm",
+    "./runtime/mathlib.wasm": "./runtime/mathlib.wasm",
+    "./package.json": "./package.json"
   },
   "bin": {
     "sbmlsim-core-simulate": "./simulate.mjs"
   },
+  "files": [
+    "loader.mjs",
+    "pool.mjs",
+    "worker.mjs",
+    "panels.mjs",
+    "simulate.mjs",
+    "runtime/engine.wasm",
+    "runtime/mathlib.wasm",
+    "runtime/THIRD_PARTY.md",
+    "LICENSE"
+  ],
   "scripts": {
-    "test": "node --test test/"
+    "test": "node --test test/",
+    "prepack": "node prepack.mjs"
   },
   "engines": {
     "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   }
 }
