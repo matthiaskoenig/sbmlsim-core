@@ -1302,6 +1302,10 @@ dependencies = [
 [[package]]
 name = "sbmlsim-ir"
 version = "0.1.0"
+dependencies = [
+ "sbmlsim-sbml",
+ "thiserror 2.0.21",
+]
 
 [[package]]
 name = "sbmlsim-mathlib"

@@ -6,3 +6,5 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+sbmlsim-sbml = { path = "../sbml" }
+thiserror.workspace = true
