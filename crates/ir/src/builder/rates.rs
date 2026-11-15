@@ -86,14 +86,14 @@ impl Builder<'_> {
             }
             Source::Reactions(i) => {
                 let mut terms = Vec::new();
-                for r in 0..self.refs.len() {
+                // the references of the species, in their order (an index, not a scan of every
+                // reference per state, which is quadratic in the size of the model)
+                let positions = self.refs_of.get(id).cloned().unwrap_or_default();
+                for r in positions {
                     let (reaction, reference, product) = {
                         let r = &self.refs[r];
                         (r.reaction, r.reference, r.product)
                     };
-                    if reference.species != id {
-                        continue;
-                    }
                     let stoichiometry = match &reference.id {
                         Some(sid) => Expr::Symbol(self.symbols[sid.as_str()]),
                         // libroadrunner: a missing stoichiometry is 1

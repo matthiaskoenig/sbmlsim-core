@@ -36,9 +36,19 @@
 //!   over after the assignments.
 //! - `model_sizes` and `model_event_sizes` store the sizes of the model.
 //!
+//! Every function is a list of statements (`split.rs`): the local of a let (a rule, a
+//! derivative, a common subexpression) is given back after the last statement which reads it and
+//! reused, and a function above [`MAX_FUNCTION_BYTES`] (its whole encoded body) or
+//! [`MAX_LOCALS`] is split into helper functions of the same parameters: a chain of helpers of
+//! consecutive statements, each computing the lets its statements read, or for a function of an
+//! event index helpers of consecutive events which it dispatches to by the index. A split
+//! function gives the bits of the function as one. Only a statement which alone (with the lets it
+//! reads) is above the limits is refused.
+//!
 //! The crate does no file system or OS access, so it builds for `wasm32-unknown-unknown`.
 
 mod math;
+mod split;
 mod wasm;
 
 use std::collections::BTreeMap;
@@ -52,8 +62,9 @@ use sbmlsim_ir::optimize::{self, Plan, Program, Statement};
 use sbmlsim_ir::{CompileError, EntityKind, Event, Expr, Model, SpeciesValue, Symbol};
 use wasm_encoder::ValType::{F64, I32};
 
-use wasm::{Ctx, Limits, ModuleBuilder};
-pub use wasm::{MAX_FUNCTION_BYTES, MAX_LOCALS};
+use split::{Branch, End, Signature, Stmt, Tail};
+use wasm::{Ctx, ModuleBuilder};
+pub use wasm::{Limits, MAX_FUNCTION_BYTES, MAX_LOCALS};
 
 /// The reason of a difference quotient which was asked for.
 pub const DIFFERENCE_REQUESTED: &str = "the difference quotient was requested";
@@ -61,8 +72,8 @@ pub const DIFFERENCE_REQUESTED: &str = "the difference quotient was requested";
 /// Emits `model.wasm` and its description, with the analytic Jacobian where the model has one
 /// ([`sbmlsim_ir::derive::jacobian`]), else the colored difference quotient.
 ///
-/// Refuses a model of which a function exceeds the limits of WebAssembly engines
-/// ([`MAX_FUNCTION_BYTES`], [`MAX_LOCALS`]).
+/// A function above [`MAX_FUNCTION_BYTES`] or [`MAX_LOCALS`] is split into helper functions;
+/// refuses a model of which one statement alone (with the lets it reads) is above them.
 pub fn emit(model: &Model) -> Result<(Vec<u8>, ModelDescription), CompileError> {
     emit_with(model, JacobianChoice::Auto)
 }
@@ -72,9 +83,10 @@ pub fn emit(model: &Model) -> Result<(Vec<u8>, ModelDescription), CompileError> 
 /// [`DIFFERENCE_REQUESTED`]), `Analytic` the analytic Jacobian, refused (`Unsupported`, with the
 /// reason) for a model which has none.
 ///
-/// A `model_jac` of the analytic Jacobian above the limits of WebAssembly engines is the
-/// colored difference quotient under `Auto` (with the reason naming its size) and refused
-/// under `Analytic`.
+/// A `model_jac` of the analytic Jacobian above the limits even when split (an entry or a
+/// derivative which alone, with the lets it reads, is above [`MAX_FUNCTION_BYTES`] or
+/// [`MAX_LOCALS`]) is the colored difference quotient under `Auto` (with the reason naming its
+/// size) and refused under `Analytic`.
 pub fn emit_with(
     model: &Model,
     choice: JacobianChoice,
@@ -88,14 +100,28 @@ pub fn emit_with(
 ///
 /// The kind of the Jacobian (and its refusal under `Analytic`) is decided from `model_jac` as
 /// written, as in [`emit_with`], so the description is the one of [`emit_with`] also near the
-/// limits, where an optimized `model_jac` may be within them and the one as written not. A
-/// module whose common subexpressions put a function above the limits (they add locals) is
-/// emitted without them, and as written when it is above them still.
+/// limits, where an optimized `model_jac` may be within them and the one as written not. Since
+/// the functions are split, that is only where one entry or derivative of `model_jac` as written
+/// (with the rules and derivatives it reads) is above them. A module whose common
+/// subexpressions put a statement above the limits is emitted without them, and as written when
+/// it is above them still.
 pub fn emit_optimized(
     model: &Model,
     choice: JacobianChoice,
 ) -> Result<(Vec<u8>, ModelDescription), CompileError> {
     emit_limited(model, choice, Limits::default(), true)
+}
+
+/// [`emit_optimized`] (`optimized`) or [`emit_with`] with other limits of the functions than
+/// [`MAX_FUNCTION_BYTES`] and [`MAX_LOCALS`]: lower ones split the functions of small models, which
+/// the tests of the splitting use (a split module gives the bits of the module as one).
+pub fn emit_with_limits(
+    model: &Model,
+    choice: JacobianChoice,
+    optimized: bool,
+    limits: Limits,
+) -> Result<(Vec<u8>, ModelDescription), CompileError> {
+    emit_limited(model, choice, limits, optimized)
 }
 
 /// [`emit_with`] or [`emit_optimized`] with the limits of the functions given (lower ones in
@@ -137,36 +163,78 @@ fn written_jac(
     model: &Model,
     jacobian: &JacobianIr,
 ) -> Result<(), CompileError> {
-    let ctx = Ctx { t: 0, y: 1, p: 2 };
-    let mut f = m.function(abi::JAC, &[F64, I32, I32, I32], &[], ctx);
     match jacobian {
         JacobianIr::Analytic {
             derivatives,
             entries,
             ..
         } => {
+            let mut stmts: Vec<Stmt<'_>> = Vec::new();
             if !entries.is_empty() {
-                f.assign_locals(&model.assignment_rules);
+                stmts.extend(rule_lets(model));
             }
-            for (k, d) in derivatives.iter().enumerate() {
-                f.assign_local(Symbol::Derivative(k as u32), d);
-            }
-            for (k, e) in entries.iter().enumerate() {
-                f.store_at(3, k as u32, e);
-            }
+            stmts.extend(
+                derivatives
+                    .iter()
+                    .enumerate()
+                    .map(|(k, d)| Stmt::Let(Symbol::Derivative(k as u32), d)),
+            );
+            stmts.extend(entries.iter().enumerate().map(|(k, e)| Stmt::StoreAt {
+                ptr: 3,
+                k: k as u32,
+                expr: e,
+            }));
+            m.sequence(&sig(abi::JAC, &[F64, I32, I32, I32], &[], VECTORS), &stmts)
         }
-        JacobianIr::ColoredDifference { .. } => f.unreachable(),
+        JacobianIr::ColoredDifference { .. } => trap(m, abi::JAC),
     }
-    f.finish()
+}
+
+/// A function of `(t, y, p, out)` which traps (`model_jac` of the difference quotient).
+fn trap(m: &mut ModuleBuilder, export: &'static str) -> Result<(), CompileError> {
+    let mut f = m.function(export, &[F64, I32, I32, I32], &[], VECTORS);
+    f.unreachable();
+    f.finish().map(|_| ())
+}
+
+/// The context of `(t, y, p, ...)`.
+const VECTORS: Ctx = Ctx { t: 0, y: 1, p: 2 };
+
+/// The context of `(i, t, y, p, ...)`, the functions of an event index.
+const INDEXED: Ctx = Ctx { t: 1, y: 2, p: 3 };
+
+/// The signature of a function of `model/1`.
+fn sig<'a>(
+    export: &'static str,
+    params: &'a [wasm_encoder::ValType],
+    results: &'a [wasm_encoder::ValType],
+    ctx: Ctx,
+) -> Signature<'a> {
+    Signature {
+        export,
+        params,
+        results,
+        ctx,
+    }
+}
+
+/// Every assignment rule into a local, in their order.
+fn rule_lets(model: &Model) -> impl Iterator<Item = Stmt<'_>> {
+    model
+        .assignment_rules
+        .iter()
+        .map(|a| Stmt::Let(a.target, &a.expr))
 }
 
 /// The Jacobian of a model for `choice`, decided from the model as written: the analytic one
 /// where the model has one, unless the difference quotient is asked for or `model_jac` as
-/// written is above the limits (then the colored difference quotient under `Auto`, with the
-/// reason naming the size of that function, and refused under `Analytic`).
+/// written is above the limits also when it is split, i.e. one of its entries or derivatives
+/// with the lets it reads (then the colored difference quotient under `Auto`, with the reason
+/// naming the size of that statement, and refused under `Analytic`).
 ///
 /// The size of a function does not depend on the others: an import of mathlib has an index
-/// below 128 in any order of the imports, one byte in the code.
+/// below 128 in any order of the imports, one byte in the code, and the index of a helper
+/// function is padded to five bytes.
 fn choose_jacobian(
     model: &Model,
     choice: JacobianChoice,
@@ -200,21 +268,38 @@ fn choose_jacobian(
     }
 }
 
-/// Emits the statements of a program: a let into a local, the output `k` with `output`.
-fn emit_program(
-    f: &mut wasm::Body<'_>,
-    program: &Program,
-    mut output: impl FnMut(&mut wasm::Body<'_>, u32, &Expr),
-) {
+/// The statements of a program: a let into a local, the output `k` the statement of `output`.
+fn program_stmts<'e>(
+    program: &'e Program,
+    mut output: impl FnMut(u32, &'e Expr) -> Stmt<'e>,
+) -> Vec<Stmt<'e>> {
     let mut k = 0;
+    program
+        .statements
+        .iter()
+        .map(|statement| match statement {
+            Statement::Let(symbol, e) => Stmt::Let(*symbol, e),
+            Statement::Output(e) => {
+                k += 1;
+                output(k - 1, e)
+            }
+        })
+        .collect()
+}
+
+/// The branch of a program of one output with `end` (a trigger, a priority, a delay).
+fn returning<'e>(program: &'e Program, end: fn(&'e Expr) -> End<'e>) -> Branch<'e> {
+    let mut stmts = Vec::new();
+    let mut value = None;
     for statement in &program.statements {
         match statement {
-            Statement::Let(symbol, e) => f.assign_local(*symbol, e),
-            Statement::Output(e) => {
-                output(f, k, e);
-                k += 1;
-            }
+            Statement::Let(symbol, e) => stmts.push(Stmt::Let(*symbol, e)),
+            Statement::Output(e) => value = Some(e),
         }
+    }
+    Branch::Program {
+        stmts,
+        end: end(value.expect("a branch of one output")),
     }
 }
 
@@ -230,46 +315,24 @@ fn module(
     }
     let mut m = ModuleBuilder::default();
     m.limits = limits;
-    // a function which reads no symbol
-    let none = Ctx { t: 0, y: 0, p: 0 };
 
-    // model_defaults(p, y)
-    let ctx = Ctx { t: 0, y: 1, p: 0 };
-    let mut f = m.function(abi::DEFAULTS, &[I32, I32], &[], ctx);
-    for (i, e) in model.parameters.iter().enumerate() {
-        f.store_constant(Symbol::Param(i as u32), e.default);
-    }
-    for (i, e) in model.states.iter().enumerate() {
-        f.store_constant(Symbol::State(i as u32), e.default);
-    }
-    f.finish()?;
+    defaults(&mut m, model)?;
 
     // model_init(t, p, y, fixed): fixed has a byte per parameter, then per state
-    let ctx = Ctx { t: 0, y: 2, p: 1 };
-    let mut f = m.function(abi::INIT, &[F64, I32, I32, I32], &[], ctx);
-    let n_params = model.parameters.len() as u32;
-    for a in &model.initial {
-        let k = match a.target {
-            Symbol::Param(i) => i,
-            Symbol::State(i) => n_params + i,
-            Symbol::Time | Symbol::Derivative(_) | Symbol::Common(_) => {
-                unreachable!("{:?} is no target", a.target)
-            }
-        };
-        f.store_unless_fixed(3, k, a.target, &a.expr);
-    }
-    f.finish()?;
+    let init: Vec<Stmt<'_>> = model
+        .initial
+        .iter()
+        .map(|a| Stmt::Unfixed {
+            fixed: 3,
+            k: fixed_index(model, a.target),
+            body: vec![Stmt::Store(a.target, &a.expr)],
+        })
+        .collect();
+    m.sequence(&sig(abi::INIT, &[F64, I32, I32, I32], &[], INIT), &init)?;
 
     // model_rhs(t, y, p, ydot)
-    let ctx = Ctx { t: 0, y: 1, p: 2 };
-    let mut f = m.function(abi::RHS, &[F64, I32, I32, I32], &[], ctx);
-    for a in &model.assignment_rules {
-        f.assign_local(a.target, &a.expr);
-    }
-    for (i, rate) in model.rates.iter().enumerate() {
-        f.store_at(3, i as u32, rate);
-    }
-    f.finish()?;
+    let rhs: Vec<Stmt<'_>> = rule_lets(model).chain(outputs(3, &model.rates)).collect();
+    m.sequence(&sig(abi::RHS, &[F64, I32, I32, I32], &[], VECTORS), &rhs)?;
 
     written_jac(&mut m, model, jacobian)?;
 
@@ -279,36 +342,43 @@ fn module(
         .iter()
         .flat_map(|e| e.root_functions())
         .collect();
-    let ctx = Ctx { t: 0, y: 1, p: 2 };
-    let mut f = m.function(abi::ROOTS, &[F64, I32, I32, I32], &[], ctx);
+    let mut stmts: Vec<Stmt<'_>> = Vec::new();
     if !roots.is_empty() {
-        f.assign_locals(&model.assignment_rules);
+        stmts.extend(rule_lets(model));
     }
-    for (k, root) in roots.iter().enumerate() {
-        f.store_at(3, k as u32, root);
-    }
-    f.finish()?;
+    stmts.extend(outputs(3, &roots));
+    m.sequence(
+        &sig(abi::ROOTS, &[F64, I32, I32, I32], &[], VECTORS),
+        &stmts,
+    )?;
 
     // the functions of an event index `i` (the local 0): a branch per event, which returns;
     // an index which is no event gives false, 0, or nothing
-    let indexed = Ctx { t: 1, y: 2, p: 3 };
     let events = &model.events;
-    let with_rules = |f: &mut wasm::Body<'_>| {
-        if !events.is_empty() {
-            f.assign_locals(&model.assignment_rules);
+    let prefix = |any: bool| -> Vec<Stmt<'_>> {
+        if any {
+            rule_lets(model).collect()
+        } else {
+            Vec::new()
         }
     };
 
     // model_trigger(i, t, y, p) -> i32
-    let mut f = m.function(abi::TRIGGER, &[I32, F64, I32, I32], &[I32], indexed);
-    with_rules(&mut f);
-    for (k, e) in events.iter().enumerate() {
-        f.if_index(0, k as u32);
-        f.return_bool(&e.trigger);
-        f.end();
-    }
-    f.i32_const(0);
-    f.finish()?;
+    let branches: Vec<Option<Branch<'_>>> = events
+        .iter()
+        .map(|e| {
+            Some(Branch::Program {
+                stmts: Vec::new(),
+                end: End::Bool(&e.trigger),
+            })
+        })
+        .collect();
+    m.indexed(
+        &sig(abi::TRIGGER, &[I32, F64, I32, I32], &[I32], INDEXED),
+        &prefix(!events.is_empty()),
+        &branches,
+        Tail::I32Zero,
+    )?;
 
     // model_priority(i, t, y, p) -> f64 and model_delay(i, t, y, p) -> f64, 0 without
     for (name, part) in [
@@ -318,77 +388,174 @@ fn module(
         ),
         (abi::DELAY, |e: &Event| e.delay.as_ref()),
     ] {
-        let mut f = m.function(name, &[I32, F64, I32, I32], &[F64], indexed);
-        if events.iter().any(|e| part(e).is_some()) {
-            f.assign_locals(&model.assignment_rules);
-        }
-        for (k, e) in events.iter().enumerate() {
-            if let Some(x) = part(e) {
-                f.if_index(0, k as u32);
-                f.return_f64(x);
-                f.end();
-            }
-        }
-        f.return_f64(&Expr::Number(0.0));
-        f.finish()?;
+        let branches: Vec<Option<Branch<'_>>> = events
+            .iter()
+            .map(|e| {
+                part(e).map(|x| Branch::Program {
+                    stmts: Vec::new(),
+                    end: End::F64(x),
+                })
+            })
+            .collect();
+        m.indexed(
+            &sig(name, &[I32, F64, I32, I32], &[F64], INDEXED),
+            &prefix(events.iter().any(|e| part(e).is_some())),
+            &branches,
+            Tail::F64Zero,
+        )?;
     }
 
     // model_event_values(i, t, y, p, out)
-    let mut f = m.function(abi::EVENT_VALUES, &[I32, F64, I32, I32, I32], &[], indexed);
-    with_rules(&mut f);
-    for (k, e) in events.iter().enumerate() {
-        f.if_index(0, k as u32);
-        for (j, a) in e.assignments.iter().enumerate() {
-            f.store_at(4, j as u32, &a.value);
-        }
-        f.return_();
-        f.end();
-    }
-    f.finish()?;
+    let branches: Vec<Option<Branch<'_>>> = events
+        .iter()
+        .map(|e| {
+            Some(Branch::Program {
+                stmts: e
+                    .assignments
+                    .iter()
+                    .enumerate()
+                    .map(|(j, a)| Stmt::StoreAt {
+                        ptr: 4,
+                        k: j as u32,
+                        expr: &a.value,
+                    })
+                    .collect(),
+                end: End::Return,
+            })
+        })
+        .collect();
+    m.indexed(
+        &sig(abi::EVENT_VALUES, &[I32, F64, I32, I32, I32], &[], INDEXED),
+        &prefix(!events.is_empty()),
+        &branches,
+        Tail::Nothing,
+    )?;
 
-    // model_event_apply(i, t, values, y, p)
-    let apply = Ctx { t: 1, y: 3, p: 4 };
-    let mut f = m.function(abi::EVENT_APPLY, &[I32, F64, I32, I32, I32], &[], apply);
-    for (k, e) in events.iter().enumerate() {
-        f.if_index(0, k as u32);
-        event_apply(model, e, &mut f);
-        f.return_();
-        f.end();
-    }
-    f.finish()?;
+    event_apply_function(&mut m, model)?;
 
     // model_selections(t, y, p, out)
-    let ctx = Ctx { t: 0, y: 1, p: 2 };
-    let mut f = m.function(abi::SELECTIONS, &[F64, I32, I32, I32], &[], ctx);
-    for a in &model.assignment_rules {
-        f.assign_local(a.target, &a.expr);
-    }
-    for (k, s) in model.selections.iter().enumerate() {
-        f.store_at(3, k as u32, &s.expr);
-    }
-    f.finish()?;
+    let selections: Vec<Stmt<'_>> = rule_lets(model)
+        .chain(
+            model
+                .selections
+                .iter()
+                .enumerate()
+                .map(|(k, s)| Stmt::StoreAt {
+                    ptr: 3,
+                    k: k as u32,
+                    expr: &s.expr,
+                }),
+        )
+        .collect();
+    m.sequence(
+        &sig(abi::SELECTIONS, &[F64, I32, I32, I32], &[], VECTORS),
+        &selections,
+    )?;
 
     // model_assign(t, y, p)
-    let mut f = m.function(abi::ASSIGN, &[F64, I32, I32], &[], ctx);
-    for a in &model.assignment_rules {
-        f.store(a.target, &a.expr);
-    }
-    f.finish()?;
+    let assign: Vec<Stmt<'_>> = model
+        .assignment_rules
+        .iter()
+        .map(|a| Stmt::Store(a.target, &a.expr))
+        .collect();
+    m.sequence(&sig(abi::ASSIGN, &[F64, I32, I32], &[], VECTORS), &assign)?;
 
-    // model_sizes(out) and model_event_sizes(out)
-    let sizes = sizes(model, jacobian);
-    let mut f = m.function(abi::SIZES, &[I32], &[], none);
-    for (k, x) in sizes.words().into_iter().enumerate() {
-        f.store_i32_at(0, k as u32, x);
-    }
-    f.finish()?;
-    let mut f = m.function(abi::EVENT_SIZES, &[I32], &[], none);
-    for (k, x) in sizes.assignments.iter().enumerate() {
-        f.store_i32_at(0, k as u32, *x);
-    }
-    f.finish()?;
-
+    size_functions(&mut m, model, jacobian)?;
     Ok(m.finish())
+}
+
+/// The context of `model_init(t, p, y, fixed)`.
+const INIT: Ctx = Ctx { t: 0, y: 2, p: 1 };
+
+/// The index of the byte of `fixed` of a target: a byte per parameter, then per state.
+fn fixed_index(model: &Model, target: Symbol) -> u32 {
+    match target {
+        Symbol::Param(i) => i,
+        Symbol::State(i) => model.parameters.len() as u32 + i,
+        Symbol::Time | Symbol::Derivative(_) | Symbol::Common(_) => {
+            unreachable!("{target:?} is no target")
+        }
+    }
+}
+
+/// `out[k] = e` of the expressions, `out` the pointer in the local `ptr`.
+fn outputs(ptr: u32, exprs: &[Expr]) -> impl Iterator<Item = Stmt<'_>> {
+    exprs.iter().enumerate().map(move |(k, e)| Stmt::StoreAt {
+        ptr,
+        k: k as u32,
+        expr: e,
+    })
+}
+
+/// `model_defaults(p, y)`: the default of every parameter and state.
+fn defaults(m: &mut ModuleBuilder, model: &Model) -> Result<(), CompileError> {
+    let stmts: Vec<Stmt<'_>> = model
+        .parameters
+        .iter()
+        .enumerate()
+        .map(|(i, e)| Stmt::Constant(Symbol::Param(i as u32), e.default))
+        .chain(
+            model
+                .states
+                .iter()
+                .enumerate()
+                .map(|(i, e)| Stmt::Constant(Symbol::State(i as u32), e.default)),
+        )
+        .collect();
+    let ctx = Ctx { t: 0, y: 1, p: 0 };
+    m.sequence(&sig(abi::DEFAULTS, &[I32, I32], &[], ctx), &stmts)
+}
+
+/// `model_event_apply(i, t, values, y, p)`, as written (the values in the local 2).
+fn event_apply_function(m: &mut ModuleBuilder, model: &Model) -> Result<(), CompileError> {
+    let branches: Vec<Option<Branch<'_>>> = model
+        .events
+        .iter()
+        .map(|e| {
+            Some(Branch::Custom(Box::new(move |f: &mut wasm::Body<'_>| {
+                event_apply(model, e, f)
+            })))
+        })
+        .collect();
+    let apply = Ctx { t: 1, y: 3, p: 4 };
+    m.indexed(
+        &sig(abi::EVENT_APPLY, &[I32, F64, I32, I32, I32], &[], apply),
+        &[],
+        &branches,
+        Tail::Nothing,
+    )
+}
+
+/// `model_sizes(out)` and `model_event_sizes(out)`.
+fn size_functions(
+    m: &mut ModuleBuilder,
+    model: &Model,
+    jacobian: &JacobianIr,
+) -> Result<(), CompileError> {
+    let sizes = sizes(model, jacobian);
+    let none = Ctx { t: 0, y: 0, p: 0 };
+    let words: Vec<Stmt<'_>> = sizes
+        .words()
+        .into_iter()
+        .enumerate()
+        .map(|(k, x)| Stmt::I32At {
+            ptr: 0,
+            k: k as u32,
+            x,
+        })
+        .collect();
+    m.sequence(&sig(abi::SIZES, &[I32], &[], none), &words)?;
+    let counts: Vec<Stmt<'_>> = sizes
+        .assignments
+        .iter()
+        .enumerate()
+        .map(|(k, x)| Stmt::I32At {
+            ptr: 0,
+            k: k as u32,
+            x: *x,
+        })
+        .collect();
+    m.sequence(&sig(abi::EVENT_SIZES, &[I32], &[], none), &counts)
 }
 
 /// The module of a model from the programs of the optimizer, with the outputs of the code as
@@ -402,139 +569,113 @@ fn optimized_module(
 ) -> Result<Vec<u8>, CompileError> {
     let mut m = ModuleBuilder::default();
     m.limits = limits;
-    let none = Ctx { t: 0, y: 0, p: 0 };
 
-    // model_defaults(p, y)
-    let ctx = Ctx { t: 0, y: 1, p: 0 };
-    let mut f = m.function(abi::DEFAULTS, &[I32, I32], &[], ctx);
-    for (i, e) in model.parameters.iter().enumerate() {
-        f.store_constant(Symbol::Param(i as u32), e.default);
-    }
-    for (i, e) in model.states.iter().enumerate() {
-        f.store_constant(Symbol::State(i as u32), e.default);
-    }
-    f.finish()?;
+    defaults(&mut m, model)?;
 
     // model_init(t, p, y, fixed): each initial evaluation in the block of its target
-    let ctx = Ctx { t: 0, y: 2, p: 1 };
-    let mut f = m.function(abi::INIT, &[F64, I32, I32, I32], &[], ctx);
-    let n_params = model.parameters.len() as u32;
-    for (a, program) in model.initial.iter().zip(&plan.init) {
-        let k = match a.target {
-            Symbol::Param(i) => i,
-            Symbol::State(i) => n_params + i,
-            Symbol::Time | Symbol::Derivative(_) | Symbol::Common(_) => {
-                unreachable!("{:?} is no target", a.target)
-            }
-        };
-        f.if_not_fixed(3, k);
-        emit_program(&mut f, program, |f, _, e| f.store(a.target, e));
-        f.end();
-    }
-    f.finish()?;
+    let init: Vec<Stmt<'_>> = model
+        .initial
+        .iter()
+        .zip(&plan.init)
+        .map(|(a, program)| Stmt::Unfixed {
+            fixed: 3,
+            k: fixed_index(model, a.target),
+            body: program_stmts(program, |_, e| Stmt::Store(a.target, e)),
+        })
+        .collect();
+    m.sequence(&sig(abi::INIT, &[F64, I32, I32, I32], &[], INIT), &init)?;
 
     // model_rhs(t, y, p, ydot), model_jac(t, y, p, values), model_roots(t, y, p, g)
-    let ctx = Ctx { t: 0, y: 1, p: 2 };
-    let mut f = m.function(abi::RHS, &[F64, I32, I32, I32], &[], ctx);
-    emit_program(&mut f, &plan.rhs, |f, k, e| f.store_at(3, k, e));
-    f.finish()?;
-    let mut f = m.function(abi::JAC, &[F64, I32, I32, I32], &[], ctx);
+    let out = |k, e| Stmt::StoreAt { ptr: 3, k, expr: e };
+    let vectors = |export| sig(export, &[F64, I32, I32, I32], &[], VECTORS);
+    m.sequence(&vectors(abi::RHS), &program_stmts(&plan.rhs, out))?;
     match (jacobian, &plan.jac) {
         (JacobianIr::Analytic { .. }, Some(program)) => {
-            emit_program(&mut f, program, |f, k, e| f.store_at(3, k, e))
+            m.sequence(&vectors(abi::JAC), &program_stmts(program, out))?
         }
-        (JacobianIr::ColoredDifference { .. }, None) => f.unreachable(),
+        (JacobianIr::ColoredDifference { .. }, None) => trap(&mut m, abi::JAC)?,
         _ => unreachable!("the plan is of another Jacobian"),
     }
-    f.finish()?;
-    let mut f = m.function(abi::ROOTS, &[F64, I32, I32, I32], &[], ctx);
-    emit_program(&mut f, &plan.roots, |f, k, e| f.store_at(3, k, e));
-    f.finish()?;
+    m.sequence(&vectors(abi::ROOTS), &program_stmts(&plan.roots, out))?;
 
     // the functions of an event index `i` (the local 0)
-    let indexed = Ctx { t: 1, y: 2, p: 3 };
+    let lets = |program| program_stmts(program, |_, _| unreachable!("a let"));
 
     // model_trigger(i, t, y, p) -> i32
-    let mut f = m.function(abi::TRIGGER, &[I32, F64, I32, I32], &[I32], indexed);
-    emit_program(&mut f, &plan.trigger.prefix, |_, _, _| {
-        unreachable!("a let")
-    });
-    for (k, branch) in plan.trigger.branches.iter().enumerate() {
-        let branch = branch.as_ref().expect("every event has a trigger");
-        f.if_index(0, k as u32);
-        emit_program(&mut f, branch, |f, _, e| f.return_bool(e));
-        f.end();
-    }
-    f.i32_const(0);
-    f.finish()?;
+    let branches: Vec<Option<Branch<'_>>> = plan
+        .trigger
+        .branches
+        .iter()
+        .map(|b| {
+            let b = b.as_ref().expect("every event has a trigger");
+            Some(returning(b, End::Bool))
+        })
+        .collect();
+    m.indexed(
+        &sig(abi::TRIGGER, &[I32, F64, I32, I32], &[I32], INDEXED),
+        &lets(&plan.trigger.prefix),
+        &branches,
+        Tail::I32Zero,
+    )?;
 
     // model_priority(i, t, y, p) -> f64 and model_delay(i, t, y, p) -> f64, 0 without
     for (name, part) in [(abi::PRIORITY, &plan.priority), (abi::DELAY, &plan.delay)] {
-        let mut f = m.function(name, &[I32, F64, I32, I32], &[F64], indexed);
-        emit_program(&mut f, &part.prefix, |_, _, _| unreachable!("a let"));
-        for (k, branch) in part.branches.iter().enumerate() {
-            if let Some(branch) = branch {
-                f.if_index(0, k as u32);
-                emit_program(&mut f, branch, |f, _, e| f.return_f64(e));
-                f.end();
-            }
-        }
-        f.return_f64(&Expr::Number(0.0));
-        f.finish()?;
+        let branches: Vec<Option<Branch<'_>>> = part
+            .branches
+            .iter()
+            .map(|b| b.as_ref().map(|b| returning(b, End::F64)))
+            .collect();
+        m.indexed(
+            &sig(name, &[I32, F64, I32, I32], &[F64], INDEXED),
+            &lets(&part.prefix),
+            &branches,
+            Tail::F64Zero,
+        )?;
     }
 
     // model_event_values(i, t, y, p, out)
-    let mut f = m.function(abi::EVENT_VALUES, &[I32, F64, I32, I32, I32], &[], indexed);
-    emit_program(&mut f, &plan.event_values.prefix, |_, _, _| {
-        unreachable!("a let")
-    });
-    for (k, branch) in plan.event_values.branches.iter().enumerate() {
-        let branch = branch.as_ref().expect("every event has its values");
-        f.if_index(0, k as u32);
-        emit_program(&mut f, branch, |f, j, e| f.store_at(4, j, e));
-        f.return_();
-        f.end();
-    }
-    f.finish()?;
+    let branches: Vec<Option<Branch<'_>>> = plan
+        .event_values
+        .branches
+        .iter()
+        .map(|b| {
+            let b = b.as_ref().expect("every event has its values");
+            Some(Branch::Program {
+                stmts: program_stmts(b, |j, e| Stmt::StoreAt {
+                    ptr: 4,
+                    k: j,
+                    expr: e,
+                }),
+                end: End::Return,
+            })
+        })
+        .collect();
+    m.indexed(
+        &sig(abi::EVENT_VALUES, &[I32, F64, I32, I32, I32], &[], INDEXED),
+        &lets(&plan.event_values.prefix),
+        &branches,
+        Tail::Nothing,
+    )?;
 
     // model_event_apply(i, t, values, y, p), as written
-    let apply = Ctx { t: 1, y: 3, p: 4 };
-    let mut f = m.function(abi::EVENT_APPLY, &[I32, F64, I32, I32, I32], &[], apply);
-    for (k, e) in model.events.iter().enumerate() {
-        f.if_index(0, k as u32);
-        event_apply(model, e, &mut f);
-        f.return_();
-        f.end();
-    }
-    f.finish()?;
+    event_apply_function(&mut m, model)?;
 
     // model_selections(t, y, p, out)
-    let ctx = Ctx { t: 0, y: 1, p: 2 };
-    let mut f = m.function(abi::SELECTIONS, &[F64, I32, I32, I32], &[], ctx);
-    emit_program(&mut f, &plan.selections, |f, k, e| f.store_at(3, k, e));
-    f.finish()?;
+    m.sequence(
+        &vectors(abi::SELECTIONS),
+        &program_stmts(&plan.selections, out),
+    )?;
 
     // model_assign(t, y, p): every rule stored before the next one reads the memory
-    let mut f = m.function(abi::ASSIGN, &[F64, I32, I32], &[], ctx);
     let rules = &model.assignment_rules;
-    emit_program(&mut f, &plan.assign, |f, k, e| {
-        f.store(rules[k as usize].target, e)
-    });
-    f.finish()?;
+    m.sequence(
+        &sig(abi::ASSIGN, &[F64, I32, I32], &[], VECTORS),
+        &program_stmts(&plan.assign, |k, e| {
+            Stmt::Store(rules[k as usize].target, e)
+        }),
+    )?;
 
-    // model_sizes(out) and model_event_sizes(out)
-    let sizes = sizes(model, jacobian);
-    let mut f = m.function(abi::SIZES, &[I32], &[], none);
-    for (k, x) in sizes.words().into_iter().enumerate() {
-        f.store_i32_at(0, k as u32, x);
-    }
-    f.finish()?;
-    let mut f = m.function(abi::EVENT_SIZES, &[I32], &[], none);
-    for (k, x) in sizes.assignments.iter().enumerate() {
-        f.store_i32_at(0, k as u32, *x);
-    }
-    f.finish()?;
-
+    size_functions(&mut m, model, jacobian)?;
     Ok(m.finish())
 }
 
@@ -779,15 +920,17 @@ mod tests {
 
     const MATH: &str = r#"xmlns="http://www.w3.org/1998/Math/MathML""#;
 
-    /// `x' = -b` with the rule `b = x * x + y` and `y' = 1`: `model_jac` has one more local than
-    /// any other function (the derivative `x + x` of the rule).
-    fn chain() -> Model {
+    /// `x' = -(b * x * 1)` with the rule `b = x * x + y` and `y' = 1`: an entry of `model_jac`
+    /// reads the rule and its derivative at once, one more local than any statement of another
+    /// function; the rate as written (with `* 1`, which the optimizer folds) is the largest
+    /// statement of `model_rhs`.
+    fn product() -> Model {
         let xml = format!(
             r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2"><model id="m">
 <listOfParameters><parameter id="x" value="1" constant="false"/><parameter id="y" value="1" constant="false"/><parameter id="b" constant="false"/></listOfParameters>
 <listOfRules>
 <assignmentRule variable="b"><math {MATH}><apply><plus/><apply><times/><ci>x</ci><ci>x</ci></apply><ci>y</ci></apply></math></assignmentRule>
-<rateRule variable="x"><math {MATH}><apply><minus/><ci>b</ci></apply></math></rateRule>
+<rateRule variable="x"><math {MATH}><apply><minus/><apply><times/><ci>b</ci><ci>x</ci><cn>1</cn></apply></apply></math></rateRule>
 <rateRule variable="y"><math {MATH}><cn>1</cn></math></rateRule>
 </listOfRules></model></sbml>"#
         );
@@ -827,11 +970,12 @@ mod tests {
                 .filter(|op| matches!(op.as_ref().unwrap(), wasmparser::Operator::Call { .. }))
                 .count()
         };
-        // with the common subexpressions model_rhs has 4 parameters and 2 locals
+        // with the common subexpressions model_rhs has 4 parameters and 1 local (exp(x), given
+        // back after the rate of x and then exp(y)), model_jac 2 locals
         let (wasm, d) = emit_limited(&m, JacobianChoice::Auto, Limits::default(), true).unwrap();
         assert_eq!(exps(&wasm), 2);
         assert!(matches!(d.jacobian, JacobianKind::Analytic(_)));
-        // above 5 locals: without them, every exp of the code as written
+        // above 5 locals (model_jac): without them, every exp of the code as written
         let limits = Limits {
             bytes: MAX_FUNCTION_BYTES,
             locals: 5,
@@ -854,14 +998,14 @@ mod tests {
     /// above them.
     #[test]
     fn the_jacobian_is_chosen_from_the_model_as_written() {
-        let m = chain();
+        let m = product();
         let mut limits: Vec<Limits> = (1..=10)
             .map(|locals| Limits {
                 bytes: MAX_FUNCTION_BYTES,
                 locals,
             })
             .collect();
-        limits.extend((1..=120).map(|bytes| Limits {
+        limits.extend((1..=200).map(|bytes| Limits {
             bytes,
             locals: MAX_LOCALS,
         }));
@@ -896,21 +1040,21 @@ mod tests {
                 }
             }
         }
-        assert!(compared > 200, "{compared}");
+        assert!(compared > 300, "{compared}");
 
-        // 5 locals: model_jac as written has 6 (the rule b and its derivative), the optimized
-        // one 5 (no rule b, which the derivative x + x does not read), every other function 5
+        // 5 locals: the entry of model_jac reads the rule b and its derivative (6 locals with
+        // the parameters); the optimized module is within them (the rule is folded into the
+        // entry with the common subexpressions or not), model_jac as written decides
         let limits = Limits {
             bytes: MAX_FUNCTION_BYTES,
             locals: 5,
         };
         let analytic = derive::jacobian(&m);
-        for cse in [true, false] {
-            let plan = optimize::plan(&m, &analytic, cse);
-            assert!(module(&m, &analytic, limits, Some(&plan)).is_ok());
-        }
-        let reason = "model_jac would be a function above the limits of WebAssembly engines (74 \
-                      bytes, 6 locals; at most 7654321 bytes and 5 locals)";
+        let mut written = ModuleBuilder::default();
+        written.limits = limits;
+        assert!(written_jac(&mut written, &m, &analytic).is_err());
+        let reason = "model_jac would be a function above the limits of WebAssembly engines (one \
+                      statement: 82 bytes, 6 locals; at most 1000000 bytes and 5 locals)";
         for optimized in [false, true] {
             let (_, d) = emit_limited(&m, JacobianChoice::Auto, limits, optimized).unwrap();
             let JacobianKind::ColoredDifference { reason: r, .. } = &d.jacobian else {
@@ -923,28 +1067,43 @@ mod tests {
                 "{error:?}"
             );
         }
-        // within the limits of model_jac as written both are analytic
-        let limits = Limits {
-            bytes: 74,
-            locals: 6,
-        };
-        for optimized in [false, true] {
-            let (_, d) = emit_limited(&m, JacobianChoice::Analytic, limits, optimized).unwrap();
-            assert!(matches!(d.jacobian, JacobianKind::Analytic(_)));
+
+        // bytes: where model_jac as written is above the limits and the optimized one within
+        // them, the optimized module is the colored difference quotient as well
+        let mut only_written = 0;
+        for bytes in 1..=200 {
+            let limits = Limits {
+                bytes,
+                locals: MAX_LOCALS,
+            };
+            let mut written = ModuleBuilder::default();
+            written.limits = limits;
+            let mut optimized = ModuleBuilder::default();
+            optimized.limits = limits;
+            let plan = optimize::plan(&m, &analytic, true);
+            let program = plan.jac.as_ref().unwrap();
+            let out = |k, e| Stmt::StoreAt { ptr: 3, k, expr: e };
+            let jac = sig(abi::JAC, &[F64, I32, I32, I32], &[], VECTORS);
+            if written_jac(&mut written, &m, &analytic).is_err()
+                && optimized
+                    .sequence(&jac, &program_stmts(program, out))
+                    .is_ok()
+            {
+                only_written += 1;
+                if let Ok((_, d)) = emit_limited(&m, JacobianChoice::Auto, limits, true) {
+                    assert!(
+                        matches!(d.jacobian, JacobianKind::ColoredDifference { .. }),
+                        "{bytes}"
+                    );
+                }
+            }
         }
-        let limits = Limits {
-            bytes: 73,
-            locals: 6,
-        };
-        for optimized in [false, true] {
-            let (_, d) = emit_limited(&m, JacobianChoice::Auto, limits, optimized).unwrap();
-            assert!(matches!(d.jacobian, JacobianKind::ColoredDifference { .. }));
-        }
+        assert!(only_written > 0);
     }
 
     #[test]
     fn a_model_jac_above_the_limits_is_the_difference_quotient_under_auto() {
-        let m = chain();
+        let m = product();
         let JacobianIr::Analytic { derivatives, .. } = derive::jacobian(&m) else {
             panic!()
         };
@@ -965,8 +1124,8 @@ mod tests {
         assert_eq!(pattern.row_idx, [0, 0]);
         assert_eq!(
             reason,
-            "model_jac would be a function above the limits of WebAssembly engines (\
-             74 bytes, 6 locals; at most 7654321 bytes and 5 locals)"
+            "model_jac would be a function above the limits of WebAssembly engines (one \
+             statement: 82 bytes, 6 locals; at most 1000000 bytes and 5 locals)"
         );
         // the analytic Jacobian asked for is refused with the error of the limits
         let error = emit_limited(&m, JacobianChoice::Analytic, limits, false).unwrap_err();

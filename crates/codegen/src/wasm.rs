@@ -5,10 +5,11 @@
 //! `model/1` and exports them, and has no memory, table, global, data segment or start function
 //! of its own. A function is a list of statements, each one store of one expression into the
 //! memory or into a local; temporaries are locals. Every function is checked against the limits
-//! WebAssembly engines put on a function ([`MAX_FUNCTION_BYTES`], [`MAX_LOCALS`]), so a module
-//! above them is an error and not a module an engine refuses. Statements are independent of
-//! each other but for the locals of the assignment rules, so a later split of a large function
-//! into helper functions cuts its list of statements.
+//! [`MAX_FUNCTION_BYTES`] (the whole encoded body, the declaration of its locals included) and
+//! [`MAX_LOCALS`] (with the parameters), which are well below the limits of V8 (7,654,321
+//! bytes and 50,000 locals); a function of the code generation above them is split into helper
+//! functions (`split.rs`), and a statement which alone is above them is an error and not a
+//! module an engine refuses.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -21,10 +22,13 @@ use wasm_encoder::{
 
 use crate::math::{HALF_PI, QUOTIENT_HIGH, QUOTIENT_INVALID, QUOTIENT_LOW, is_boolean};
 
-/// The largest body of a function V8 compiles, in bytes.
-pub const MAX_FUNCTION_BYTES: usize = 7_654_321;
-/// The most locals (with the parameters) of a function V8 compiles.
-pub const MAX_LOCALS: usize = 50_000;
+/// The largest encoded body of a function of `model.wasm` in bytes (the declaration of the
+/// locals, the code and its `end`); a larger function is split into helper functions. Below
+/// V8's limit of 7,654,321 bytes, and small enough that V8 compiles a function quickly.
+pub const MAX_FUNCTION_BYTES: usize = 1_000_000;
+/// The most locals (with the parameters) of a function of `model.wasm`; a function with more is
+/// split into helper functions. Below V8's limit of 50,000, and a frame of at most 160 kB.
+pub const MAX_LOCALS: usize = 20_000;
 
 /// The feature of the error of a function above the limits ([`Body::finish`]).
 pub(crate) const ABOVE_THE_LIMITS: &str = "a function above the limits of WebAssembly engines";
@@ -86,9 +90,9 @@ impl MathFn {
 /// A signature of a function.
 type Signature = (Vec<ValType>, Vec<ValType>);
 
-/// The limits a function is checked against.
+/// The limits a function is checked against (and split above).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Limits {
+pub struct Limits {
     /// The largest body in bytes.
     pub bytes: usize,
     /// The most locals, with the parameters.
@@ -116,12 +120,32 @@ pub(crate) struct ModuleBuilder {
     pub limits: Limits,
 }
 
-/// A function the module defines and exports.
+/// A function the module defines: a function of `model/1` it exports, or a helper function of a
+/// split one.
 struct DefinedFunction {
-    export: &'static str,
+    export: Option<&'static str>,
     ty: u32,
     locals: u32,
     code: Vec<u8>,
+    /// The calls of helper functions: the offset of the padded index in the code and the
+    /// position of the callee among the defined functions.
+    calls: Vec<(usize, u32)>,
+}
+
+/// The bytes of the index of a call of a helper function: a LEB128 padded to its most bytes,
+/// patched when the module is finished (the index of a defined function follows the imports of
+/// mathlib, which are known only then).
+const CALL_INDEX_BYTES: usize = 5;
+
+/// The number of bytes of the unsigned LEB128 of `x`.
+fn leb_len(x: u64) -> usize {
+    (64 - x.max(1).leading_zeros() as usize).div_ceil(7)
+}
+
+/// The size of the encoded body of a function of `locals` locals (one group of `f64`) and `code`
+/// bytes of code without its `end`.
+pub(crate) fn body_size(locals: u32, code: usize) -> usize {
+    leb_len(1) + leb_len(u64::from(locals)) + 1 + code + 1
 }
 
 impl ModuleBuilder {
@@ -148,10 +172,21 @@ impl ModuleBuilder {
         index
     }
 
-    /// Starts a function of the given parameters and result.
+    /// Starts a function of the given parameters and result, exported as `export`.
     pub(crate) fn function<'b>(
         &'b mut self,
         export: &'static str,
+        params: &[ValType],
+        results: &[ValType],
+        ctx: Ctx,
+    ) -> Body<'b> {
+        self.body(Some(export), params, results, ctx)
+    }
+
+    /// Starts a function, exported as `export` or a helper function without.
+    pub(crate) fn body<'b>(
+        &'b mut self,
+        export: Option<&'static str>,
         params: &[ValType],
         results: &[ValType],
         ctx: Ctx,
@@ -165,6 +200,7 @@ impl ModuleBuilder {
             n_locals: 0,
             free: Vec::new(),
             code: Vec::new(),
+            calls: Vec::new(),
             ctx,
             rules: HashMap::new(),
         }
@@ -203,9 +239,19 @@ impl ModuleBuilder {
         let mut exports = ExportSection::new();
         let mut code = CodeSection::new();
         let first = self.math.len() as u32;
-        for (i, f) in self.functions.iter().enumerate() {
+        for (i, f) in self.functions.iter_mut().enumerate() {
             functions.function(f.ty);
-            exports.export(f.export, ExportKind::Func, first + i as u32);
+            if let Some(export) = f.export {
+                exports.export(export, ExportKind::Func, first + i as u32);
+            }
+            for &(offset, callee) in &f.calls {
+                let mut index = first + callee;
+                for byte in &mut f.code[offset..offset + CALL_INDEX_BYTES] {
+                    *byte = (index & 0x7f) as u8 | 0x80;
+                    index >>= 7;
+                }
+                f.code[offset + CALL_INDEX_BYTES - 1] &= 0x7f;
+            }
             let mut body = Function::new([(f.locals, ValType::F64)]);
             body.raw(f.code.iter().copied());
             code.function(&body);
@@ -233,12 +279,14 @@ pub(crate) struct Ctx {
 /// The body of a function being built.
 pub(crate) struct Body<'b> {
     module: &'b mut ModuleBuilder,
-    export: &'static str,
+    export: Option<&'static str>,
     ty: u32,
     n_params: u32,
     n_locals: u32,
     free: Vec<u32>,
     code: Vec<u8>,
+    /// The calls of helper functions ([`DefinedFunction::calls`]).
+    calls: Vec<(usize, u32)>,
     ctx: Ctx,
     /// The locals holding the values of the targets of assignment rules, which the expressions
     /// read instead of the memory.
@@ -269,9 +317,97 @@ fn f64c(x: f64) -> Ieee64 {
     Ieee64::from(x)
 }
 
+/// A position in a body to go back to ([`Body::mark`], [`Body::rollback`]).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Mark {
+    code: usize,
+    calls: usize,
+    n_locals: u32,
+}
+
 impl Body<'_> {
     fn sink(&mut self) -> InstructionSink<'_> {
         InstructionSink::new(&mut self.code)
+    }
+
+    /// The position after the code so far.
+    pub(crate) fn mark(&self) -> Mark {
+        Mark {
+            code: self.code.len(),
+            calls: self.calls.len(),
+            n_locals: self.n_locals,
+        }
+    }
+
+    /// Drops the code and the locals after `mark`; the function is only finished after it
+    /// (the locals of the expressions and the rules may refer to dropped locals).
+    pub(crate) fn rollback(&mut self, mark: Mark) {
+        self.code.truncate(mark.code);
+        self.calls.truncate(mark.calls);
+        self.n_locals = mark.n_locals;
+    }
+
+    /// Whether the function, finished now, is within the limits of the module.
+    pub(crate) fn within_limits(&self) -> bool {
+        self.within_limits_with(0)
+    }
+
+    /// Whether the function, finished after `bytes` more bytes of code, is within the limits.
+    pub(crate) fn within_limits_with(&self, bytes: usize) -> bool {
+        let limits = self.module.limits;
+        self.size() + bytes <= limits.bytes && self.locals() <= limits.locals
+    }
+
+    /// The size of the encoded body if the function were finished now.
+    pub(crate) fn size(&self) -> usize {
+        body_size(self.n_locals, self.code.len())
+    }
+
+    /// The number of locals with the parameters.
+    pub(crate) fn locals(&self) -> usize {
+        (self.n_params + self.n_locals) as usize
+    }
+
+    /// The value of an expression into a local (one given back before, or a new one), which
+    /// later expressions read for `symbol` until [`Body::release_let`].
+    pub(crate) fn let_(&mut self, symbol: Symbol, e: &Expr) {
+        self.f64(e);
+        let local = self.temp();
+        self.sink().local_set(local);
+        self.rules.insert(symbol, local);
+    }
+
+    /// Whether a local holds the value of `symbol`.
+    pub(crate) fn has_let(&self, symbol: Symbol) -> bool {
+        self.rules.contains_key(&symbol)
+    }
+
+    /// Gives back the local of `symbol` (after the last statement which reads it): later
+    /// expressions read the memory for it, and later locals may reuse the local.
+    pub(crate) fn release_let(&mut self, symbol: Symbol) {
+        if let Some(local) = self.rules.remove(&symbol) {
+            self.free.push(local);
+        }
+    }
+
+    /// `local.get` of every parameter, then the call of the helper function at the position
+    /// `callee` among the defined functions.
+    pub(crate) fn call_helper(&mut self, callee: u32) {
+        for i in 0..self.n_params {
+            self.sink().local_get(i);
+        }
+        self.code.push(0x10);
+        self.calls.push((self.code.len(), callee));
+        self.code.extend_from_slice(&[0; CALL_INDEX_BYTES]);
+    }
+
+    /// `if (local 0 as u32) < k {`, the `i32` index in the local 0; closed by [`Body::end`].
+    pub(crate) fn if_index_below(&mut self, k: u32) {
+        self.sink()
+            .local_get(0)
+            .i32_const(k as i32)
+            .i32_lt_u()
+            .if_(BlockType::Empty);
     }
 
     /// A new `f64` local.
@@ -315,13 +451,6 @@ impl Body<'_> {
             .local_get(ptr)
             .f64_const(f64c(x))
             .f64_store(slot(i));
-    }
-
-    /// `if fixed[k] == 0 { target = expr }`, `fixed` the pointer in the local `fixed`.
-    pub(crate) fn store_unless_fixed(&mut self, fixed: u32, k: u32, target: Symbol, expr: &Expr) {
-        self.if_not_fixed(fixed, k);
-        self.store(target, expr);
-        self.sink().end();
     }
 
     /// `if fixed[k] == 0 {`, `fixed` the pointer in the local `fixed`; closed by [`Body::end`].
@@ -500,30 +629,37 @@ impl Body<'_> {
         }
     }
 
-    /// Ends the function, checks it against the limits and adds it to the module.
-    pub(crate) fn finish(mut self) -> Result<(), CompileError> {
-        self.sink().end();
-        let locals = (self.n_params + self.n_locals) as usize;
+    /// The error of this function (of the export `element`) above the limits.
+    pub(crate) fn above_the_limits(&self, element: &str, what: &str) -> CompileError {
         let limits = self.module.limits;
-        if self.code.len() > limits.bytes || locals > limits.locals {
-            return Err(CompileError::Unsupported {
-                feature: format!(
-                    "{ABOVE_THE_LIMITS} ({} bytes, {locals} locals; at most {} bytes and {} \
-                     locals)",
-                    self.code.len(),
-                    limits.bytes,
-                    limits.locals
-                ),
-                element: self.export.to_string(),
-            });
+        CompileError::Unsupported {
+            feature: format!(
+                "{ABOVE_THE_LIMITS} ({what}{} bytes, {} locals; at most {} bytes and {} locals)",
+                self.size(),
+                self.locals(),
+                limits.bytes,
+                limits.locals
+            ),
+            element: element.to_string(),
         }
+    }
+
+    /// Ends the function, checks it against the limits and adds it to the module; gives its
+    /// position among the defined functions.
+    pub(crate) fn finish(mut self) -> Result<u32, CompileError> {
+        if !self.within_limits() {
+            return Err(self.above_the_limits(self.export.unwrap_or("a helper function"), ""));
+        }
+        self.sink().end();
+        let position = self.module.functions.len() as u32;
         self.module.functions.push(DefinedFunction {
             export: self.export,
             ty: self.ty,
             locals: self.n_locals,
             code: self.code,
+            calls: self.calls,
         });
-        Ok(())
+        Ok(position)
     }
 
     /// Reads a symbol.

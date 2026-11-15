@@ -20,6 +20,9 @@ rayon = "1.10"
 serde.workspace = true
 serde_json.workspace = true
 
+[dev-dependencies]
+wasmparser = "0.263"
+
 [lib]
 name = "sbmlsim_cli"
 path = "src/lib.rs"

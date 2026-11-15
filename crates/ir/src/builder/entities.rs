@@ -67,10 +67,18 @@ impl<'m> Builder<'m> {
                 }
             }
         }
+        let mut refs_of: HashMap<&'m str, Vec<usize>> = HashMap::new();
+        for (i, r) in refs.iter().enumerate() {
+            refs_of
+                .entry(r.reference.species.as_str())
+                .or_default()
+                .push(i);
+        }
         Ok(Builder {
             m,
             items,
             refs,
+            refs_of,
             symbols: HashMap::new(),
             assignment_rule: HashMap::new(),
             rate_rule: HashMap::new(),

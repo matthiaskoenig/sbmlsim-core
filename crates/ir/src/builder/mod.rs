@@ -64,6 +64,8 @@ struct Builder<'m> {
     m: &'m Sbml,
     items: HashMap<&'m str, Item>,
     refs: Vec<Ref<'m>>,
+    /// The positions in `refs` of the references of each species, in their order.
+    refs_of: HashMap<&'m str, Vec<usize>>,
     symbols: HashMap<&'m str, Symbol>,
     /// The position in the list of rules of the assignment rule of an id.
     assignment_rule: HashMap<&'m str, usize>,

@@ -1,7 +1,7 @@
 //! The module and the description of `sbmlsim_codegen::emit`.
 
 use sbmlsim_abi::{self as abi, EntityKind, JacobianChoice, JacobianKind, MODEL_CONTRACT};
-use sbmlsim_codegen::{DIFFERENCE_REQUESTED, MAX_LOCALS, emit, emit_with};
+use sbmlsim_codegen::{DIFFERENCE_REQUESTED, MAX_LOCALS, emit, emit_optimized, emit_with};
 use sbmlsim_ir::{Assignment, CompileError, Entity, Expr, Model, Op, Symbol, build};
 use wasmparser::{
     CompositeInnerType, ExternalKind, FuncType, Operator, Parser, Payload, TypeRef, ValType,
@@ -413,8 +413,65 @@ fn the_events_are_described() {
 }
 
 #[test]
-fn a_function_above_the_limits_is_an_error() {
-    // more assignment rules than a function may have locals: rhs holds each in a local
+fn a_statement_above_the_limits_is_an_error() {
+    // a selection which reads more rules than a function may have locals: one statement whose
+    // values are alive at once, which no split makes smaller
+    let n = MAX_LOCALS;
+    let parameters = (0..=n)
+        .map(|i| Entity {
+            id: format!("p{i}"),
+            kind: sbmlsim_ir::EntityKind::Parameter,
+            default: 1.0,
+            settable: i == 0,
+            unit: None,
+        })
+        .collect();
+    let assignment_rules = (1..=n)
+        .map(|i| Assignment {
+            target: Symbol::Param(i as u32),
+            expr: Expr::apply(
+                Op::Times,
+                vec![Expr::Symbol(Symbol::Param(0)), Expr::Number(i as f64)],
+            ),
+        })
+        .collect();
+    let sum = Expr::apply(
+        Op::Plus,
+        (1..=n)
+            .map(|i| Expr::Symbol(Symbol::Param(i as u32)))
+            .collect(),
+    );
+    let m = Model {
+        id: None,
+        states: vec![],
+        parameters,
+        assignment_rules,
+        initial: vec![],
+        rates: vec![],
+        events: vec![],
+        selections: vec![sbmlsim_ir::SelectionDef {
+            id: "sum".to_string(),
+            kind: sbmlsim_ir::SelectionKind::Parameter,
+            expr: sum,
+            unit: None,
+        }],
+    };
+    for result in [emit(&m), emit_optimized(&m, abi::JacobianChoice::Auto)] {
+        match result.unwrap_err() {
+            CompileError::Unsupported { feature, element } => {
+                assert!(feature.contains("limits"), "{feature}");
+                assert!(feature.contains("one statement"), "{feature}");
+                assert_eq!(element, abi::SELECTIONS);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+}
+
+/// A chain of more assignment rules than a function may have locals is within the limits: the
+/// local of a rule is given back after the last statement which reads it.
+#[test]
+fn locals_are_reused_after_their_last_use() {
     let n = MAX_LOCALS + 1;
     let parameters = (0..=n)
         .map(|i| Entity {
@@ -439,13 +496,33 @@ fn a_function_above_the_limits_is_an_error() {
         initial: vec![],
         rates: vec![],
         events: vec![],
-        selections: vec![],
+        selections: vec![sbmlsim_ir::SelectionDef {
+            id: "last".to_string(),
+            kind: sbmlsim_ir::SelectionKind::Parameter,
+            expr: Expr::Symbol(Symbol::Param(n as u32)),
+            unit: None,
+        }],
     };
-    match emit(&m).unwrap_err() {
-        CompileError::Unsupported { feature, element } => {
-            assert!(feature.contains("limits"), "{feature}");
-            assert_eq!(element, abi::RHS);
-        }
-        other => panic!("{other:?}"),
-    }
+    let (wasm, _) = emit(&m).unwrap();
+    wasmparser::Validator::new().validate_all(&wasm).unwrap();
+    // model_selections: the parameters and one local alive at a time (a rule and the next)
+    let locals = function_locals(&wasm, 10);
+    assert!(locals <= 2, "{locals}");
+}
+
+/// The number of locals (without the parameters) of the defined function at `index`.
+fn function_locals(wasm: &[u8], index: usize) -> u32 {
+    let bodies: Vec<wasmparser::FunctionBody> = wasmparser::Parser::new(0)
+        .parse_all(wasm)
+        .filter_map(|p| match p.unwrap() {
+            wasmparser::Payload::CodeSectionEntry(body) => Some(body),
+            _ => None,
+        })
+        .collect();
+    bodies[index]
+        .get_locals_reader()
+        .unwrap()
+        .into_iter()
+        .map(|l| l.unwrap().0)
+        .sum()
 }
