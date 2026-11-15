@@ -68,7 +68,8 @@ pub(crate) struct SimulationOutput {
 
 #[pymethods]
 impl SimulationOutput {
-    /// The names of the columns, `time` first.
+    /// The names of the columns, `time` first, as a new list by every access, so read it once
+    /// and not per point.
     #[getter]
     fn columns(&self) -> Vec<String> {
         self.columns.clone()

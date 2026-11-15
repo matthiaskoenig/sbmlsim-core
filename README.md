@@ -120,7 +120,7 @@ compiled = sbmlsim_core.compile_sbml(sbml_text)  # optimize=True, jacobian="auto
 compiled.wasm         # the bytes of model.wasm
 compiled.description  # the dict of model.json (model/2)
 
-runtime = sbmlsim_core.Runtime(max_memory_bytes=None)       # engine.wasm and mathlib.wasm, compiled once
+runtime = sbmlsim_core.Runtime(max_memory_bytes=None)       # engine.wasm and mathlib.wasm, compiled once per runtime: share it
 model = runtime.load(compiled.wasm, compiled.description)  # compiled once, shared
 model.initial_values()                                      # selection id -> value as loaded
 instance = model.instance()                                 # one per thread
@@ -129,6 +129,8 @@ out.columns, out.values                                     # names, float64 arr
 instance.stats()                                            # the counters of the integrator
 results = model.simulate_many(requests, threads=None)       # a batch on rayon threads, in order
 ```
+
+`description` and `initial_values()` of a model, `description` of a compiled model and `columns` of an output are computed anew by every access, so read them once. The parallelism of `simulate_many` is `min(threads, len(requests))`, and its pool and its per-thread instances live only for the duration of the call (an instance costs about 0.3 s to make for a model of 700 kB of description), so give it as many points as you can rather than many small batches: 320 points in one call on 20 threads took 2.09 s against 22.0 s serially.
 
 Errors derive from `SbmlsimCoreError`: `CompileError`, and `SimulationError` with `RequestError`, `IntegrationError` (`flag`, `time`), `UnsupportedError` and `InternalError`. A point of a batch which failed is a `PointError` (`kind`, `message`, `flag`, `time`) in its position of the result, so one failing request does not fail the batch.
 
