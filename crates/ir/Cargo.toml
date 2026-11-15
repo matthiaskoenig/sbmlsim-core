@@ -8,4 +8,6 @@ authors.workspace = true
 [dependencies]
 sbmlsim-abi = { path = "../abi" }
 sbmlsim-sbml = { path = "../sbml" }
+# the math functions of a model, for the native evaluation (`eval`) and the constant folding
+sbmlsim-mathlib = { path = "../mathlib" }
 thiserror.workspace = true

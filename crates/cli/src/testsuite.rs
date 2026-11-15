@@ -13,7 +13,7 @@
 //! `auto` (the default) the analytic one where the model has one, else the colored difference
 //! quotient; `analytic` the analytic one, a model without one is not compiled; `difference` the
 //! colored difference quotient for every model. The summary counts the Jacobians of the compiled
-//! models.
+//! models. `--no-optimize` compiles them without the optimizer, which gives the same bits.
 //!
 //! The statuses are compared with the baseline (`testdata/testsuite_baseline.json`, the format of
 //! `sbmlsim.testsuite.baseline`) in both directions: a case which fails and is not listed is a
@@ -797,6 +797,9 @@ pub struct TestsuiteArgs {
     /// The Jacobian the models are compiled with.
     #[arg(long, value_enum, default_value_t = JacobianArg::Auto)]
     pub jacobian: JacobianArg,
+    /// Compile the models without the optimizer (`CompileOptions.optimize` false).
+    #[arg(long)]
+    pub no_optimize: bool,
 }
 
 /// The values of `--jacobian`.
@@ -877,7 +880,7 @@ pub fn run(args: &TestsuiteArgs) -> anyhow::Result<bool> {
     // rayon keeps the order of the directories
     let options = CompileOptions {
         jacobian: args.jacobian.choice(),
-        ..CompileOptions::default()
+        optimize: !args.no_optimize,
     };
     let results: Vec<CaseResult> = pool.install(|| {
         dirs.par_iter()

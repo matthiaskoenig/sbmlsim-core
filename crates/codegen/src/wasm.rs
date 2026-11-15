@@ -311,13 +311,18 @@ impl Body<'_> {
 
     /// `if fixed[k] == 0 { target = expr }`, `fixed` the pointer in the local `fixed`.
     pub(crate) fn store_unless_fixed(&mut self, fixed: u32, k: u32, target: Symbol, expr: &Expr) {
+        self.if_not_fixed(fixed, k);
+        self.store(target, expr);
+        self.sink().end();
+    }
+
+    /// `if fixed[k] == 0 {`, `fixed` the pointer in the local `fixed`; closed by [`Body::end`].
+    pub(crate) fn if_not_fixed(&mut self, fixed: u32, k: u32) {
         self.sink()
             .local_get(fixed)
             .i32_load8_u(byte(k))
             .i32_eqz()
             .if_(BlockType::Empty);
-        self.store(target, expr);
-        self.sink().end();
     }
 
     /// Evaluates an assignment rule into a local, which later expressions read for its target.
@@ -481,7 +486,7 @@ impl Body<'_> {
         match target {
             Symbol::State(i) => (self.ctx.y, i),
             Symbol::Param(i) => (self.ctx.p, i),
-            Symbol::Time | Symbol::Derivative(_) => {
+            Symbol::Time | Symbol::Derivative(_) | Symbol::Common(_) => {
                 unreachable!("{target:?} is no entity of the memory")
             }
         }

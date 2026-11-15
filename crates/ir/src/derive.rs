@@ -185,7 +185,7 @@ fn states_read(e: &Expr, position: &HashMap<Symbol, usize>, deps: &[Vec<u32>]) -
                 out.extend(d.iter().copied());
             }
         }
-        Symbol::Time | Symbol::Derivative(_) => {}
+        Symbol::Time | Symbol::Derivative(_) | Symbol::Common(_) => {}
     });
     out.into_iter().collect()
 }

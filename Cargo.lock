@@ -1331,6 +1331,7 @@ name = "sbmlsim-ir"
 version = "0.1.0"
 dependencies = [
  "sbmlsim-abi",
+ "sbmlsim-mathlib",
  "sbmlsim-sbml",
  "thiserror 2.0.21",
 ]

@@ -1,7 +1,8 @@
 //! The compiler: SBML to `model.wasm` and its [`ModelDescription`].
 //!
 //! [`compile`] reads the SBML ([`sbmlsim_sbml::read`]), builds the model representation
-//! ([`sbmlsim_ir::build`]) and emits the module and its description ([`sbmlsim_codegen::emit`]),
+//! ([`sbmlsim_ir::build`]) and emits the module and its description
+//! ([`sbmlsim_codegen::emit_optimized`], [`sbmlsim_codegen::emit_with`] without the optimizer),
 //! so a refusal of the reader, of the builder or of the code generation surfaces with its own
 //! message.
 //!
@@ -15,7 +16,11 @@ pub use sbmlsim_ir::CompileError;
 /// What the compiler does besides the translation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CompileOptions {
-    /// Optimize the generated module.
+    /// Optimize the generated module (`sbmlsim_codegen::emit_optimized`, the optimizer of
+    /// `sbmlsim_ir::optimize`): constant folding and the rewrites which are exact in binary64,
+    /// the assignment rules no output of a function reads left out, and the common
+    /// subexpressions of a function computed once. The results are bitwise those of the module
+    /// without it (`sbmlsim_codegen::emit_with`).
     pub optimize: bool,
     /// The source of the Jacobian of the model: `Auto` the analytic Jacobian where the model
     /// has one, else the colored difference quotient; `DifferenceQuotient` always the colored
@@ -46,7 +51,11 @@ pub struct CompiledModel {
 pub fn compile(sbml: &str, options: &CompileOptions) -> Result<CompiledModel, CompileError> {
     let doc = sbmlsim_sbml::read(sbml).map_err(from_read_error)?;
     let model = sbmlsim_ir::build(&doc)?;
-    let (wasm, description) = sbmlsim_codegen::emit_with(&model, options.jacobian)?;
+    let (wasm, description) = if options.optimize {
+        sbmlsim_codegen::emit_optimized(&model, options.jacobian)?
+    } else {
+        sbmlsim_codegen::emit_with(&model, options.jacobian)?
+    };
     Ok(CompiledModel { wasm, description })
 }
 

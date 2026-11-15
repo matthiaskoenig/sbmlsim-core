@@ -45,6 +45,9 @@ enum Command {
         /// The directory to write `model.wasm` and `model.json` into.
         #[arg(short, long)]
         output: PathBuf,
+        /// Without the optimizer (the same results, a larger and slower module).
+        #[arg(long)]
+        no_optimize: bool,
     },
     /// Simulates a compiled model with a request and writes the result as CSV.
     Simulate {
@@ -62,7 +65,11 @@ enum Command {
 
 fn main() -> ExitCode {
     let result = match Cli::parse().command {
-        Command::Compile { model, output } => compile(&model, &output).map(|()| true),
+        Command::Compile {
+            model,
+            output,
+            no_optimize,
+        } => compile(&model, &output, !no_optimize).map(|()| true),
         Command::Simulate {
             model_dir,
             request,
@@ -86,11 +93,15 @@ fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> anyhow::Result<T> {
     serde_json::from_slice(&bytes).with_context(|| format!("cannot read {}", path.display()))
 }
 
-/// The command `compile`.
-fn compile(model: &Path, output: &Path) -> anyhow::Result<()> {
+/// The command `compile`, with the optimizer when `optimize`.
+fn compile(model: &Path, output: &Path, optimize: bool) -> anyhow::Result<()> {
     let sbml =
         fs::read_to_string(model).with_context(|| format!("cannot read {}", model.display()))?;
-    let compiled = sbmlsim_compiler::compile(&sbml, &CompileOptions::default())
+    let options = CompileOptions {
+        optimize,
+        ..CompileOptions::default()
+    };
+    let compiled = sbmlsim_compiler::compile(&sbml, &options)
         .with_context(|| format!("cannot compile {}", model.display()))?;
     fs::create_dir_all(output).with_context(|| format!("cannot create {}", output.display()))?;
     let write = |name: &str, bytes: &[u8]| {

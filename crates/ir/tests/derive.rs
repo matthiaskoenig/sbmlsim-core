@@ -80,6 +80,7 @@ fn eval(e: &Expr, y: &[f64], p: &[f64], d: &[f64]) -> f64 {
         Expr::Symbol(Symbol::Param(i)) => p[*i as usize],
         Expr::Symbol(Symbol::Time) => 0.0,
         Expr::Symbol(Symbol::Derivative(k)) => d[*k as usize],
+        Expr::Symbol(Symbol::Common(_)) => unreachable!("no common subexpression"),
         Expr::Piecewise { pieces, otherwise } => {
             for (value, condition) in pieces {
                 if b(condition) {

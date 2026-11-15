@@ -6,7 +6,10 @@
 //! functions of mathlib it calls as `math.*`, and exports the fourteen functions of the contract.
 //! The expressions are emitted as written, without fast math, reassociation or folding of
 //! constants (`q / 49` is one `f64.div` by `49`), with the meaning libroadrunner gives every
-//! operator (see `math.rs`).
+//! operator (see `math.rs`). [`emit_optimized`] emits the programs of the optimizer of
+//! `sbmlsim_ir::optimize` instead (constant folding and the rewrites which are exact in binary64,
+//! only the assignment rules a function reads, its common subexpressions once in locals), which
+//! give the bits of the code as written; the functions below are those of [`emit_with`].
 //!
 //! The functions:
 //!
@@ -45,6 +48,7 @@ use sbmlsim_abi::{
     ModelSizes, Selection,
 };
 use sbmlsim_ir::derive::{self, JacobianIr};
+use sbmlsim_ir::optimize::{self, Plan, Program, Statement};
 use sbmlsim_ir::{CompileError, EntityKind, Event, Expr, Model, SpeciesValue, Symbol};
 use wasm_encoder::ValType::{F64, I32};
 
@@ -75,14 +79,31 @@ pub fn emit_with(
     model: &Model,
     choice: JacobianChoice,
 ) -> Result<(Vec<u8>, ModelDescription), CompileError> {
-    emit_limited(model, choice, Limits::default())
+    emit_limited(model, choice, Limits::default(), false)
 }
 
-/// [`emit_with`] with the limits of the functions given (lower ones in tests).
+/// [`emit_with`] with the optimizer ([`sbmlsim_ir::optimize`]): the functions are the programs
+/// of [`optimize::plan`] of the model and of its Jacobian as [`emit_with`] derives it, so the
+/// module is smaller and faster and gives the bits of the module of [`emit_with`]; the
+/// description is the same.
+///
+/// A function with the common subexpressions above the limits of WebAssembly engines (they add
+/// locals) is emitted without them; a `model_jac` above the limits without them as well is the
+/// colored difference quotient under `Auto`, as in [`emit_with`].
+pub fn emit_optimized(
+    model: &Model,
+    choice: JacobianChoice,
+) -> Result<(Vec<u8>, ModelDescription), CompileError> {
+    emit_limited(model, choice, Limits::default(), true)
+}
+
+/// [`emit_with`] or [`emit_optimized`] with the limits of the functions given (lower ones in
+/// tests).
 fn emit_limited(
     model: &Model,
     choice: JacobianChoice,
     limits: Limits,
+    optimized: bool,
 ) -> Result<(Vec<u8>, ModelDescription), CompileError> {
     let jacobian = match (derive::jacobian(model), choice) {
         (jacobian, JacobianChoice::DifferenceQuotient) => {
@@ -96,7 +117,28 @@ fn emit_limited(
         }
         (jacobian, _) => jacobian,
     };
-    let (wasm, jacobian) = match module(model, &jacobian, limits) {
+    // the module of a Jacobian: as written, or optimized with the common subexpressions and,
+    // when a function is above the limits with them, without them
+    let build = |jacobian: &JacobianIr| -> Result<Vec<u8>, CompileError> {
+        if !optimized {
+            return module(model, jacobian, limits, None);
+        }
+        module(
+            model,
+            jacobian,
+            limits,
+            Some(&optimize::plan(model, jacobian, true)),
+        )
+        .or_else(|_| {
+            module(
+                model,
+                jacobian,
+                limits,
+                Some(&optimize::plan(model, jacobian, false)),
+            )
+        })
+    };
+    let (wasm, jacobian) = match build(&jacobian) {
         Ok(wasm) => (wasm, jacobian),
         // the analytic Jacobian is too large for one function: the difference quotient, which
         // needs no model_jac, unless the analytic one was asked for
@@ -106,15 +148,41 @@ fn emit_limited(
                 && matches!(jacobian, JacobianIr::Analytic { .. }) =>
         {
             let jacobian = jacobian.into_difference(format!("model_jac would be {feature}"));
-            (module(model, &jacobian, limits)?, jacobian)
+            (build(&jacobian)?, jacobian)
         }
         Err(error) => return Err(error),
     };
     Ok((wasm, description(model, jacobian)))
 }
 
-/// The module of a model.
-fn module(model: &Model, jacobian: &JacobianIr, limits: Limits) -> Result<Vec<u8>, CompileError> {
+/// Emits the statements of a program: a let into a local, the output `k` with `output`.
+fn emit_program(
+    f: &mut wasm::Body<'_>,
+    program: &Program,
+    mut output: impl FnMut(&mut wasm::Body<'_>, u32, &Expr),
+) {
+    let mut k = 0;
+    for statement in &program.statements {
+        match statement {
+            Statement::Let(symbol, e) => f.assign_local(*symbol, e),
+            Statement::Output(e) => {
+                output(f, k, e);
+                k += 1;
+            }
+        }
+    }
+}
+
+/// The module of a model: the code as written, or the programs of `plan` (the optimizer).
+fn module(
+    model: &Model,
+    jacobian: &JacobianIr,
+    limits: Limits,
+    plan: Option<&Plan>,
+) -> Result<Vec<u8>, CompileError> {
+    if let Some(plan) = plan {
+        return optimized_module(model, jacobian, limits, plan);
+    }
     let mut m = ModuleBuilder::default();
     m.limits = limits;
     // a function which reads no symbol
@@ -139,7 +207,9 @@ fn module(model: &Model, jacobian: &JacobianIr, limits: Limits) -> Result<Vec<u8
         let k = match a.target {
             Symbol::Param(i) => i,
             Symbol::State(i) => n_params + i,
-            Symbol::Time | Symbol::Derivative(_) => unreachable!("{:?} is no target", a.target),
+            Symbol::Time | Symbol::Derivative(_) | Symbol::Common(_) => {
+                unreachable!("{:?} is no target", a.target)
+            }
         };
         f.store_unless_fixed(3, k, a.target, &a.expr);
     }
@@ -297,6 +367,153 @@ fn module(model: &Model, jacobian: &JacobianIr, limits: Limits) -> Result<Vec<u8
     Ok(m.finish())
 }
 
+/// The module of a model from the programs of the optimizer, with the outputs of the code as
+/// written (see [`module`]); `model_defaults`, `model_event_apply` and the sizes are the code
+/// as written.
+fn optimized_module(
+    model: &Model,
+    jacobian: &JacobianIr,
+    limits: Limits,
+    plan: &Plan,
+) -> Result<Vec<u8>, CompileError> {
+    let mut m = ModuleBuilder::default();
+    m.limits = limits;
+    let none = Ctx { t: 0, y: 0, p: 0 };
+
+    // model_defaults(p, y)
+    let ctx = Ctx { t: 0, y: 1, p: 0 };
+    let mut f = m.function(abi::DEFAULTS, &[I32, I32], &[], ctx);
+    for (i, e) in model.parameters.iter().enumerate() {
+        f.store_constant(Symbol::Param(i as u32), e.default);
+    }
+    for (i, e) in model.states.iter().enumerate() {
+        f.store_constant(Symbol::State(i as u32), e.default);
+    }
+    f.finish()?;
+
+    // model_init(t, p, y, fixed): each initial evaluation in the block of its target
+    let ctx = Ctx { t: 0, y: 2, p: 1 };
+    let mut f = m.function(abi::INIT, &[F64, I32, I32, I32], &[], ctx);
+    let n_params = model.parameters.len() as u32;
+    for (a, program) in model.initial.iter().zip(&plan.init) {
+        let k = match a.target {
+            Symbol::Param(i) => i,
+            Symbol::State(i) => n_params + i,
+            Symbol::Time | Symbol::Derivative(_) | Symbol::Common(_) => {
+                unreachable!("{:?} is no target", a.target)
+            }
+        };
+        f.if_not_fixed(3, k);
+        emit_program(&mut f, program, |f, _, e| f.store(a.target, e));
+        f.end();
+    }
+    f.finish()?;
+
+    // model_rhs(t, y, p, ydot), model_jac(t, y, p, values), model_roots(t, y, p, g)
+    let ctx = Ctx { t: 0, y: 1, p: 2 };
+    let mut f = m.function(abi::RHS, &[F64, I32, I32, I32], &[], ctx);
+    emit_program(&mut f, &plan.rhs, |f, k, e| f.store_at(3, k, e));
+    f.finish()?;
+    let mut f = m.function(abi::JAC, &[F64, I32, I32, I32], &[], ctx);
+    match (jacobian, &plan.jac) {
+        (JacobianIr::Analytic { .. }, Some(program)) => {
+            emit_program(&mut f, program, |f, k, e| f.store_at(3, k, e))
+        }
+        (JacobianIr::ColoredDifference { .. }, None) => f.unreachable(),
+        _ => unreachable!("the plan is of another Jacobian"),
+    }
+    f.finish()?;
+    let mut f = m.function(abi::ROOTS, &[F64, I32, I32, I32], &[], ctx);
+    emit_program(&mut f, &plan.roots, |f, k, e| f.store_at(3, k, e));
+    f.finish()?;
+
+    // the functions of an event index `i` (the local 0)
+    let indexed = Ctx { t: 1, y: 2, p: 3 };
+
+    // model_trigger(i, t, y, p) -> i32
+    let mut f = m.function(abi::TRIGGER, &[I32, F64, I32, I32], &[I32], indexed);
+    emit_program(&mut f, &plan.trigger.prefix, |_, _, _| {
+        unreachable!("a let")
+    });
+    for (k, branch) in plan.trigger.branches.iter().enumerate() {
+        let branch = branch.as_ref().expect("every event has a trigger");
+        f.if_index(0, k as u32);
+        emit_program(&mut f, branch, |f, _, e| f.return_bool(e));
+        f.end();
+    }
+    f.i32_const(0);
+    f.finish()?;
+
+    // model_priority(i, t, y, p) -> f64 and model_delay(i, t, y, p) -> f64, 0 without
+    for (name, part) in [(abi::PRIORITY, &plan.priority), (abi::DELAY, &plan.delay)] {
+        let mut f = m.function(name, &[I32, F64, I32, I32], &[F64], indexed);
+        emit_program(&mut f, &part.prefix, |_, _, _| unreachable!("a let"));
+        for (k, branch) in part.branches.iter().enumerate() {
+            if let Some(branch) = branch {
+                f.if_index(0, k as u32);
+                emit_program(&mut f, branch, |f, _, e| f.return_f64(e));
+                f.end();
+            }
+        }
+        f.return_f64(&Expr::Number(0.0));
+        f.finish()?;
+    }
+
+    // model_event_values(i, t, y, p, out)
+    let mut f = m.function(abi::EVENT_VALUES, &[I32, F64, I32, I32, I32], &[], indexed);
+    emit_program(&mut f, &plan.event_values.prefix, |_, _, _| {
+        unreachable!("a let")
+    });
+    for (k, branch) in plan.event_values.branches.iter().enumerate() {
+        let branch = branch.as_ref().expect("every event has its values");
+        f.if_index(0, k as u32);
+        emit_program(&mut f, branch, |f, j, e| f.store_at(4, j, e));
+        f.return_();
+        f.end();
+    }
+    f.finish()?;
+
+    // model_event_apply(i, t, values, y, p), as written
+    let apply = Ctx { t: 1, y: 3, p: 4 };
+    let mut f = m.function(abi::EVENT_APPLY, &[I32, F64, I32, I32, I32], &[], apply);
+    for (k, e) in model.events.iter().enumerate() {
+        f.if_index(0, k as u32);
+        event_apply(model, e, &mut f);
+        f.return_();
+        f.end();
+    }
+    f.finish()?;
+
+    // model_selections(t, y, p, out)
+    let ctx = Ctx { t: 0, y: 1, p: 2 };
+    let mut f = m.function(abi::SELECTIONS, &[F64, I32, I32, I32], &[], ctx);
+    emit_program(&mut f, &plan.selections, |f, k, e| f.store_at(3, k, e));
+    f.finish()?;
+
+    // model_assign(t, y, p): every rule stored before the next one reads the memory
+    let mut f = m.function(abi::ASSIGN, &[F64, I32, I32], &[], ctx);
+    let rules = &model.assignment_rules;
+    emit_program(&mut f, &plan.assign, |f, k, e| {
+        f.store(rules[k as usize].target, e)
+    });
+    f.finish()?;
+
+    // model_sizes(out) and model_event_sizes(out)
+    let sizes = sizes(model, jacobian);
+    let mut f = m.function(abi::SIZES, &[I32], &[], none);
+    for (k, x) in sizes.words().into_iter().enumerate() {
+        f.store_i32_at(0, k as u32, x);
+    }
+    f.finish()?;
+    let mut f = m.function(abi::EVENT_SIZES, &[I32], &[], none);
+    for (k, x) in sizes.assignments.iter().enumerate() {
+        f.store_i32_at(0, k as u32, *x);
+    }
+    f.finish()?;
+
+    Ok(m.finish())
+}
+
 /// The sizes of the module of a model; the entries of the Jacobian are those of its pattern.
 fn sizes(model: &Model, jacobian: &JacobianIr) -> ModelSizes {
     ModelSizes {
@@ -434,12 +651,16 @@ pub fn initial_values(model: &Model) -> (Vec<f64>, Vec<f64>) {
             Symbol::State(i) => y[i as usize],
             Symbol::Param(i) => p[i as usize],
             Symbol::Time => 0.0,
-            Symbol::Derivative(_) => unreachable!("an initial value reads no derivative"),
+            Symbol::Derivative(_) | Symbol::Common(_) => {
+                unreachable!("an initial value reads no derivative")
+            }
         });
         match a.target {
             Symbol::State(i) => y[i as usize] = value,
             Symbol::Param(i) => p[i as usize] = value,
-            Symbol::Time | Symbol::Derivative(_) => unreachable!("{:?} is no target", a.target),
+            Symbol::Time | Symbol::Derivative(_) | Symbol::Common(_) => {
+                unreachable!("{:?} is no target", a.target)
+            }
         }
     }
     (p, y)
@@ -548,6 +769,61 @@ mod tests {
         sbmlsim_ir::build(&sbmlsim_sbml::read(&xml).unwrap()).unwrap()
     }
 
+    /// `x' = exp(x) + exp(x)`, `y' = exp(y) * exp(y)`: the common subexpressions add a local
+    /// per rate to `model_rhs`.
+    fn shared() -> Model {
+        let xml = format!(
+            r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2"><model id="m">
+<listOfParameters><parameter id="x" value="1" constant="false"/><parameter id="y" value="1" constant="false"/></listOfParameters>
+<listOfRules>
+<rateRule variable="x"><math {MATH}><apply><plus/><apply><exp/><ci>x</ci></apply><apply><exp/><ci>x</ci></apply></apply></math></rateRule>
+<rateRule variable="y"><math {MATH}><apply><times/><apply><exp/><ci>y</ci></apply><apply><exp/><ci>y</ci></apply></apply></math></rateRule>
+</listOfRules></model></sbml>"#
+        );
+        sbmlsim_ir::build(&sbmlsim_sbml::read(&xml).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn an_optimized_module_above_the_limits_has_no_common_subexpressions() {
+        let m = shared();
+        // the calls of mathlib (of math_exp) in model_rhs, the third function of the module
+        let exps = |wasm: &[u8]| {
+            let bodies: Vec<wasmparser::FunctionBody> = wasmparser::Parser::new(0)
+                .parse_all(wasm)
+                .filter_map(|p| match p.unwrap() {
+                    wasmparser::Payload::CodeSectionEntry(body) => Some(body),
+                    _ => None,
+                })
+                .collect();
+            bodies[2]
+                .get_operators_reader()
+                .unwrap()
+                .into_iter()
+                .filter(|op| matches!(op.as_ref().unwrap(), wasmparser::Operator::Call { .. }))
+                .count()
+        };
+        // with the common subexpressions model_rhs has 4 parameters and 2 locals
+        let (wasm, d) = emit_limited(&m, JacobianChoice::Auto, Limits::default(), true).unwrap();
+        assert_eq!(exps(&wasm), 2);
+        assert!(matches!(d.jacobian, JacobianKind::Analytic(_)));
+        // above 5 locals: without them, every exp of the code as written
+        let limits = Limits {
+            bytes: MAX_FUNCTION_BYTES,
+            locals: 5,
+        };
+        let (wasm, d) = emit_limited(&m, JacobianChoice::Auto, limits, true).unwrap();
+        assert_eq!(exps(&wasm), 4);
+        assert!(matches!(d.jacobian, JacobianKind::Analytic(_)));
+        let (written, _) = emit_limited(&m, JacobianChoice::Auto, limits, false).unwrap();
+        assert_eq!(exps(&written), 4);
+        // a module of 4 locals (the parameters) at most is an error with and without them
+        let tight = Limits {
+            bytes: MAX_FUNCTION_BYTES,
+            locals: 3,
+        };
+        assert!(emit_limited(&m, JacobianChoice::Auto, tight, true).is_err());
+    }
+
     #[test]
     fn a_model_jac_above_the_limits_is_the_difference_quotient_under_auto() {
         let m = chain();
@@ -561,7 +837,7 @@ mod tests {
             bytes: MAX_FUNCTION_BYTES,
             locals: 5,
         };
-        let (_, d) = emit_limited(&m, JacobianChoice::Auto, limits).unwrap();
+        let (_, d) = emit_limited(&m, JacobianChoice::Auto, limits, false).unwrap();
         let JacobianKind::ColoredDifference {
             pattern, reason, ..
         } = &d.jacobian
@@ -575,20 +851,20 @@ mod tests {
              74 bytes, 6 locals; at most 7654321 bytes and 5 locals)"
         );
         // the analytic Jacobian asked for is refused with the error of the limits
-        let error = emit_limited(&m, JacobianChoice::Analytic, limits).unwrap_err();
+        let error = emit_limited(&m, JacobianChoice::Analytic, limits, false).unwrap_err();
         assert!(
             matches!(&error, CompileError::Unsupported { element, .. } if element == abi::JAC),
             "{error:?}"
         );
         // within the limits it is analytic
-        let (_, d) = emit_limited(&m, JacobianChoice::Auto, Limits::default()).unwrap();
+        let (_, d) = emit_limited(&m, JacobianChoice::Auto, Limits::default(), false).unwrap();
         assert!(matches!(d.jacobian, JacobianKind::Analytic(_)));
         // a function other than model_jac above the limits stays an error
         let tight = Limits {
             bytes: MAX_FUNCTION_BYTES,
             locals: 4,
         };
-        let error = emit_limited(&m, JacobianChoice::Auto, tight).unwrap_err();
+        let error = emit_limited(&m, JacobianChoice::Auto, tight, false).unwrap_err();
         assert!(
             matches!(&error, CompileError::Unsupported { element, .. } if element != abi::JAC),
             "{error:?}"

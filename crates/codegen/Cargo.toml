@@ -9,10 +9,9 @@ description = "Emits model.wasm and its description from the model representatio
 [dependencies]
 sbmlsim-abi = { path = "../abi" }
 sbmlsim-ir = { path = "../ir" }
-# the math functions of a model, evaluated natively for the initial values of the description
-sbmlsim-mathlib = { path = "../mathlib" }
 wasm-encoder = { version = "0.263", default-features = false, features = ["std"] }
 
 [dev-dependencies]
+sbmlsim-mathlib = { path = "../mathlib" }
 sbmlsim-sbml = { path = "../sbml" }
 wasmparser = "0.263"

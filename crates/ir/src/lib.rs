@@ -1,11 +1,13 @@
 //! The model representation of sbmlsim-core and its construction from an SBML document.
 //!
-//! [`build`] turns the [`Document`](sbmlsim_sbml::Document) of the reader into a [`Model`]: the
+//! [`build`] turns the [`Document`] of the reader into a [`Model`]: the
 //! vectors of the states `y` and of the parameters `p`, the assignment rules in their order of
 //! dependency, the initial evaluations in their order of dependency, one rate per state, the
 //! events and the selections, every math an [`Expr`] over resolved [`Symbol`]s. Code generation
-//! (Task 11) emits the functions of `model/1` from it; nothing here does file system,
-//! environment or OS access, so the crate builds for `wasm32-unknown-unknown`.
+//! (Task 11) emits the functions of `model/1` from it, as written or as the programs of the
+//! optimizer ([`optimize`]), with the Jacobian of [`derive`](mod@derive) and the meanings of
+//! [`eval`]; nothing here does file system, environment or OS access, so the crate builds for
+//! `wasm32-unknown-unknown`.
 //!
 //! # States and parameters
 //!
@@ -61,7 +63,9 @@
 
 mod builder;
 pub mod derive;
+pub mod eval;
 mod expr;
+pub mod optimize;
 mod order;
 mod units;
 
@@ -349,12 +353,15 @@ impl Model {
     ///
     /// # Panics
     ///
-    /// For [`Symbol::Time`], a [`Symbol::Derivative`] or an index out of range.
+    /// For [`Symbol::Time`], a [`Symbol::Derivative`], a [`Symbol::Common`] or an index out of
+    /// range.
     pub fn entity(&self, symbol: Symbol) -> &Entity {
         match symbol {
             Symbol::State(i) => &self.states[i as usize],
             Symbol::Param(i) => &self.parameters[i as usize],
-            Symbol::Time | Symbol::Derivative(_) => panic!("{symbol:?} is no entity"),
+            Symbol::Time | Symbol::Derivative(_) | Symbol::Common(_) => {
+                panic!("{symbol:?} is no entity")
+            }
         }
     }
 
