@@ -8,8 +8,8 @@ use std::process::Command;
 
 use sbmlsim_abi::SimulationResult;
 use sbmlsim_cli::testsuite::{
-    Baseline, CaseResult, CaseSettings, Expected, Status, Table, check_columns, check_commits,
-    compare, differences, run_case,
+    Baseline, CaseResult, CaseSettings, Expected, Status, Table, case_request, case_request_of,
+    check_columns, check_commits, compare, differences, repeat_check, repeat_difference, run_case,
 };
 
 fn result(columns: &[&str], rows: &[&[f64]]) -> SimulationResult {
@@ -386,4 +386,88 @@ fn runner_on_case_00001() {
     let runtime = sbmlsim_host::Runtime::embedded().unwrap();
     let result = run_case(&runtime, &dir.join("00001"));
     assert_eq!(result.status, Status::Pass, "{}", result.message);
+}
+
+#[test]
+fn repeat_differences_are_bitwise() {
+    let columns = ["time", "S1"];
+    let first = result(&columns, &[&[0.0, 1.0], &[1.0, f64::NAN]]);
+    assert_eq!(repeat_difference(&first, &first.clone(), "again"), None);
+    let next = 1.0f64.next_up();
+    let second = result(&columns, &[&[0.0, next], &[1.0, f64::NAN]]);
+    let message = repeat_difference(&first, &second, "again").unwrap();
+    assert!(
+        message.starts_with("again differs from the first in 1 values"),
+        "{message}"
+    );
+    assert!(message.contains("'S1' at the time 0"), "{message}");
+    let shorter = result(&columns, &[&[0.0, 1.0]]);
+    let message = repeat_difference(&first, &shorter, "again").unwrap();
+    assert!(
+        message.contains("1 rows of 2 columns and not 2 rows"),
+        "{message}"
+    );
+}
+
+#[test]
+fn requests_of_the_repeat_checks() {
+    let mut s = settings(&["time", "a"], "c");
+    s.start = 2.0;
+    s.duration = 10.0;
+    s.steps = 51;
+    let full = case_request(&s);
+    assert_eq!(case_request_of(&s, 1.0, false), full);
+    let half = case_request_of(&s, 0.5, false);
+    assert_eq!((half.start, half.end), (2.0, 7.0));
+    assert_eq!(half.output, sbmlsim_abi::Output::Uniform { steps: 26 });
+    assert_eq!(half.steady_state, None);
+    s.steps = 1;
+    assert_eq!(
+        case_request_of(&s, 0.5, false).output,
+        sbmlsim_abi::Output::Uniform { steps: 1 }
+    );
+    let steady = case_request_of(&s, 1.0, true).steady_state.unwrap();
+    assert_eq!(steady.max_time, 10.0);
+    assert_eq!(
+        (steady.absolute_tolerance, steady.relative_tolerance),
+        (1e-8, 1e-6)
+    );
+}
+
+#[test]
+fn repeat_checks_compare_with_the_first_simulation() {
+    let Some(dir) = cases_dir() else { return };
+    let runtime = sbmlsim_host::Runtime::embedded().unwrap();
+    // a case without a steady state (its steady state fails alike on both instances), a case
+    // with delayed events which reaches a steady state, a case of random event execution
+    for cid in ["00001", "00683", "00952"] {
+        let case = dir.join(cid);
+        let s: CaseSettings =
+            serde_json::from_slice(&std::fs::read(case.join("case.json")).unwrap()).unwrap();
+        let sbml = std::fs::read_to_string(case.join("model.xml")).unwrap();
+        let expected =
+            Table::from_csv(&std::fs::read_to_string(case.join("expected.csv")).unwrap()).unwrap();
+        let compiled =
+            sbmlsim_compiler::compile(&sbml, &sbmlsim_compiler::CompileOptions::default()).unwrap();
+        let mut instance = runtime
+            .instantiate(&compiled.wasm, &compiled.description)
+            .unwrap();
+        let first = instance.simulate(&case_request(&s)).unwrap();
+        assert_eq!(
+            repeat_check(&runtime, &compiled, &mut instance, &s, &expected, &first),
+            None,
+            "{cid}"
+        );
+        // a first simulation which differs in one bit is a repeat difference
+        let mut other = first.clone();
+        let k = other.columns.len();
+        other.values[k + 1] = other.values[k + 1].next_up();
+        let message = repeat_check(&runtime, &compiled, &mut instance, &s, &expected, &other)
+            .unwrap_or_default();
+        assert!(
+            message.starts_with("the second simulation of the instance differs"),
+            "{cid}: {message}"
+        );
+        assert_eq!(run_case(&runtime, &case).status, Status::Pass, "{cid}");
+    }
 }

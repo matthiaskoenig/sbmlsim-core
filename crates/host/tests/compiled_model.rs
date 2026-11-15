@@ -393,3 +393,114 @@ fn a_description_of_other_assignments_is_refused() {
         "{error}"
     );
 }
+
+/// The compartment `C` (size 1, not constant) with the species `S` (a concentration of no rule,
+/// stored as its amount), `R` (a concentration of the rate rule `R' = 0`, stored as its
+/// concentration) and `H` (an amount, `hasOnlySubstanceUnits`), every one 1, the reaction
+/// `S -> ` of the rate `k S` and the parameter `k` (0).
+fn species_model() -> String {
+    format!(
+        r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2"><model id="sp">
+<listOfCompartments><compartment id="C" size="1" spatialDimensions="3" constant="false"/></listOfCompartments>
+<listOfSpecies>
+<species id="S" compartment="C" initialConcentration="1" hasOnlySubstanceUnits="false" boundaryCondition="false" constant="false"/>
+<species id="R" compartment="C" initialConcentration="1" hasOnlySubstanceUnits="false" boundaryCondition="false" constant="false"/>
+<species id="H" compartment="C" initialAmount="1" hasOnlySubstanceUnits="true" boundaryCondition="false" constant="false"/>
+</listOfSpecies>
+<listOfParameters><parameter id="k" value="0" constant="false"/></listOfParameters>
+<listOfRules><rateRule variable="R"><math {MATH}><cn>0</cn></math></rateRule></listOfRules>
+<listOfReactions><reaction id="J" reversible="false"><listOfReactants><speciesReference species="S" stoichiometry="1" constant="true"/></listOfReactants>
+<kineticLaw><math {MATH}><apply><times/><ci>k</ci><ci>S</ci></apply></math></kineticLaw></reaction></listOfReactions>
+</model></sbml>"#
+    )
+}
+
+/// The values of a change and the values after it.
+type ChangeCase<'a> = (&'a [(&'a str, f64)], [f64; 7]);
+
+#[test]
+fn compiled_changes_keep_concentrations() {
+    // the values of libroadrunner 2.11.1 through sbmlsim (Task 14 report, probe 1): a
+    // compartment set by a change keeps the concentrations of its species of a concentration,
+    // the species of an amount keeps its amount; `R` is the amount, `[R]` the concentration
+    let compiled = compile(&species_model(), &CompileOptions::default()).unwrap();
+    let selections = ["time", "S", "[S]", "R", "[R]", "H", "[H]", "C"];
+    let cases: [ChangeCase; 4] = [
+        (&[("C", 2.0)], [2.0, 1.0, 2.0, 1.0, 1.0, 0.5, 2.0]),
+        (
+            &[("C", 2.0), ("[S]", 3.0)],
+            [6.0, 3.0, 2.0, 1.0, 1.0, 0.5, 2.0],
+        ),
+        (
+            &[("C", 2.0), ("S", 3.0)],
+            [3.0, 1.5, 2.0, 1.0, 1.0, 0.5, 2.0],
+        ),
+        (
+            &[("C", 2.0), ("R", 3.0)],
+            [2.0, 1.0, 3.0, 1.5, 1.0, 0.5, 2.0],
+        ),
+    ];
+    for (values, expected) in cases {
+        let mut req = request(10.0, 2, &selections);
+        req.changes = vec![sbmlsim_abi::Change {
+            time: 5.0,
+            values: values.iter().map(|(id, v)| (id.to_string(), *v)).collect(),
+        }];
+        let result = runtime()
+            .instantiate(&compiled.wasm, &compiled.description)
+            .unwrap()
+            .simulate(&req)
+            .unwrap();
+        assert_eq!(result.n_rows, 4, "{values:?}");
+        let k = result.columns.len();
+        let row = |i: usize| &result.values[i * k + 1..(i + 1) * k];
+        assert_eq!(row(1), [1.0; 7], "{values:?}");
+        assert_eq!(row(2), expected, "{values:?}");
+        assert_eq!(row(3), expected, "{values:?}");
+    }
+}
+
+#[test]
+fn requests_on_one_instance_are_independent() {
+    // requests A, B, A, B on one instance of the wasm engine: every result is the one of a
+    // fresh instance, bitwise; B has events, a pre-initialization, changes and a steady state
+    let compiled = compile(&event_model(), &CompileOptions::default()).unwrap();
+    let a = request(2.0, 8, &["time", "S", "[S]", "R", "[R]", "C", "n", "x"]);
+    let mut b = request(3.0, 6, &[]);
+    b.output = Output::IntegratorSteps;
+    b.preinit = vec![("n".to_string(), 5.0)];
+    b.changes = vec![sbmlsim_abi::Change {
+        time: 0.5,
+        values: vec![("C".to_string(), 4.0), ("x".to_string(), 1.0)],
+    }];
+    b.steady_state = Some(sbmlsim_abi::SteadyState {
+        max_time: 100.0,
+        ..sbmlsim_abi::SteadyState::default()
+    });
+    b.seed = 3;
+    b.settings.stiff = true;
+    let fresh = |req: &SimulationRequest| {
+        runtime()
+            .instantiate(&compiled.wasm, &compiled.description)
+            .unwrap()
+            .simulate(req)
+            .unwrap()
+    };
+    let mut instance = runtime()
+        .instantiate(&compiled.wasm, &compiled.description)
+        .unwrap();
+    let a1 = instance.simulate(&a).unwrap();
+    let b1 = instance.simulate(&b).unwrap();
+    let a2 = instance.simulate(&a).unwrap();
+    let b2 = instance.simulate(&b).unwrap();
+    let bits = |r: &sbmlsim_abi::SimulationResult| {
+        r.values.iter().map(|v| v.to_bits()).collect::<Vec<_>>()
+    };
+    assert_eq!(bits(&a1), bits(&a2));
+    assert_eq!(bits(&a1), bits(&fresh(&a)));
+    assert_eq!(bits(&b1), bits(&b2));
+    assert_eq!(bits(&b1), bits(&fresh(&b)));
+    // B ran its steady state (E1 executed there: n = 5 + 1), its change and its events
+    let n = b1.columns.iter().position(|c| c == "n").unwrap();
+    assert_eq!(b1.values[n], 6.0);
+}

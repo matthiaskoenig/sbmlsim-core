@@ -286,7 +286,8 @@ fn the_description_is_of_model_1() {
         d.states[1].kind,
         EntityKind::Species {
             compartment: "C".to_string(),
-            has_only_substance_units: false
+            has_only_substance_units: false,
+            stores_concentration: false,
         }
     );
     // the selections of the model representation, at the indices 0..k

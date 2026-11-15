@@ -25,10 +25,11 @@ use anyhow::Context;
 use clap::Args;
 use rayon::prelude::*;
 use sbmlsim_abi::{
-    IntegratorSettings, Output, SIMULATION_CONTRACT, SimulationRequest, SimulationResult, Tolerance,
+    IntegratorSettings, Output, SIMULATION_CONTRACT, SimulationRequest, SimulationResult,
+    SteadyState, Tolerance,
 };
-use sbmlsim_compiler::{CompileOptions, compile};
-use sbmlsim_host::Runtime;
+use sbmlsim_compiler::{CompileOptions, CompiledModel, compile};
+use sbmlsim_host::{Instance, Runtime};
 use serde::{Deserialize, Serialize};
 
 /// The absolute and the relative tolerance of the integrator in a run of the suite.
@@ -60,7 +61,7 @@ pub enum Status {
     SimulationError,
     /// A column or a row of the expected results is missing from the simulation.
     MissingVariable,
-    /// A repeated simulation does not equal the first (not checked yet).
+    /// A repeated simulation does not equal the first (see [`repeat_check`]).
     Repeat,
 }
 
@@ -133,6 +134,9 @@ pub struct CaseSettings {
     pub absolute_tolerance: f64,
     /// The relative tolerance of the comparison.
     pub relative_tolerance: f64,
+    /// The test tags of the case.
+    #[serde(default)]
+    pub test_tags: Vec<String>,
     /// Set when the model was not converted by the preparation: the message.
     #[serde(default)]
     pub not_converted: Option<String>,
@@ -306,12 +310,178 @@ pub fn check_commits(dirs: &[PathBuf], baseline_commit: &str) -> anyhow::Result<
     Ok(())
 }
 
-/// The hook of the repeat checks (a simulation of the loaded model again, after half the
-/// duration, and a steady state must equal the first one bitwise): not implemented yet, so
-/// every case which agrees with its expected results has no repeat difference. Returns the
-/// message of a difference.
-pub fn repeat_check(_settings: &CaseSettings, _observed: &SimulationResult) -> Option<String> {
-    None
+/// The test tag of the cases whose simultaneous events execute in a random order.
+pub const RANDOM_EVENT_EXECUTION: &str = "RandomEventExecution";
+
+/// The request of a case for `fraction` of its duration with as many of its steps (at least
+/// one), with a steady state before it of at most the duration of the case for `steady`.
+pub fn case_request_of(settings: &CaseSettings, fraction: f64, steady: bool) -> SimulationRequest {
+    let mut req = case_request(settings);
+    if fraction != 1.0 {
+        req.end = settings.start + settings.duration * fraction;
+        req.output = Output::Uniform {
+            steps: ((settings.steps as f64 * fraction).round() as u32).max(1),
+        };
+    }
+    if steady {
+        req.steady_state = Some(SteadyState {
+            max_time: settings.duration,
+            ..SteadyState::default()
+        });
+    }
+    req
+}
+
+/// How a later simulation differs from the first, bitwise (`NaN` equal to `NaN`), `None` for
+/// equal results.
+pub fn repeat_difference(
+    first: &SimulationResult,
+    second: &SimulationResult,
+    what: &str,
+) -> Option<String> {
+    if first.columns != second.columns
+        || first.n_rows != second.n_rows
+        || first.values.len() != second.values.len()
+    {
+        return Some(format!(
+            "{what} has {} rows of {} columns and not {} rows of {} columns of the first",
+            second.n_rows,
+            second.columns.len(),
+            first.n_rows,
+            first.columns.len()
+        ));
+    }
+    let differs = |a: f64, b: f64| a.to_bits() != b.to_bits() && !(a.is_nan() && b.is_nan());
+    let k = first.columns.len().max(1);
+    let mut n = 0usize;
+    let mut worst: Option<(f64, usize)> = None;
+    for (i, (a, b)) in first.values.iter().zip(&second.values).enumerate() {
+        if differs(*a, *b) {
+            n += 1;
+            let d = (a - b).abs();
+            let d = if d.is_nan() { f64::INFINITY } else { d };
+            if worst.is_none_or(|(w, _)| d > w) {
+                worst = Some((d, i));
+            }
+        }
+    }
+    let (d, i) = worst?;
+    let (row, col) = (i / k, i % k);
+    Some(format!(
+        "{what} differs from the first in {n} values, at most {d:.3e} in '{}' at the time {} \
+         ({:?} and {:?})",
+        first.columns[col],
+        first.values[row * k],
+        first.values[i],
+        second.values[i]
+    ))
+}
+
+/// Whether two results of a case of random event execution agree within the tolerances of
+/// the case (the rule of the suite, `a` taken as the expected one).
+fn within_case(a: &SimulationResult, b: &SimulationResult, settings: &CaseSettings) -> bool {
+    a.columns == b.columns
+        && a.values.len() == b.values.len()
+        && a.values.iter().zip(&b.values).all(|(x, y)| {
+            within(
+                *x,
+                *y,
+                settings.absolute_tolerance,
+                settings.relative_tolerance,
+            )
+        })
+}
+
+/// The repeat checks of a case which agrees with its expected results, as sbmlsim's
+/// `testsuite/runner.py` `repeat_check`, on the instance which simulated it first:
+///
+/// 1. the same simulation again;
+/// 2. a simulation of half the duration, then the simulation of the case;
+/// 3. the simulation with a steady state before it (at most the duration of the case), on
+///    this instance and on a fresh one; both may fail, then with the same error.
+///
+/// Each must equal the first (3: the one of the fresh instance), bitwise. Every request has
+/// the seed [`EVENT_SEED`], so a case of random event execution ([`RANDOM_EVENT_EXECUTION`])
+/// draws the same order; as in sbmlsim it is compared with its expected results in 2 and
+/// within the tolerances of the case in 3 instead. Returns the message of a difference.
+pub fn repeat_check(
+    runtime: &Runtime,
+    compiled: &CompiledModel,
+    instance: &mut Instance,
+    settings: &CaseSettings,
+    expected: &Table,
+    first: &SimulationResult,
+) -> Option<String> {
+    let random = settings
+        .test_tags
+        .iter()
+        .any(|t| t == RANDOM_EVENT_EXECUTION);
+    let request = case_request(settings);
+    let simulate = |instance: &mut Instance, req: &SimulationRequest, what: &str| {
+        instance
+            .simulate(req)
+            .map_err(|e| format!("{what} failed: {e}"))
+    };
+
+    let what = "the second simulation of the instance";
+    let second = match simulate(instance, &request, what) {
+        Ok(second) => second,
+        Err(message) => return Some(message),
+    };
+    if let Some(difference) = repeat_difference(first, &second, what) {
+        return Some(difference);
+    }
+
+    let half = case_request_of(settings, 0.5, false);
+    if let Err(message) = simulate(instance, &half, "a simulation of half the duration") {
+        return Some(message);
+    }
+    let what = "a simulation of the instance after a shorter one";
+    let third = match simulate(instance, &request, what) {
+        Ok(third) => third,
+        Err(message) => return Some(message),
+    };
+    if let Some(difference) = repeat_difference(first, &third, what) {
+        let agrees = compare(
+            expected,
+            &third,
+            settings.absolute_tolerance,
+            settings.relative_tolerance,
+        )
+        .is_ok();
+        if !(random && agrees) {
+            return Some(difference);
+        }
+    }
+
+    let steady = case_request_of(settings, 1.0, true);
+    let what = "a steady state after the simulations of the instance";
+    let reference = match runtime.instantiate(&compiled.wasm, &compiled.description) {
+        Ok(mut fresh) => fresh.simulate(&steady).map_err(|e| e.to_string()),
+        Err(error) => return Some(format!("a fresh instance failed: {error:#}")),
+    };
+    let observed = instance.simulate(&steady).map_err(|e| e.to_string());
+    match (reference, observed) {
+        (Ok(reference), Ok(observed)) => {
+            let difference = repeat_difference(&reference, &observed, what)?;
+            if random && within_case(&reference, &observed, settings) {
+                return None;
+            }
+            Some(difference)
+        }
+        (Err(reference), Err(observed)) if reference == observed => None,
+        (reference, observed) => {
+            let describe = |r: &Result<SimulationResult, String>| match r {
+                Ok(_) => "results".to_string(),
+                Err(message) => message.clone(),
+            };
+            Some(format!(
+                "{what} gives {}, a steady state of a fresh instance {}",
+                describe(&observed),
+                describe(&reference)
+            ))
+        }
+    }
 }
 
 /// The request of a case.
@@ -382,16 +552,15 @@ fn run_case_inner(runtime: &Runtime, dir: &Path, cid: &str) -> CaseResult {
         Ok(compiled) => compiled,
         Err(error) => return CaseResult::new(cid, Status::NotCompiled, error.to_string()),
     };
-    let observed = match runtime
-        .instantiate(&compiled.wasm, &compiled.description)
-        .map_err(|e| format!("{e:#}"))
-        .and_then(|mut instance| {
-            instance
-                .simulate(&case_request(&settings))
-                .map_err(|e| e.to_string())
-        }) {
+    let mut instance = match runtime.instantiate(&compiled.wasm, &compiled.description) {
+        Ok(instance) => instance,
+        Err(error) => {
+            return CaseResult::new(cid, Status::SimulationError, format!("{error:#}"));
+        }
+    };
+    let observed = match instance.simulate(&case_request(&settings)) {
         Ok(observed) => observed,
-        Err(message) => return CaseResult::new(cid, Status::SimulationError, message),
+        Err(error) => return CaseResult::new(cid, Status::SimulationError, error.to_string()),
     };
     let expected = match fs::read_to_string(dir.join("expected.csv"))
         .map_err(anyhow::Error::from)
@@ -420,7 +589,14 @@ fn run_case_inner(runtime: &Runtime, dir: &Path, cid: &str) -> CaseResult {
             CaseResult::new(cid, failure.status, failure.message)
                 .with_difference(failure.max_difference)
         }
-        Ok(max_difference) => match repeat_check(&settings, &observed) {
+        Ok(max_difference) => match repeat_check(
+            runtime,
+            &compiled,
+            &mut instance,
+            &settings,
+            &expected,
+            &observed,
+        ) {
             Some(message) => CaseResult::new(cid, Status::Repeat, message),
             None => CaseResult::new(cid, Status::Pass, "").with_difference(Some(max_difference)),
         },

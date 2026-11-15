@@ -35,6 +35,14 @@
 //! looks [`END_RTOL`] ahead ([`Probe::End`]) and the output is written after it (sbmlsim's
 //! event at the end).
 //!
+//! At a change (`changes`) the integration stops exactly at its time without executing the
+//! events there; after the change the events execute with the triggers before the change
+//! ([`Probe::Change`]: the events the change makes true, with their priorities, persistence
+//! and values, as sbmlsim's `fire_events`), then the output of the state after the change is
+//! written, then the executions which were pending at its time and the strict comparisons
+//! execute ([`Probe::After`]). An event triggered by a change which has a delay is pending as
+//! any other (sbmlsim does not schedule it and warns).
+//!
 //! Both windows are relative: the absolute window is the rtol times the magnitude of the time
 //! scale of the simulation, `max(|start|, |end|, end - start)` (1 when that is 0), so a
 //! simulation from 0 to 1e6 looks 1e-6 ahead after a stop and 1e-3 at its end. An event within
@@ -77,6 +85,8 @@ struct Pending {
     /// The values of the assignments, evaluated when the event was triggered, or `None` to
     /// evaluate them at the execution.
     values: Option<Vec<f64>>,
+    /// Whether the execution waits for the next round ([`Probe::Change`]).
+    held: bool,
 }
 
 /// The events of a simulation: the last values of the triggers and the pending executions.
@@ -111,6 +121,12 @@ pub(crate) enum Probe {
     After,
     /// Right after the end, within [`END_RTOL`]: also a pending execution within it is due.
     End,
+    /// At the time, right after a change: the triggers as [`Probe::Exact`], but only the
+    /// executions this round triggers are due; the executions which were pending before it
+    /// wait for the next round (sbmlsim: the events a change triggers fire with the change, an
+    /// execution pending at its time fires when the integration continues, after the output of
+    /// the state after the change).
+    Change,
 }
 
 impl<'a> Events<'a> {
@@ -123,27 +139,51 @@ impl<'a> Events<'a> {
         start: f64,
         end: f64,
     ) -> Events<'a> {
+        let n = desc.states.len();
+        let mut events = Events {
+            model,
+            info: &desc.events,
+            armed: desc.events.iter().map(|e| e.initial_value).collect(),
+            pending: Vec::new(),
+            rng: Pcg64::seed_from_u64(seed),
+            probe: 0.0,
+            end_probe: 0.0,
+            executions: vec![0; desc.events.len()],
+            executions_at: f64::NAN,
+            current: vec![false; desc.events.len()],
+            y_probe: vec![0.0; n],
+            ydot: vec![0.0; n],
+        };
+        events.set_window(start, end);
+        events
+    }
+
+    /// Sets the windows of the probes for an integration from `start` to `end`: [`PROBE_RTOL`]
+    /// and [`END_RTOL`] times the magnitude of its times (1 when that is 0).
+    pub fn set_window(&mut self, start: f64, end: f64) {
         let scale = start.abs().max(end.abs()).max(end - start);
         let scale = if scale > 0.0 && scale.is_finite() {
             scale
         } else {
             1.0
         };
-        let n = desc.states.len();
-        Events {
-            model,
-            info: &desc.events,
-            armed: desc.events.iter().map(|e| e.initial_value).collect(),
-            pending: Vec::new(),
-            rng: Pcg64::seed_from_u64(seed),
-            probe: PROBE_RTOL * scale,
-            end_probe: END_RTOL * scale,
-            executions: vec![0; desc.events.len()],
-            executions_at: f64::NAN,
-            current: vec![false; desc.events.len()],
-            y_probe: vec![0.0; n],
-            ydot: vec![0.0; n],
+        self.probe = PROBE_RTOL * scale;
+        self.end_probe = END_RTOL * scale;
+    }
+
+    /// Moves the time of the events from `from` to `to`: every pending execution keeps the time
+    /// it has left (an integration to a steady state which ends at `from` is followed by the
+    /// simulation from `to`).
+    pub fn rebase(&mut self, from: f64, to: f64) {
+        for e in &mut self.pending {
+            e.time = to + (e.time - from);
         }
+        self.executions_at = f64::NAN;
+    }
+
+    /// The model of the events.
+    pub fn model(&self) -> &'a dyn ModelFns {
+        self.model
     }
 
     /// The time of the next pending execution.
@@ -167,7 +207,7 @@ impl<'a> Events<'a> {
             let exact = model.trigger(i as u32, t, y, p);
             self.current[i] = exact;
             let delta = match probe {
-                Probe::Exact => continue,
+                Probe::Exact | Probe::Change => continue,
                 Probe::After => self.probe,
                 Probe::End => self.end_probe,
             };
@@ -212,12 +252,32 @@ impl<'a> Events<'a> {
         p: &mut [f64],
         probe: Probe,
     ) -> Result<bool, EngineError> {
-        let model = self.model;
-        let mut executed = false;
         if t != self.executions_at {
             self.executions.fill(0);
             self.executions_at = t;
         }
+        if probe == Probe::Change {
+            for e in &mut self.pending {
+                e.held = true;
+            }
+        }
+        let result = self.rounds(t, y, p, probe);
+        for e in &mut self.pending {
+            e.held = false;
+        }
+        result
+    }
+
+    /// The executions of [`Events::execute_at`].
+    fn rounds(
+        &mut self,
+        t: f64,
+        y: &mut [f64],
+        p: &mut [f64],
+        probe: Probe,
+    ) -> Result<bool, EngineError> {
+        let model = self.model;
+        let mut executed = false;
         loop {
             model.assign(t, y, p);
             self.evaluate(t, y, p, probe);
@@ -256,6 +316,7 @@ impl<'a> Events<'a> {
                     event: i as u32,
                     time,
                     values,
+                    held: false,
                 });
             }
             self.armed.copy_from_slice(&self.current);
@@ -299,7 +360,7 @@ impl<'a> Events<'a> {
         let mut best: Vec<usize> = Vec::new();
         let mut best_priority = f64::NEG_INFINITY;
         for (k, e) in self.pending.iter().enumerate() {
-            if e.time > t + horizon {
+            if e.time > t + horizon || e.held {
                 continue;
             }
             let priority = self.model.priority(e.event, t, y, p);

@@ -1,5 +1,5 @@
 //! The errors of the engine: failed integrations, invalid requests refused before any
-//! integration, the features of later tasks, and the reuse of an engine after an error.
+//! integration, a description of another model, and the reuse of an engine after an error.
 
 use sbmlsim_abi::{
     Change, EventInfo, IntegratorSettings, MODEL_CONTRACT, ModelDescription, Output,
@@ -95,7 +95,7 @@ fn invalid_requests_are_refused() {
         decay(&with(&|r| r.selections = vec!["nope".to_string()])),
         &["nope"],
     );
-    // a change after the end (a feature of a later task, but the request is checked first)
+    // a change after the end
     let change = |time: f64, value: f64| Change {
         time,
         values: vec![("k".to_string(), value)],
@@ -105,18 +105,19 @@ fn invalid_requests_are_refused() {
         &["change at t = 20 "],
     );
     for (changes, text) in [
-        (vec![change(0.0, 1.0)], "change at t = 0 "),
+        (vec![change(-1.0, 1.0)], "change at t = -1 "),
         (vec![change(f64::NAN, 1.0)], "change at t = NaN "),
         (vec![change(5.0, 1.0), change(4.0, 1.0)], "change at t = 4 "),
         (
             vec![change(5.0, f64::INFINITY)],
-            "the value inf of k is not finite",
+            "the value inf of k at t = 5 is not finite",
         ),
     ] {
         assert_request(decay(&with(&|r| r.changes = changes.clone())), &[text]);
     }
-    // a change of an unknown entity and of one which is not settable
-    for id in ["nothing", "t_half"] {
+    // a change of an unknown entity, of one which is not settable and the concentration of an
+    // entity which is no species
+    for id in ["nothing", "t_half", "[k]", "[nothing]"] {
         let r = with(&|r| {
             r.changes = vec![Change {
                 time: 5.0,
@@ -125,6 +126,26 @@ fn invalid_requests_are_refused() {
         });
         assert_request(decay(&r), &[id]);
     }
+    // an entity set twice at one time, also by two changes of that time
+    let twice = |a: f64, b: f64| {
+        with(&|r| {
+            r.changes = vec![change(a, 1.0), change(b, 2.0)];
+        })
+    };
+    assert_request(
+        decay(&twice(5.0, 5.0)),
+        &["k is set more than once at t = 5"],
+    );
+    decay(&twice(5.0, 6.0)).unwrap();
+    // a target of the pre-initialization of the request and of its steady state
+    let r = with(&|r| {
+        r.preinit = vec![("k".to_string(), 1.0)];
+        r.steady_state = Some(SteadyState {
+            preinit: vec![("k".to_string(), 2.0)],
+            ..SteadyState::default()
+        });
+    });
+    assert_request(decay(&r), &["k is set more than once"]);
     // output times out of order, outside the simulation, not finite
     for times in [vec![1.0, 0.5], vec![-1.0], vec![11.0], vec![f64::NAN]] {
         assert_request(
@@ -264,34 +285,34 @@ fn output_larger_than_the_limit_is_refused_upfront() {
 }
 
 #[test]
-fn features_of_later_tasks_are_unsupported() {
+fn invalid_steady_states_and_other_descriptions_are_refused() {
     let model = Decay { k: 0.5 };
     let base = request(0.0, 1.0, Output::Uniform { steps: 2 });
-
+    for steady in [
+        SteadyState {
+            max_time: -1.0,
+            ..SteadyState::default()
+        },
+        SteadyState {
+            max_time: f64::INFINITY,
+            ..SteadyState::default()
+        },
+    ] {
+        let mut req = base.clone();
+        req.steady_state = Some(steady);
+        assert_request(
+            simulate(&model, &model.description(), &req),
+            &["maximum time"],
+        );
+    }
     let mut req = base.clone();
-    req.changes = vec![Change {
-        time: 0.5,
-        values: vec![("k".to_string(), 1.0)],
-    }];
-    assert!(matches!(
-        simulate(&model, &model.description(), &req),
-        Err(EngineError::Unsupported(m)) if m.contains("changes")
-    ));
-
-    let mut req = base.clone();
-    req.steady_state = Some(SteadyState::default());
-    assert!(matches!(
-        simulate(&model, &model.description(), &req),
-        Err(EngineError::Unsupported(m)) if m.contains("steady")
-    ));
-    // an invalid steady state is a Request error, checked first
     req.steady_state = Some(SteadyState {
-        max_time: -1.0,
+        absolute_tolerance: f64::NAN,
         ..SteadyState::default()
     });
     assert_request(
         simulate(&model, &model.description(), &req),
-        &["maximum time"],
+        &["steady state tolerances"],
     );
 
     // events are simulated: a description of events which the model does not have is a

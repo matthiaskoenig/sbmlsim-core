@@ -6,10 +6,10 @@ use std::sync::OnceLock;
 
 use sbmlsim_abi::{
     Change, IntegratorSettings, ModelDescription, Output, SIMULATION_CONTRACT, SimulationRequest,
-    SimulationResult,
+    SimulationResult, SteadyState,
 };
 use sbmlsim_engine::model::Decay;
-use sbmlsim_engine::{EngineError, simulate};
+use sbmlsim_engine::{EngineError, STEADY_STATE_FLAG, simulate};
 use sbmlsim_host::{ENGINE_WASM, Instance, MATHLIB_WASM, Runtime};
 
 /// The runtime of the embedded engine and mathlib, compiled once for the tests.
@@ -177,15 +177,34 @@ fn errors_of_the_engine_come_back() {
     req.contract = "simulation/0".to_string();
     let wasm = instance.simulate(&req).unwrap_err();
     assert_eq!(wasm, native_result(&req).unwrap_err());
-    // unsupported: a change
+    // a steady state which is not reached
+    let mut req = request();
+    req.steady_state = Some(SteadyState {
+        max_time: 0.5,
+        ..SteadyState::default()
+    });
+    let wasm = instance.simulate(&req).unwrap_err();
+    assert!(
+        matches!(
+            wasm,
+            EngineError::Integration {
+                flag: STEADY_STATE_FLAG,
+                ..
+            }
+        ),
+        "{wasm:?}"
+    );
+    assert_eq!(wasm, native_result(&req).unwrap_err());
+    // a change is simulated as natively
     let mut req = request();
     req.changes = vec![Change {
         time: 5.0,
         values: vec![("k".to_string(), 1.0)],
     }];
-    let wasm = instance.simulate(&req).unwrap_err();
-    assert!(matches!(wasm, EngineError::Unsupported(_)), "{wasm:?}");
-    assert_eq!(wasm, native_result(&req).unwrap_err());
+    assert_close(
+        &instance.simulate(&req).unwrap(),
+        &native_result(&req).unwrap(),
+    );
     // and the instance still simulates
     assert_close(
         &instance.simulate(&request()).unwrap(),

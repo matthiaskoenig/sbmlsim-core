@@ -51,7 +51,8 @@
 //!
 //! Revisions of `model/1` before its first release: the field [`ModelDescription::n_roots`],
 //! the exports `model_sizes` and `model_event_sizes` and the time of `model_event_apply` were
-//! added with the events (no version change, nothing was released).
+//! added with the events, the field `stores_concentration` of [`EntityKind::Species`] with the
+//! changes (no version change, nothing was released).
 
 mod request;
 
@@ -296,6 +297,9 @@ pub enum EntityKind {
         compartment: String,
         /// The `hasOnlySubstanceUnits` attribute.
         has_only_substance_units: bool,
+        /// Whether the entity stores the concentration of the species (a species of a
+        /// concentration which is the target of a rule), else its amount.
+        stores_concentration: bool,
     },
     /// A compartment.
     Compartment,
@@ -487,6 +491,7 @@ mod tests {
                 kind: EntityKind::Species {
                     compartment: "c".to_string(),
                     has_only_substance_units: false,
+                    stores_concentration: false,
                 },
                 initial: 1.0,
                 settable: true,

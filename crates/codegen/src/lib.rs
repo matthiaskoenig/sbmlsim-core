@@ -380,10 +380,12 @@ fn description(model: &Model) -> ModelDescription {
             EntityKind::Species {
                 compartment,
                 has_only_substance_units,
+                value,
                 ..
             } => abi::EntityKind::Species {
                 compartment: model.entity(*compartment).id.clone(),
                 has_only_substance_units: *has_only_substance_units,
+                stores_concentration: *value == SpeciesValue::Concentration,
             },
             EntityKind::Compartment => abi::EntityKind::Compartment,
             EntityKind::Parameter => abi::EntityKind::Parameter,

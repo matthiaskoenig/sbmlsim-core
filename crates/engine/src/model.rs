@@ -41,7 +41,9 @@ pub trait ModelFns {
 }
 
 #[cfg(any(test, feature = "test-models"))]
-pub use test_models::{Decay, Derived, EventModel, Fun, NanRhs, Robertson, Target, TestEvent};
+pub use test_models::{
+    Compartmental, Decay, Derived, EventModel, Fun, NanRhs, Robertson, Target, TestEvent,
+};
 
 #[cfg(any(test, feature = "test-models"))]
 mod test_models {
@@ -333,6 +335,80 @@ mod test_models {
         fn selections(&self, _t: f64, y: &[f64], p: &[f64], out: &mut [f64]) {
             out[0] = y[0];
             out[1] = p[1];
+        }
+        fn assign(&self, _t: f64, _y: &mut [f64], _p: &mut [f64]) {}
+        no_events!();
+    }
+
+    /// Three species in the compartment `C` (of size 1): `S` of a concentration stored as its
+    /// amount, with `S' = -k S`; `R` of a concentration which stores its concentration (the
+    /// target of the rate rule `R' = 0`); `H` of an amount (`hasOnlySubstanceUnits`), with
+    /// `H' = 0`; every one 1 at the start.
+    ///
+    /// The parameters are `[C, k]` (`k` = 0 by default), the states `[S, R, H]`, the
+    /// selections `[S, [S], R, [R], H, [H], C]` (the amounts and the concentrations).
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    pub struct Compartmental {
+        /// The rate of `S`.
+        pub k: f64,
+    }
+
+    impl Compartmental {
+        /// The description of the model.
+        pub fn description(&self) -> ModelDescription {
+            let species = |id: &str, has_only_substance_units, stores_concentration| Entity {
+                id: id.to_string(),
+                kind: EntityKind::Species {
+                    compartment: "C".to_string(),
+                    has_only_substance_units,
+                    stores_concentration,
+                },
+                initial: 1.0,
+                settable: true,
+            };
+            let mut compartment = entity("C", 1.0, true);
+            compartment.kind = EntityKind::Compartment;
+            description(
+                "compartmental",
+                vec![
+                    species("S", false, false),
+                    species("R", false, true),
+                    species("H", true, false),
+                ],
+                vec![compartment, entity("k", self.k, true)],
+                selections(&["S", "[S]", "R", "[R]", "H", "[H]", "C"]),
+                SparsityPattern {
+                    n: 3,
+                    col_ptr: vec![0, 1, 1, 1],
+                    row_idx: vec![0],
+                },
+            )
+        }
+    }
+
+    impl ModelFns for Compartmental {
+        fn defaults(&self, p: &mut [f64], y: &mut [f64]) {
+            p[0] = 1.0;
+            p[1] = self.k;
+            y.fill(1.0);
+        }
+        fn init(&self, _t: f64, _p: &mut [f64], _y: &mut [f64], _fixed: &[u8]) {}
+        fn rhs(&self, _t: f64, y: &[f64], p: &[f64], ydot: &mut [f64]) {
+            ydot[0] = -p[1] * y[0];
+            ydot[1] = 0.0;
+            ydot[2] = 0.0;
+        }
+        fn jac(&self, _t: f64, _y: &[f64], p: &[f64], values: &mut [f64]) {
+            values[0] = -p[1];
+        }
+        fn selections(&self, _t: f64, y: &[f64], p: &[f64], out: &mut [f64]) {
+            out[0] = y[0];
+            out[1] = y[0] / p[0];
+            out[2] = y[1] * p[0];
+            out[3] = y[1];
+            out[4] = y[2];
+            out[5] = y[2] / p[0];
+            out[6] = p[0];
         }
         fn assign(&self, _t: f64, _y: &mut [f64], _p: &mut [f64]) {}
         no_events!();

@@ -14,19 +14,25 @@
 //! - `exports` (wasm32 and the feature `exports`): the exports of `engine.wasm` and the model it
 //!   imports.
 //!
-//! The initialization is `defaults`, then the pre-initialization values (fixed for `init`), then
-//! `init` at the start time; the integration runs in absolute time from the start. Changes and
-//! steady states come with a later task and are [`EngineError::Unsupported`] until then.
+//! - `changes`: the changes at times and how they are applied.
+//! - `steady`: the steady state before a simulation.
+//!
+//! The initialization is `defaults`, then the pre-initialization values of the request and of
+//! its steady state (fixed for `init`), then `init` at the start time; then the steady state, if
+//! the request has one; the integration runs in absolute time from the start, in segments
+//! between the changes.
 
+mod changes;
 mod cvode;
 mod events;
 #[cfg(all(target_arch = "wasm32", feature = "exports"))]
 mod exports;
 pub mod model;
 mod segments;
+mod steady;
 
 use sbmlsim_abi::{
-    Change, IntegratorSettings, JacobianChoice, JacobianKind, LinearSolver, MODEL_CONTRACT,
+    IntegratorSettings, JacobianChoice, JacobianKind, LinearSolver, MODEL_CONTRACT,
     ModelDescription, ModelSizes, Output, SIMULATION_CONTRACT, SimulationRequest, SimulationResult,
     SparsityPattern, Tolerance, check_contract,
 };
@@ -58,9 +64,14 @@ pub const EVENT_LIMIT_FLAG: i32 = -1002;
 /// it is triggered: an engine code, distinct from CVODE's and the other engine flags.
 pub const DELAY_FLAG: i32 = -1003;
 
+/// The flag of the [`EngineError::Integration`] of a steady state which is not reached by its
+/// `max_time`: an engine code, distinct from CVODE's and the other engine flags.
+pub const STEADY_STATE_FLAG: i32 = -1004;
+
 pub use events::MAX_EXECUTIONS_PER_EVENT;
 pub use model::ModelFns;
 
+use changes::Changes;
 use cvode::{Config, Cvode, Linear, Method, Problem};
 use events::Events;
 use segments::{Column, Recorder, SegmentOutput};
@@ -383,33 +394,6 @@ fn resolve_preinit(
     Ok(resolved)
 }
 
-/// Checks the changes: finite values in `(start, end]` in non-decreasing order of the time.
-fn check_changes(
-    desc: &ModelDescription,
-    changes: &[Change],
-    start: f64,
-    end: f64,
-) -> Result<(), EngineError> {
-    let mut previous = start;
-    for change in changes {
-        let t = change.time;
-        if !t.is_finite() || t <= start || t > end || t < previous {
-            return Err(request(format!(
-                "change at t = {t} is not after the start {start}, within the end {end} and in \
-                 order of the time"
-            )));
-        }
-        resolve_preinit(desc, &change.values)?;
-        if let Some((id, value)) = change.values.iter().find(|(_, v)| !v.is_finite()) {
-            return Err(request(format!(
-                "the value {value} of {id} at t = {t} is not finite"
-            )));
-        }
-        previous = t;
-    }
-    Ok(())
-}
-
 /// Checks the steady state of a request.
 fn check_steady_state(
     desc: &ModelDescription,
@@ -477,19 +461,17 @@ fn run(
     check_settings(&req.settings, n)?;
     let (names, columns) = columns_of(desc, req)?;
     let times = output_times(&req.output, start, end, names.len())?;
-    check_changes(desc, &req.changes, start, end)?;
+    let changes = Changes::new(desc, &req.changes, start, end)?;
+    // the model is initialized once, with the pre-initialization values of the request and of
+    // its steady state together (sbmlsim refuses a target in both)
+    let mut preinit = req.preinit.clone();
     if let Some(steady) = &req.steady_state {
         check_steady_state(desc, steady)?;
+        preinit.extend(steady.preinit.iter().cloned());
     }
-    let preinit = resolve_preinit(desc, &req.preinit)?;
-    // 2. the features of later tasks
-    if !req.changes.is_empty() {
-        return Err(EngineError::Unsupported("changes".into()));
-    }
-    if req.steady_state.is_some() {
-        return Err(EngineError::Unsupported("steady states".into()));
-    }
-    let (p, y0) = initial_values(model, desc, &preinit, start);
+    let preinit = resolve_preinit(desc, &preinit)?;
+    // 2. the initialization
+    let (p, mut y0) = initial_values(model, desc, &preinit, start);
     let with_events = !desc.events.is_empty() || desc.n_roots > 0;
 
     // a model without states but with events integrates one state of the rate 0, so CVODE
@@ -553,9 +535,24 @@ fn run(
         Output::IntegratorSteps => SegmentOutput::Steps,
         _ => SegmentOutput::Times(&times),
     };
+    // the state of CVODE: the model reads its first `n` values
+    y0.resize(n_cvode, 0.0);
     match cvode {
         Some(cvode) if with_events => {
             let mut events = Events::new(model, desc, req.seed, start, end);
+            if let Some(steady) = &req.steady_state {
+                steady::steady_state(
+                    Some(&mut *cvode),
+                    &mut problem,
+                    &settings,
+                    start,
+                    end,
+                    &mut y0,
+                    steady,
+                    Some(&mut events),
+                    &desc.id,
+                )?;
+            }
             segments::integrate_events(
                 cvode,
                 &mut problem,
@@ -566,18 +563,35 @@ fn run(
                 output,
                 &mut recorder,
                 &mut events,
+                &changes,
             )?;
         }
-        cvode => segments::integrate(
-            cvode,
-            &mut problem,
-            &settings,
-            start,
-            &y0,
-            end,
-            output,
-            &mut recorder,
-        )?,
+        mut cvode => {
+            if let Some(steady) = &req.steady_state {
+                steady::steady_state(
+                    cvode.as_deref_mut(),
+                    &mut problem,
+                    &settings,
+                    start,
+                    end,
+                    &mut y0,
+                    steady,
+                    None,
+                    &desc.id,
+                )?;
+            }
+            segments::integrate(
+                cvode,
+                &mut problem,
+                &settings,
+                start,
+                &y0,
+                end,
+                output,
+                &mut recorder,
+                &changes,
+            )?
+        }
     }
     Ok(SimulationResult {
         columns: names,

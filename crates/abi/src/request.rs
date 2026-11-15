@@ -14,9 +14,11 @@ pub struct SimulationRequest {
     pub end: f64,
     /// The times of the output.
     pub output: Output,
-    /// Values set before the initialization, as `(id, value)`.
+    /// Values set before the initialization, as `(id, value)`: the id of an entity, set in the
+    /// quantity it stores (the amount of a species, or the concentration of a species which
+    /// stores its concentration, see `EntityKind::Species`).
     pub preinit: Vec<(String, f64)>,
-    /// Changes at absolute times after the start.
+    /// Changes at absolute times in `[start, end]`, in non-decreasing order of the time.
     pub changes: Vec<Change>,
     /// A steady state to reach before the start.
     pub steady_state: Option<SteadyState>,
@@ -47,21 +49,39 @@ pub enum Output {
     IntegratorSteps,
 }
 
-/// Values set at a time.
+/// Values set at a time, as sbmlsim's `Change` (PEtab v2).
+///
+/// The values are set at once (the changes of one time are one change): a compartment keeps
+/// the concentrations of the species of a concentration in it (not of an amount, not of an
+/// assignment rule, not of one the change sets), and the assignment rules follow. The id of a
+/// value is a selection: `S` is the amount of a species, `[S]` its concentration, any other id
+/// the value of its entity. A change at the start is applied after the initialization (and
+/// after the steady state) and before the output of the start; a change after the start ends a
+/// segment of the integration, and the output has the state before it and the state after it
+/// at its time (two rows: in the steps of the integrator always, in an output of times when
+/// its time is one of them). The events a change triggers execute with it; an event at its
+/// time executes after it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Change {
     /// The absolute time of the change.
     pub time: f64,
-    /// The `(id, value)` pairs, evaluated simultaneously.
+    /// The `(id, value)` pairs, set simultaneously.
     pub values: Vec<(String, f64)>,
 }
 
-/// A steady state which is reached before the start.
+/// A steady state which is reached before the start, as sbmlsim's `SteadyState`.
+///
+/// The model is initialized once, with the pre-initialization of the request and of the steady
+/// state together (an id in both is refused), and integrated from the start, events active,
+/// until every state has `|dx/dt| <= absolute_tolerance + relative_tolerance * |x|` at the end
+/// of a horizon (1, 10, 100, ... time units), at most `max_time`; the simulation starts from that
+/// state at its start. A steady state which is not reached is an error of the integration.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SteadyState {
-    /// Values set before the steady state, as `(id, value)`.
+    /// Values set before the initialization, as `(id, value)`, as the pre-initialization of the
+    /// request.
     pub preinit: Vec<(String, f64)>,
     /// The absolute tolerance of the steady state criterion.
     pub absolute_tolerance: f64,
