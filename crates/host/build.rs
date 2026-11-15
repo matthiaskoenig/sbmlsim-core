@@ -5,6 +5,12 @@
 //! of the workspace, kept between builds): the engine as a `cdylib` for `wasm32-wasip1` with an
 //! imported (and exported) memory, which needs `WASI_SDK_PATH` for the C of `sbmlsim-csolvers`,
 //! and mathlib for `wasm32-unknown-unknown`, both with the release profile.
+//!
+//! `engine.wasm` gets a custom section `sbmlsim.engine` (when it has none) with the JSON
+//! `{"memory_minimum_pages":n}`, the minimum of the memory it imports as `env.memory`: a
+//! JavaScript host creates that memory before it instantiates the engine and has no reflection
+//! of the type of an import of a compiled `WebAssembly.Module` (`js/loader.mjs` reads the
+//! section with `WebAssembly.Module.customSections`). wasmtime ignores custom sections.
 
 use std::env;
 use std::path::{Path, PathBuf};
@@ -30,6 +36,7 @@ fn main() {
                 )
             });
         }
+        add_engine_section(&out.join("engine.wasm"));
         return;
     }
     if env::var_os("WASI_SDK_PATH").is_none() {
@@ -101,6 +108,109 @@ fn main() {
     );
     std::fs::copy(engine, out.join("engine.wasm")).unwrap();
     std::fs::copy(mathlib, out.join("mathlib.wasm")).unwrap();
+    add_engine_section(&out.join("engine.wasm"));
+}
+
+/// The name of the custom section of `engine.wasm` with the minimum of its memory.
+const ENGINE_SECTION: &str = "sbmlsim.engine";
+
+/// Reads an unsigned LEB128 at `*at`.
+fn leb(bytes: &[u8], at: &mut usize) -> u64 {
+    let (mut value, mut shift) = (0u64, 0);
+    loop {
+        let byte = bytes[*at];
+        *at += 1;
+        value |= u64::from(byte & 0x7f) << shift;
+        if byte & 0x80 == 0 {
+            return value;
+        }
+        shift += 7;
+    }
+}
+
+/// Appends the unsigned LEB128 of `value`.
+fn push_leb(out: &mut Vec<u8>, mut value: u64) {
+    loop {
+        let byte = (value & 0x7f) as u8;
+        value >>= 7;
+        if value == 0 {
+            out.push(byte);
+            return;
+        }
+        out.push(byte | 0x80);
+    }
+}
+
+/// A name of the module at `*at`.
+fn name<'a>(bytes: &'a [u8], at: &mut usize) -> &'a [u8] {
+    let len = leb(bytes, at) as usize;
+    let name = &bytes[*at..*at + len];
+    *at += len;
+    name
+}
+
+/// Adds the section [`ENGINE_SECTION`] to the module at `path` unless it has one.
+fn add_engine_section(path: &Path) {
+    let mut bytes = std::fs::read(path).unwrap();
+    assert_eq!(&bytes[..8], b"\0asm\x01\0\0\0", "engine.wasm is no module");
+    let mut minimum = None;
+    let mut at = 8;
+    while at < bytes.len() {
+        let id = bytes[at];
+        at += 1;
+        let size = leb(&bytes, &mut at) as usize;
+        let end = at + size;
+        match id {
+            0 if name(&bytes, &mut at.clone()) == ENGINE_SECTION.as_bytes() => return,
+            // the import section: the memory `env.memory`
+            2 => {
+                let mut p = at;
+                for _ in 0..leb(&bytes, &mut p) {
+                    let module = name(&bytes, &mut p).to_vec();
+                    let field = name(&bytes, &mut p).to_vec();
+                    let kind = bytes[p];
+                    p += 1;
+                    match kind {
+                        0 => {
+                            leb(&bytes, &mut p);
+                        }
+                        1 => {
+                            p += 1;
+                            let flags = leb(&bytes, &mut p);
+                            leb(&bytes, &mut p);
+                            if flags & 1 == 1 {
+                                leb(&bytes, &mut p);
+                            }
+                        }
+                        2 => {
+                            let flags = leb(&bytes, &mut p);
+                            let min = leb(&bytes, &mut p);
+                            if flags & 1 == 1 {
+                                leb(&bytes, &mut p);
+                            }
+                            if module == b"env" && field == b"memory" {
+                                minimum = Some(min);
+                            }
+                        }
+                        3 => p += 2,
+                        other => panic!("engine.wasm imports an extern of the kind {other}"),
+                    }
+                }
+            }
+            _ => {}
+        }
+        at = end;
+    }
+    let minimum = minimum.expect("engine.wasm imports env.memory");
+    let payload = format!(r#"{{"memory_minimum_pages":{minimum}}}"#);
+    let mut section = Vec::new();
+    push_leb(&mut section, ENGINE_SECTION.len() as u64);
+    section.extend_from_slice(ENGINE_SECTION.as_bytes());
+    section.extend_from_slice(payload.as_bytes());
+    bytes.push(0);
+    push_leb(&mut bytes, section.len() as u64);
+    bytes.extend_from_slice(&section);
+    std::fs::write(path, bytes).unwrap();
 }
 
 /// Runs a nested cargo with `args`, the target directory and `rest`, and gives the path of

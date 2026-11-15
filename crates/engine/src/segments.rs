@@ -28,38 +28,59 @@ pub(crate) struct Recorder<'a> {
     y: Vec<f64>,
     p: Vec<f64>,
     selections: Vec<f64>,
-    /// The values of the rows, row major.
+    /// The values of the rows, row major, after the `prefix` slots which the caller fills (the
+    /// header of the output of `engine.wasm`, which so needs no second copy of the result).
     pub values: Vec<f64>,
+    /// The number of slots before the first row.
+    prefix: usize,
     /// The number of rows.
     pub n_rows: usize,
-    /// The most values the result may hold.
+    /// The most values the result may hold (the prefix not counted).
     cap: usize,
 }
 
+/// The [`EngineError::Request`] of a result which does not fit into the memory of the engine.
+fn out_of_memory(values: usize) -> EngineError {
+    EngineError::Request(format!(
+        "the result of {values} values does not fit into the memory of the engine"
+    ))
+}
+
 impl<'a> Recorder<'a> {
-    /// A recorder of the columns; `n_selections` is the length of the output of
-    /// [`ModelFns::selections`].
+    /// A recorder of the columns with `prefix` slots of 0 before the first row;
+    /// `n_selections` is the length of the output of [`ModelFns::selections`].
     pub fn new(
         model: &'a dyn ModelFns,
         columns: Vec<Column>,
         n_selections: usize,
         cap: usize,
-    ) -> Self {
-        Recorder {
+        prefix: usize,
+    ) -> Result<Self, EngineError> {
+        let mut values = Vec::new();
+        values
+            .try_reserve_exact(prefix)
+            .map_err(|_| out_of_memory(prefix))?;
+        values.resize(prefix, 0.0);
+        Ok(Recorder {
             model,
             columns,
             y: Vec::new(),
             p: Vec::new(),
             selections: vec![0.0; n_selections],
-            values: Vec::new(),
+            values,
+            prefix,
             n_rows: 0,
             cap,
-        }
+        })
     }
 
-    /// Reserves the values of `rows` more rows.
-    pub fn reserve(&mut self, rows: usize) {
-        self.values.reserve_exact(rows * self.columns.len());
+    /// Reserves the values of `rows` more rows, in one allocation; a result which does not fit
+    /// into the memory is an [`EngineError::Request`] (not an abort of the allocator).
+    pub fn reserve(&mut self, rows: usize) -> Result<(), EngineError> {
+        let n = rows.saturating_mul(self.columns.len());
+        self.values
+            .try_reserve_exact(n)
+            .map_err(|_| out_of_memory(self.values.len() - self.prefix + n))
     }
 
     /// Appends the row of the time `t`, the state `y` and the parameters `p`.
@@ -67,7 +88,8 @@ impl<'a> Recorder<'a> {
     /// Fails with [`OUTPUT_LIMIT_FLAG`] when the row would exceed the cap of values of the
     /// result.
     pub fn row(&mut self, t: f64, y: &[f64], p: &[f64]) -> Result<(), EngineError> {
-        if self.values.len() + self.columns.len() > self.cap {
+        let k = self.columns.len();
+        if self.values.len() - self.prefix + k > self.cap {
             return Err(EngineError::Integration {
                 flag: OUTPUT_LIMIT_FLAG,
                 time: t,
@@ -86,6 +108,13 @@ impl<'a> Recorder<'a> {
         self.model.assign(t, &mut self.y, &mut self.p);
         self.model
             .selections(t, &self.y, &self.p, &mut self.selections);
+        // the growth of the values (by doubling, for the steps of the integrator) may find no
+        // memory: an error and not an abort of the allocator, which would write to stderr
+        if self.values.capacity() - self.values.len() < k {
+            self.values
+                .try_reserve(k)
+                .map_err(|_| out_of_memory(self.values.len() - self.prefix + k))?;
+        }
         for column in &self.columns {
             self.values.push(match column {
                 Column::Time => t,
@@ -598,7 +627,7 @@ mod tests {
         let no_changes = Changes::new(&desc, &[], 0.0, 50.0).unwrap();
         let mut run = |cap: usize| {
             let columns = vec![Column::Time, Column::Selection(0)];
-            let mut recorder = Recorder::new(&model, columns, 2, cap);
+            let mut recorder = Recorder::new(&model, columns, 2, cap, 0).unwrap();
             let result = integrate(
                 Some(&mut cvode),
                 &mut problem,

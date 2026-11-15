@@ -20,6 +20,14 @@
 //! regression, a case which is listed and passes is a baseline which is out of date; a listed
 //! case with another status and, in a run of all cases, a listed case which was not run are
 //! differences as well. The command exits with 0 only without differences.
+//!
+//! `--export DIR` writes every case which passes as the inputs and the outputs of the wasmtime
+//! host, which `js/test/same_bits.test.mjs` runs in Node and compares byte for byte:
+//! `DIR/engine.wasm` and `DIR/mathlib.wasm` (the ones of the run), and per case
+//! `DIR/cases/<case>/`: `model.wasm`, `model.json`, `request.json` and `wasmtime.csv` (the CSV
+//! of `sbmlsim_cli::csv` of the result of the case), `wasmtime.f64` (its values as `f64`, little
+//! endian) and, when the simulation with a steady state before it succeeds, `steady.json` and
+//! `steady.csv`.
 
 use std::cell::OnceCell;
 use std::collections::BTreeMap;
@@ -31,12 +39,15 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use clap::Args;
 use rayon::prelude::*;
+use sbmlsim_abi::ModelDescription;
 use sbmlsim_abi::{
     IntegratorSettings, JacobianChoice, JacobianKind, Output, SIMULATION_CONTRACT,
     SimulationRequest, SimulationResult, SteadyState, Tolerance,
 };
 use sbmlsim_compiler::{CompileOptions, CompiledModel, compile};
 use sbmlsim_host::{Instance, Runtime};
+
+use crate::csv::to_csv;
 use serde::{Deserialize, Serialize};
 
 /// The absolute and the relative tolerance of the integrator in a run of the suite.
@@ -527,12 +538,22 @@ pub fn run_case(runtime: &Runtime, dir: &Path) -> CaseResult {
 
 /// Runs the case in a directory with a model compiled with `options`.
 pub fn run_case_with(runtime: &Runtime, dir: &Path, options: &CompileOptions) -> CaseResult {
+    run_case_exported(runtime, dir, options, None)
+}
+
+/// [`run_case_with`], which writes a case which passes into `export` (`--export`).
+pub fn run_case_exported(
+    runtime: &Runtime,
+    dir: &Path,
+    options: &CompileOptions,
+    export: Option<&Path>,
+) -> CaseResult {
     let cid = dir
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
     match catch_unwind(AssertUnwindSafe(|| {
-        run_case_inner(runtime, dir, &cid, options)
+        run_case_inner(runtime, dir, &cid, options, export)
     })) {
         Ok(result) => result,
         Err(panic) => {
@@ -551,9 +572,10 @@ fn run_case_inner(
     dir: &Path,
     cid: &str,
     options: &CompileOptions,
+    export: Option<&Path>,
 ) -> CaseResult {
     let compiled = OnceCell::new();
-    let result = run_compiled(runtime, dir, cid, options, &compiled);
+    let result = run_compiled(runtime, dir, cid, options, &compiled, export);
     CaseResult {
         jacobian: compiled.get().map(|c: &CompiledModel| {
             match c.description.jacobian {
@@ -572,6 +594,7 @@ fn run_compiled(
     cid: &str,
     options: &CompileOptions,
     cell: &OnceCell<CompiledModel>,
+    export: Option<&Path>,
 ) -> CaseResult {
     let settings: CaseSettings = match fs::read(dir.join("case.json"))
         .map_err(anyhow::Error::from)
@@ -645,9 +668,78 @@ fn run_compiled(
             &observed,
         ) {
             Some(message) => CaseResult::new(cid, Status::Repeat, message),
-            None => CaseResult::new(cid, Status::Pass, "").with_difference(Some(max_difference)),
+            None => {
+                if let Some(out) = export
+                    && let Err(error) =
+                        export_case(runtime, compiled, &settings, &observed, out, cid)
+                {
+                    return CaseResult::new(
+                        cid,
+                        Status::SimulationError,
+                        format!("the export failed: {error:#}"),
+                    );
+                }
+                CaseResult::new(cid, Status::Pass, "").with_difference(Some(max_difference))
+            }
         },
     }
+}
+
+/// The JSON of a description as `sbmlsim-core compile` writes `model.json`.
+pub fn description_json(desc: &ModelDescription) -> anyhow::Result<Vec<u8>> {
+    let mut json = serde_json::to_vec_pretty(desc)?;
+    json.push(b'\n');
+    Ok(json)
+}
+
+/// Writes the `engine.wasm` and `mathlib.wasm` of this build into `dir`.
+pub fn write_runtime(dir: &Path) -> anyhow::Result<()> {
+    fs::create_dir_all(dir).with_context(|| format!("cannot create {}", dir.display()))?;
+    for (name, bytes) in [
+        ("engine.wasm", sbmlsim_host::ENGINE_WASM),
+        ("mathlib.wasm", sbmlsim_host::MATHLIB_WASM),
+    ] {
+        let path = dir.join(name);
+        fs::write(&path, bytes).with_context(|| format!("cannot write {}", path.display()))?;
+    }
+    Ok(())
+}
+
+/// Writes a case which passes into `out/cases/<cid>` (see the module).
+fn export_case(
+    runtime: &Runtime,
+    compiled: &CompiledModel,
+    settings: &CaseSettings,
+    observed: &SimulationResult,
+    out: &Path,
+    cid: &str,
+) -> anyhow::Result<()> {
+    let dir = out.join("cases").join(cid);
+    fs::create_dir_all(&dir).with_context(|| format!("cannot create {}", dir.display()))?;
+    let write = |name: &str, bytes: &[u8]| {
+        let path = dir.join(name);
+        fs::write(&path, bytes).with_context(|| format!("cannot write {}", path.display()))
+    };
+    write("model.wasm", &compiled.wasm)?;
+    write("model.json", &description_json(&compiled.description)?)?;
+    write(
+        "request.json",
+        &serde_json::to_vec_pretty(&case_request(settings))?,
+    )?;
+    write("wasmtime.csv", to_csv(observed).as_bytes())?;
+    let values: Vec<u8> = observed
+        .values
+        .iter()
+        .flat_map(|x| x.to_le_bytes())
+        .collect();
+    write("wasmtime.f64", &values)?;
+    let steady = case_request_of(settings, 1.0, true);
+    let mut fresh = runtime.instantiate(&compiled.wasm, &compiled.description)?;
+    if let Ok(result) = fresh.simulate(&steady) {
+        write("steady.json", &serde_json::to_vec_pretty(&steady)?)?;
+        write("steady.csv", to_csv(&result).as_bytes())?;
+    }
+    Ok(())
 }
 
 impl CaseResult {
@@ -800,6 +892,9 @@ pub struct TestsuiteArgs {
     /// Compile the models without the optimizer (`CompileOptions.optimize` false).
     #[arg(long)]
     pub no_optimize: bool,
+    /// Write every case which passes into this directory (see the module).
+    #[arg(long)]
+    pub export: Option<PathBuf>,
 }
 
 /// The values of `--jacobian`.
@@ -882,9 +977,12 @@ pub fn run(args: &TestsuiteArgs) -> anyhow::Result<bool> {
         jacobian: args.jacobian.choice(),
         optimize: !args.no_optimize,
     };
+    if let Some(out) = &args.export {
+        write_runtime(out)?;
+    }
     let results: Vec<CaseResult> = pool.install(|| {
         dirs.par_iter()
-            .map(|dir| run_case_with(&runtime, dir, &options))
+            .map(|dir| run_case_exported(&runtime, dir, &options, args.export.as_deref()))
             .collect()
     });
 

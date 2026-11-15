@@ -12,6 +12,13 @@
 //! stdout and stderr inherited; it calls none of it while it loads or simulates
 //! ([`Instance::wasi_calls`] counts the calls). The exports of `engine.wasm` and the format of
 //! its output are documented in `crates/engine/src/exports.rs`.
+//!
+//! The memory of an instance grows to at most [`MAX_MEMORY_BYTES`] (a resource limiter of the
+//! store, as `StoreLimits`; the JavaScript loader gives its memory the same `maximum`), so a
+//! `memory.grow` beyond it fails in the engine. A result which does not fit is the error
+//! `request` of the engine, which allocates the result with `try_reserve`, and not an abort of
+//! its allocator. Every `memory.grow` is a call into the host for wasmtime's call hook; the
+//! limiter counts them, and [`Instance::wasi_calls`] leaves them out.
 
 use anyhow::{Context, anyhow, bail, ensure};
 use sbmlsim_abi::{
@@ -21,8 +28,8 @@ use sbmlsim_engine::EngineError;
 use serde::Deserialize;
 use wasmtime::wasmparser::{Parser, Payload};
 use wasmtime::{
-    CallHook, Config, Engine, ExternType, FuncType, Linker, Memory, MemoryType, Module, Store,
-    TypedFunc,
+    CallHook, Config, Engine, ExternType, FuncType, Linker, Memory, MemoryType, Module,
+    ResourceLimiter, Store, TypedFunc,
 };
 use wasmtime_wasi::WasiCtxBuilder;
 use wasmtime_wasi::p1::{self, WasiP1Ctx};
@@ -46,15 +53,58 @@ const ENGINE_EXPORTS: [&str; 6] = [
     "engine_output_len",
 ];
 
-/// The data of a store: the WASI context of the engine and the number of its calls into the
-/// host.
+/// The most bytes the memory of an instance grows to: 2 GiB, `32768` pages of 64 KiB, the
+/// `maximum` the JavaScript loader gives its memory (`js/loader.mjs`). The largest result
+/// ([`sbmlsim_engine::MAX_OUTPUT_VALUES`], 512 MiB) is recorded in place of its output, so it
+/// fits, also while the steps of the integrator grow it by doubling.
+pub const MAX_MEMORY_BYTES: usize = 2 << 30;
+
+/// The data of a store: the WASI context of the engine, the number of its calls into the host
+/// and the limit of its memory.
 struct HostState {
     wasi: WasiP1Ctx,
     host_calls: u64,
+    memory: MemoryLimit,
 }
 
-/// A store whose call hook counts the calls of wasm into the host.
-fn store(engine: &Engine) -> Store<HostState> {
+/// The limit of the memory of a store, which counts the growths of the memory (each a call
+/// into the host for the call hook).
+struct MemoryLimit {
+    max_bytes: usize,
+    grows: u64,
+}
+
+impl ResourceLimiter for MemoryLimit {
+    fn memory_growing(
+        &mut self,
+        _current: usize,
+        desired: usize,
+        _maximum: Option<usize>,
+    ) -> wasmtime::Result<bool> {
+        self.grows += 1;
+        Ok(desired <= self.max_bytes)
+    }
+
+    fn table_growing(
+        &mut self,
+        _current: usize,
+        _desired: usize,
+        _maximum: Option<usize>,
+    ) -> wasmtime::Result<bool> {
+        Ok(true)
+    }
+}
+
+impl HostState {
+    /// The calls into the host but the growths of the memory: the WASI calls.
+    fn wasi_calls(&self) -> u64 {
+        self.host_calls - self.memory.grows
+    }
+}
+
+/// A store whose call hook counts the calls of wasm into the host, with a memory of at most
+/// `max_memory` bytes.
+fn store(engine: &Engine, max_memory: usize) -> Store<HostState> {
     let wasi = WasiCtxBuilder::new()
         .inherit_stdout()
         .inherit_stderr()
@@ -64,8 +114,13 @@ fn store(engine: &Engine) -> Store<HostState> {
         HostState {
             wasi,
             host_calls: 0,
+            memory: MemoryLimit {
+                max_bytes: max_memory,
+                grows: 0,
+            },
         },
     );
+    store.limiter(|state| &mut state.memory);
     store.call_hook(|mut state, hook| {
         if matches!(hook, CallHook::CallingHost) {
             state.data_mut().host_calls += 1;
@@ -88,12 +143,13 @@ fn linker(engine: &Engine) -> anyhow::Result<Linker<HostState>> {
 pub fn count_wasi_calls(wasm: &[u8], export: &str) -> anyhow::Result<u64> {
     let engine = Engine::default();
     let module = Module::new(&engine, wasm)?;
-    let mut store = store(&engine);
+    let mut store = store(&engine, MAX_MEMORY_BYTES);
     let instance = linker(&engine)?.instantiate(&mut store, &module)?;
+    store.data_mut().memory.grows = 0;
     let function = instance.get_typed_func::<(), i32>(&mut store, export)?;
-    let before = store.data().host_calls;
+    let before = store.data().wasi_calls();
     function.call(&mut store, ())?;
-    Ok(store.data().host_calls - before)
+    Ok(store.data().wasi_calls() - before)
 }
 
 /// `engine.wasm` and `mathlib.wasm`, compiled once; instantiates models.
@@ -102,6 +158,7 @@ pub struct Runtime {
     engine_module: Module,
     mathlib_module: Module,
     memory_type: MemoryType,
+    max_memory: usize,
 }
 
 impl Runtime {
@@ -141,7 +198,15 @@ impl Runtime {
             engine_module,
             mathlib_module,
             memory_type,
+            max_memory: MAX_MEMORY_BYTES,
         })
+    }
+
+    /// The runtime with instances whose memory grows to at most `bytes` (instead of
+    /// [`MAX_MEMORY_BYTES`]).
+    pub fn with_max_memory(mut self, bytes: usize) -> Runtime {
+        self.max_memory = bytes;
+        self
     }
 
     /// The runtime of the embedded [`ENGINE_WASM`] and [`MATHLIB_WASM`].
@@ -188,7 +253,7 @@ impl Runtime {
             }
         }
         ensure!(memory_imported, "model.wasm does not import env.memory");
-        let mut store = store(&self.engine);
+        let mut store = store(&self.engine, self.max_memory);
         let memory = Memory::new(&mut store, self.memory_type.clone())?;
         let mut linker = linker(&self.engine)?;
         linker.define(&store, "env", "memory", memory)?;
@@ -203,11 +268,14 @@ impl Runtime {
             .instantiate(&mut store, &self.engine_module)
             .map_err(anyhow::Error::from)
             .context("engine.wasm does not instantiate with the model")?;
-        let before = store.data().host_calls;
+        // the limiter saw the memories the instantiation created, which are no calls into
+        // the host
+        store.data_mut().memory.grows = 0;
+        let before = store.data().wasi_calls();
         if let Ok(initialize) = engine.get_typed_func::<(), ()>(&mut store, "_initialize") {
             initialize.call(&mut store, ())?;
         }
-        let initialize_calls = store.data().host_calls - before;
+        let initialize_calls = store.data().wasi_calls() - before;
         let mut instance = Instance {
             alloc: engine.get_typed_func(&mut store, "engine_alloc")?,
             free: engine.get_typed_func(&mut store, "engine_free")?,
@@ -251,7 +319,7 @@ impl Runtime {
         let module = Module::new(&self.engine, model_wasm)
             .map_err(anyhow::Error::from)
             .context("model.wasm does not compile")?;
-        let mut store = store(&self.engine);
+        let mut store = store(&self.engine, self.max_memory);
         let memory = Memory::new(&mut store, self.memory_type.clone())?;
         let mut linker = linker(&self.engine)?;
         linker.define(&store, "env", "memory", memory)?;
@@ -504,7 +572,18 @@ impl Instance {
     /// The number of calls of the engine into the host (all of them WASI calls) since the
     /// instance was created, `_initialize` and `engine_load` included.
     pub fn wasi_calls(&self) -> u64 {
-        self.store.data().host_calls
+        self.store.data().wasi_calls()
+    }
+
+    /// The size of the memory of the instance in bytes.
+    pub fn memory_bytes(&self) -> usize {
+        self.memory.data_size(&self.store)
+    }
+
+    /// The address of the output of the last call in the memory, aligned to 8
+    /// (`crates/engine/src/exports.rs`).
+    pub fn output_address(&mut self) -> Result<usize, EngineError> {
+        Ok(self.guard(Self::output_range)?.start)
     }
 
     /// The number of WASI calls of `_initialize`.
@@ -558,20 +637,28 @@ impl Instance {
         })
     }
 
-    /// The bytes of the output of the last call.
-    fn output_bytes(&mut self) -> wasmtime::Result<Vec<u8>> {
+    /// The range of the output of the last call in the memory.
+    fn output_range(&mut self) -> wasmtime::Result<std::ops::Range<usize>> {
         let ptr = self.output_ptr.call(&mut self.store, ())? as u32 as usize;
         let len = self.output_len.call(&mut self.store, ())? as u32 as usize;
-        let data = self.memory.data(&self.store);
-        data.get(ptr..ptr + len)
-            .map(<[u8]>::to_vec)
-            .ok_or_else(|| wasmtime::format_err!("the output is outside of the memory"))
+        let size = self.memory.data_size(&self.store);
+        match ptr.checked_add(len) {
+            Some(end) if end <= size => Ok(ptr..end),
+            _ => Err(wasmtime::format_err!("the output is outside of the memory")),
+        }
     }
 
-    /// The output of the last call.
+    /// The bytes of the output of the last call.
+    fn output_bytes(&mut self) -> wasmtime::Result<Vec<u8>> {
+        let range = self.output_range()?;
+        Ok(self.memory.data(&self.store)[range].to_vec())
+    }
+
+    /// The output of the last call, read from the memory in place (the values are copied once,
+    /// into the result).
     fn output(&mut self) -> Result<Output, EngineError> {
-        let bytes = self.guard(Self::output_bytes)?;
-        read_output(&bytes)
+        let range = self.guard(Self::output_range)?;
+        read_output(&self.memory.data(&self.store)[range])
     }
 }
 

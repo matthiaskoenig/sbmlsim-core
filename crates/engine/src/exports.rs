@@ -25,8 +25,14 @@
 //!
 //! The output is a `u32` (little endian) with the length of a JSON header, the header, zero
 //! bytes up to a multiple of 8 from the start of the output, then the values as `f64` (little
-//! endian), row major. The header of a table is `{"columns":[...],"n_rows":n}` and is followed
-//! by `n * columns` values; the header of an error is
+//! endian), row major. The output starts at an address aligned to 8, so the values are aligned
+//! to 8 as well: a host reads them in place (a `Float64Array` over the memory at
+//! `ptr + start`, valid until the next call or a growth of the memory) without a copy. The
+//! header of a table may end in spaces (JSON whitespace): the result is recorded right behind
+//! room for its header, whose length is known before the simulation but for the digits of
+//! `n_rows`, so the output is the result itself and not a second copy of it. The header of a
+//! table is `{"columns":[...],"n_rows":n}` and is followed by `n * columns` values; the header
+//! of an error is
 //! `{"error":{"kind":"...","message":"..."}}` and is followed by nothing. The kinds are `load`
 //! (a description which is not valid), `request`, `unsupported`, `integration` (with the fields
 //! `flag` and `time`, `null` for a time which is not finite), as the variants of
@@ -41,10 +47,10 @@ use std::alloc::{Layout, alloc, dealloc};
 use std::cell::RefCell;
 use std::sync::Once;
 
-use sbmlsim_abi::{ModelDescription, ModelSizes, SimulationRequest, SimulationResult};
+use sbmlsim_abi::{ModelDescription, ModelSizes, SimulationRequest};
 use serde::Serialize;
 
-use crate::{Engine, EngineError, ModelFns};
+use crate::{Engine, EngineError, ModelFns, Recorded};
 
 /// The functions of the contract `model/1`, imported from the module `model`; the names are the
 /// export names of `sbmlsim_abi` (`DEFAULTS`, `INIT`, ...). Every pointer is an offset into the
@@ -133,10 +139,75 @@ impl ModelFns for ImportedModel {
     }
 }
 
+/// The output of a call: its bytes in words of 8 bytes, so it starts at an address aligned to 8.
+#[derive(Default)]
+struct OutputBuffer {
+    words: Vec<f64>,
+    /// The number of bytes of the output (at most `8 * words.len()`).
+    len: usize,
+    /// The output is [`NO_MEMORY_OUTPUT`] (an output which found no memory).
+    no_memory: bool,
+}
+
+impl OutputBuffer {
+    /// An output of the bytes; one of no memory is the error `request` in a static buffer.
+    fn of_bytes(bytes: &[u8]) -> OutputBuffer {
+        let mut words = Vec::new();
+        if words.try_reserve_exact(bytes.len().div_ceil(8)).is_err() {
+            return OutputBuffer::no_memory();
+        }
+        words.extend(bytes.chunks(8).map(|chunk| {
+            let mut word = [0u8; 8];
+            word[..chunk.len()].copy_from_slice(chunk);
+            f64::from_le_bytes(word)
+        }));
+        OutputBuffer {
+            words,
+            len: bytes.len(),
+            no_memory: false,
+        }
+    }
+
+    /// The error `request` of an output which does not fit into the memory, without an
+    /// allocation ([`NO_MEMORY_OUTPUT`]).
+    fn no_memory() -> OutputBuffer {
+        OutputBuffer {
+            no_memory: true,
+            ..OutputBuffer::default()
+        }
+    }
+}
+
+/// The header of an output which does not fit into the memory of the engine.
+const NO_MEMORY: &[u8] = br#"{"error":{"kind":"request","message":"the output does not fit into the memory of the engine"}}"#;
+
+/// The length of [`NO_MEMORY_OUTPUT`].
+const NO_MEMORY_LEN: usize = (4 + NO_MEMORY.len()).next_multiple_of(8);
+
+/// Bytes aligned to 8.
+#[repr(C, align(8))]
+struct Aligned<const N: usize>([u8; N]);
+
+/// The output of [`NO_MEMORY`], in static memory, so it needs no allocation.
+static NO_MEMORY_OUTPUT: Aligned<NO_MEMORY_LEN> = {
+    let mut bytes = [0u8; NO_MEMORY_LEN];
+    let length = (NO_MEMORY.len() as u32).to_le_bytes();
+    let mut i = 0;
+    while i < 4 {
+        bytes[i] = length[i];
+        i += 1;
+    }
+    while i < 4 + NO_MEMORY.len() {
+        bytes[i] = NO_MEMORY[i - 4];
+        i += 1;
+    }
+    Aligned(bytes)
+};
+
 /// The engine of the instance and the output of its last call.
 struct State {
     engine: Option<Engine>,
-    output: Vec<u8>,
+    output: OutputBuffer,
 }
 
 thread_local! {
@@ -146,7 +217,11 @@ thread_local! {
     static STATE: RefCell<State> = const {
         RefCell::new(State {
             engine: None,
-            output: Vec::new(),
+            output: OutputBuffer {
+                words: Vec::new(),
+                len: 0,
+                no_memory: false,
+            },
         })
     };
 }
@@ -174,38 +249,35 @@ struct ErrorHeader<'a> {
 #[derive(Serialize)]
 struct TableHeader<'a> {
     columns: &'a [String],
-    n_rows: usize,
+    n_rows: u64,
 }
 
-/// The output of a header and the values which follow it.
-fn output(header: &impl Serialize, values: &[f64]) -> Vec<u8> {
+/// The output of a header which no values follow.
+fn output(header: &impl Serialize) -> OutputBuffer {
     let header = serde_json::to_vec(header).unwrap_or_else(|_| {
         br#"{"error":{"kind":"panic","message":"the header does not serialize"}}"#.to_vec()
     });
     let start = (4 + header.len()).next_multiple_of(8);
-    let mut out = Vec::with_capacity(start + 8 * values.len());
+    let mut out = Vec::with_capacity(start);
     out.extend_from_slice(&(header.len() as u32).to_le_bytes());
     out.extend_from_slice(&header);
     out.resize(start, 0);
-    for value in values {
-        out.extend_from_slice(&value.to_le_bytes());
-    }
-    out
+    OutputBuffer::of_bytes(&out)
 }
 
 /// The output of an error of the given kind.
-fn error_output(kind: &str, message: &str) -> Vec<u8> {
+fn error_output(kind: &str, message: &str) -> OutputBuffer {
     let body = ErrorBody {
         kind,
         message,
         flag: None,
         time: None,
     };
-    output(&ErrorHeader { error: body }, &[])
+    output(&ErrorHeader { error: body })
 }
 
 /// The output of an error of the engine.
-fn engine_error_output(error: &EngineError) -> Vec<u8> {
+fn engine_error_output(error: &EngineError) -> OutputBuffer {
     let (kind, message) = match error {
         EngineError::Request(message) => ("request", message),
         EngineError::Unsupported(message) => ("unsupported", message),
@@ -221,23 +293,51 @@ fn engine_error_output(error: &EngineError) -> Vec<u8> {
                 flag: Some(*flag),
                 time: Some(time.is_finite().then_some(*time)),
             };
-            return output(&ErrorHeader { error: body }, &[]);
+            return output(&ErrorHeader { error: body });
         }
     };
     error_output(kind, message)
 }
 
-/// The output of a table.
-fn table_output(result: &SimulationResult) -> Vec<u8> {
-    let header = TableHeader {
-        columns: &result.columns,
-        n_rows: result.n_rows,
-    };
-    output(&header, &result.values)
+/// The JSON of the header of a table.
+fn table_header(columns: &[String], n_rows: u64) -> Vec<u8> {
+    serde_json::to_vec(&TableHeader { columns, n_rows }).unwrap_or_default()
+}
+
+/// The slots of 8 bytes of the length and the header of a table of these columns of any number
+/// of rows: the room a result is recorded behind ([`Engine::simulate_with_prefix`]).
+fn header_slots(columns: &[String]) -> usize {
+    (4 + table_header(columns, u64::MAX).len()).div_ceil(8)
+}
+
+/// The output of a table recorded behind the room of its header: the header is written into
+/// the room (padded with spaces), so the values are not copied.
+fn table_output(recorded: Recorded) -> OutputBuffer {
+    let Recorded {
+        columns,
+        n_rows,
+        mut values,
+        prefix,
+    } = recorded;
+    let header = table_header(&columns, n_rows as u64);
+    let room = 8 * prefix - 4;
+    debug_assert!(header.len() <= room && prefix == header_slots(&columns));
+    // SAFETY: the bytes of the first `prefix` slots of the values; every bit pattern is an f64
+    let bytes =
+        unsafe { std::slice::from_raw_parts_mut(values.as_mut_ptr().cast::<u8>(), 8 * prefix) };
+    bytes[..4].copy_from_slice(&(room as u32).to_le_bytes());
+    bytes[4..4 + header.len()].copy_from_slice(&header);
+    bytes[4 + header.len()..].fill(b' ');
+    let len = 8 * values.len();
+    OutputBuffer {
+        words: values,
+        len,
+        no_memory: false,
+    }
 }
 
 /// Sets the output of the call.
-fn set_output(out: Vec<u8>) {
+fn set_output(out: OutputBuffer) {
     STATE.with_borrow_mut(|state| state.output = out);
 }
 
@@ -322,7 +422,7 @@ pub unsafe extern "C" fn engine_load(desc_ptr: i32, desc_len: i32) -> i32 {
             })
         });
     let (engine, out, code) = match loaded {
-        Ok(engine) => (Some(engine), Vec::new(), 0),
+        Ok(engine) => (Some(engine), OutputBuffer::default(), 0),
         Err(message) => (None, error_output("load", &message), 1),
     };
     STATE.with_borrow_mut(|state| {
@@ -355,11 +455,13 @@ pub unsafe extern "C" fn engine_simulate(req_ptr: i32, req_len: i32) -> i32 {
         set_output(error_output("request", "no model is loaded"));
         return 1;
     };
-    let result = engine.simulate(&request);
+    // the output of the last call is released before the simulation, which may need its memory
+    set_output(OutputBuffer::default());
+    let result = engine.simulate_with_prefix(&request, &header_slots);
     STATE.with_borrow_mut(|state| state.engine = Some(engine));
     match result {
-        Ok(result) => {
-            set_output(table_output(&result));
+        Ok(recorded) => {
+            set_output(table_output(recorded));
             0
         }
         Err(error) => {
@@ -369,14 +471,20 @@ pub unsafe extern "C" fn engine_simulate(req_ptr: i32, req_len: i32) -> i32 {
     }
 }
 
-/// The pointer of the output of the last call.
+/// The pointer of the output of the last call, aligned to 8.
 #[unsafe(no_mangle)]
 pub extern "C" fn engine_output_ptr() -> i32 {
-    STATE.with_borrow(|state| state.output.as_ptr() as usize as i32)
+    STATE.with_borrow(|state| match state.output.no_memory {
+        true => NO_MEMORY_OUTPUT.0.as_ptr().addr() as i32,
+        false => state.output.words.as_ptr().addr() as i32,
+    })
 }
 
 /// The length of the output of the last call.
 #[unsafe(no_mangle)]
 pub extern "C" fn engine_output_len() -> i32 {
-    STATE.with_borrow(|state| state.output.len() as i32)
+    STATE.with_borrow(|state| match state.output.no_memory {
+        true => NO_MEMORY_LEN as i32,
+        false => state.output.len as i32,
+    })
 }

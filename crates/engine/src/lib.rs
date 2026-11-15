@@ -40,12 +40,22 @@ use sbmlsim_abi::{
 
 pub use cvode::KLU_THRESHOLD;
 
-/// The most `f64` values a result may hold (rows times columns, 1 GiB).
+/// The most `f64` values a result may hold (rows times columns, 512 MiB).
 ///
 /// An output of times or of uniform steps which exceeds it is refused before any allocation as
 /// [`EngineError::Request`]; an output of the steps of the integrator which reaches it stops
 /// with [`EngineError::Integration`] and the flag [`OUTPUT_LIMIT_FLAG`].
-pub const MAX_OUTPUT_VALUES: usize = 1 << 27;
+///
+/// Why 512 MiB: the result is recorded in place of the output of `engine.wasm` (no second
+/// copy), but the steps of the integrator grow it by doubling, and in the linear memory of
+/// wasm32 the high water mark of that growth is about twice the result (the old block, the new
+/// one, and the freed blocks below, which the allocator cannot reuse for the larger one;
+/// measured: 1153 MiB of memory at a result of 576 MiB). The memory of an instance grows to at
+/// most 2 GiB (the `maximum` of the hosts, `MAX_MEMORY_BYTES` of `sbmlsim-host` and
+/// `js/loader.mjs`), so the largest result of 512 MiB leaves room for the model, CVODE and the
+/// request (measured: 1153 MiB at the limit of the steps of the integrator, 683 MiB at the
+/// largest output of times).
+pub const MAX_OUTPUT_VALUES: usize = 1 << 26;
 
 /// The flag of the [`EngineError::Integration`] of an output which exceeds
 /// [`MAX_OUTPUT_VALUES`]: an engine code, distinct from the flags of CVODE (`-1` to `-99`).
@@ -135,7 +145,45 @@ impl Engine {
 
     /// Simulates the model; the result does not depend on the simulations before.
     pub fn simulate(&mut self, req: &SimulationRequest) -> Result<SimulationResult, EngineError> {
-        run(&*self.model, &self.desc, &mut self.cvode, req)
+        run(&*self.model, &self.desc, &mut self.cvode, req, &|_| 0).map(Recorded::into_result)
+    }
+
+    /// [`Engine::simulate`] with `prefix(columns)` slots before the values of the result, which
+    /// the caller fills (the header of the output of `engine.wasm`).
+    #[cfg_attr(not(feature = "exports"), allow(dead_code))]
+    pub(crate) fn simulate_with_prefix(
+        &mut self,
+        req: &SimulationRequest,
+        prefix: &dyn Fn(&[String]) -> usize,
+    ) -> Result<Recorded, EngineError> {
+        run(&*self.model, &self.desc, &mut self.cvode, req, prefix)
+    }
+}
+
+/// A result with slots before its values ([`Engine::simulate_with_prefix`]).
+pub(crate) struct Recorded {
+    /// The names of the columns.
+    pub columns: Vec<String>,
+    /// The number of rows.
+    pub n_rows: usize,
+    /// The slots of the prefix, then the values of the rows, row major.
+    pub values: Vec<f64>,
+    /// The number of slots before the values.
+    pub prefix: usize,
+}
+
+impl Recorded {
+    /// The result, without the prefix.
+    fn into_result(self) -> SimulationResult {
+        let mut values = self.values;
+        if self.prefix > 0 {
+            values.drain(..self.prefix);
+        }
+        SimulationResult {
+            columns: self.columns,
+            n_rows: self.n_rows,
+            values,
+        }
     }
 }
 
@@ -147,7 +195,7 @@ pub fn simulate(
 ) -> Result<SimulationResult, EngineError> {
     check_description(desc)?;
     check_sizes(model, desc)?;
-    run(model, desc, &mut None, req)
+    run(model, desc, &mut None, req, &|_| 0).map(Recorded::into_result)
 }
 
 /// Checks that the sizes of a model (`model_sizes`, `model_event_sizes`) are the ones of its
@@ -322,6 +370,11 @@ fn output_times(
         ))
     };
     let exceeds = |rows: u128| rows * n_columns as u128 > MAX_OUTPUT_VALUES as u128;
+    let no_memory = |rows: usize| {
+        request(format!(
+            "{rows} output times do not fit into the memory of the engine"
+        ))
+    };
     match output {
         Output::Times(times) => {
             if exceeds(times.len() as u128) {
@@ -334,7 +387,11 @@ fn output_times(
                     "output times {times:?} are not non-decreasing within [{start}, {end}]"
                 )));
             }
-            Ok(times.clone())
+            let mut copy = Vec::new();
+            copy.try_reserve_exact(times.len())
+                .map_err(|_| no_memory(times.len()))?;
+            copy.extend_from_slice(times);
+            Ok(copy)
         }
         Output::Uniform { steps: 0 } => Err(request("uniform output of 0 steps")),
         Output::Uniform { steps } => {
@@ -344,7 +401,11 @@ fn output_times(
             }
             let steps = *steps as usize;
             let h = (end - start) / steps as f64;
-            let mut times: Vec<f64> = (0..steps).map(|i| start + i as f64 * h).collect();
+            let mut times = Vec::new();
+            times
+                .try_reserve_exact(steps + 1)
+                .map_err(|_| no_memory(steps + 1))?;
+            times.extend((0..steps).map(|i| start + i as f64 * h));
             times.push(end);
             Ok(times)
         }
@@ -463,13 +524,15 @@ fn initial_values(
 }
 
 /// The simulation [`simulate`] and [`Engine::simulate`] share; `cache` is the CVODE memory of
-/// the last simulation, replaced when the configuration differs.
+/// the last simulation, replaced when the configuration differs; the result has
+/// `prefix(columns)` slots of 0 before its values.
 fn run(
     model: &dyn ModelFns,
     desc: &ModelDescription,
     cache: &mut Option<Cvode>,
     req: &SimulationRequest,
-) -> Result<SimulationResult, EngineError> {
+    prefix: &dyn Fn(&[String]) -> usize,
+) -> Result<Recorded, EngineError> {
     // 1. the request is validated before any feature is refused and before any integration
     check_contract(&req.contract, SIMULATION_CONTRACT).map_err(|e| request(e.to_string()))?;
     let (start, end) = (req.start, req.end);
@@ -563,12 +626,13 @@ fn run(
         .map(|s| s.index as usize + 1)
         .max()
         .unwrap_or(0);
-    let mut recorder = Recorder::new(model, columns, n_selections, MAX_OUTPUT_VALUES);
+    let prefix = prefix(&names);
+    let mut recorder = Recorder::new(model, columns, n_selections, MAX_OUTPUT_VALUES, prefix)?;
     // the size of an output of times is known (and checked against the cap): one allocation,
     // not a growth by doubling, whose peak would be twice the result; the steps of the
     // integrator have no known count and grow by doubling up to the cap
     if !matches!(req.output, Output::IntegratorSteps) {
-        recorder.reserve(times.len());
+        recorder.reserve(times.len())?;
     }
     let output = match req.output {
         Output::IntegratorSteps => SegmentOutput::Steps,
@@ -632,10 +696,11 @@ fn run(
             )?
         }
     }
-    Ok(SimulationResult {
+    Ok(Recorded {
         columns: names,
         n_rows: recorder.n_rows,
         values: recorder.values,
+        prefix,
     })
 }
 

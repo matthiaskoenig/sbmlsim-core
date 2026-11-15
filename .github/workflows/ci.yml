@@ -40,15 +40,62 @@ jobs:
       # the tests of sbmlsim-host and sbmlsim-cli build engine.wasm and mathlib.wasm (WASI_SDK_PATH)
       - run: cargo test
       - run: cargo run -p sbmlsim-cli -- simulate crates/host/tests/decay-model crates/host/tests/decay-model/request.json
-      - run: cargo build -p sbmlsim-abi --target wasm32-unknown-unknown
-      - run: cargo build -p sbmlsim-sbml --target wasm32-unknown-unknown
-      - run: cargo build -p sbmlsim-ir --target wasm32-unknown-unknown
-      - run: cargo build -p sbmlsim-codegen --target wasm32-unknown-unknown
-      - run: cargo build -p sbmlsim-compiler --target wasm32-unknown-unknown
       - run: cargo build -p sbmlsim-mathlib --target wasm32-unknown-unknown --release
       - run: cargo test -p sbmlsim-mathlib wasm_has_no_imports
       - run: cargo test -p sbmlsim-csolvers --target wasm32-wasip1
       - run: cargo test -p sbmlsim-engine --target wasm32-wasip1
+  compiler_builds_for_wasm32_unknown_unknown:
+    # the compiler (and the crates it is made of) does no file system or OS access, so it runs
+    # in a browser as wasm32-unknown-unknown; needs no wasi-sdk
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the toolchain of rust-toolchain.toml
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build -p sbmlsim-abi --target wasm32-unknown-unknown
+      - run: cargo build -p sbmlsim-sbml --target wasm32-unknown-unknown
+      - run: cargo build -p sbmlsim-ir --target wasm32-unknown-unknown
+      - run: cargo build -p sbmlsim-codegen --target wasm32-unknown-unknown
+      - run: cargo build -p sbmlsim-compiler --target wasm32-unknown-unknown --release
+  same_bits_as_wasmtime:
+    # the JavaScript loader in Node: its tests, and every passing case of the SBML Test Suite
+    # gives in Node the CSV of the wasmtime host byte for byte (js/test/same_bits.test.mjs)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Install the toolchain of rust-toolchain.toml
+        run: rustup show active-toolchain || rustup toolchain install
+      - name: Install wasi-sdk
+        run: |
+          mkdir -p "$HOME/tools" && cd "$HOME/tools"
+          sdk="wasi-sdk-${WASI_SDK_VERSION}-x86_64-linux"
+          curl -sSLO "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-${WASI_SDK_VERSION%%.*}/${sdk}.tar.gz"
+          echo "${WASI_SDK_SHA256}  ${sdk}.tar.gz" | sha256sum -c -
+          tar xzf "${sdk}.tar.gz"
+          echo "WASI_SDK_PATH=$HOME/tools/${sdk}" >> "$GITHUB_ENV"
+      - uses: Swatinem/rust-cache@v2
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Cache the prepared cases
+        uses: actions/cache@v4
+        with:
+          path: testdata/cases
+          key: testsuite-cases-${{ hashFiles('scripts/prepare_testsuite.py', 'testdata/testsuite_baseline.json') }}
+      - name: Prepare the cases
+        run: test -f testdata/cases/SUITE_COMMIT || uv run scripts/prepare_testsuite.py --out testdata/cases
+      - run: cargo build --release -p sbmlsim-cli
+      - name: Export every passing case with the outputs of the wasmtime host
+        run: target/release/sbmlsim-core testsuite testdata/cases --export "$RUNNER_TEMP/export"
+      - name: The tests of the loader in Node
+        run: node --test js/test
+        env:
+          SBMLSIM_CORE_CLI: ${{ github.workspace }}/target/release/sbmlsim-core
+          SBMLSIM_CORE_EXPORT: ${{ runner.temp }}/export
   testsuite-cases:
     # the prepared cases of the SBML Test Suite and the tests of the runner which read them
     runs-on: ubuntu-latest
