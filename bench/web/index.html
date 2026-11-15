@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>running</title>
+</head>
+<body>
+<pre id="log"></pre>
+<script type="module">
+// The benchmark of sbmlsim-core in Chrome: `js/bench-core.mjs` in a module worker (where the
+// models of a web app run), with the export of `sbmlsim-core bench --export` at `?export=`
+// (default `/target/bench/export`); the result is posted to `/result` of `serve.mjs` and the
+// title of the page becomes `done` (or `failed: ...`).
+const params = new URLSearchParams(location.search);
+const exportDir = params.get("export") ?? "/target/bench/export";
+const log = (line) => {
+  document.getElementById("log").textContent += line + "\n";
+  fetch("/log", { method: "POST", body: line });
+};
+log(`crossOriginIsolated ${self.crossOriginIsolated}, ${navigator.userAgent}`);
+const worker = new Worker("./worker.mjs", { type: "module" });
+worker.onmessage = async ({ data }) => {
+  if (data.log) return log(data.log);
+  if (data.error) {
+    log(data.error);
+    document.title = `failed: ${data.error}`;
+    return;
+  }
+  data.result.user_agent = navigator.userAgent;
+  data.result.cross_origin_isolated = self.crossOriginIsolated;
+  await fetch("/result", { method: "POST", body: JSON.stringify(data.result, null, 1) });
+  document.title = "done";
+};
+worker.postMessage({
+  exportDir,
+  only: params.get("only")?.split(",") ?? null,
+  rounds: params.has("rounds") ? Number(params.get("rounds")) : null,
+  warmups: params.has("warmups") ? Number(params.get("warmups")) : null,
+  reps: params.has("reps") ? Number(params.get("reps")) : null,
+});
+</script>
+</body>
+</html>

@@ -6,10 +6,10 @@ use std::sync::OnceLock;
 
 use sbmlsim_abi::{
     Change, IntegratorSettings, ModelDescription, Output, SIMULATION_CONTRACT, SimulationRequest,
-    SimulationResult, SteadyState,
+    SimulationResult, SimulationStats, SteadyState,
 };
 use sbmlsim_engine::model::Decay;
-use sbmlsim_engine::{EngineError, STEADY_STATE_FLAG, simulate};
+use sbmlsim_engine::{Engine, EngineError, STEADY_STATE_FLAG, simulate};
 use sbmlsim_host::{ENGINE_WASM, Instance, MATHLIB_WASM, Runtime};
 
 /// The runtime of the embedded engine and mathlib, compiled once for the tests.
@@ -115,6 +115,49 @@ fn wat_decay_matches_native() {
         assert_eq!(wasm.columns, ["time", "y", "t_half"]);
         assert_close(&wasm, &native_result(&req).unwrap());
     }
+}
+
+#[test]
+fn the_counters_are_the_ones_of_the_native_engine() {
+    let mut wasm = instance();
+    let mut native = Engine::new(Box::new(native()), description()).unwrap();
+    let mut req = request();
+    req.settings.stiff = true;
+    req.changes = vec![Change {
+        time: 5.0,
+        values: vec![("y".to_string(), 2.0)],
+    }];
+    let mut sweep = vec![];
+    for solver in [
+        sbmlsim_abi::LinearSolver::Dense,
+        sbmlsim_abi::LinearSolver::Klu,
+    ] {
+        req.settings.linear_solver = solver;
+        wasm.simulate(&req).unwrap();
+        native.simulate(&req).unwrap();
+        let stats = wasm.stats().unwrap();
+        assert_eq!(stats, native.stats());
+        // two segments, the change ends the first; the counters of the last simulation only
+        assert_eq!(stats.integrations, 2);
+        assert!(stats.steps > 0 && stats.rhs_evals >= stats.steps);
+        assert!(stats.jacobian_evals > 0 && stats.linear_setups > 0);
+        assert_eq!(stats.jacobian_rhs_evals + stats.probe_rhs_evals, 0);
+        sweep.push(stats);
+    }
+    // the same simulation again gives the same counters, not their sum
+    wasm.simulate(&req).unwrap();
+    assert_eq!(wasm.stats().unwrap(), sweep[1]);
+    // the difference quotient calls the right hand side per color
+    req.settings.jacobian = sbmlsim_abi::JacobianChoice::DifferenceQuotient;
+    wasm.simulate(&req).unwrap();
+    let stats = wasm.stats().unwrap();
+    assert_eq!(stats.jacobian_rhs_evals, stats.jacobian_evals);
+    // a request refused before its integration has no counters
+    req.end = -1.0;
+    assert!(wasm.simulate(&req).is_err());
+    assert_eq!(wasm.stats().unwrap(), SimulationStats::default());
+    let words = sweep[0].words();
+    assert_eq!(SimulationStats::from_words(words), sweep[0]);
 }
 
 #[test]

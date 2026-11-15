@@ -54,6 +54,27 @@ const ENGINE_EXPORTS = [
   "engine_simulate",
   "engine_output_ptr",
   "engine_output_len",
+  "engine_stats_ptr",
+];
+
+/**
+ * The counters of the last simulation in the order of `engine_stats_ptr` (`SimulationStats`
+ * of `crates/abi`).
+ */
+export const STATS_NAMES = [
+  "steps",
+  "rhs_evals",
+  "jacobian_evals",
+  "jacobian_rhs_evals",
+  "jacobian_fallbacks",
+  "linear_setups",
+  "error_test_failures",
+  "nonlinear_iterations",
+  "nonlinear_convergence_failures",
+  "root_evals",
+  "integrations",
+  "probe_rhs_evals",
+  "steady_state_rhs_evals",
 ];
 
 const LITTLE_ENDIAN = new Uint8Array(new Uint16Array([1]).buffer)[0] === 1;
@@ -303,6 +324,19 @@ class Instance {
   /** The size of the memory of the instance in bytes. */
   memoryBytes() {
     return this.memory.buffer.byteLength;
+  }
+
+  /**
+   * The counters of the integrator of the last simulation: an object of the names of
+   * `STATS_NAMES` to numbers (`engine_stats_ptr`).
+   */
+  stats() {
+    if (this.trapped) {
+      throw new EngineError("internal", "the instance trapped before and is not used again");
+    }
+    const ptr = this.guard(() => this.exports.engine_stats_ptr()) >>> 0;
+    const view = new DataView(this.memory.buffer, ptr, 8 * STATS_NAMES.length);
+    return Object.fromEntries(STATS_NAMES.map((name, i) => [name, Number(view.getBigUint64(8 * i, true))]));
   }
 
   /** The address of the output of the last call in the memory (aligned to 8). */

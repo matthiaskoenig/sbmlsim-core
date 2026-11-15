@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2">
+  <model id="repeated_dose" name="Oral dose every 8 h, two compartments and a metabolite (events)" timeUnits="hour">
+    <notes>
+      <body xmlns="http://www.w3.org/1999/xhtml">
+        <p>The event model of the benchmark of sbmlsim-core: an oral dose every tau hours (an event whose trigger time &gt;= tnext moves tnext by tau), first order absorption, distribution between a central and a peripheral compartment, Michaelis-Menten metabolism and the elimination of the metabolite.</p>
+      </body>
+    </notes>
+    <listOfUnitDefinitions>
+      <unitDefinition id="hour">
+        <listOfUnits>
+          <unit kind="second" exponent="1" scale="0" multiplier="3600"/>
+        </listOfUnits>
+      </unitDefinition>
+    </listOfUnitDefinitions>
+    <listOfCompartments>
+      <compartment id="gut" spatialDimensions="3" size="1" constant="true"/>
+      <compartment id="central" spatialDimensions="3" size="10" constant="true"/>
+      <compartment id="peripheral" spatialDimensions="3" size="25" constant="true"/>
+    </listOfCompartments>
+    <listOfSpecies>
+      <species id="A_gut" compartment="gut" initialAmount="0" hasOnlySubstanceUnits="true" boundaryCondition="false" constant="false"/>
+      <species id="C" compartment="central" initialConcentration="0" hasOnlySubstanceUnits="false" boundaryCondition="false" constant="false"/>
+      <species id="P" compartment="peripheral" initialConcentration="0" hasOnlySubstanceUnits="false" boundaryCondition="false" constant="false"/>
+      <species id="M" compartment="central" initialConcentration="0" hasOnlySubstanceUnits="false" boundaryCondition="false" constant="false"/>
+    </listOfSpecies>
+    <listOfParameters>
+      <parameter id="dose" value="100" constant="true"/>
+      <parameter id="tau" value="8" constant="true"/>
+      <parameter id="tnext" value="0" constant="false"/>
+      <parameter id="ka" value="1.2" constant="true"/>
+      <parameter id="Q" value="15" constant="true"/>
+      <parameter id="Vmax" value="40" constant="true"/>
+      <parameter id="Km" value="2" constant="true"/>
+      <parameter id="CL" value="0.5" constant="true"/>
+      <parameter id="kM" value="3" constant="true"/>
+    </listOfParameters>
+    <listOfReactions>
+      <reaction id="absorption" reversible="false">
+        <listOfReactants><speciesReference species="A_gut" stoichiometry="1" constant="true"/></listOfReactants>
+        <listOfProducts><speciesReference species="C" stoichiometry="1" constant="true"/></listOfProducts>
+        <kineticLaw><math xmlns="http://www.w3.org/1998/Math/MathML"><apply><times/><ci> ka </ci><ci> A_gut </ci></apply></math></kineticLaw>
+      </reaction>
+      <reaction id="distribution" reversible="true">
+        <listOfReactants><speciesReference species="C" stoichiometry="1" constant="true"/></listOfReactants>
+        <listOfProducts><speciesReference species="P" stoichiometry="1" constant="true"/></listOfProducts>
+        <kineticLaw><math xmlns="http://www.w3.org/1998/Math/MathML"><apply><times/><ci> Q </ci><apply><minus/><ci> C </ci><ci> P </ci></apply></apply></math></kineticLaw>
+      </reaction>
+      <reaction id="metabolism" reversible="false">
+        <listOfReactants><speciesReference species="C" stoichiometry="1" constant="true"/></listOfReactants>
+        <listOfProducts><speciesReference species="M" stoichiometry="1" constant="true"/></listOfProducts>
+        <kineticLaw><math xmlns="http://www.w3.org/1998/Math/MathML"><apply><divide/><apply><times/><ci> Vmax </ci><ci> C </ci></apply><apply><plus/><ci> Km </ci><ci> C </ci></apply></apply></math></kineticLaw>
+      </reaction>
+      <reaction id="renal" reversible="false">
+        <listOfReactants><speciesReference species="C" stoichiometry="1" constant="true"/></listOfReactants>
+        <kineticLaw><math xmlns="http://www.w3.org/1998/Math/MathML"><apply><times/><ci> CL </ci><ci> C </ci></apply></math></kineticLaw>
+      </reaction>
+      <reaction id="metabolite_elimination" reversible="false">
+        <listOfReactants><speciesReference species="M" stoichiometry="1" constant="true"/></listOfReactants>
+        <kineticLaw><math xmlns="http://www.w3.org/1998/Math/MathML"><apply><times/><ci> kM </ci><ci> M </ci><ci> central </ci></apply></math></kineticLaw>
+      </reaction>
+    </listOfReactions>
+    <listOfEvents>
+      <event id="oral_dose" useValuesFromTriggerTime="true">
+        <trigger initialValue="false" persistent="true">
+          <math xmlns="http://www.w3.org/1998/Math/MathML"><apply><geq/><csymbol encoding="text" definitionURL="http://www.sbml.org/sbml/symbols/time"> time </csymbol><ci> tnext </ci></apply></math>
+        </trigger>
+        <listOfEventAssignments>
+          <eventAssignment variable="A_gut"><math xmlns="http://www.w3.org/1998/Math/MathML"><apply><plus/><ci> A_gut </ci><ci> dose </ci></apply></math></eventAssignment>
+          <eventAssignment variable="tnext"><math xmlns="http://www.w3.org/1998/Math/MathML"><apply><plus/><ci> tnext </ci><ci> tau </ci></apply></math></eventAssignment>
+        </listOfEventAssignments>
+      </event>
+    </listOfEvents>
+  </model>
+</sbml>

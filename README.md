@@ -59,6 +59,20 @@ const { columns, nRows, values } = instance.simulate(request); // values: a Floa
 
 The tests (`node --test js/test`) build the command line (`SBMLSIM_CORE_CLI` names a built one) and compare every passing case of the prepared SBML Test Suite with the wasmtime host (`SBMLSIM_CORE_EXPORT` names the output of `sbmlsim-core testsuite <cases> --export <dir>`).
 
+## Benchmark
+
+`bench/models.toml` lists the models of the benchmark against roadrunner; `bench/RESULTS.md` has the method and the results. A model with `comp`, `distrib` or of another level is prepared first (`scripts/prepare_model.py`: comp flattened, the uncertainties of distrib stripped, a distribution function in a math refused, converted to L3V2):
+
+```bash
+uv run scripts/prepare_model.py --bench bench/models.toml        # into target/bench-models/
+taskset -c 2 sbmlsim-core bench bench/models.toml --json target/bench/engine.json --export target/bench/export
+taskset -c 2 node js/bench.mjs target/bench/export --json target/bench/node.json
+uv run scripts/roadrunner_reference.py bench/models.toml --json target/bench/roadrunner.json
+uv run scripts/agreement.py                                        # sbmlsim-core against roadrunner at rtol 1e-10
+```
+
+The counters of the integrator of the last simulation are `Instance::stats` (wasmtime) and `instance.stats()` (`js/loader.mjs`).
+
 ## License
 
 MIT, see `LICENSE`.

@@ -225,5 +225,10 @@ unsafe extern "C" {
         hcur: *mut sunrealtype,
         tcur: *mut sunrealtype,
     ) -> c_int;
+    pub fn CVodeGetNonlinSolvStats(
+        cvode_mem: *mut c_void,
+        nniters: *mut c_long,
+        nncfails: *mut c_long,
+    ) -> c_int;
     pub fn CVodeFree(cvode_mem: *mut *mut c_void);
 }

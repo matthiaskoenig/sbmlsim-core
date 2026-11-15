@@ -187,3 +187,114 @@ pub struct SimulationResult {
     /// `n_rows * columns.len()` values, row major.
     pub values: Vec<f64>,
 }
+
+/// The counters of the last simulation of an engine: diagnostics of the work of the
+/// integrator, no part of a result (`engine_stats_ptr` of `engine.wasm`, `stats()` of the hosts).
+///
+/// The counters of CVODE are summed over every (re)initialization of the simulation (the
+/// steady state, the segments between the changes and the events). The calls of the right hand
+/// side are counted where they are made: by CVODE (its nonlinear iteration, its error
+/// estimates, its own difference quotient), by the sparse difference quotient, by the probes of
+/// the triggers of the events and by the criterion of the steady state.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SimulationStats {
+    /// The steps of CVODE.
+    pub steps: u64,
+    /// The calls of the right hand side by CVODE.
+    pub rhs_evals: u64,
+    /// The calls of the Jacobian function by CVODE (the analytic Jacobian or the sparse
+    /// difference quotient; CVODE's own difference quotient of a model without states is not
+    /// counted).
+    pub jacobian_evals: u64,
+    /// The calls of the right hand side by the sparse difference quotient (one per color of a
+    /// Jacobian, also of the fallback of the analytic one).
+    pub jacobian_rhs_evals: u64,
+    /// The calls of the analytic Jacobian with an entry which is not finite, which the sparse
+    /// difference quotient replaced.
+    pub jacobian_fallbacks: u64,
+    /// The setups of the linear solver (factorizations of `I - gamma J`).
+    pub linear_setups: u64,
+    /// The failures of the local error test.
+    pub error_test_failures: u64,
+    /// The iterations of the nonlinear solver.
+    pub nonlinear_iterations: u64,
+    /// The convergence failures of the nonlinear solver.
+    pub nonlinear_convergence_failures: u64,
+    /// The calls of the root functions by CVODE.
+    pub root_evals: u64,
+    /// The (re)initializations of CVODE.
+    pub integrations: u64,
+    /// The calls of the right hand side by the probes of the triggers right after a time.
+    pub probe_rhs_evals: u64,
+    /// The calls of the right hand side by the criterion of the steady state.
+    pub steady_state_rhs_evals: u64,
+}
+
+impl SimulationStats {
+    /// The number of counters, the `u64` words of `engine_stats_ptr`.
+    pub const WORDS: usize = 13;
+
+    /// The names of the counters in the order of [`SimulationStats::words`] (the fields).
+    pub const NAMES: [&'static str; Self::WORDS] = [
+        "steps",
+        "rhs_evals",
+        "jacobian_evals",
+        "jacobian_rhs_evals",
+        "jacobian_fallbacks",
+        "linear_setups",
+        "error_test_failures",
+        "nonlinear_iterations",
+        "nonlinear_convergence_failures",
+        "root_evals",
+        "integrations",
+        "probe_rhs_evals",
+        "steady_state_rhs_evals",
+    ];
+
+    /// The counters in the order of the fields.
+    pub fn words(&self) -> [u64; Self::WORDS] {
+        [
+            self.steps,
+            self.rhs_evals,
+            self.jacobian_evals,
+            self.jacobian_rhs_evals,
+            self.jacobian_fallbacks,
+            self.linear_setups,
+            self.error_test_failures,
+            self.nonlinear_iterations,
+            self.nonlinear_convergence_failures,
+            self.root_evals,
+            self.integrations,
+            self.probe_rhs_evals,
+            self.steady_state_rhs_evals,
+        ]
+    }
+
+    /// The counters of [`SimulationStats::words`].
+    pub fn from_words(w: [u64; Self::WORDS]) -> SimulationStats {
+        SimulationStats {
+            steps: w[0],
+            rhs_evals: w[1],
+            jacobian_evals: w[2],
+            jacobian_rhs_evals: w[3],
+            jacobian_fallbacks: w[4],
+            linear_setups: w[5],
+            error_test_failures: w[6],
+            nonlinear_iterations: w[7],
+            nonlinear_convergence_failures: w[8],
+            root_evals: w[9],
+            integrations: w[10],
+            probe_rhs_evals: w[11],
+            steady_state_rhs_evals: w[12],
+        }
+    }
+
+    /// Every call of the right hand side.
+    pub fn all_rhs_evals(&self) -> u64 {
+        self.rhs_evals
+            + self.jacobian_rhs_evals
+            + self.probe_rhs_evals
+            + self.steady_state_rhs_evals
+    }
+}

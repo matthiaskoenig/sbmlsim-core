@@ -1,0 +1,83 @@
+# The models of the benchmark of sbmlsim-core against roadrunner (bench/RESULTS.md).
+#
+# Prepared first, `uv run scripts/prepare_model.py --bench bench/models.toml`: every `source` is
+# flattened (comp), stripped of distrib and converted to L3V2 into `sbml` (relative to this
+# file, a gitignored directory of the build), with the absolute tolerance vector roadrunner
+# integrates the model with (`<sbml>.atol.json`). Then
+#
+#     sbmlsim-core bench bench/models.toml --json target/bench/engine.json
+#     uv run scripts/roadrunner_reference.py bench/models.toml --json target/bench/roadrunner.json
+#
+# A model: `source` (see scripts/prepare_model.py), `sbml`, `end` (time units of the model, from
+# 0), `points` (uniform output points, `end / (points - 1)` apart), `preinit` (values set before
+# the initialization, as the request of simulation/1), `relative_tolerance` and
+# `absolute_tolerance` (scaled per state as roadrunner does it); `steps = true` also measures the
+# output of the steps of the integrator. The settings are the ones of the spike
+# (spike/RESULTS.md): BDF, rtol 1e-6, atol 1e-12, 201 points, at most 20000 steps.
+
+[checkouts]
+# a checkout of github.com/matthiaskoenig/pkdb_models (not public), next to this repository;
+# SBMLSIM_CORE_CHECKOUT_PKDB_MODELS overrides it
+pkdb_models = "../../pkdb_models"
+
+[models.hctz]
+# hydrochlorothiazide whole body PBPK, 28 states; an oral dose of 25 mg over 24 h
+source = "sbmlsim:hctz_body_flat.xml"
+sbml = "../target/bench-models/hctz.xml"
+end = 1440.0
+points = 201
+preinit = [["PODOSE_hctz", 25.0]]
+relative_tolerance = 1e-6
+absolute_tolerance = 1e-12
+
+[models.midazolam]
+# midazolam whole body PBPK; an oral dose of 7.5 mg over 24 h
+source = "sbmlsim:midazolam_body_flat.xml"
+sbml = "../target/bench-models/midazolam.xml"
+end = 1440.0
+points = 201
+preinit = [["PODOSE_mid", 7.5]]
+relative_tolerance = 1e-6
+absolute_tolerance = 1e-12
+
+[models.repeated_dose]
+# the event model: an oral dose every 8 h for a week (21 events), 4 states
+source = "models/repeated_dose.xml"
+sbml = "../target/bench-models/repeated_dose.xml"
+end = 168.0
+points = 201
+preinit = []
+relative_tolerance = 1e-6
+absolute_tolerance = 1e-12
+steps = true
+
+[models.mp_core]
+# machine perfusion of the liver, core model (comp), 43 states; the 6 h perfusion
+source = "pkdb_models:pkdb_models/misc/machine_perfusion/models/output/models/machine_perfusion_liver_core.xml"
+sbml = "../target/bench-models/mp_core.xml"
+end = 360.0
+points = 201
+preinit = []
+relative_tolerance = 1e-6
+absolute_tolerance = 1e-12
+
+[models.chen]
+# Chen et al. 2009 (PEtab benchmark collection, Chen_MSB2009 at the commit sbmlsim pins), 500
+# species; the stimulation with EGF of the condition model1_data1 (c1 = 5e-9) over 9000 s
+source = "https://raw.githubusercontent.com/Benchmarking-Initiative/Benchmark-Models-PEtab/c44d5ede9bf979db5aa8ae4e94fc31fba9776675/problems/Chen_MSB2009/v1/model.xml"
+sbml = "../target/bench-models/chen.xml"
+end = 9000.0
+points = 201
+preinit = [["c1", 5e-9]]
+relative_tolerance = 1e-6
+absolute_tolerance = 1e-12
+
+[models.mp_flat]
+# machine perfusion of the liver, flat model (distrib stripped), 919 states; the 6 h perfusion
+source = "pkdb_models:pkdb_models/misc/machine_perfusion/models/output/models/machine_perfusion_liver_flat.xml"
+sbml = "../target/bench-models/mp_flat.xml"
+end = 360.0
+points = 201
+preinit = []
+relative_tolerance = 1e-6
+absolute_tolerance = 1e-12

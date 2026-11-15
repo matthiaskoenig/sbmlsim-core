@@ -15,6 +15,9 @@
 //! values which are not finite as `NaN`, `inf` and `-inf` (`sbmlsim_cli::csv`, which
 //! `js/simulate.mjs` writes byte for byte alike).
 //!
+//! `sbmlsim-core bench <models.toml> [--json FILE]` measures the compilation, the instantiation
+//! and the simulations of the models of a benchmark file in wasmtime (`sbmlsim_cli::bench`).
+//!
 //! `sbmlsim-core runtime -o <dir>` writes the `engine.wasm` and `mathlib.wasm` of this build
 //! (the ones `simulate` embeds), which the JavaScript loader `js/loader.mjs` runs.
 
@@ -26,6 +29,7 @@ use std::process::ExitCode;
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 use sbmlsim_abi::{ModelDescription, SimulationRequest};
+use sbmlsim_cli::bench::{self, BenchArgs};
 use sbmlsim_cli::csv::to_csv;
 use sbmlsim_cli::testsuite::{self, TestsuiteArgs};
 use sbmlsim_compiler::CompileOptions;
@@ -65,6 +69,8 @@ enum Command {
     },
     /// Runs the prepared cases of the SBML Test Suite and compares them with the baseline.
     Testsuite(TestsuiteArgs),
+    /// Measures the models of a benchmark file (`bench/models.toml`) in wasmtime.
+    Bench(BenchArgs),
     /// Writes the `engine.wasm` and `mathlib.wasm` of this build into a directory.
     Runtime {
         /// The directory (created when missing).
@@ -86,6 +92,7 @@ fn main() -> ExitCode {
             output,
         } => simulate(&model_dir, &request, output.as_deref()).map(|()| true),
         Command::Testsuite(args) => testsuite::run(&args),
+        Command::Bench(args) => bench::run(&args),
         Command::Runtime { output } => testsuite::write_runtime(&output).map(|()| true),
     };
     match result {

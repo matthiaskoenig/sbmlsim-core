@@ -77,6 +77,7 @@ pub(crate) fn steady_state(
         }
         t = stop;
         model.rhs(t, &y[..m], &problem.p, &mut rates);
+        problem.counts.steady_state_rhs += 1;
         let steady_now = rates.iter().zip(&y[..m]).all(|(r, x)| {
             r.abs() <= steady.absolute_tolerance + steady.relative_tolerance * x.abs()
         });

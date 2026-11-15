@@ -31,7 +31,7 @@
 use std::ffi::{CStr, c_char, c_int, c_long, c_void};
 use std::ptr;
 
-use sbmlsim_abi::{IntegratorSettings, SparsityPattern, Tolerance};
+use sbmlsim_abi::{IntegratorSettings, SimulationStats, SparsityPattern, Tolerance};
 use sbmlsim_csolvers::ffi::*;
 
 use crate::EngineError;
@@ -39,7 +39,13 @@ use crate::model::ModelFns;
 
 /// The number of states above which [`LinearSolver::Auto`](sbmlsim_abi::LinearSolver::Auto)
 /// takes KLU, else the dense solver.
-pub const KLU_THRESHOLD: usize = 64;
+///
+/// Measured with the analytic Jacobian in wasmtime and Node (bench/RESULTS.md, the scaling
+/// models of `scripts/scaling_models.py`): KLU is as fast as the dense solver at 11 to 20 states
+/// (a banded chain at 16 to 20, a whole body model whose pools couple to every organ at 11 to
+/// 14) and faster above, 0.9 of the dense time at 17 to 28 states, 0.65 at 64 and 0.1 to 0.25 at
+/// 512; the PBPK models of 28 to 43 states take 0.7 to 0.9 of the dense time with KLU.
+pub const KLU_THRESHOLD: usize = 16;
 
 /// The source of the Jacobian of a stiff configuration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -163,6 +169,78 @@ pub(crate) struct Problem<'a> {
     /// The CVODE memory of the running integration, set by [`Cvode::integrate`] (the sparse
     /// difference quotient reads its error weights and step size).
     pub mem: *mut c_void,
+    /// The calls of the model the callbacks of CVODE and the engine made.
+    pub counts: Counts,
+}
+
+/// The calls of the model during a simulation, counted where they are made (the counters of
+/// [`SimulationStats`] which are no counters of CVODE).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct Counts {
+    /// The calls of the right hand side by CVODE.
+    pub rhs: u64,
+    /// The calls of the Jacobian function by CVODE.
+    pub jacobian: u64,
+    /// The calls of the right hand side by the sparse difference quotient.
+    pub jacobian_rhs: u64,
+    /// The analytic Jacobians with an entry which is not finite.
+    pub fallbacks: u64,
+    /// The calls of the root functions by CVODE.
+    pub roots: u64,
+    /// The calls of the right hand side by the criterion of the steady state.
+    pub steady_state_rhs: u64,
+}
+
+/// The counters of CVODE itself, summed over the (re)initializations of a simulation.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct CvodeCounts {
+    /// The steps.
+    pub steps: u64,
+    /// The setups of the linear solver.
+    pub linear_setups: u64,
+    /// The failures of the local error test.
+    pub error_test_failures: u64,
+    /// The iterations of the nonlinear solver.
+    pub nonlinear_iterations: u64,
+    /// The convergence failures of the nonlinear solver.
+    pub nonlinear_convergence_failures: u64,
+    /// The (re)initializations.
+    pub integrations: u64,
+}
+
+impl CvodeCounts {
+    /// The sum of two counts.
+    fn add(self, other: CvodeCounts) -> CvodeCounts {
+        CvodeCounts {
+            steps: self.steps + other.steps,
+            linear_setups: self.linear_setups + other.linear_setups,
+            error_test_failures: self.error_test_failures + other.error_test_failures,
+            nonlinear_iterations: self.nonlinear_iterations + other.nonlinear_iterations,
+            nonlinear_convergence_failures: self.nonlinear_convergence_failures
+                + other.nonlinear_convergence_failures,
+            integrations: self.integrations + other.integrations,
+        }
+    }
+}
+
+/// The statistics of a simulation from the counts of the engine, of CVODE and of the probes of
+/// the triggers.
+pub(crate) fn stats(counts: &Counts, cvode: &CvodeCounts, probe_rhs: u64) -> SimulationStats {
+    SimulationStats {
+        steps: cvode.steps,
+        rhs_evals: counts.rhs,
+        jacobian_evals: counts.jacobian,
+        jacobian_rhs_evals: counts.jacobian_rhs,
+        jacobian_fallbacks: counts.fallbacks,
+        linear_setups: cvode.linear_setups,
+        error_test_failures: cvode.error_test_failures,
+        nonlinear_iterations: cvode.nonlinear_iterations,
+        nonlinear_convergence_failures: cvode.nonlinear_convergence_failures,
+        root_evals: counts.roots,
+        integrations: cvode.integrations,
+        probe_rhs_evals: probe_rhs,
+        steady_state_rhs_evals: counts.steady_state_rhs,
+    }
 }
 
 /// The message of the last error SUNDIALS reported, written by [`record_error`].
@@ -217,6 +295,7 @@ unsafe extern "C" fn rhs(t: sunrealtype, y: N_Vector, ydot: N_Vector, data: *mut
     // SAFETY: CVODE passes the vectors of the problem and the user data set before the call.
     unsafe {
         let problem = problem(data);
+        problem.counts.rhs += 1;
         let (n, m) = (problem.n, problem.n_model);
         let ydot = values(ydot, n);
         problem
@@ -237,6 +316,7 @@ unsafe extern "C" fn roots(
     // the user data set before the call.
     unsafe {
         let problem = problem(data);
+        problem.counts.roots += 1;
         let (n, m) = (problem.n, problem.n_model);
         let g = std::slice::from_raw_parts_mut(g, problem.n_roots);
         problem.model.roots(t, &values(y, n)[..m], &problem.p, g);
@@ -261,6 +341,7 @@ unsafe fn jacobian_values(
     ewt: N_Vector,
 ) -> c_int {
     let n = pattern.n as usize;
+    problem.counts.jacobian += 1;
     // SAFETY: as documented; the vectors are not aliased by the slices of the problem.
     unsafe {
         let y_values = values(y, n);
@@ -271,6 +352,7 @@ unsafe fn jacobian_values(
             if problem.jac_values.iter().all(|v| v.is_finite()) {
                 return 0;
             }
+            problem.counts.fallbacks += 1;
         }
         let Some(dq) = problem.difference.as_mut() else {
             return -1;
@@ -306,6 +388,7 @@ unsafe fn jacobian_values(
             problem
                 .model
                 .rhs(t, &dq.perturbed, &problem.p, &mut dq.rates);
+            problem.counts.jacobian_rhs += 1;
             for &j in columns {
                 dq.perturbed[j] = y_values[j];
                 // `N_VLinearSum(inc_inv, ftemp, -inc_inv, fy)` is `inc_inv * (ftemp - fy)`
@@ -429,6 +512,11 @@ pub(crate) struct Cvode {
     attached: bool,
     /// The last error, written by [`record_error`] through the pointer of the context.
     errors: Box<ErrorLog>,
+    /// The counters of the (re)initializations of the simulation before the current one.
+    totals: CvodeCounts,
+    /// Whether the counters of the memory belong to the running simulation (a segment of it
+    /// was started since [`Cvode::begin`]).
+    live: bool,
 }
 
 impl Drop for Cvode {
@@ -484,6 +572,8 @@ impl Cvode {
             initialized: false,
             attached: false,
             errors: Box::default(),
+            totals: CvodeCounts::default(),
+            live: false,
         };
         let n = config.n as sunindextype;
         // SAFETY: the objects are created in the context and owned by `cvode`, which frees them
@@ -573,6 +663,13 @@ impl Cvode {
     ) -> Result<(), EngineError> {
         let n = self.config.n;
         self.errors.message.clear();
+        if self.live {
+            self.totals = self.totals.add(self.current());
+        }
+        // counted before the call, also when it fails (its counters are then those of the
+        // segment before or 0)
+        self.live = true;
+        self.totals.integrations += 1;
         // SAFETY: the vectors have `n` values; the memory is initialized before it is
         // re-initialized and before the linear solver is attached.
         unsafe {
@@ -633,6 +730,59 @@ impl Cvode {
             self.flag(CVodeRootInit(self.mem, nrtfn, g), t0)?;
         }
         Ok(())
+    }
+
+    /// Starts the counters of a simulation: the counters of the memory, which a simulation
+    /// before left in it, are no part of it until a segment is started.
+    pub fn begin(&mut self) {
+        self.totals = CvodeCounts::default();
+        self.live = false;
+    }
+
+    /// The counters of CVODE of the simulation since [`Cvode::begin`].
+    pub fn counts(&self) -> CvodeCounts {
+        if self.live {
+            self.totals.add(self.current())
+        } else {
+            self.totals
+        }
+    }
+
+    /// The counters of the current (re)initialization of the memory, 0 before the first one
+    /// (CVODE answers with an error, which leaves them 0).
+    fn current(&self) -> CvodeCounts {
+        let (mut steps, mut nfe, mut setups, mut netf) = (0, 0, 0, 0);
+        let (mut qlast, mut qcur) = (0, 0);
+        let (mut hinused, mut hlast, mut hcur, mut tcur) = (0.0, 0.0, 0.0, 0.0);
+        let (mut nni, mut ncfn) = (0, 0);
+        if self.initialized {
+            // SAFETY: the memory is initialized; every out-pointer is a local
+            unsafe {
+                CVodeGetIntegratorStats(
+                    self.mem,
+                    &mut steps,
+                    &mut nfe,
+                    &mut setups,
+                    &mut netf,
+                    &mut qlast,
+                    &mut qcur,
+                    &mut hinused,
+                    &mut hlast,
+                    &mut hcur,
+                    &mut tcur,
+                );
+                CVodeGetNonlinSolvStats(self.mem, &mut nni, &mut ncfn);
+            }
+        }
+        let count = |x: c_long| x.max(0) as u64;
+        CvodeCounts {
+            steps: count(steps),
+            linear_setups: count(setups),
+            error_test_failures: count(netf),
+            nonlinear_iterations: count(nni),
+            nonlinear_convergence_failures: count(ncfn),
+            integrations: 0,
+        }
     }
 
     /// Sets the stop time of the running segment, which must not be behind the internal time of
@@ -721,6 +871,7 @@ mod tests {
             analytic,
             difference,
             mem: ptr::null_mut(),
+            counts: Counts::default(),
         };
         let mut out = Vec::new();
         for i in 0..11 {
@@ -818,6 +969,7 @@ mod tests {
             analytic: false,
             difference,
             mem: ptr::null_mut(),
+            counts: Counts::default(),
         };
         let mut out = Vec::new();
         for i in 0..4 {

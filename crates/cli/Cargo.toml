@@ -19,6 +19,8 @@ sbmlsim-host = { path = "../host" }
 rayon = "1.10"
 serde.workspace = true
 serde_json.workspace = true
+# the models of a benchmark file in their order
+toml = { version = "1", features = ["preserve_order"] }
 
 [dev-dependencies]
 wasmparser = "0.263"

@@ -2,3 +2,4 @@
 /target/
 /testdata/cases/
 /js/runtime/
+__pycache__/

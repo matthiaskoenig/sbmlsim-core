@@ -110,6 +110,8 @@ pub(crate) struct Events<'a> {
     current: Vec<bool>,
     y_probe: Vec<f64>,
     ydot: Vec<f64>,
+    /// The calls of the right hand side by the probes.
+    probe_rhs: u64,
 }
 
 /// The values of the triggers at a time: at the time itself, or right after it (a trigger which
@@ -154,6 +156,7 @@ impl<'a> Events<'a> {
             current: vec![false; desc.events.len()],
             y_probe: vec![0.0; n],
             ydot: vec![0.0; n],
+            probe_rhs: 0,
         };
         events.set_window(start, end);
         events
@@ -200,6 +203,11 @@ impl<'a> Events<'a> {
         }
     }
 
+    /// The calls of the right hand side by the probes of the triggers.
+    pub fn probe_rhs(&self) -> u64 {
+        self.probe_rhs
+    }
+
     /// Evaluates the triggers at `t` into `current`, or right after `t`.
     fn evaluate(&mut self, t: f64, y: &[f64], p: &[f64], probe: Probe) {
         let model = self.model;
@@ -218,6 +226,7 @@ impl<'a> Events<'a> {
             if !probed {
                 // the state at t + delta, moved along its rate
                 model.rhs(t, y, p, &mut self.ydot);
+                self.probe_rhs += 1;
                 for ((q, x), r) in self.y_probe.iter_mut().zip(y).zip(&self.ydot) {
                     *q = x + delta * r;
                 }

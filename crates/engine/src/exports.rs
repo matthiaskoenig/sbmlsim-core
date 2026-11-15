@@ -22,6 +22,10 @@
 //!   0 with the table in the output, 1 with an error in the output.
 //! - `engine_output_ptr() -> ptr` and `engine_output_len() -> len`: the output of the last call,
 //!   valid until the next call of `engine_load` or `engine_simulate`.
+//! - `engine_stats_ptr() -> ptr`: the counters of the last call of `engine_simulate`
+//!   ([`SimulationStats`], `SimulationStats::WORDS` words of `u64`, little endian, in the order of
+//!   `SimulationStats::NAMES`, aligned to 8; all 0 before the first simulation, after a load and
+//!   for a request refused before its integration), valid until the next call.
 //!
 //! The output is a `u32` (little endian) with the length of a JSON header, the header, zero
 //! bytes up to a multiple of 8 from the start of the output, then the values as `f64` (little
@@ -47,7 +51,7 @@ use std::alloc::{Layout, alloc, dealloc};
 use std::cell::RefCell;
 use std::sync::Once;
 
-use sbmlsim_abi::{ModelDescription, ModelSizes, SimulationRequest};
+use sbmlsim_abi::{ModelDescription, ModelSizes, SimulationRequest, SimulationStats};
 use serde::Serialize;
 
 use crate::{Engine, EngineError, ModelFns, Recorded};
@@ -208,6 +212,8 @@ static NO_MEMORY_OUTPUT: Aligned<NO_MEMORY_LEN> = {
 struct State {
     engine: Option<Engine>,
     output: OutputBuffer,
+    /// The counters of the last simulation (`engine_stats_ptr`).
+    stats: [u64; SimulationStats::WORDS],
 }
 
 thread_local! {
@@ -222,6 +228,7 @@ thread_local! {
                 len: 0,
                 no_memory: false,
             },
+            stats: [0; SimulationStats::WORDS],
         })
     };
 }
@@ -428,6 +435,7 @@ pub unsafe extern "C" fn engine_load(desc_ptr: i32, desc_len: i32) -> i32 {
     STATE.with_borrow_mut(|state| {
         state.engine = engine;
         state.output = out;
+        state.stats = [0; SimulationStats::WORDS];
     });
     code
 }
@@ -442,6 +450,7 @@ pub unsafe extern "C" fn engine_load(desc_ptr: i32, desc_len: i32) -> i32 {
 pub unsafe extern "C" fn engine_simulate(req_ptr: i32, req_len: i32) -> i32 {
     install_panic_hook();
     let bytes = unsafe { input(req_ptr, req_len) };
+    STATE.with_borrow_mut(|state| state.stats = [0; SimulationStats::WORDS]);
     let request = match serde_json::from_slice::<SimulationRequest>(bytes) {
         Ok(request) => request,
         Err(e) => {
@@ -458,7 +467,11 @@ pub unsafe extern "C" fn engine_simulate(req_ptr: i32, req_len: i32) -> i32 {
     // the output of the last call is released before the simulation, which may need its memory
     set_output(OutputBuffer::default());
     let result = engine.simulate_with_prefix(&request, &header_slots);
-    STATE.with_borrow_mut(|state| state.engine = Some(engine));
+    let stats = engine.stats().words().map(u64::to_le);
+    STATE.with_borrow_mut(|state| {
+        state.engine = Some(engine);
+        state.stats = stats;
+    });
     match result {
         Ok(recorded) => {
             set_output(table_output(recorded));
@@ -487,4 +500,11 @@ pub extern "C" fn engine_output_len() -> i32 {
         true => NO_MEMORY_LEN as i32,
         false => state.output.len as i32,
     })
+}
+
+/// The pointer of the counters of the last simulation, `SimulationStats::WORDS` words of `u64`
+/// aligned to 8, valid until the next call of `engine_load` or `engine_simulate`.
+#[unsafe(no_mangle)]
+pub extern "C" fn engine_stats_ptr() -> i32 {
+    STATE.with_borrow(|state| state.stats.as_ptr().addr() as i32)
 }

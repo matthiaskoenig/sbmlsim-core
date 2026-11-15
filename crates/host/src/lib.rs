@@ -22,7 +22,8 @@
 
 use anyhow::{Context, anyhow, bail, ensure};
 use sbmlsim_abi::{
-    MODEL_CONTRACT, ModelDescription, SimulationRequest, SimulationResult, check_contract,
+    MODEL_CONTRACT, ModelDescription, SimulationRequest, SimulationResult, SimulationStats,
+    check_contract,
 };
 use sbmlsim_engine::EngineError;
 use serde::Deserialize;
@@ -44,13 +45,14 @@ pub static MATHLIB_WASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/mathl
 const WASI_MODULE: &str = "wasi_snapshot_preview1";
 
 /// The exports of `engine.wasm`.
-const ENGINE_EXPORTS: [&str; 6] = [
+const ENGINE_EXPORTS: [&str; 7] = [
     "engine_alloc",
     "engine_free",
     "engine_load",
     "engine_simulate",
     "engine_output_ptr",
     "engine_output_len",
+    "engine_stats_ptr",
 ];
 
 /// The most bytes the memory of an instance grows to: 2 GiB, `32768` pages of 64 KiB, the
@@ -285,6 +287,7 @@ impl Runtime {
             simulate: engine.get_typed_func(&mut store, "engine_simulate")?,
             output_ptr: engine.get_typed_func(&mut store, "engine_output_ptr")?,
             output_len: engine.get_typed_func(&mut store, "engine_output_len")?,
+            stats_ptr: engine.get_typed_func(&mut store, "engine_stats_ptr")?,
             store,
             memory,
             trapped: false,
@@ -547,6 +550,7 @@ pub struct Instance {
     simulate: TypedFunc<(i32, i32), i32>,
     output_ptr: TypedFunc<(), i32>,
     output_len: TypedFunc<(), i32>,
+    stats_ptr: TypedFunc<(), i32>,
     trapped: bool,
     initialize_calls: u64,
     load_calls: u64,
@@ -569,6 +573,25 @@ impl Instance {
                 "engine_simulate returned {code} with the output {output:?}"
             ))),
         }
+    }
+
+    /// The counters of the integrator of the last simulation (`engine_stats_ptr`).
+    pub fn stats(&mut self) -> Result<SimulationStats, EngineError> {
+        if self.trapped {
+            return Err(internal(
+                "the instance trapped before and is not used again",
+            ));
+        }
+        let ptr = self.guard(|this| this.stats_ptr.call(&mut this.store, ()))? as u32 as usize;
+        let mut bytes = [0u8; 8 * SimulationStats::WORDS];
+        self.memory
+            .read(&self.store, ptr, &mut bytes)
+            .map_err(|e| internal(format!("the counters are outside of the memory: {e}")))?;
+        let mut words = [0u64; SimulationStats::WORDS];
+        for (word, chunk) in words.iter_mut().zip(bytes.as_chunks::<8>().0) {
+            *word = u64::from_le_bytes(*chunk);
+        }
+        Ok(SimulationStats::from_words(words))
     }
 
     /// The number of calls of the engine into the host (all of them WASI calls) since the

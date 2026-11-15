@@ -35,7 +35,7 @@ mod steady;
 use sbmlsim_abi::{
     IntegratorSettings, JacobianChoice, JacobianKind, LinearSolver, MODEL_CONTRACT,
     ModelDescription, ModelSizes, Output, SIMULATION_CONTRACT, SimulationRequest, SimulationResult,
-    SparsityPattern, Tolerance, check_contract,
+    SimulationStats, SparsityPattern, Tolerance, check_contract,
 };
 
 pub use cvode::KLU_THRESHOLD;
@@ -88,7 +88,7 @@ pub use events::MAX_EXECUTIONS_PER_EVENT;
 pub use model::ModelFns;
 
 use changes::{Changes, Target};
-use cvode::{Config, Cvode, Difference, Jacobian, Linear, Method, Problem};
+use cvode::{Config, Counts, Cvode, Difference, Jacobian, Linear, Method, Problem};
 use events::Events;
 use segments::{Column, Recorder, SegmentOutput};
 
@@ -124,6 +124,7 @@ pub struct Engine {
     model: Box<dyn ModelFns>,
     desc: ModelDescription,
     cvode: Option<Cvode>,
+    stats: SimulationStats,
 }
 
 impl Engine {
@@ -135,6 +136,7 @@ impl Engine {
             model,
             desc,
             cvode: None,
+            stats: SimulationStats::default(),
         })
     }
 
@@ -145,7 +147,14 @@ impl Engine {
 
     /// Simulates the model; the result does not depend on the simulations before.
     pub fn simulate(&mut self, req: &SimulationRequest) -> Result<SimulationResult, EngineError> {
-        run(&*self.model, &self.desc, &mut self.cvode, req, &|_| 0).map(Recorded::into_result)
+        let (model, desc) = (&*self.model, &self.desc);
+        run(model, desc, &mut self.cvode, req, &|_| 0, &mut self.stats).map(Recorded::into_result)
+    }
+
+    /// The counters of the last simulation (also of one which failed; all 0 for one refused
+    /// before its integration).
+    pub fn stats(&self) -> SimulationStats {
+        self.stats
     }
 
     /// [`Engine::simulate`] with `prefix(columns)` slots before the values of the result, which
@@ -156,7 +165,8 @@ impl Engine {
         req: &SimulationRequest,
         prefix: &dyn Fn(&[String]) -> usize,
     ) -> Result<Recorded, EngineError> {
-        run(&*self.model, &self.desc, &mut self.cvode, req, prefix)
+        let (model, desc) = (&*self.model, &self.desc);
+        run(model, desc, &mut self.cvode, req, prefix, &mut self.stats)
     }
 }
 
@@ -195,7 +205,8 @@ pub fn simulate(
 ) -> Result<SimulationResult, EngineError> {
     check_description(desc)?;
     check_sizes(model, desc)?;
-    run(model, desc, &mut None, req, &|_| 0).map(Recorded::into_result)
+    let mut stats = SimulationStats::default();
+    run(model, desc, &mut None, req, &|_| 0, &mut stats).map(Recorded::into_result)
 }
 
 /// Checks that the sizes of a model (`model_sizes`, `model_event_sizes`) are the ones of its
@@ -525,14 +536,17 @@ fn initial_values(
 
 /// The simulation [`simulate`] and [`Engine::simulate`] share; `cache` is the CVODE memory of
 /// the last simulation, replaced when the configuration differs; the result has
-/// `prefix(columns)` slots of 0 before its values.
+/// `prefix(columns)` slots of 0 before its values; `stats` gets the counters of the simulation
+/// (0 for a request refused before the integration).
 fn run(
     model: &dyn ModelFns,
     desc: &ModelDescription,
     cache: &mut Option<Cvode>,
     req: &SimulationRequest,
     prefix: &dyn Fn(&[String]) -> usize,
+    stats: &mut SimulationStats,
 ) -> Result<Recorded, EngineError> {
+    *stats = SimulationStats::default();
     // 1. the request is validated before any feature is refused and before any integration
     check_contract(&req.contract, SIMULATION_CONTRACT).map_err(|e| request(e.to_string()))?;
     let (start, end) = (req.start, req.end);
@@ -598,7 +612,14 @@ fn run(
             *cache = None;
             *cache = Some(Cvode::new(config)?);
         }
-        cache.as_mut()
+        let cvode = cache.as_mut();
+        if let Some(cvode) = cvode {
+            // the counters of the memory start with this simulation
+            cvode.begin();
+            Some(cvode)
+        } else {
+            None
+        }
     };
     let settings = match (&req.settings.absolute_tolerance, n_cvode > n) {
         // the state of the rate 0 of a model without states gets the tolerance of no state
@@ -619,6 +640,7 @@ fn run(
         analytic,
         difference,
         mem: std::ptr::null_mut(),
+        counts: Counts::default(),
     };
     let n_selections = desc
         .selections
@@ -640,62 +662,75 @@ fn run(
     };
     // the state of CVODE: the model reads its first `n` values
     y0.resize(n_cvode, 0.0);
-    match cvode {
+    let mut probe_rhs = 0;
+    let (outcome, cvode_counts) = match cvode {
         Some(cvode) if with_events => {
             let mut events = Events::new(model, desc, req.seed, start, end);
-            if let Some(steady) = &req.steady_state {
-                steady::steady_state(
-                    Some(&mut *cvode),
+            let mut integrate = || {
+                if let Some(steady) = &req.steady_state {
+                    steady::steady_state(
+                        Some(&mut *cvode),
+                        &mut problem,
+                        &settings,
+                        start,
+                        end,
+                        &mut y0,
+                        steady,
+                        Some(&mut events),
+                        &desc.id,
+                    )?;
+                }
+                segments::integrate_events(
+                    cvode,
                     &mut problem,
                     &settings,
                     start,
+                    &y0,
                     end,
-                    &mut y0,
-                    steady,
-                    Some(&mut events),
-                    &desc.id,
-                )?;
-            }
-            segments::integrate_events(
-                cvode,
-                &mut problem,
-                &settings,
-                start,
-                &y0,
-                end,
-                output,
-                &mut recorder,
-                &mut events,
-                &changes,
-            )?;
+                    output,
+                    &mut recorder,
+                    &mut events,
+                    &changes,
+                )
+            };
+            let outcome = integrate();
+            probe_rhs = events.probe_rhs();
+            (outcome, cvode.counts())
         }
         mut cvode => {
-            if let Some(steady) = &req.steady_state {
-                steady::steady_state(
+            let mut integrate = || {
+                if let Some(steady) = &req.steady_state {
+                    steady::steady_state(
+                        cvode.as_deref_mut(),
+                        &mut problem,
+                        &settings,
+                        start,
+                        end,
+                        &mut y0,
+                        steady,
+                        None,
+                        &desc.id,
+                    )?;
+                }
+                segments::integrate(
                     cvode.as_deref_mut(),
                     &mut problem,
                     &settings,
                     start,
+                    &y0,
                     end,
-                    &mut y0,
-                    steady,
-                    None,
-                    &desc.id,
-                )?;
-            }
-            segments::integrate(
-                cvode,
-                &mut problem,
-                &settings,
-                start,
-                &y0,
-                end,
-                output,
-                &mut recorder,
-                &changes,
-            )?
+                    output,
+                    &mut recorder,
+                    &changes,
+                )
+            };
+            let outcome = integrate();
+            let counts = cvode.as_deref().map(Cvode::counts).unwrap_or_default();
+            (outcome, counts)
         }
-    }
+    };
+    *stats = cvode::stats(&problem.counts, &cvode_counts, probe_rhs);
+    outcome?;
     Ok(Recorded {
         columns: names,
         n_rows: recorder.n_rows,

@@ -633,6 +633,7 @@ mod tests {
             analytic: true,
             difference: None,
             mem: std::ptr::null_mut(),
+            counts: crate::cvode::Counts::default(),
         };
         let no_changes = Changes::new(&desc, &[], 0.0, 50.0).unwrap();
         let mut run = |cap: usize| {
