@@ -2,7 +2,15 @@
 name = "sbmlsim-csolvers"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+# the code of the crate is MIT; it builds and links SUNDIALS (BSD-3-Clause) and KLU, AMD, COLAMD, BTF
+# and SuiteSparse_config (LGPL-2.1-or-later and BSD-3-Clause), whose license files are in third_party
+license = "MIT AND BSD-3-Clause AND LGPL-2.1-or-later"
 authors.workspace = true
+description = "SUNDIALS CVODE and SuiteSparse KLU built for native targets and wasm32-wasip1, with their FFI declarations"
+links = "sbmlsim_csolvers"
+build = "build.rs"
 
 [dependencies]
+
+[build-dependencies]
+cc = { version = "1.2", features = ["parallel"] }
