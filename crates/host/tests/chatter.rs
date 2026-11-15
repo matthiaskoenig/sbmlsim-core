@@ -4,7 +4,7 @@
 //! starting the budget of steps again.
 
 use std::sync::mpsc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use sbmlsim_abi::{
     IntegratorSettings, Output, SIMULATION_CONTRACT, SimulationRequest, SimulationResult,
@@ -72,11 +72,7 @@ fn request(end: f64, output: Output, rtol: f64, atol: f64) -> SimulationRequest 
     }
 }
 
-type Outcome = (
-    Result<SimulationResult, EngineError>,
-    SimulationStats,
-    Duration,
-);
+type Outcome = (Result<SimulationResult, EngineError>, SimulationStats);
 
 /// Runs `req` on a new instance in a thread of its own and waits at most [`BOUND`] for it
 /// (a run which does not end fails the test instead of hanging it).
@@ -88,10 +84,8 @@ fn run_bounded(compiled: &CompiledModel, req: &SimulationRequest) -> Outcome {
         let mut instance = runtime
             .instantiate(&compiled.wasm, &compiled.description)
             .unwrap();
-        let begin = Instant::now();
         let result = instance.simulate(&req);
-        let elapsed = begin.elapsed();
-        let _ = send.send((result, instance.stats().unwrap(), elapsed));
+        let _ = send.send((result, instance.stats().unwrap()));
     });
     receive
         .recv_timeout(BOUND)
@@ -115,7 +109,7 @@ fn the_bouncing_ball_ends_with_too_much_work_in_an_output_of_times() {
     let compiled = ball();
     // up to 1.34 the bounces are well separated: a result
     let req = request(1.34, Output::Uniform { steps: 10 }, 1e-8, 1e-10);
-    let (result, _, _) = run_bounded(&compiled, &req);
+    let (result, _) = run_bounded(&compiled, &req);
     result.unwrap();
     // past the accumulation point: the executions close to the last applied root do not start
     // the budget of steps again
@@ -123,7 +117,8 @@ fn the_bouncing_ball_ends_with_too_much_work_in_an_output_of_times() {
         let req = request(end, Output::Uniform { steps }, 1e-8, 1e-10);
         let outcome = run_bounded(&compiled, &req);
         assert_too_much_work(&outcome, 1.3416, 1.3417);
-        assert!(outcome.2 < Duration::from_secs(10), "{:?}", outcome.2);
+        // measured 20259 steps in every run, the bound is about twice that
+        assert!(outcome.1.steps < 40_000, "{:?}", outcome.1);
     }
 }
 
@@ -134,7 +129,8 @@ fn the_bouncing_ball_ends_with_too_much_work_in_the_steps_of_the_integrator() {
         let req = request(end, Output::IntegratorSteps, 1e-8, 1e-10);
         let outcome = run_bounded(&compiled, &req);
         assert_too_much_work(&outcome, 1.3416, 1.3417);
-        assert!(outcome.2 < Duration::from_secs(10), "{:?}", outcome.2);
+        // measured 20259 steps in every run, the bound is about twice that
+        assert!(outcome.1.steps < 40_000, "{:?}", outcome.1);
     }
 }
 
@@ -147,7 +143,8 @@ fn a_sliding_mode_ends_with_too_much_work_in_the_steps_of_the_integrator() {
     let req = request(3.0, Output::IntegratorSteps, 1e-6, 1e-12);
     let outcome = run_bounded(&sliding(), &req);
     assert_too_much_work(&outcome, 1.0, 1.00000001);
-    assert!(outcome.2 < Duration::from_secs(10), "{:?}", outcome.2);
+    // measured 20025 steps, the bound is about twice that
+    assert!(outcome.1.steps < 40_000, "{:?}", outcome.1);
 }
 
 #[test]
@@ -158,12 +155,12 @@ fn well_separated_doses_start_the_budget_of_steps_again() {
     let compiled = repeated_dose();
     let mut req = request(168.0, Output::Uniform { steps: 1 }, 1e-6, 1e-12);
     req.settings.maximum_num_steps = MAX_STEPS;
-    let (result, stats, _) = run_bounded(&compiled, &req);
+    let (result, stats) = run_bounded(&compiled, &req);
     let result = result.unwrap();
     assert_eq!(result.n_rows, 2);
     assert!(stats.steps > 3 * u64::from(MAX_STEPS), "{stats:?}");
     // the steps of the integrator: the doses are far apart, no chatter
     let req = request(168.0, Output::IntegratorSteps, 1e-6, 1e-12);
-    let (result, _, _) = run_bounded(&compiled, &req);
+    let (result, _) = run_bounded(&compiled, &req);
     assert!(result.unwrap().n_rows > 100);
 }
