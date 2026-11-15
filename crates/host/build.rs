@@ -231,6 +231,18 @@ fn build(
         .arg("--target-dir")
         .arg(target_dir)
         .args(rest);
+    // the C flags of the environment never reach the C of the engine (`sbmlsim-csolvers`
+    // ignores them as well): a stray `-ffast-math` would change the bits of `engine.wasm`
+    for (key, _) in env::vars_os() {
+        if key.to_str().is_some_and(|key| {
+            key == "CFLAGS"
+                || key.starts_with("CFLAGS_")
+                || key == "TARGET_CFLAGS"
+                || key == "HOST_CFLAGS"
+        }) {
+            command.env_remove(key);
+        }
+    }
     // the flags, the target and the wrapper (clippy) of the outer build are not the ones of the
     // wasm build
     for variable in [

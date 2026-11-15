@@ -6,6 +6,12 @@
 //! cargo profile, nor SIMD, nor the contraction into fused multiply-adds changes a result.
 //! `sundials_config.h` is generated per target into `OUT_DIR`, the configuration CMake writes
 //! with `SUNDIALS_INDEX_SIZE=64` and KLU enabled.
+//!
+//! The flags of the environment are not used: `cc` appends `CFLAGS` (and `CFLAGS_<target>`,
+//! `TARGET_CFLAGS`, `HOST_CFLAGS`) after the flags of the crate, so a stray `-ffast-math` there
+//! would change the bits of every result, of a distributed `engine.wasm` too. The build script
+//! removes them from its environment before `cc` reads it, and `cc` does not inherit flags of
+//! rustc either.
 
 use std::env;
 use std::fmt::Write as _;
@@ -135,7 +141,12 @@ fn main() {
         require(&suitesparse.join(source));
     }
 
+    for key in c_flag_variables() {
+        // SAFETY: the build script is single threaded here (`cc` starts its threads later)
+        unsafe { env::remove_var(key) };
+    }
     let mut build = cc::Build::new();
+    build.inherit_rustflags(false);
     let compiler_name = if wasm {
         println!("cargo:rerun-if-env-changed=WASI_SDK_PATH");
         let sdk = PathBuf::from(env::var("WASI_SDK_PATH").unwrap_or_else(|_| {
@@ -238,6 +249,23 @@ fn require(path: &Path) {
 /// indices, `long int` counters, KLU, no MPI, the logging level 0 (no logging: the logger of a
 /// context reads no environment variable and writes nothing, the engine records the errors with
 /// an error handler of its own), and the modules of [`SUNDIALS_SOURCES`].
+/// The variables of C flags in the environment which `cc` would append to the flags of the
+/// crate: `CFLAGS` and its variants of a target and a kind (`CFLAGS_<target>`,
+/// `TARGET_CFLAGS`, `HOST_CFLAGS`).
+fn c_flag_variables() -> Vec<std::ffi::OsString> {
+    env::vars_os()
+        .map(|(key, _)| key)
+        .filter(|key| {
+            key.to_str().is_some_and(|key| {
+                key == "CFLAGS"
+                    || key.starts_with("CFLAGS_")
+                    || key == "TARGET_CFLAGS"
+                    || key == "HOST_CFLAGS"
+            })
+        })
+        .collect()
+}
+
 fn write_config(include: &Path, compiler: &str, flags: &str) {
     let dir = include.join("sundials");
     fs::create_dir_all(&dir).unwrap();
