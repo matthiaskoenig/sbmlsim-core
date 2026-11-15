@@ -34,7 +34,13 @@
 //! # Values
 //!
 //! An entity's [`Entity::default`] is the value its SBML attribute gives in the quantity it
-//! stores, NaN when there is none (a missing value, or a species given in the other quantity).
+//! stores. A missing value is the one libroadrunner 2.11 sets: a compartment without a size 1,
+//! a species without an initial amount or concentration 0, a species reference without a
+//! stoichiometry 1 (also inlined where it has no id), a local parameter without a value NaN; a
+//! parameter without a value is refused (`Unsupported`, `parameter without a value`) unless an
+//! initial assignment or an assignment rule gives it one, also when a rate rule or an event
+//! changes it, as libroadrunner refuses to load it. The default is NaN for a species given in
+//! the other quantity and for a parameter without a value which is assigned.
 //! [`Model::initial`] completes them: the amount of a species given as a concentration
 //! (`initialConcentration * compartment`, the compartment as evaluated at init), the
 //! concentration of a species of a rule given as an amount, the initial assignments (of a
@@ -108,7 +114,9 @@ pub struct Entity {
     pub id: String,
     /// What it is.
     pub kind: EntityKind,
-    /// The value of its SBML attribute in the quantity it stores, NaN when there is none.
+    /// The value of its SBML attribute in the quantity it stores, a missing one as libroadrunner
+    /// sets it (see the crate documentation), NaN until [`Model::initial`] when it is given in
+    /// the other quantity or assigned.
     pub default: f64,
     /// Whether a pre-initialization or a change may set it (not the target of an assignment
     /// rule).

@@ -45,6 +45,7 @@ impl Builder<'_> {
         let locals: HashMap<String, f64> = law
             .local_parameters
             .iter()
+            // libroadrunner: a local parameter without a value is NaN
             .map(|p| (p.id.clone(), p.value.unwrap_or(f64::NAN)))
             .collect();
         let element = law
@@ -92,7 +93,8 @@ impl Builder<'_> {
                     }
                     let stoichiometry = match &reference.id {
                         Some(sid) => Expr::Symbol(self.symbols[sid.as_str()]),
-                        None => Expr::Number(reference.stoichiometry.unwrap_or(f64::NAN)),
+                        // libroadrunner: a missing stoichiometry is 1
+                        None => Expr::Number(reference.stoichiometry.unwrap_or(1.0)),
                     };
                     let v = self.reaction_rate(reaction)?;
                     let term = Expr::apply(Op::Times, vec![stoichiometry, v]);

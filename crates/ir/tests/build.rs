@@ -495,7 +495,8 @@ fn species_reference_read_in_math_and_assigned() {
     let sr = m.symbol("sr").unwrap();
     assert!(matches!(sr, Symbol::Param(_)));
     assert_eq!(m.entity(sr).kind, EntityKind::SpeciesReference);
-    assert!(m.entity(sr).default.is_nan());
+    // libroadrunner: a missing stoichiometry is 1, the initial assignment sets it
+    assert_eq!(m.entity(sr).default, 1.0);
     assert_eq!(rule(&m, "x"), &Expr::Symbol(sr));
     assert_eq!(initial(&m, "sr"), &num(3.0));
     // sr is evaluated before x
@@ -588,16 +589,129 @@ fn avogadro_is_the_value_of_libroadrunner() {
     assert_eq!(rule(&m, "x"), &num(6.02214179e23));
 }
 
+/// A parameter `p` and `extra` (rules, initial assignments, events) after it.
+fn parameter_without_value(constant: bool, extra: &str) -> Result<Model, CompileError> {
+    build(&doc(
+        "",
+        &format!(
+            r#"<listOfParameters><parameter id="p" constant="{constant}"/></listOfParameters>{extra}"#
+        ),
+    ))
+}
+
 #[test]
-fn missing_values_are_nan() {
+fn a_missing_compartment_size_is_one() {
     let m = model(&format!(
-        r#"<listOfCompartments><compartment id="C" constant="true"/></listOfCompartments><listOfSpecies>{}</listOfSpecies><listOfParameters><parameter id="p" constant="true"/></listOfParameters>"#,
-        species("S", r#"hasOnlySubstanceUnits="false""#)
+        r#"<listOfCompartments><compartment id="C" constant="true"/><compartment id="R" constant="false"/></listOfCompartments><listOfSpecies>{}</listOfSpecies><listOfRules><rateRule variable="R"><math $><cn>1</cn></math></rateRule></listOfRules>"#,
+        species(
+            "S",
+            r#"initialConcentration="2" hasOnlySubstanceUnits="false""#
+        )
     ));
-    for id in ["C", "S", "p"] {
-        assert!(m.entity(m.symbol(id).unwrap()).default.is_nan(), "{id}");
+    assert_eq!(m.entity(m.symbol("C").unwrap()).default, 1.0);
+    assert_eq!(m.entity(m.symbol("R").unwrap()).default, 1.0);
+    assert_eq!(
+        initial(&m, "S"),
+        &ap(Op::Times, vec![num(2.0), sym(&m, "C")])
+    );
+}
+
+#[test]
+fn a_missing_species_value_is_zero() {
+    let m = model(&format!(
+        r#"<listOfCompartments>{}</listOfCompartments><listOfSpecies>{}{}{}</listOfSpecies><listOfRules><rateRule variable="R"><math $><cn>1</cn></math></rateRule></listOfRules>"#,
+        compartment("C", "2", true),
+        species("S", r#"hasOnlySubstanceUnits="false""#),
+        species("H", r#"hasOnlySubstanceUnits="true""#).replace(
+            r#"boundaryCondition="false" constant="false""#,
+            r#"boundaryCondition="true" constant="true""#
+        ),
+        species("R", r#"hasOnlySubstanceUnits="false""#),
+    ));
+    for id in ["S", "H", "R"] {
+        assert_eq!(m.entity(m.symbol(id).unwrap()).default, 0.0, "{id}");
     }
+    // R stores its concentration, 0 as well
+    assert!(matches!(
+        m.entity(m.symbol("R").unwrap()).kind,
+        EntityKind::Species {
+            value: SpeciesValue::Concentration,
+            ..
+        }
+    ));
     assert!(m.initial.is_empty());
+}
+
+#[test]
+fn a_missing_stoichiometry_is_one() {
+    let body = decay("", "")
+        .replace(
+            &reference("S1", r#"stoichiometry="1""#),
+            &reference("S1", ""),
+        )
+        .replace(
+            &reference("S2", r#"stoichiometry="2""#),
+            &reference("S2", r#"id="sr""#),
+        );
+    let m = model(&body);
+    let v = ap(Op::Times, vec![sym(&m, "k"), sym(&m, "S1")]);
+    assert_eq!(
+        m.rate("S1").unwrap(),
+        &ap(Op::Minus, vec![ap(Op::Times, vec![num(1.0), v.clone()])])
+    );
+    assert_eq!(m.entity(m.symbol("sr").unwrap()).default, 1.0);
+    assert_eq!(
+        m.rate("S2").unwrap(),
+        &ap(Op::Times, vec![sym(&m, "sr"), v])
+    );
+}
+
+#[test]
+fn a_parameter_without_a_value_is_refused_unless_assigned() {
+    let refused = CompileError::Unsupported {
+        feature: "parameter without a value".into(),
+        element: "p".into(),
+    };
+    // libroadrunner: "Global parameter 'p' is missing a value", also with a rate rule or an event
+    assert_eq!(parameter_without_value(true, "").unwrap_err(), refused);
+    assert_eq!(parameter_without_value(false, "").unwrap_err(), refused);
+    let rate_rule =
+        r#"<listOfRules><rateRule variable="p"><math $><cn>1</cn></math></rateRule></listOfRules>"#;
+    assert_eq!(
+        parameter_without_value(false, rate_rule).unwrap_err(),
+        refused
+    );
+    let event = format!(
+        r#"<listOfEvents><event><trigger initialValue="false" persistent="true"><math $>{}</math></trigger><listOfEventAssignments><eventAssignment variable="p"><math $><cn>4</cn></math></eventAssignment></listOfEventAssignments></event></listOfEvents>"#,
+        apply("gt", &[TIME, "<cn>0.5</cn>"])
+    );
+    assert_eq!(parameter_without_value(false, &event).unwrap_err(), refused);
+    // an initial assignment or an assignment rule gives it its value
+    let ia = r#"<listOfInitialAssignments><initialAssignment symbol="p"><math $><cn>2</cn></math></initialAssignment></listOfInitialAssignments>"#;
+    let m = parameter_without_value(true, ia).unwrap();
+    assert_eq!(initial(&m, "p"), &num(2.0));
+    let m = parameter_without_value(
+        false,
+        &format!(
+            "<listOfRules>{}</listOfRules>",
+            assignment_rule("p", "<cn>3</cn>")
+        ),
+    )
+    .unwrap();
+    assert_eq!(rule(&m, "p"), &num(3.0));
+}
+
+#[test]
+fn a_local_parameter_without_a_value_is_nan() {
+    let body = decay("", "").replace(
+        "</math></kineticLaw>",
+        r#"</math><listOfLocalParameters><localParameter id="k"/></listOfLocalParameters></kineticLaw>"#,
+    );
+    let m = model(&body);
+    let Expr::Apply { args, .. } = &m.selection("J").unwrap().expr else {
+        panic!()
+    };
+    assert!(matches!(args[0], Expr::Number(x) if x.is_nan()));
 }
 
 #[test]

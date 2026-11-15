@@ -157,6 +157,16 @@ impl<'m> Builder<'m> {
                 return Err(invalid(format!("{s} has two initial assignments")));
             }
         }
+        // libroadrunner refuses a parameter without a value unless an initial assignment or an
+        // assignment rule gives it one ("Global parameter 'p' is missing a value"), also when a
+        // rate rule or an event changes it
+        if let Some(p) = m.parameters.iter().find(|p| {
+            p.value.is_none()
+                && !assigned_initially.contains_key(p.id.as_str())
+                && !self.assignment_rule.contains_key(p.id.as_str())
+        }) {
+            return Err(unsupported("parameter without a value", &p.id));
+        }
         // a species a rule or `constant` fixes cannot be changed by reactions as well
         for r in &self.refs {
             let s = &m.species[match self.items[r.reference.species.as_str()] {
@@ -265,8 +275,11 @@ impl<'m> Builder<'m> {
                 Symbol::Time => unreachable!("no entity is time"),
             }
         };
+        // the missing values of libroadrunner: a compartment 1, a species 0, a stoichiometry 1;
+        // a parameter without a value is refused unless it is assigned (then NaN until `initial`)
         for c in &m.compartments {
-            push(&c.id, EntityKind::Compartment, c.size, units.compartment(c));
+            let size = Some(c.size.unwrap_or(1.0));
+            push(&c.id, EntityKind::Compartment, size, units.compartment(c));
         }
         for (s, info) in m.species.iter().zip(&self.species) {
             let (default, unit) = match info.value {
@@ -276,6 +289,9 @@ impl<'m> Builder<'m> {
                     units.concentration(s, Some(&m.compartments[info.compartment_index])),
                 ),
             };
+            // given in the other quantity: NaN, which `initial` completes
+            let given = s.initial_amount.is_some() || s.initial_concentration.is_some();
+            let default = if given { default } else { Some(0.0) };
             let kind = EntityKind::Species {
                 compartment: info.compartment,
                 has_only_substance_units: s.has_only_substance_units,
@@ -291,7 +307,7 @@ impl<'m> Builder<'m> {
         }
         for r in &self.refs {
             if let Some(id) = &r.reference.id {
-                let default = r.reference.stoichiometry;
+                let default = Some(r.reference.stoichiometry.unwrap_or(1.0));
                 push(id, EntityKind::SpeciesReference, default, None);
             }
         }
