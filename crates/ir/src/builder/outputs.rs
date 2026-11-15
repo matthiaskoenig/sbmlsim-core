@@ -42,10 +42,8 @@ impl<'m> Builder<'m> {
     /// sets them.
     pub(super) fn initial_values(&self) -> Result<Vec<(Symbol, Expr)>, CompileError> {
         let m = self.m;
-        let assigned: Vec<&str> = m
-            .initial_assignments
-            .iter()
-            .map(|a| a.symbol.as_str())
+        let assigned: Vec<&str> = initial_assignments_with_math(m)
+            .map(|(_, a)| a.symbol.as_str())
             .collect();
         let mut out = Vec::new();
         for (s, info) in m.species.iter().zip(&self.species) {
@@ -72,10 +70,11 @@ impl<'m> Builder<'m> {
     pub(super) fn initial_assignments(&mut self) -> Result<Vec<(Symbol, Expr)>, CompileError> {
         let m = self.m;
         let mut out = Vec::new();
-        for (position, ia) in m.initial_assignments.iter().enumerate() {
+        for (position, ia) in initial_assignments_with_math(m) {
             let s = ia.symbol.as_str();
             let element = name(ia.id.as_ref(), "initialAssignment", position, Some(s));
-            let value = expr::build(&ia.math, self, &Scope::global(&element))?;
+            let math = ia.math.as_ref().expect("an initial assignment with math");
+            let value = expr::build(math, self, &Scope::global(&element))?;
             let e = match self.items[s] {
                 Item::Species(i) => {
                     let info = self.species[i];
@@ -92,20 +91,20 @@ impl<'m> Builder<'m> {
         Ok(out)
     }
 
+    /// The event `e` of its trigger `t` with the math `math`; a delay or a priority without math
+    /// is none and an event assignment without math is ignored, as libroadrunner does.
     pub(super) fn event(
         &mut self,
         position: usize,
         e: &'m SbmlEvent,
+        t: &'m Trigger,
+        math: &'m Node,
     ) -> Result<Event, CompileError> {
         let event = event_name(position, e);
         let part = |id: &Option<String>, kind: &str| {
             id.clone().unwrap_or_else(|| format!("{kind} of {event}"))
         };
-        let trigger = expr::build(
-            &e.trigger.math,
-            self,
-            &Scope::global(&part(&e.trigger.id, "trigger")),
-        )?;
+        let trigger = expr::build(math, self, &Scope::global(&part(&t.id, "trigger")))?;
         let mut optional = |math: &Option<Node>, id: &Option<String>, kind: &str| {
             math.as_ref()
                 .map(|n| expr::build(n, self, &Scope::global(&part(id, kind))))
@@ -115,6 +114,9 @@ impl<'m> Builder<'m> {
         let priority = optional(&e.priority, &e.priority_id, "priority")?;
         let mut assignments = Vec::new();
         for (i, a) in e.assignments.iter().enumerate() {
+            let Some(math) = &a.math else {
+                continue;
+            };
             let v = a.variable.as_str();
             let element =
                 a.id.clone()
@@ -131,7 +133,7 @@ impl<'m> Builder<'m> {
                      assignment rule"
                 )));
             }
-            let value = expr::build(&a.math, self, &Scope::global(&element))?;
+            let value = expr::build(math, self, &Scope::global(&element))?;
             let compartment = match self.items[v] {
                 Item::Species(s) => {
                     let info = self.species[s];
@@ -149,8 +151,8 @@ impl<'m> Builder<'m> {
         Ok(Event {
             id: e.id.clone(),
             trigger,
-            initial_value: e.trigger.initial_value,
-            persistent: e.trigger.persistent,
+            initial_value: t.initial_value,
+            persistent: t.persistent,
             use_values_from_trigger_time: e.use_values_from_trigger_time,
             delay,
             priority,

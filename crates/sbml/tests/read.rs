@@ -15,6 +15,7 @@ fn math(body: &str) -> Node {
     read(&xml).unwrap().model.initial_assignments[0]
         .math
         .clone()
+        .expect("the initial assignment has math")
 }
 
 fn bad_math(body: &str) -> ReadError {
@@ -152,7 +153,7 @@ fn elements_keep_their_ids() {
         Some("kl")
     );
     let e = &m.events[0];
-    assert_eq!(e.trigger.id.as_deref(), Some("tr"));
+    assert_eq!(e.trigger.as_ref().unwrap().id.as_deref(), Some("tr"));
     assert_eq!(e.priority_id.as_deref(), Some("pr"));
     assert_eq!(e.delay_id.as_deref(), Some("de"));
     assert_eq!(e.assignments[0].id.as_deref(), Some("ea"));
@@ -189,10 +190,10 @@ fn csymbols() {
     let m = &doc.model;
     assert_eq!(
         m.initial_assignments[0].math,
-        Node::Apply {
+        Some(Node::Apply {
             op: Op::Plus,
             args: vec![Node::CsymbolTime, Node::CsymbolAvogadro]
-        }
+        })
     );
     let Rule::Assignment {
         variable, math: mm, ..
@@ -203,10 +204,10 @@ fn csymbols() {
     assert_eq!(variable, "b");
     assert_eq!(
         *mm,
-        Node::Apply {
+        Some(Node::Apply {
             op: Op::RateOf,
             args: vec![Node::Symbol("c".into())]
-        }
+        })
     );
     let Rule::Rate {
         variable, math: mm, ..
@@ -217,10 +218,10 @@ fn csymbols() {
     assert_eq!(variable, "c");
     assert_eq!(
         *mm,
-        Node::Apply {
+        Some(Node::Apply {
             op: Op::Delay,
             args: vec![Node::Symbol("b".into()), Node::Number(2.0)]
-        }
+        })
     );
     assert!(matches!(&m.rules[2], Rule::Algebraic { .. }));
     // a csymbol outside of an operator position
@@ -241,25 +242,27 @@ fn event_fields() {
     assert_eq!(e.len(), 2);
     assert_eq!(e[0].id.as_deref(), Some("e1"));
     assert!(!e[0].use_values_from_trigger_time);
-    assert!(!e[0].trigger.initial_value);
-    assert!(e[0].trigger.persistent);
+    let t0 = e[0].trigger.as_ref().unwrap();
+    assert!(!t0.initial_value);
+    assert!(t0.persistent);
     assert_eq!(
-        e[0].trigger.math,
-        Node::Apply {
+        t0.math,
+        Some(Node::Apply {
             op: Op::Gt,
             args: vec![Node::Symbol("x".into()), Node::Number(1.0)]
-        }
+        })
     );
     assert_eq!(e[0].priority, Some(Node::Number(5.0)));
     assert_eq!(e[0].delay, Some(Node::Number(0.5)));
     assert_eq!(e[0].assignments.len(), 2);
     assert_eq!(e[0].assignments[1].variable, "y");
-    assert_eq!(e[0].assignments[1].math, Node::Symbol("x".into()));
+    assert_eq!(e[0].assignments[1].math, Some(Node::Symbol("x".into())));
     // an event without an id keeps its position
     assert_eq!(e[1].id, None);
     assert!(e[1].use_values_from_trigger_time);
-    assert!(e[1].trigger.initial_value && !e[1].trigger.persistent);
-    assert_eq!(e[1].trigger.math, Node::True);
+    let t1 = e[1].trigger.as_ref().unwrap();
+    assert!(t1.initial_value && !t1.persistent);
+    assert_eq!(t1.math, Some(Node::True));
     assert_eq!(e[1].delay, None);
     assert_eq!(e[1].priority, None);
     assert!(e[1].assignments.is_empty());
@@ -500,4 +503,70 @@ fn reads_all_cases() {
         failures.len(),
         failures.join("\n")
     );
+}
+
+/// A model of `body` in SBML Level 3 Version 2.
+fn model(body: &str) -> sbmlsim_sbml::Model {
+    let xml = format!(
+        r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2"><model>{body}</model></sbml>"#
+    );
+    read(&xml).unwrap().model
+}
+
+const M: &str = r#"<math xmlns="http://www.w3.org/1998/Math/MathML">"#;
+
+#[test]
+fn case_01234_an_initial_assignment_without_math_is_read() {
+    let m = model(
+        r#"<listOfInitialAssignments><initialAssignment symbol="p"/></listOfInitialAssignments>"#,
+    );
+    assert_eq!(m.initial_assignments[0].symbol, "p");
+    assert_eq!(m.initial_assignments[0].math, None);
+}
+
+#[test]
+fn case_01235_rules_without_math_are_read() {
+    let m = model(
+        r#"<listOfRules><assignmentRule variable="a"/><rateRule variable="b"/><algebraicRule/></listOfRules>"#,
+    );
+    assert!(
+        matches!(&m.rules[0], Rule::Assignment { variable, math: None, .. } if variable == "a")
+    );
+    assert!(matches!(&m.rules[1], Rule::Rate { variable, math: None, .. } if variable == "b"));
+    assert!(matches!(&m.rules[2], Rule::Algebraic { math: None, .. }));
+    assert!(m.rules.iter().all(|r| r.math().is_none()));
+}
+
+#[test]
+fn case_01238_a_math_without_content_is_empty() {
+    // a trigger without math, an assignment whose math has no content
+    let m = model(&format!(
+        r#"<listOfEvents><event id="E0"><trigger initialValue="true" persistent="true"/><listOfEventAssignments><eventAssignment variable="p">{M}
+</math></eventAssignment></listOfEventAssignments></event></listOfEvents>"#
+    ));
+    let e = &m.events[0];
+    assert_eq!(e.trigger.as_ref().unwrap().math, None);
+    assert_eq!(e.assignments[0].math, Some(Node::Empty));
+}
+
+#[test]
+fn case_01239_an_event_without_a_trigger_is_read() {
+    let m = model(&format!(
+        r#"<listOfEvents><event id="E0"><listOfEventAssignments><eventAssignment variable="p">{M}<cn>1</cn></math></eventAssignment></listOfEventAssignments></event></listOfEvents>"#
+    ));
+    assert_eq!(m.events[0].trigger, None);
+    assert_eq!(m.events[0].assignments[0].math, Some(Node::Number(1.0)));
+}
+
+#[test]
+fn case_01241_a_delay_or_priority_without_math_is_absent() {
+    let m = model(&format!(
+        r#"<listOfEvents><event id="E0"><trigger initialValue="true" persistent="true">{M}<true/></math></trigger><delay id="d"/><priority/><listOfEventAssignments><eventAssignment variable="d"/></listOfEventAssignments></event></listOfEvents>"#
+    ));
+    let e = &m.events[0];
+    assert_eq!(e.delay, None);
+    assert_eq!(e.delay_id.as_deref(), Some("d"));
+    assert_eq!(e.priority, None);
+    // case 01243: an event assignment without math
+    assert_eq!(e.assignments[0].math, None);
 }

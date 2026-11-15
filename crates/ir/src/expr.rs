@@ -214,6 +214,8 @@ pub(crate) fn build(
         Node::CsymbolTime => Expr::Symbol(Symbol::Time),
         Node::CsymbolAvogadro => Expr::Number(AVOGADRO),
         Node::CsymbolDelay => return Err(unsupported("delay csymbol", scope.element)),
+        // libroadrunner: "Unknown ASTNode type of 9999"
+        Node::Empty => return Err(unsupported("math without content", scope.element)),
         Node::CsymbolRateOf => {
             return Err(CompileError::Invalid(format!(
                 "the csymbol rateOf is not applied to an argument in {}",
@@ -298,10 +300,10 @@ fn inline(
                 "{id} is called in {element} but is no function definition"
             )));
         }
-        Some(None) => {
-            return Err(CompileError::Invalid(format!(
-                "the function definition {id} called in {element} has no math"
-            )));
+        // libroadrunner crashes on a call of a function definition without math and refuses one
+        // whose math is empty ("math element of function definition must be a lambda")
+        Some(None | Some(Node::Empty)) => {
+            return Err(unsupported("function definition without math", id));
         }
         Some(Some(math)) => math,
     };

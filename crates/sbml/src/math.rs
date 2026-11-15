@@ -110,6 +110,9 @@ pub enum Node {
     ExponentialE,
     Infinity,
     NotANumber,
+    /// The content of a `<math>` element without an element in it (libsbml reads it as a node
+    /// of an unknown type, which libroadrunner refuses to compile).
+    Empty,
 }
 
 fn err(message: String) -> ReadError {
@@ -200,10 +203,10 @@ fn check_ns(n: X) -> Result<(), ReadError> {
 
 /// Reads a `<math>` element: its first element child is the expression.
 pub(crate) fn read_math(math: X) -> Result<Node, ReadError> {
-    let first = elements(math)
-        .next()
-        .ok_or_else(|| err("empty <math> element".into()))?;
-    expr(first)
+    match elements(math).next() {
+        Some(first) => expr(first),
+        None => Ok(Node::Empty),
+    }
 }
 
 fn number(n: X) -> Result<Node, ReadError> {

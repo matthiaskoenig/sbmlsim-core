@@ -9,7 +9,9 @@ use outputs::ordered;
 use std::collections::HashMap;
 
 use sbmlsim_sbml::math::Node;
-use sbmlsim_sbml::{Event as SbmlEvent, Model as Sbml, Rule, SpeciesReference};
+use sbmlsim_sbml::{
+    Event as SbmlEvent, InitialAssignment, Model as Sbml, Rule, SpeciesReference, Trigger,
+};
 
 use crate::expr::{self, Context, Scope};
 use crate::order::order;
@@ -111,6 +113,32 @@ fn event_name(position: usize, event: &SbmlEvent) -> String {
     name(event.id.as_ref(), "event", position, None)
 }
 
+/// The rules with math, by their position in the list of rules: libroadrunner ignores a rule
+/// without math as if it were not there.
+fn rules_with_math(m: &Sbml) -> impl Iterator<Item = (usize, &Rule)> {
+    m.rules
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| r.math().is_some())
+}
+
+/// The initial assignments with math, by their position: libroadrunner ignores one without math.
+fn initial_assignments_with_math(m: &Sbml) -> impl Iterator<Item = (usize, &InitialAssignment)> {
+    m.initial_assignments
+        .iter()
+        .enumerate()
+        .filter(|(_, a)| a.math.is_some())
+}
+
+/// The events with a trigger with math, by their position: libroadrunner ignores an event
+/// without a trigger or whose trigger has no math, with everything in it.
+fn events_with_trigger(m: &Sbml) -> impl Iterator<Item = (usize, &SbmlEvent, &Trigger, &Node)> {
+    m.events.iter().enumerate().filter_map(|(k, e)| {
+        let t = e.trigger.as_ref()?;
+        Some((k, e, t, t.math.as_ref()?))
+    })
+}
+
 /// A sum of terms as written, `0` without terms.
 fn sum(mut terms: Vec<Expr>) -> Expr {
     match terms.len() {
@@ -132,8 +160,13 @@ pub(crate) fn build(m: &Sbml) -> Result<Model, CompileError> {
 
     // the assignment rules, built once for both lists
     let mut rules = Vec::new();
-    for (position, rule) in m.rules.iter().enumerate() {
-        if let Rule::Assignment { variable, math, .. } = rule {
+    for (position, rule) in rules_with_math(m) {
+        if let Rule::Assignment {
+            variable,
+            math: Some(math),
+            ..
+        } = rule
+        {
             let element = rule_name(position, rule);
             let e = expr::build(math, &mut b, &Scope::global(&element))?;
             rules.push((b.symbols[variable.as_str()], e));
@@ -150,11 +183,8 @@ pub(crate) fn build(m: &Sbml) -> Result<Model, CompileError> {
     entries.extend(rules);
     let initial = ordered(entries, id_of, "initial assignments and assignment rules")?;
 
-    let events = m
-        .events
-        .iter()
-        .enumerate()
-        .map(|(k, e)| b.event(k, e))
+    let events = events_with_trigger(m)
+        .map(|(k, e, trigger, math)| b.event(k, e, trigger, math))
         .collect::<Result<_, _>>()?;
     let selections = b.selections()?;
     Ok(Model {
@@ -169,9 +199,10 @@ pub(crate) fn build(m: &Sbml) -> Result<Model, CompileError> {
     })
 }
 
-/// The features refused before anything is built: algebraic rules and fast reactions.
+/// The features refused before anything is built: algebraic rules (with math) and fast
+/// reactions.
 fn refuse_unsupported(m: &Sbml) -> Result<(), CompileError> {
-    for (position, rule) in m.rules.iter().enumerate() {
+    for (position, rule) in rules_with_math(m) {
         if let Rule::Algebraic { .. } = rule {
             return Err(unsupported("algebraic rule", &rule_name(position, rule)));
         }

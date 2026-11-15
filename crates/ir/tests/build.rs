@@ -871,3 +871,263 @@ fn event_assignments_name_their_targets() {
     );
     assert_eq!(e.assignments[1].compartment, None);
 }
+
+/// The value parameter `p` = 3, not constant, and `rest` after the parameters.
+fn p3(rest: &str) -> Model {
+    model(&format!(
+        r#"<listOfParameters><parameter id="p" value="3" constant="false"/></listOfParameters>{rest}"#
+    ))
+}
+
+/// `p` is a parameter of the default 3 which nothing assigns.
+fn untouched(m: &Model) {
+    let p = m.symbol("p").unwrap();
+    assert!(matches!(p, Symbol::Param(_)));
+    assert_eq!(m.entity(p).default, 3.0);
+    assert!(m.entity(p).settable);
+    assert!(m.states.is_empty() && m.rates.is_empty());
+    assert!(m.assignment_rules.is_empty() && m.initial.is_empty());
+}
+
+#[test]
+fn case_01234_an_initial_assignment_without_math_is_ignored() {
+    // libroadrunner: p = 3, and no initial assignment of p
+    untouched(&p3(
+        r#"<listOfInitialAssignments><initialAssignment symbol="p"/></listOfInitialAssignments>"#,
+    ));
+    // it gives a parameter without a value no value
+    let e = error(
+        r#"<listOfParameters><parameter id="p" constant="true"/></listOfParameters><listOfInitialAssignments><initialAssignment symbol="p"/></listOfInitialAssignments>"#,
+    );
+    assert_eq!(
+        e,
+        CompileError::Unsupported {
+            feature: "parameter without a value".into(),
+            element: "p".into()
+        }
+    );
+}
+
+#[test]
+fn case_01554_an_initial_assignment_without_math_keeps_the_initial_concentration() {
+    // libroadrunner: S = 6, [S] = 3 for initialConcentration 3 in C = 2
+    let m = model(&format!(
+        r#"<listOfCompartments>{}</listOfCompartments><listOfSpecies>{}</listOfSpecies><listOfInitialAssignments><initialAssignment symbol="S"/></listOfInitialAssignments>"#,
+        compartment("C", "2", true),
+        species(
+            "S",
+            r#"initialConcentration="3" hasOnlySubstanceUnits="false""#
+        )
+    ));
+    assert_eq!(
+        initial(&m, "S"),
+        &ap(Op::Times, vec![num(3.0), sym(&m, "C")])
+    );
+}
+
+#[test]
+fn case_01235_an_assignment_rule_without_math_is_ignored() {
+    untouched(&p3(
+        r#"<listOfRules><assignmentRule variable="p"/></listOfRules>"#,
+    ));
+    // libroadrunner does not look at its variable either, nor count it as the second rule
+    untouched(&p3(
+        r#"<listOfRules><assignmentRule variable="zz"/><assignmentRule variable="p"/><assignmentRule variable="p"/></listOfRules>"#,
+    ));
+    let m = p3(
+        r#"<listOfInitialAssignments><initialAssignment symbol="p"><math $><cn>7</cn></math></initialAssignment></listOfInitialAssignments><listOfRules><assignmentRule variable="p"/></listOfRules>"#,
+    );
+    assert_eq!(initial(&m, "p"), &num(7.0));
+    assert!(m.entity(m.symbol("p").unwrap()).settable);
+}
+
+#[test]
+fn case_01236_a_rate_rule_without_math_is_ignored() {
+    untouched(&p3(
+        r#"<listOfRules><rateRule variable="p"/></listOfRules>"#,
+    ));
+    // with an assignment rule with math of the same variable, the assignment rule holds
+    let m = p3(&format!(
+        r#"<listOfRules><rateRule variable="p"/>{}</listOfRules>"#,
+        assignment_rule("p", "<cn>5</cn>")
+    ));
+    assert_eq!(rule(&m, "p"), &num(5.0));
+}
+
+#[test]
+fn case_01461_rate_of_a_variable_of_a_rate_rule_without_math_is_zero() {
+    let m = model(&format!(
+        r#"<listOfParameters>{}<parameter id="p" value="2" constant="false"/></listOfParameters><listOfRules>{}<rateRule variable="p"/></listOfRules>"#,
+        variable("x"),
+        assignment_rule("x", &rate_of("p"))
+    ));
+    assert_eq!(rule(&m, "x"), &num(0.0));
+}
+
+#[test]
+fn case_01556_a_species_of_a_rate_rule_without_math_is_changed_by_its_reactions() {
+    // libroadrunner: S(1) = 2 for S(0) = 3 and a rate of the reaction 1
+    let m = model(&format!(
+        r#"<listOfCompartments>{}</listOfCompartments><listOfSpecies>{}</listOfSpecies><listOfRules><rateRule variable="S"/></listOfRules><listOfReactions>{}</listOfReactions>"#,
+        compartment("C", "2", true),
+        amount("S", "3"),
+        reaction(
+            "J",
+            &reference("S", r#"stoichiometry="1""#),
+            "",
+            &law("<cn>1</cn>")
+        )
+    ));
+    assert!(matches!(m.symbol("S"), Some(Symbol::State(_))));
+    assert_eq!(
+        m.rate("S").unwrap(),
+        &ap(Op::Minus, vec![ap(Op::Times, vec![num(1.0), num(1.0)])])
+    );
+}
+
+#[test]
+fn case_01464_a_species_reference_of_a_rate_rule_without_math_is_constant() {
+    let m = model(&format!(
+        r#"<listOfCompartments>{}</listOfCompartments><listOfSpecies>{}</listOfSpecies><listOfRules><rateRule variable="sr"/></listOfRules><listOfReactions>{}</listOfReactions>"#,
+        compartment("C", "1", true),
+        amount("S", "0"),
+        reaction(
+            "J",
+            "",
+            r#"<speciesReference id="sr" species="S" stoichiometry="2" constant="false"/>"#,
+            &law("<cn>1</cn>")
+        )
+    ));
+    let sr = m.symbol("sr").unwrap();
+    assert!(matches!(sr, Symbol::Param(_)));
+    assert_eq!(m.entity(sr).default, 2.0);
+    assert_eq!(m.states.len(), 1);
+}
+
+#[test]
+fn case_01244_an_algebraic_rule_without_math_is_ignored() {
+    untouched(&p3(r#"<listOfRules><algebraicRule/></listOfRules>"#));
+}
+
+/// An event `E` at `time > 0.5` with `parts` before its assignments.
+fn event_of(trigger: &str, parts: &str, assignments: &str) -> String {
+    format!(
+        r#"<listOfEvents><event id="E" useValuesFromTriggerTime="true">{trigger}{parts}<listOfEventAssignments>{assignments}</listOfEventAssignments></event></listOfEvents>"#
+    )
+}
+
+fn trigger() -> String {
+    format!(
+        r#"<trigger initialValue="true" persistent="true"><math $>{}</math></trigger>"#,
+        apply("gt", &[TIME, "<cn>0.5</cn>"])
+    )
+}
+
+const EMPTY_ASSIGNMENT: &str = r#"<eventAssignment variable="p"><math $>
+</math></eventAssignment>"#;
+
+#[test]
+fn case_01238_an_event_whose_trigger_has_no_math_is_ignored() {
+    // with everything in it, also an assignment whose math has no content
+    let m = p3(&event_of(
+        r#"<trigger initialValue="true" persistent="true"/>"#,
+        "",
+        EMPTY_ASSIGNMENT,
+    ));
+    assert!(m.events.is_empty());
+}
+
+#[test]
+fn case_01239_an_event_without_a_trigger_is_ignored() {
+    let m = p3(&event_of("", "", EMPTY_ASSIGNMENT));
+    assert!(m.events.is_empty());
+}
+
+#[test]
+fn case_01238_a_math_without_content_is_refused() {
+    // libroadrunner: "Unknown ASTNode type of 9999"
+    let body = format!(
+        r#"<listOfParameters><parameter id="p" value="3" constant="false"/></listOfParameters>{}"#,
+        event_of(&trigger(), "", EMPTY_ASSIGNMENT)
+    );
+    assert_eq!(
+        error(&body),
+        CompileError::Unsupported {
+            feature: "math without content".into(),
+            element: "eventAssignment #0 (p) of E".into()
+        }
+    );
+    let e = error(
+        r#"<listOfParameters><parameter id="p" value="3" constant="false"/></listOfParameters><listOfRules><rateRule variable="p"><math $></math></rateRule></listOfRules>"#,
+    );
+    assert_eq!(
+        e,
+        CompileError::Unsupported {
+            feature: "math without content".into(),
+            element: "rateRule #0 (p)".into()
+        }
+    );
+}
+
+#[test]
+fn case_01243_an_event_assignment_without_math_is_ignored() {
+    let m = model(&format!(
+        r#"<listOfParameters><parameter id="p" value="3" constant="false"/><parameter id="d" value="5" constant="false"/></listOfParameters>{}"#,
+        event_of(
+            &trigger(),
+            "",
+            r#"<eventAssignment variable="d"/><eventAssignment variable="zz"/><eventAssignment variable="p"><math $><cn>5</cn></math></eventAssignment>"#
+        )
+    ));
+    let e = &m.events[0];
+    assert_eq!(e.assignments.len(), 1);
+    assert_eq!(e.assignments[0].target, m.symbol("p").unwrap());
+    assert_eq!(e.assignments[0].value, num(5.0));
+}
+
+#[test]
+fn case_01241_a_delay_without_math_is_none() {
+    let m = p3(&event_of(
+        &trigger(),
+        r#"<delay/>"#,
+        r#"<eventAssignment variable="p"><math $><cn>5</cn></math></eventAssignment>"#,
+    ));
+    assert_eq!(m.events[0].delay, None);
+}
+
+#[test]
+fn case_01242_a_priority_without_math_is_none() {
+    let m = p3(&event_of(
+        &trigger(),
+        r#"<priority/>"#,
+        r#"<eventAssignment variable="p"><math $><cn>5</cn></math></eventAssignment>"#,
+    ));
+    assert_eq!(m.events[0].priority, None);
+}
+
+#[test]
+fn case_01271_a_function_definition_without_math_is_refused_where_it_is_called() {
+    let defs = |math: &str| {
+        format!(
+            r#"<listOfFunctionDefinitions><functionDefinition id="foo">{math}</functionDefinition></listOfFunctionDefinitions>"#
+        )
+    };
+    // not called: libroadrunner loads the model
+    untouched(&p3(&defs("")));
+    untouched(&p3(&defs("<math $></math>")));
+    // called: libroadrunner crashes (no math) or refuses ("must be a lambda")
+    for math in ["", "<math $></math>"] {
+        let e = error(&format!(
+            r#"{}<listOfParameters><parameter id="p" value="3" constant="false"/></listOfParameters><listOfRules>{}</listOfRules>"#,
+            defs(math),
+            assignment_rule("p", "<apply><ci>foo</ci><cn>1</cn></apply>")
+        ));
+        assert_eq!(
+            e,
+            CompileError::Unsupported {
+                feature: "function definition without math".into(),
+                element: "foo".into()
+            }
+        );
+    }
+}

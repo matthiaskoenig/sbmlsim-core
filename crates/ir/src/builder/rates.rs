@@ -75,8 +75,11 @@ impl Builder<'_> {
         let e = match self.sources[k] {
             Source::RateRule(position) => {
                 let rule = &m.rules[position];
-                let Rule::Rate { math, .. } = rule else {
-                    unreachable!("a rate rule")
+                let Rule::Rate {
+                    math: Some(math), ..
+                } = rule
+                else {
+                    unreachable!("a rate rule with math")
                 };
                 let element = rule_name(position, rule);
                 expr::build(math, self, &Scope::global(&element))?

@@ -109,7 +109,7 @@ impl<'m> Builder<'m> {
     /// states and the parameters.
     pub(super) fn classify(&mut self) -> Result<(), CompileError> {
         let m = self.m;
-        for (position, rule) in m.rules.iter().enumerate() {
+        for (position, rule) in rules_with_math(m) {
             let (variable, map) = match rule {
                 Rule::Assignment { variable, .. } => (variable, &mut self.assignment_rule),
                 Rule::Rate { variable, .. } => (variable, &mut self.rate_rule),
@@ -139,7 +139,7 @@ impl<'m> Builder<'m> {
             return Err(invalid(format!("{v} is the variable of two rules")));
         }
         let mut assigned_initially = HashMap::new();
-        for (position, ia) in m.initial_assignments.iter().enumerate() {
+        for (position, ia) in initial_assignments_with_math(m) {
             let s = ia.symbol.as_str();
             let element = name(ia.id.as_ref(), "initialAssignment", position, Some(s));
             if !self.is_entity(s) {
@@ -191,7 +191,7 @@ impl<'m> Builder<'m> {
         }
 
         // the states: the rate rules in their order, then the species of the reactions
-        for (position, rule) in m.rules.iter().enumerate() {
+        for (position, rule) in rules_with_math(m) {
             if let Rule::Rate { variable, .. } = rule {
                 self.sources.push(Source::RateRule(position));
                 self.state_ids.push(variable);

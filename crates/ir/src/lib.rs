@@ -46,6 +46,18 @@
 //! concentration of a species of a rule given as an amount, the initial assignments (of a
 //! species of a concentration stored as an amount: `value * compartment`) and the initial
 //! values of the assignment rules, all in one order of dependency.
+//!
+//! # Missing math
+//!
+//! As libroadrunner 2.11 does: a rule (also an algebraic rule) or an initial assignment without
+//! math is ignored, as if it were not there (it does not give a parameter a value, and its
+//! variable is not looked at); an event without a trigger, or whose trigger has no math, is
+//! ignored with everything in it; an event assignment without math is ignored; a delay or a
+//! priority without math is none. Refused (`Unsupported`): a kinetic law without math
+//! (`kinetic law without math`), a call of a function definition without math or with an empty
+//! math (`function definition without math`; libroadrunner crashes or refuses), and a math
+//! without content, an empty `<math>`, wherever it is compiled (`math without content`;
+//! libroadrunner: "Unknown ASTNode type of 9999").
 
 mod builder;
 mod expr;

@@ -94,8 +94,8 @@ pub struct InitialAssignment {
     pub id: Option<String>,
     /// The assigned symbol.
     pub symbol: String,
-    /// The math.
-    pub math: Node,
+    /// The math, absent when the element has no `<math>`.
+    pub math: Option<Node>,
 }
 
 /// A rule.
@@ -107,8 +107,8 @@ pub enum Rule {
         id: Option<String>,
         /// The variable.
         variable: String,
-        /// The math.
-        math: Node,
+        /// The math, absent when the element has no `<math>`.
+        math: Option<Node>,
     },
     /// `d variable / dt = math`.
     Rate {
@@ -116,16 +116,27 @@ pub enum Rule {
         id: Option<String>,
         /// The variable.
         variable: String,
-        /// The math.
-        math: Node,
+        /// The math, absent when the element has no `<math>`.
+        math: Option<Node>,
     },
     /// `0 = math`.
     Algebraic {
         /// The id.
         id: Option<String>,
-        /// The math.
-        math: Node,
+        /// The math, absent when the element has no `<math>`.
+        math: Option<Node>,
     },
+}
+
+impl Rule {
+    /// The math of the rule, absent when the element has no `<math>`.
+    pub fn math(&self) -> Option<&Node> {
+        match self {
+            Rule::Assignment { math, .. }
+            | Rule::Rate { math, .. }
+            | Rule::Algebraic { math, .. } => math.as_ref(),
+        }
+    }
 }
 
 /// A species reference of a reactant or a product.
@@ -191,8 +202,8 @@ pub struct Trigger {
     pub initial_value: bool,
     /// Whether the trigger is persistent.
     pub persistent: bool,
-    /// The math.
-    pub math: Node,
+    /// The math, absent when the element has no `<math>`.
+    pub math: Option<Node>,
 }
 
 /// An assignment of an event.
@@ -202,8 +213,8 @@ pub struct EventAssignment {
     pub id: Option<String>,
     /// The variable.
     pub variable: String,
-    /// The math.
-    pub math: Node,
+    /// The math, absent when the element has no `<math>`.
+    pub math: Option<Node>,
 }
 
 /// An event.
@@ -213,15 +224,15 @@ pub struct Event {
     pub id: Option<String>,
     /// Whether the assignments use the values at the time of the trigger (default true).
     pub use_values_from_trigger_time: bool,
-    /// The trigger.
-    pub trigger: Trigger,
+    /// The trigger, absent when the event has no `<trigger>`.
+    pub trigger: Option<Trigger>,
     /// The id of the delay.
     pub delay_id: Option<String>,
-    /// The delay.
+    /// The delay, absent without a `<delay>` or when it has no `<math>`.
     pub delay: Option<Node>,
     /// The id of the priority.
     pub priority_id: Option<String>,
-    /// The priority.
+    /// The priority, absent without a `<priority>` or when it has no `<math>`.
     pub priority: Option<Node>,
     /// The assignments.
     pub assignments: Vec<EventAssignment>,
@@ -335,10 +346,6 @@ fn child_math<'a, 'i>(n: X<'a, 'i>) -> Option<X<'a, 'i>> {
     })
 }
 
-fn req_math(n: X) -> Result<Node, ReadError> {
-    math_of(n)?.ok_or_else(|| err(format!("<{}> without math", n.tag_name().name())))
-}
-
 /// A unit as `kind`, `factor*kind`, `kind**e` or `(factor*kind)**e`, the factor the double of
 /// the text `{multiplier}e{scale}` (the multiplier read as a double first).
 fn unit_term(u: X) -> Result<String, ReadError> {
@@ -441,22 +448,27 @@ fn reaction(n: X) -> Result<Reaction, ReadError> {
     })
 }
 
-/// The assigned-math children (`priority` and `delay` hold a `<math>`).
+/// The math of the child `name` (`priority` and `delay` hold a `<math>`), absent without the
+/// child or when it has no `<math>`.
 fn wrapped_math(n: X, name: &str) -> Result<Option<Node>, ReadError> {
-    child(n, name).map(req_math).transpose()
+    Ok(child(n, name).map(math_of).transpose()?.flatten())
 }
 
 fn event(n: X) -> Result<Event, ReadError> {
-    let t = child(n, "trigger").ok_or_else(|| err("<event> without a <trigger>".into()))?;
+    let trigger = child(n, "trigger")
+        .map(|t| -> Result<Trigger, ReadError> {
+            Ok(Trigger {
+                id: opt(t, "id"),
+                initial_value: flag(t, "initialValue", true)?,
+                persistent: flag(t, "persistent", true)?,
+                math: math_of(t)?,
+            })
+        })
+        .transpose()?;
     Ok(Event {
         id: opt(n, "id"),
         use_values_from_trigger_time: flag(n, "useValuesFromTriggerTime", true)?,
-        trigger: Trigger {
-            id: opt(t, "id"),
-            initial_value: flag(t, "initialValue", true)?,
-            persistent: flag(t, "persistent", true)?,
-            math: req_math(t)?,
-        },
+        trigger,
         delay_id: child(n, "delay").and_then(|d| opt(d, "id")),
         delay: wrapped_math(n, "delay")?,
         priority_id: child(n, "priority").and_then(|d| opt(d, "id")),
@@ -467,7 +479,7 @@ fn event(n: X) -> Result<Event, ReadError> {
                 Ok(EventAssignment {
                     id: opt(a, "id"),
                     variable: req(a, "variable")?,
-                    math: req_math(a)?,
+                    math: math_of(a)?,
                 })
             })
             .collect::<Result<_, ReadError>>()?,
@@ -479,16 +491,16 @@ fn rule(n: X) -> Result<Rule, ReadError> {
         "assignmentRule" => Rule::Assignment {
             id: opt(n, "id"),
             variable: req(n, "variable")?,
-            math: req_math(n)?,
+            math: math_of(n)?,
         },
         "rateRule" => Rule::Rate {
             id: opt(n, "id"),
             variable: req(n, "variable")?,
-            math: req_math(n)?,
+            math: math_of(n)?,
         },
         _ => Rule::Algebraic {
             id: opt(n, "id"),
-            math: req_math(n)?,
+            math: math_of(n)?,
         },
     })
 }
@@ -562,7 +574,7 @@ fn read_model(m: X) -> Result<Model, ReadError> {
                 Ok(InitialAssignment {
                     id: opt(a, "id"),
                     symbol: req(a, "symbol")?,
-                    math: req_math(a)?,
+                    math: math_of(a)?,
                 })
             })
             .collect::<Result<_, ReadError>>()?,

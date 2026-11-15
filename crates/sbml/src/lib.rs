@@ -5,6 +5,8 @@
 //! the document, so the position of an element is its index in its list (an event without an id
 //! is named by its position). A number keeps the double of its text.
 //!
+//! Missing math: an element without a `<math>` child (a rule, an initial assignment, a trigger, an event assignment, a kinetic law, a function definition) has its math absent, a `<delay>` or `<priority>` without one is read as absent, an event without a `<trigger>` has its trigger absent, and a `<math>` without an element in it is [`math::Node::Empty`]. What they mean is the compiler's decision.
+//!
 //! Packages: a package whose `required` attribute on `<sbml>` is `"true"` is refused with
 //! [`ReadError::Package`] (the package name is read from its namespace URI, e.g. `comp`; comp
 //! must be flattened before); a package with `required="false"` (layout, render, fbc
