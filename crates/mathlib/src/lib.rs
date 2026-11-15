@@ -84,23 +84,32 @@ pub mod f {
     pub fn math_fmod(x: f64, y: f64) -> f64 {
         libm::fmod(x, y)
     }
-    /// `x!` as the running product `1 * 2 * ... * x`, exact in doubles.
+    /// `x!` as libroadrunner computes it (`rr_factoriald`): `1` for `x <= 0`, else `x * factorial(x - 1)`.
     ///
-    /// Defined for non-negative integers only: a negative or non-integer `x` (and NaN) gives NaN, and `x >= 171` gives infinity, the overflow of `171!`.
+    /// The recursion is evaluated innermost first, so the order of the multiplications, and with it every bit, is the one of roadrunner; a non-integer `x` is a product over `x, x - 1, ...` while the term is positive, e.g. `2.5! = 2.5 * 1.5 * 0.5`. Guards where the recursion of roadrunner does not end: `x >= 171` is infinity (the product overflows, and for `x >= 2^53` the recursion would never end since `x - 1 == x`), and infinity gives `1` as roadrunner answers it. NaN gives NaN (roadrunner crashes).
     pub fn math_factorial(x: f64) -> f64 {
-        if x.is_nan() || x < 0.0 || libm::floor(x) != x {
+        if x.is_nan() {
             return f64::NAN;
+        }
+        if x <= 0.0 || x == f64::INFINITY {
+            return 1.0;
         }
         if x >= 171.0 {
             return f64::INFINITY;
         }
-        let mut p = 1.0;
-        let mut i = 2.0;
-        while i <= x {
-            p *= i;
-            i += 1.0;
+        let mut terms = [0.0f64; 172];
+        let mut n = 0;
+        let mut a = x;
+        while a > 0.0 {
+            terms[n] = a;
+            n += 1;
+            a -= 1.0;
         }
-        p
+        let mut r = 1.0;
+        for t in terms[..n].iter().rev() {
+            r *= t;
+        }
+        r
     }
 }
 

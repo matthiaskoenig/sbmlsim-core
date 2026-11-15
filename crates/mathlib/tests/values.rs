@@ -107,21 +107,37 @@ fn edge_values() {
     assert_eq!(f::math_pow(0.0, 0.0), 1.0);
     assert_eq!(f::math_factorial(5.0), 120.0);
     assert_eq!(f::math_factorial(171.0), f64::INFINITY);
-    assert!(f::math_factorial(-1.0).is_nan());
     assert!(f::math_factorial(f64::NAN).is_nan());
 }
 
 #[test]
-fn factorial_exact() {
-    let mut p = 1.0f64;
-    for n in 0..=170u32 {
-        if n > 0 {
-            p *= n as f64;
-        }
-        assert_eq!(f::math_factorial(n as f64), p, "{n}!");
-    }
-    for n in [171.0, 500.0, 1e9] {
-        assert_eq!(f::math_factorial(n), f64::INFINITY);
+fn factorial_matches_roadrunner() {
+    // values of libroadrunner 2.11.1 (rr_factoriald), compared bitwise
+    let cases: [(f64, f64); 16] = [
+        (5.0, 120.0),
+        (2.5, 1.875),
+        (2.9, 4.958999999999999),
+        (7.3, 3102.5166272099973),
+        (13.7, 30201993205.66932),
+        (0.5, 0.5),
+        (1e-300, 1e-300),
+        (0.0, 1.0),
+        (-0.0, 1.0),
+        (-1.0, 1.0),
+        (-2.5, 1.0),
+        (170.0, 7.257415615307994e306),
+        (171.0, f64::INFINITY),
+        (f64::INFINITY, 1.0),
+        (f64::NEG_INFINITY, 1.0),
+        (1e300, f64::INFINITY),
+    ];
+    for (x, want) in cases {
+        let got = f::math_factorial(x);
+        assert_eq!(
+            got.to_bits(),
+            want.to_bits(),
+            "{x:e}! = {got:e}, want {want:e}"
+        );
     }
 }
 
