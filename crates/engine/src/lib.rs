@@ -18,8 +18,9 @@
 //! - `steady`: the steady state before a simulation.
 //!
 //! The initialization is `defaults`, then the pre-initialization values of the request and of
-//! its steady state (fixed for `init`), then `init` at the start time; then the steady state, if
-//! the request has one; the integration runs in absolute time from the start, in segments
+//! its steady state (fixed for `init`, in the selections of sbmlsim as the changes), then `init`
+//! at the start time; then the steady state, if the request has one (integrated from the time
+//! 0); the integration runs in absolute time from the start, in segments
 //! between the changes.
 
 mod changes;
@@ -71,7 +72,7 @@ pub const STEADY_STATE_FLAG: i32 = -1004;
 pub use events::MAX_EXECUTIONS_PER_EVENT;
 pub use model::ModelFns;
 
-use changes::Changes;
+use changes::{Changes, Target};
 use cvode::{Config, Cvode, Linear, Method, Problem};
 use events::Events;
 use segments::{Column, Recorder, SegmentOutput};
@@ -361,37 +362,13 @@ fn columns_of(
     Ok((names, columns))
 }
 
-/// Resolves pre-initialization values to the entity position (the parameters, then the states)
-/// and the value; an unknown id, an entity which is not settable, a repeated id and a value
-/// which is not finite are [`EngineError::Request`] naming the id.
+/// Resolves the pre-initialization values, in the selections of sbmlsim as the changes (`S`
+/// the amount of a species, `[S]` its concentration, see `changes`).
 fn resolve_preinit(
     desc: &ModelDescription,
     values: &[(String, f64)],
-) -> Result<Vec<(usize, f64)>, EngineError> {
-    let mut resolved: Vec<(usize, f64)> = Vec::with_capacity(values.len());
-    for (id, value) in values {
-        let (index, entity) = desc
-            .parameters
-            .iter()
-            .chain(&desc.states)
-            .enumerate()
-            .find(|(_, e)| e.id == *id)
-            .ok_or_else(|| request(format!("model {} has no entity {id}", desc.id)))?;
-        if !entity.settable {
-            return Err(request(format!(
-                "{id} of model {} is not settable",
-                desc.id
-            )));
-        }
-        if !value.is_finite() {
-            return Err(request(format!("the value {value} of {id} is not finite")));
-        }
-        if resolved.iter().any(|(i, _)| *i == index) {
-            return Err(request(format!("{id} is set more than once")));
-        }
-        resolved.push((index, *value));
-    }
-    Ok(resolved)
+) -> Result<Vec<(Target, f64)>, EngineError> {
+    changes::resolve_values(desc, values, "in the pre-initialization")
 }
 
 /// Checks the steady state of a request.
@@ -418,10 +395,16 @@ fn check_steady_state(
 
 /// The parameters and the state at the start: `defaults`, the pre-initialization values (fixed
 /// for `init`), `init`.
+///
+/// A value which needs the size of a compartment (the amount of a species which stores its
+/// concentration, the concentration of a species which stores its amount) is converted with
+/// the size of the model as loaded (`defaults` and `init`), or with the value an earlier
+/// pre-initialization value of the request gave the compartment, as sbmlsim's `setValue` of
+/// the selections on the reset model, in the order of the values.
 fn initial_values(
     model: &dyn ModelFns,
     desc: &ModelDescription,
-    preinit: &[(usize, f64)],
+    preinit: &[(Target, f64)],
     start: f64,
 ) -> (Vec<f64>, Vec<f64>) {
     let (np, ns) = (desc.parameters.len(), desc.states.len());
@@ -429,11 +412,32 @@ fn initial_values(
     let mut y = vec![0.0; ns];
     model.defaults(&mut p, &mut y);
     let mut fixed = vec![0u8; np + ns];
-    for &(index, value) in preinit {
-        if index < np {
-            p[index] = value;
+    // the model as loaded, with the values set so far, for the sizes of the conversions
+    let mut loaded = preinit
+        .iter()
+        .any(|(target, _)| target.compartment().is_some())
+        .then(|| {
+            let (mut lp, mut ly) = (p.clone(), y.clone());
+            model.init(start, &mut lp, &mut ly, &fixed);
+            (lp, ly)
+        });
+    let get = |p: &[f64], y: &[f64], i: usize| if i < np { p[i] } else { y[i - np] };
+    let set = |p: &mut [f64], y: &mut [f64], i: usize, v: f64| {
+        if i < np {
+            p[i] = v;
         } else {
-            y[index - np] = value;
+            y[i - np] = v;
+        }
+    };
+    for &(target, value) in preinit {
+        let stored = match (&loaded, target.compartment()) {
+            (Some((lp, ly)), Some(c)) => target.stored(value, get(lp, ly, c)),
+            _ => value,
+        };
+        let index = target.index();
+        set(&mut p, &mut y, index, stored);
+        if let Some((lp, ly)) = &mut loaded {
+            set(lp, ly, index, stored);
         }
         fixed[index] = 1;
     }

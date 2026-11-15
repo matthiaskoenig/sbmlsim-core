@@ -476,3 +476,81 @@ fn requests_on_one_instance_are_independent() {
     let after = (0..time.len()).filter(|i| time[*i] == 2.0).nth(1).unwrap();
     assert_eq!(y[after], 0.0);
 }
+
+#[test]
+fn steady_state_from_time_zero() {
+    // y' = (time < 50 ? 1 : 2) - y: integrated from 0 the steady state is 2 (the horizon to 100
+    // passes 50), from -1000 it would be 1; sbmlsim integrates it from 0 whatever the start
+    // (probe 3 of the report: y = 1.9999999999999496 at the starts -1000, 0 and 200)
+    let model = EventModel {
+        states: vec![("y", 0.0)],
+        parameters: vec![],
+        rhs: |t, y, _, ydot| ydot[0] = if t < 50.0 { 1.0 } else { 2.0 } - y[0],
+        events: vec![],
+    };
+    for start in [-1000.0, 0.0, 200.0] {
+        let mut req = request(start, start + 1.0, Output::Uniform { steps: 1 });
+        req.steady_state = Some(SteadyState::default());
+        let result = events(&model, &req).unwrap();
+        assert_eq!(column(&result, "time"), [start, start + 1.0]);
+        let y = column(&result, "y");
+        assert!((y[0] - 2.0).abs() < 1e-9, "{start}: {y:?}");
+    }
+    // the events at the time 0 execute before the steady state: `time < 1` (initial value
+    // false) is true at 0 and sets b = 3, the steady state is y = 3 for the start 100 too
+    let early = TestEvent {
+        assignments: vec![(Target::Param(0), (|_, _, _| 3.0) as Fun)],
+        initial_value: false,
+        ..TestEvent::new("early", |t, _, _| t < 1.0, vec![|t, _, _| 1.0 - t])
+    };
+    let mut req = request(100.0, 101.0, Output::Uniform { steps: 1 });
+    req.steady_state = Some(SteadyState::default());
+    let result = events(&relax(vec![early]), &req).unwrap();
+    assert_eq!(column(&result, "b"), [3.0, 3.0]);
+    assert!((column(&result, "y")[0] - 3.0).abs() < 1e-5);
+}
+
+#[test]
+fn preinit_takes_the_selections_of_sbmlsim() {
+    // probed with libroadrunner 2.11.1 through sbmlsim (probe 3 of the report): `R` is the
+    // amount and `[R]` the concentration of a species which stores its concentration, `[S]`
+    // the concentration of one which stores its amount, in the compartment of the size as
+    // loaded or as an earlier value of the pre-initialization sets it
+    let run = |preinit: &[(&str, f64)]| {
+        let mut req = request(0.0, 1.0, Output::Uniform { steps: 1 });
+        req.preinit = preinit.iter().map(|(id, v)| (id.to_string(), *v)).collect();
+        let result = compartmental(&req);
+        let k = result.columns.len();
+        result.values[1..k].to_vec()
+    };
+    // S, [S], R, [R], H, [H], C
+    assert_eq!(
+        run(&[("C", 2.0), ("R", 3.0)]),
+        [1.0, 0.5, 3.0, 1.5, 1.0, 0.5, 2.0]
+    );
+    assert_eq!(
+        run(&[("C", 2.0), ("[R]", 3.0)]),
+        [1.0, 0.5, 6.0, 3.0, 1.0, 0.5, 2.0]
+    );
+    assert_eq!(
+        run(&[("C", 2.0), ("S", 3.0)]),
+        [3.0, 1.5, 2.0, 1.0, 1.0, 0.5, 2.0]
+    );
+    assert_eq!(
+        run(&[("C", 2.0), ("[S]", 3.0)]),
+        [6.0, 3.0, 2.0, 1.0, 1.0, 0.5, 2.0]
+    );
+    // a value before its compartment is converted with the size as loaded (1)
+    assert_eq!(
+        run(&[("[S]", 3.0), ("C", 2.0)]),
+        [3.0, 1.5, 2.0, 1.0, 1.0, 0.5, 2.0]
+    );
+    // the concentration of an entity which is no species is refused
+    let mut req = request(0.0, 1.0, Output::Uniform { steps: 1 });
+    req.preinit = vec![("[C]".to_string(), 1.0)];
+    let model = Compartmental { k: 0.0 };
+    assert!(matches!(
+        simulate(&model, &model.description(), &req),
+        Err(EngineError::Request(m)) if m.contains("[C]")
+    ));
+}

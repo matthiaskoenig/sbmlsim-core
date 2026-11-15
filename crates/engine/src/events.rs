@@ -41,7 +41,8 @@
 //! and values, as sbmlsim's `fire_events`), then the output of the state after the change is
 //! written, then the executions which were pending at its time and the strict comparisons
 //! execute ([`Probe::After`]). An event triggered by a change which has a delay is pending as
-//! any other (sbmlsim does not schedule it and warns).
+//! any other: a known difference to sbmlsim, whose executor reports such an event and does
+//! not fire it (ruling R34).
 //!
 //! Both windows are relative: the absolute window is the rtol times the magnitude of the time
 //! scale of the simulation, `max(|start|, |end|, end - start)` (1 when that is 0), so a

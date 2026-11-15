@@ -2,8 +2,12 @@
 //! and its executor (`simulator/executor.py` `steady_state`).
 //!
 //! The model is initialized once, with the pre-initialization values of the request and of the
-//! steady state together, and integrated from the start over horizons which grow by a factor of
-//! ten (1, 10, 100, ... time units, the last one cut at `max_time`), CVODE started again at the
+//! steady state together, and integrated from the time [`STEADY_STATE_FROM`] (0, whatever the
+//! start of the simulation, as sbmlsim integrates it from the time 0 of roadrunner: its
+//! `steady_state(model, plan)` has `start=0.0`; probed with a rate which reads `time`, the
+//! steady state of a simulation from -1000 is the one integrated from 0) over horizons which
+//! grow by a factor of ten (1, 10, 100, ... time units, the last one cut at `max_time`), CVODE
+//! started again at the
 //! beginning of every horizon and stopped exactly at its end. After every horizon the rates of
 //! the states (`model_rhs` at the end of the horizon) are compared with the criterion
 //! `|dx/dt| <= absolute_tolerance + relative_tolerance * |x|`, every state in the quantity it
@@ -11,13 +15,14 @@
 //! which does not satisfy it after `max_time` is [`EngineError::Integration`] with the flag
 //! [`STEADY_STATE_FLAG`]; a rate which is NaN never satisfies it.
 //!
-//! The events are active: the events at the start (the initialization) execute first, the
+//! The events are active: the events at the time 0 (the initialization) execute first, the
 //! triggers are located and the events execute as in a simulation (`events`), the end of a
 //! horizon is a stop like an output time, so an event whose trigger becomes true at the end of a
 //! horizon executes once. The simulation then starts at its start from the state at the steady
 //! state, with the triggers as they were at its end (an event whose trigger is false at the end
 //! of the steady state and true at the start executes at the start) and every pending execution
-//! with the time it had left.
+//! with the time it had left (sbmlsim's roadrunner keeps such an execution at the time of its
+//! clock; this engine moves it with the simulation).
 
 use sbmlsim_abi::{IntegratorSettings, SteadyState};
 use sbmlsim_csolvers::ffi::{CV_NORMAL, CV_ROOT_RETURN, CV_TSTOP_RETURN};
@@ -27,9 +32,13 @@ use crate::events::{Events, Probe};
 use crate::segments::too_close;
 use crate::{EngineError, STEADY_STATE_FLAG};
 
-/// Integrates the model from `start` with the state `y` (of `problem.n` values) to a steady
-/// state; `y` and `problem.p` are the state and the parameters at the steady state. `end` is
-/// the end of the simulation which follows, whose windows the events get back.
+/// The time the integration to a steady state starts at.
+pub const STEADY_STATE_FROM: f64 = 0.0;
+
+/// Integrates the model from [`STEADY_STATE_FROM`] with the state `y` (of `problem.n` values) to
+/// a steady state; `y` and `problem.p` are the state and the parameters at the steady state.
+/// `start` and `end` are the times of the simulation which follows: the pending executions are
+/// moved to `start`, the windows of the events are the ones of the simulation again.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn steady_state(
     mut cvode: Option<&mut Cvode>,
@@ -44,18 +53,19 @@ pub(crate) fn steady_state(
 ) -> Result<(), EngineError> {
     let m = problem.n_model;
     let model = problem.model;
+    let from = STEADY_STATE_FROM;
     if let Some(events) = events.as_deref_mut() {
-        // the events at the start are part of the initial state
-        events.execute_at(start, &mut y[..m], &mut problem.p, Probe::Exact)?;
+        // the events at the time 0 are part of the initial state
+        events.execute_at(from, &mut y[..m], &mut problem.p, Probe::Exact)?;
     }
     let mut rates = vec![0.0; m];
-    let mut t = start;
+    let mut t = from;
     let mut horizon = 1.0f64;
     loop {
-        let stop = start + horizon.min(steady.max_time);
+        let stop = from + horizon.min(steady.max_time);
         match (cvode.as_deref_mut(), events.as_deref_mut()) {
             (Some(cvode), Some(events)) => {
-                events.set_window(start, stop);
+                events.set_window(from, stop);
                 with_events(cvode, problem, settings, t, stop, y, events)?;
             }
             (Some(cvode), None) if !too_close(t, stop) => {
@@ -73,7 +83,7 @@ pub(crate) fn steady_state(
         if steady_now {
             break;
         }
-        if t - start >= steady.max_time {
+        if t - from >= steady.max_time {
             let worst = rates.iter().map(|r| r.abs()).fold(0.0, f64::max);
             return Err(EngineError::Integration {
                 flag: STEADY_STATE_FLAG,

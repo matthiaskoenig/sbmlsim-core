@@ -18,6 +18,18 @@
 //! a concentration `[S]` set with its compartment is a concentration in the new compartment
 //! (sbmlsim's order). Then the assignment rules are evaluated (`model_assign`).
 //!
+//! The pre-initialization takes the same ids (`resolve_values`, sbmlsim's selections), set
+//! before `init` (see `initial_values` of the crate).
+//!
+//! Known differences to sbmlsim (rulings R34, R35): an event with a delay which a change makes
+//! true is pending as any other, sbmlsim reports it and does not fire it (a limitation of its
+//! executor); a change which sets a state exactly to the threshold of a strict comparison
+//! triggers its event right after the change (as sbmlsim's executors of COPASI and AMICI, not
+//! its roadrunner, whose CVODE ignores a root which is 0 at the start of a segment); the
+//! variable of an assignment rule without math is settable (the rule is ignored, as
+//! libroadrunner does), sbmlsim refuses to change it; an entity named `time` is set as an
+//! entity, sbmlsim sets the clock of roadrunner.
+//!
 //! Note that an event keeps the amounts when it changes a compartment (as libroadrunner does,
 //! see `model_event_apply` of `sbmlsim_abi`): a change and an event differ there, as in sbmlsim.
 
@@ -26,9 +38,9 @@ use sbmlsim_abi::{Change, EntityKind, ModelDescription};
 use crate::model::ModelFns;
 use crate::{EngineError, request};
 
-/// What a value of a change sets.
+/// What a value of a change or of the pre-initialization sets.
 #[derive(Debug, Clone, Copy, PartialEq)]
-enum Target {
+pub(crate) enum Target {
     /// The value of the entity at this position (the parameters, then the states).
     Entity(usize),
     /// The amount of the species at this position.
@@ -39,7 +51,7 @@ enum Target {
 
 /// A species and what it stores.
 #[derive(Debug, Clone, Copy, PartialEq)]
-struct Species {
+pub(crate) struct Species {
     /// The position of the species (the parameters, then the states).
     index: usize,
     /// The position of its compartment.
@@ -105,13 +117,47 @@ fn species_of(
     }
 }
 
-/// Resolves the values of a change (or of a pre-initialization in the selections of sbmlsim):
-/// an unknown id, an entity which is not settable, a target set twice and a value which is not
-/// finite are [`EngineError::Request`] naming the id.
-fn resolve_values(
+impl Target {
+    /// The position of the entity it sets (the parameters, then the states).
+    pub fn index(&self) -> usize {
+        match self {
+            Target::Entity(i) => *i,
+            Target::Amount(s) | Target::Concentration(s) => s.index,
+        }
+    }
+
+    /// The position of the compartment whose size converts the value into the quantity the
+    /// entity stores: an amount of a species which stores its concentration, a concentration
+    /// of a species which stores its amount; `None` without a conversion.
+    pub fn compartment(&self) -> Option<usize> {
+        match self {
+            Target::Amount(s) if s.stores_concentration => Some(s.compartment),
+            Target::Concentration(s) if !s.stores_concentration => Some(s.compartment),
+            _ => None,
+        }
+    }
+
+    /// The value the entity stores for the value `value` of the target in a compartment of
+    /// the size `size` (used only by a target with a [`Target::compartment`]): `value / size`
+    /// for an amount, `value * size` for a concentration (sbmlsim's `setValue`).
+    pub fn stored(&self, value: f64, size: f64) -> f64 {
+        match self {
+            Target::Amount(s) if s.stores_concentration => value / size,
+            Target::Concentration(s) if !s.stores_concentration => value * size,
+            _ => value,
+        }
+    }
+}
+
+/// Resolves the values of a change or of the pre-initialization, both in the selections of
+/// sbmlsim (`S` the amount of a species, `[S]` its concentration); `place` names them in a
+/// message (`at t = 5`, `in the pre-initialization`). An unknown id, an entity which is not
+/// settable, a target set twice and a value which is not finite are [`EngineError::Request`]
+/// naming the id.
+pub(crate) fn resolve_values(
     desc: &ModelDescription,
     values: &[(String, f64)],
-    time: f64,
+    place: &str,
 ) -> Result<Vec<(Target, f64)>, EngineError> {
     let mut resolved: Vec<(Target, f64)> = Vec::with_capacity(values.len());
     let mut seen: Vec<usize> = Vec::with_capacity(values.len());
@@ -140,13 +186,11 @@ fn resolve_values(
         }
         if !value.is_finite() {
             return Err(request(format!(
-                "the value {value} of {id} at t = {time} is not finite"
+                "the value {value} of {id} {place} is not finite"
             )));
         }
         if seen.contains(&index) {
-            return Err(request(format!(
-                "{name} is set more than once at t = {time}"
-            )));
+            return Err(request(format!("{name} is set more than once {place}")));
         }
         seen.push(index);
         resolved.push((target, *value));
@@ -185,7 +229,7 @@ impl Changes {
             .map(|(time, values)| {
                 Ok(ResolvedChange {
                     time: *time,
-                    values: resolve_values(desc, values, *time)?,
+                    values: resolve_values(desc, values, &format!("at t = {time}"))?,
                 })
             })
             .collect::<Result<Vec<_>, EngineError>>()?;
@@ -253,18 +297,11 @@ impl Changes {
         }
         // then the species, in the compartments after the change
         for &(target, value) in &change.values {
-            match target {
-                Target::Entity(_) => {}
-                Target::Amount(s) if s.stores_concentration => {
-                    let size = get(y, p, s.compartment);
-                    set(y, p, s.index, value / size);
-                }
-                Target::Concentration(s) if !s.stores_concentration => {
-                    let size = get(y, p, s.compartment);
-                    set(y, p, s.index, value * size);
-                }
-                Target::Amount(s) | Target::Concentration(s) => set(y, p, s.index, value),
+            if matches!(target, Target::Entity(_)) {
+                continue;
             }
+            let size = target.compartment().map_or(f64::NAN, |c| get(y, p, c));
+            set(y, p, target.index(), target.stored(value, size));
         }
         // the assignment rules, at the time of the change
         model.assign(change.time, y, p);

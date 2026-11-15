@@ -14,9 +14,10 @@ pub struct SimulationRequest {
     pub end: f64,
     /// The times of the output.
     pub output: Output,
-    /// Values set before the initialization, as `(id, value)`: the id of an entity, set in the
-    /// quantity it stores (the amount of a species, or the concentration of a species which
-    /// stores its concentration, see `EntityKind::Species`).
+    /// Values set before the initialization, as `(id, value)`; the ids are selections, as the
+    /// ones of a [`Change`]: `S` is the amount of a species, `[S]` its concentration (converted
+    /// with the size of its compartment as loaded, or as an earlier value of the
+    /// pre-initialization sets it), any other id the value of its entity.
     pub preinit: Vec<(String, f64)>,
     /// Changes at absolute times in `[start, end]`, in non-decreasing order of the time.
     pub changes: Vec<Change>,
@@ -73,10 +74,11 @@ pub struct Change {
 /// A steady state which is reached before the start, as sbmlsim's `SteadyState`.
 ///
 /// The model is initialized once, with the pre-initialization of the request and of the steady
-/// state together (an id in both is refused), and integrated from the start, events active,
-/// until every state has `|dx/dt| <= absolute_tolerance + relative_tolerance * |x|` at the end
-/// of a horizon (1, 10, 100, ... time units), at most `max_time`; the simulation starts from that
-/// state at its start. A steady state which is not reached is an error of the integration.
+/// state together (an id in both is refused), and integrated from the time 0 (whatever the
+/// start of the simulation, as sbmlsim), events active, until every state has
+/// `|dx/dt| <= absolute_tolerance + relative_tolerance * |x|` at the end of a horizon (1, 10,
+/// 100, ... time units), at most `max_time`; the simulation starts from that state at its
+/// start. A steady state which is not reached is an error of the integration.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SteadyState {

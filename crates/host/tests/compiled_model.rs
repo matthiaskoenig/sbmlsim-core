@@ -504,3 +504,28 @@ fn requests_on_one_instance_are_independent() {
     let n = b1.columns.iter().position(|c| c == "n").unwrap();
     assert_eq!(b1.values[n], 6.0);
 }
+
+#[test]
+fn compiled_preinit_takes_the_selections_of_sbmlsim() {
+    // the values of libroadrunner 2.11.1 through sbmlsim (Task 14 report, pre-review fix,
+    // probe 3), the compartment of the size 2: `R` the amount, `[R]` the concentration of the
+    // species of the rate rule, `S` and `[S]` of the species without a rule
+    let sbml = species_model().replace(r#"id="C" size="1""#, r#"id="C" size="2""#);
+    let compiled = compile(&sbml, &CompileOptions::default()).unwrap();
+    let cases: [(&str, [f64; 4]); 4] = [
+        ("R", [2.0, 1.0, 3.0, 1.5]),
+        ("[R]", [2.0, 1.0, 6.0, 3.0]),
+        ("S", [3.0, 1.5, 2.0, 1.0]),
+        ("[S]", [6.0, 3.0, 2.0, 1.0]),
+    ];
+    for (id, expected) in cases {
+        let mut req = request(1.0, 1, &["time", "S", "[S]", "R", "[R]"]);
+        req.preinit = vec![(id.to_string(), 3.0)];
+        let result = runtime()
+            .instantiate(&compiled.wasm, &compiled.description)
+            .unwrap()
+            .simulate(&req)
+            .unwrap();
+        assert_eq!(result.values[1..5], expected, "{id}");
+    }
+}
