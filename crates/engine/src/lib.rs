@@ -29,6 +29,7 @@ mod events;
 #[cfg(all(target_arch = "wasm32", feature = "exports"))]
 mod exports;
 pub mod model;
+mod roots;
 mod segments;
 mod steady;
 

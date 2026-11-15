@@ -193,30 +193,166 @@ fn a_discontinuity_at_the_time_of_an_event() {
     let compiled = model(&step(&ap("gt", &[TIME, &cn("1")])), &event_at_one());
     assert_eq!(compiled.description.n_roots, 2);
     assert_eq!(compiled.description.n_discontinuity_roots, 1);
-    // (an absolute tolerance of 1e-14 fails the error test of CVODE in the steps of the
-    // integrator, as before the root finding of the discontinuities: the event executes at a
-    // step right before 1, within the probe of its trigger, and CVODE starts again from there
-    // into the jump of the rate at 1)
-    let request = |end: f64, output: Output| {
-        let mut req = request(end, output);
-        req.settings.absolute_tolerance = Tolerance::Scalar(1e-12);
-        req
-    };
     let (result, stats) = run(&compiled, &request(2.0, Output::Uniform { steps: 2 }));
     assert_eq!(stats.integrations, 2, "{stats:?}");
     assert_eq!(column(&result, "n"), [0.0, 0.0, 1.0]);
     let x = column(&result, "x");
     assert!((x[2] - 1.0).abs() < 1e-11, "{x:?}");
-    // the steps: the two rows of the event, no more
-    let (steps, _) = run(&compiled, &request(2.0, Output::IntegratorSteps));
-    let (times, n) = (column(&steps, "time"), column(&steps, "n"));
+    // the steps: the event executes once, at a step within the probe of its trigger before 1
+    // (its two rows) or at its root, and the discontinuity has its two rows of one state there
+    // or right after it. At atol 1e-14 (the default of `request`) CVODE fails here with the
+    // flag -3: the event executes at a step within the probe of its trigger, 4.6e-13 before 1,
+    // and CVODE starts again from there into the jump of the rate at 1, where its first step
+    // cannot shrink below the jump within its 7 failures of the error test (open: a decision on
+    // the probe at the steps of the integrator or on CVODE's limit of failures, fix round 1 of
+    // Task 18b); atol 1e-12 until then
+    let mut steps_request = request(2.0, Output::IntegratorSteps);
+    steps_request.settings.absolute_tolerance = Tolerance::Scalar(1e-12);
+    let (steps, _) = run(&compiled, &steps_request);
+    let (times, n, x) = (
+        column(&steps, "time"),
+        column(&steps, "n"),
+        column(&steps, "x"),
+    );
     let pairs = pairs(&times);
-    assert_eq!(pairs.len(), 1, "{times:?}");
-    let i = pairs[0];
-    assert!((times[i] - 1.0).abs() < 1e-11, "{}", times[i]);
-    assert_eq!((n[i], n[i + 1]), (0.0, 1.0));
+    assert!(!pairs.is_empty() && pairs.len() <= 2, "{times:?}");
+    let event: Vec<usize> = pairs
+        .iter()
+        .copied()
+        .filter(|&i| n[i] != n[i + 1])
+        .collect();
+    assert_eq!(event.len(), 1, "{times:?}");
+    assert_eq!((n[event[0]], n[event[0] + 1]), (0.0, 1.0));
+    for i in pairs {
+        assert!((times[i] - 1.0).abs() < 1e-11, "{}", times[i]);
+        assert_eq!(x[i], x[i + 1]);
+    }
+    assert_eq!(*n.last().unwrap(), 1.0);
+    assert!((x.last().unwrap() - 1.0).abs() < 1e-11);
 }
 
+#[test]
+fn an_event_at_its_threshold_at_a_root_executes_once_at_a_tight_tolerance() {
+    // the root of time > 1 is located exactly at 1, where the strict trigger is false; CVODE,
+    // started again there with a first step below the rounding of the time, returns the zero at
+    // 1 again, which was a fall and a rise of the trigger in the probe each time (the event
+    // executed 1000 times, EVENT_LIMIT_FLAG)
+    for discontinuity in [true, false] {
+        let rate = if discontinuity {
+            step(&ap("gt", &[TIME, &cn("1")]))
+        } else {
+            cn("0")
+        };
+        let compiled = model(&rate, &event_at_one());
+        for output in [Output::Uniform { steps: 2 }, Output::IntegratorSteps] {
+            let mut req = request(2.0, output.clone());
+            req.settings.absolute_tolerance = Tolerance::Scalar(1e-16);
+            let (result, stats) = run(&compiled, &req);
+            let n = column(&result, "n");
+            assert_eq!(*n.last().unwrap(), 1.0, "{output:?} {discontinuity}");
+            assert!(
+                stats.integrations <= 3,
+                "{output:?} {discontinuity} {stats:?}"
+            );
+        }
+    }
+}
+
+/// The model of the sliding mode `x' = piecewise(-1, x > 0, 1)`, `x(0) = 1`: `x = 1 - t` up to
+/// 1, then 0 (the condition chatters at noise level).
+fn sliding() -> CompiledModel {
+    let xml = format!(
+        r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2"><model id="sliding">
+<listOfParameters><parameter id="x" value="1" constant="false"/></listOfParameters>
+<listOfRules><rateRule variable="x"><math {MATH}><piecewise><piece><cn>-1</cn>{}</piece><otherwise><cn>1</cn></otherwise></piecewise></math></rateRule></listOfRules>
+</model></sbml>"#,
+        ap("gt", &["<ci>x</ci>", &cn("0")])
+    );
+    compile(&xml, &CompileOptions::default()).unwrap()
+}
+
+#[test]
+fn a_sliding_mode_ends_as_in_roadrunner() {
+    let compiled = sliding();
+    let sliding_request = |end: f64, rtol: f64, atol: f64| {
+        let mut req = request(end, Output::Uniform { steps: 30 });
+        req.selections = vec!["time".to_string(), "x".to_string()];
+        req.settings.relative_tolerance = rtol;
+        req.settings.absolute_tolerance = Tolerance::Scalar(atol);
+        req
+    };
+    // rtol 1e-6, atol 1e-12: CVODE never accepts a step across 0 and creeps up to it; roadrunner
+    // 2.12.0.dev683 fails with CV_TOO_MUCH_WORK at 1.00000000157277, the engine likewise
+    let mut instance = runtime()
+        .instantiate(&compiled.wasm, &compiled.description)
+        .unwrap();
+    match instance.simulate(&sliding_request(3.0, 1e-6, 1e-12)) {
+        Err(sbmlsim_engine::EngineError::Integration { flag, time, .. }) => {
+            assert_eq!(flag, -1);
+            assert!((time - 1.00000000157277).abs() < 1e-11, "{time}");
+        }
+        other => panic!("{other:?}"),
+    }
+    // rtol 1e-3, atol 1e-4 up to 2: the condition chatters (the engine starts again at about
+    // 3000 roots, its count of roots close together ignoring others; roadrunner restarts at
+    // none of them, its trajectory chatters otherwise); both are within the absolute tolerance
+    // of the exact solution at every output time (roadrunner 6.7e-6, the engine 5.5e-6) and of
+    // each other (1.1e-5), in a bounded number of steps
+    let (result, stats) = run(&compiled, &sliding_request(2.0, 1e-3, 1e-4));
+    assert!(stats.integrations > 100, "{stats:?}");
+    assert!(stats.steps <= 30 * 20000, "{stats:?}");
+    for (t, x) in column(&result, "time").iter().zip(column(&result, "x")) {
+        let exact = (1.0 - t).max(0.0);
+        assert!((x - exact).abs() < 1e-4, "{t} {x}");
+    }
+}
+
+#[test]
+fn a_guard_at_noise_level_agrees_with_roadrunner() {
+    // the rate piecewise(0, S < 0, k * S) of a decay, whose state falls below 0 within the
+    // absolute tolerance once: roadrunner and the engine restart CVODE once (roadrunner
+    // 2.12.0.dev683: 1 restart, dense and KLU). Against the solution exp(-t), in units of the
+    // criterion of the agreement, 1e-12 + 1e-7 |c|, roadrunner at rtol 1e-10 and atol 1e-12 has
+    // the largest excess 1.67732 (dense) and 1.67745 (KLU) at the output 11.67; the engine
+    // passes R47b (at most 1 % above roadrunner's excess); in the steps of the integrator
+    // (roadrunner dense: 464 rows, largest excess 1.90231) likewise
+    const ROADRUNNER_EXCESS: f64 = 1.6773194722192153;
+    const ROADRUNNER_STEPS_EXCESS: f64 = 1.9023145427845396;
+    let law = format!(
+        "<piecewise><piece><cn>0</cn>{}</piece><otherwise>{}</otherwise></piecewise>",
+        ap("lt", &["<ci>S</ci>", &cn("0")]),
+        ap("times", &["<ci>k</ci>", "<ci>S</ci>"])
+    );
+    let xml = format!(
+        r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2"><model id="guard">
+<listOfCompartments><compartment id="C" size="1" constant="true"/></listOfCompartments>
+<listOfSpecies><species id="S" compartment="C" initialAmount="1" hasOnlySubstanceUnits="true" boundaryCondition="false" constant="false"/></listOfSpecies>
+<listOfParameters><parameter id="k" value="1" constant="true"/></listOfParameters>
+<listOfReactions><reaction id="J" reversible="false"><listOfReactants><speciesReference species="S" stoichiometry="1" constant="true"/></listOfReactants><kineticLaw><math {MATH}>{law}</math></kineticLaw></reaction></listOfReactions>
+</model></sbml>"#
+    );
+    let compiled = compile(&xml, &CompileOptions::default()).unwrap();
+    for output in [Output::Uniform { steps: 30 }, Output::IntegratorSteps] {
+        let mut req = request(50.0, output.clone());
+        req.selections = vec!["time".to_string(), "S".to_string()];
+        req.settings.absolute_tolerance = Tolerance::Scalar(1e-12);
+        let (result, stats) = run(&compiled, &req);
+        assert_eq!(stats.integrations, 2, "{output:?} {stats:?}");
+        let excess = column(&result, "time")
+            .iter()
+            .zip(column(&result, "S"))
+            .map(|(t, s)| {
+                let c = (-t).exp();
+                (s - c).abs() / (1e-12 + 1e-7 * c)
+            })
+            .fold(0.0, f64::max);
+        let roadrunner = match output {
+            Output::IntegratorSteps => ROADRUNNER_STEPS_EXCESS,
+            _ => ROADRUNNER_EXCESS,
+        };
+        assert!(excess <= 1.01 * roadrunner, "{output:?} {excess}");
+    }
+}
 /// Two events of equal priority at the time 2, which set `n` to 1 and to 2; the seed draws
 /// their order.
 fn tie_at_two() -> String {

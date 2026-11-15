@@ -30,9 +30,13 @@
 //! along its rate for that time, is triggered at the time. That is a strict comparison exactly
 //! at its threshold, e.g. `time > 1` at 1, where CVODE places the zero of `time - 1` and where
 //! the trigger is false; such a trigger which was true before the time falls and rises there
-//! again. An output at that very time is written between the two rounds, so it sees the state
-//! before such an event (as libroadrunner and sbmlsim show it); at the end the second round
-//! looks [`END_RTOL`] ahead ([`Probe::End`]) and the output is written after it (sbmlsim's
+//! again. A trigger which a probe found true stays true up to the time the probe looked at,
+//! while it is still true there with the state of a later stop moved along its rate (an
+//! execution may change what it reads): a stop before that time (a step of the integrator inside
+//! the window, a zero of a root function at the same time again) does not see it fall and rise
+//! again, which would execute its event at every such stop. An output at that very time is written between the two rounds, so it sees
+//! the state before such an event (as libroadrunner and sbmlsim show it); at the end the second
+//! round looks [`END_RTOL`] ahead ([`Probe::End`]) and the output is written after it (sbmlsim's
 //! event at the end).
 //!
 //! At a change (`changes`) the integration stops exactly at its time without executing the
@@ -96,6 +100,10 @@ pub(crate) struct Events<'a> {
     info: &'a [EventInfo],
     /// The value of every trigger where it was evaluated last.
     armed: Vec<bool>,
+    /// For a trigger which a probe found true (false at the time, true right after it), the
+    /// time the probe looked at; up to it the trigger is true (it rises there), so a stop
+    /// before it does not see it fall. `-inf` for every other trigger.
+    probed_until: Vec<f64>,
     /// The pending executions, in the order they were triggered.
     pending: Vec<Pending>,
     rng: Pcg64,
@@ -147,6 +155,7 @@ impl<'a> Events<'a> {
             model,
             info: &desc.events,
             armed: desc.events.iter().map(|e| e.initial_value).collect(),
+            probed_until: vec![f64::NEG_INFINITY; desc.events.len()],
             pending: Vec::new(),
             rng: Pcg64::seed_from_u64(seed),
             probe: 0.0,
@@ -182,6 +191,9 @@ impl<'a> Events<'a> {
         for e in &mut self.pending {
             e.time = to + (e.time - from);
         }
+        for t in &mut self.probed_until {
+            *t = to + (*t - from);
+        }
         self.executions_at = f64::NAN;
     }
 
@@ -209,31 +221,67 @@ impl<'a> Events<'a> {
     }
 
     /// Evaluates the triggers at `t` into `current`, or right after `t`.
+    ///
+    /// A trigger which a probe found true at an earlier time stays true up to the time that
+    /// probe looked at (`probed_until`) while it is still true there, with the state now moved
+    /// along its rate to it (an execution may have changed what it reads): it rises there, so a
+    /// stop before it (a step of the integrator, a zero of a root function at the same time
+    /// again) does not see it fall and rise again.
     fn evaluate(&mut self, t: f64, y: &[f64], p: &[f64], probe: Probe) {
+        // the rate at t and the state moved along it for a time, computed when needed and once
+        // per time
+        let mut moved = None;
         let model = self.model;
-        let mut probed = false;
         for i in 0..self.info.len() {
             let exact = model.trigger(i as u32, t, y, p);
             self.current[i] = exact;
+            if exact {
+                self.probed_until[i] = f64::NEG_INFINITY;
+                continue;
+            }
+            if self.armed[i] && t <= self.probed_until[i] {
+                let delta = self.probed_until[i] - t;
+                if self.probe_trigger(i, t, delta, y, p, &mut moved) {
+                    self.current[i] = true;
+                    continue;
+                }
+                self.probed_until[i] = f64::NEG_INFINITY;
+            }
             let delta = match probe {
                 Probe::Exact | Probe::Change => continue,
                 Probe::After => self.probe,
                 Probe::End => self.end_probe,
             };
-            if exact {
-                continue;
+            self.current[i] = self.probe_trigger(i, t, delta, y, p, &mut moved);
+            if self.current[i] {
+                self.probed_until[i] = t + delta;
             }
-            if !probed {
-                // the state at t + delta, moved along its rate
-                model.rhs(t, y, p, &mut self.ydot);
-                self.probe_rhs += 1;
-                for ((q, x), r) in self.y_probe.iter_mut().zip(y).zip(&self.ydot) {
-                    *q = x + delta * r;
-                }
-                probed = true;
-            }
-            self.current[i] = model.trigger(i as u32, t + delta, &self.y_probe, p);
         }
+    }
+
+    /// The trigger `i` at `t + delta` with the state moved along its rate at `t` for `delta`;
+    /// `moved` is the time `y_probe` was moved for (`None` before the rate at `t` is in `ydot`).
+    fn probe_trigger(
+        &mut self,
+        i: usize,
+        t: f64,
+        delta: f64,
+        y: &[f64],
+        p: &[f64],
+        moved: &mut Option<f64>,
+    ) -> bool {
+        let model = self.model;
+        if moved.is_none() {
+            model.rhs(t, y, p, &mut self.ydot);
+            self.probe_rhs += 1;
+        }
+        if *moved != Some(delta) {
+            for ((q, x), r) in self.y_probe.iter_mut().zip(y).zip(&self.ydot) {
+                *q = x + delta * r;
+            }
+            *moved = Some(delta);
+        }
+        model.trigger(i as u32, t + delta, &self.y_probe, p)
     }
 
     /// Executes the events at the time `t`: [`Events::execute_at`] with the triggers at `t`,

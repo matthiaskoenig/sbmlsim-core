@@ -436,7 +436,12 @@ fn unread_rules_are_not_computed() {
             })
             .collect(),
     };
-    let plan = plan(&model, &jacobian(&model), true);
+    let plan = plan(
+        &model,
+        &jacobian(&model),
+        &model.discontinuity_roots(),
+        true,
+    );
     let rhs: Vec<Symbol> = lets(&plan.rhs).iter().map(|(s, _)| *s).collect();
     assert_eq!(rhs, [Symbol::Param(1), Symbol::Param(2)]);
     assert_same(outputs(&plan.rhs)[0], &ap(Op::Minus, vec![p(2)]));

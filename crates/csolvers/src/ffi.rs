@@ -114,6 +114,8 @@ pub const CV_SUCCESS: c_int = 0;
 pub const CV_TSTOP_RETURN: c_int = 1;
 /// `CVode` found a root.
 pub const CV_ROOT_RETURN: c_int = 2;
+/// `CVode` took `mxstep` steps before reaching `tout`.
+pub const CV_TOO_MUCH_WORK: c_int = -1;
 /// A sparse matrix in compressed sparse column format (`SUN_CSC_MAT`).
 pub const CSC_MAT: c_int = 0;
 /// A sparse matrix in compressed sparse row format (`SUN_CSR_MAT`).

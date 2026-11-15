@@ -8,6 +8,7 @@ use crate::changes::Changes;
 use crate::cvode::{Cvode, Problem};
 use crate::events::{Events, Probe};
 use crate::model::ModelFns;
+use crate::roots::RootGuard;
 use crate::{EngineError, OUTPUT_LIMIT_FLAG, STALL_FLAG};
 
 /// A column of the result.
@@ -437,7 +438,8 @@ impl Outputs<'_> {
 /// discontinuity of the math (a condition of a `piecewise`, `problem.n_discontinuity_roots`)
 /// CVODE starts again from the state there, as libroadrunner does at its piecewise triggers;
 /// nothing executes for it (no draw of the order of ties, no count towards the limit of
-/// executions). The output:
+/// executions). The restarts follow libroadrunner's guard against roots which chatter, and the
+/// steps towards one output time have a budget (`roots`). The output:
 ///
 /// - of times: a time before an event sees the state before it, an output at the time of an
 ///   event the state after it, except for an event whose trigger becomes true only right after
@@ -526,6 +528,7 @@ pub(crate) fn integrate_events(
     let mut started = false;
     let mut stop = end;
     let mut previous = t;
+    let mut guard = RootGuard::new(t, settings, !steps, cvode.steps());
     loop {
         // an output of times ends at its last time, as without events
         if !steps && out.next >= out.times.len() {
@@ -541,13 +544,19 @@ pub(crate) fn integrate_events(
                 out.change(t, k, changes, &mut y, &mut problem.p, events, recorder)?;
                 k += 1;
                 started = false;
+                guard.interval(cvode.steps());
                 if t >= end || too_close(t, end) {
                     return Ok(());
                 }
                 continue;
             }
+            let next = out.next;
             if out.stop(t, &mut y, &mut problem.p, true, false, events, recorder)? {
                 started = false;
+                guard.executed(cvode.steps());
+            }
+            if out.next != next {
+                guard.interval(cvode.steps());
             }
             if t >= end || too_close(t, end) {
                 return Ok(());
@@ -573,10 +582,17 @@ pub(crate) fn integrate_events(
             cvode.integrate(problem, tstop, CV_ONE_STEP)?
         } else {
             let tout = out.times.get(out.next).map_or(tstop, |x| x.min(tstop));
+            guard.limit(cvode, t)?;
             cvode.integrate(problem, tout, CV_NORMAL)?
         };
         let root = flag == CV_ROOT_RETURN;
-        let discontinuity = root && cvode.at_discontinuity(problem)?;
+        // a zero of a root function of a discontinuity at which CVODE starts again (the guard
+        // of the restarts: libroadrunner's count of roots close together, no second restart at
+        // the time of the last one)
+        let discontinuity = root && {
+            let found = cvode.at_discontinuity(problem)?;
+            guard.root(tret, found)
+        };
         if steps && !root && flag != CV_TSTOP_RETURN && tret <= previous {
             return Err(stalled(tret, previous));
         }
@@ -595,11 +611,13 @@ pub(crate) fn integrate_events(
             out.change(t, k, changes, &mut y, &mut problem.p, events, recorder)?;
             k += 1;
             started = false;
+            guard.interval(cvode.steps());
             if t >= end || too_close(t, end) {
                 return Ok(());
             }
             continue;
         }
+        let next = out.next;
         let executed = out.stop(
             t,
             &mut y,
@@ -611,6 +629,12 @@ pub(crate) fn integrate_events(
         )?;
         if executed || discontinuity {
             started = false;
+        }
+        if executed {
+            guard.executed(cvode.steps());
+        }
+        if out.next != next {
+            guard.interval(cvode.steps());
         }
         if t >= end || too_close(t, end) {
             return Ok(());

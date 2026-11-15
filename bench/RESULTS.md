@@ -4,7 +4,7 @@ The owner's threshold: at most 2x the simulation time of roadrunner native (LLJI
 
 ## Summary
 
-- No ratio is above 2x. The largest is 1.56 (the event model `repeated_dose`, dense, output of 201 times, wasmtime; Node and Chrome 1.05). On the large models the ratio is 1.02 to 1.45 (Chen dense 1.25 to 1.43, KLU 1.02 to 1.16; mp_flat dense 1.27 to 1.45, KLU 1.36 to 1.39), on the PBPK models 0.80 to 0.94, on mp_core 0.95 to 1.09 (dense) and 1.16 to 1.28 (KLU). The engine finds the roots of the conditions of `piecewise` and restarts CVODE there as roadrunner does (Task 18b, ruling R48, below), so mp_core and Chen now do roadrunner's work (Chen 4 restarts in both, mp_core 158 against 161 with KLU and 6850 against 4648 dense).
+- No ratio is above 2x. The largest is 1.56 (the event model `repeated_dose`, dense, output of 201 times, wasmtime; Node and Chrome 1.05). On the large models the ratio is 1.04 to 1.45 (Chen dense 1.25 to 1.42, KLU 1.04 to 1.16; mp_flat dense 1.27 to 1.45, KLU 1.36 to 1.39), on the PBPK models 0.80 to 0.94, on mp_core 0.91 to 1.04 (dense) and 1.13 to 1.30 (KLU). The engine finds the roots of the conditions of `piecewise` and restarts CVODE there as roadrunner does, with roadrunner's guard against roots which chatter (Task 18b, ruling R48, below), so mp_core and Chen now do roadrunner's work (Chen 4 restarts in both, mp_core 158 against 161 with KLU and 6456 against 4648 dense).
 - Chrome (headless Chrome 157 in a module worker, pinned to the performance cores) measured directly; Node and Chrome agree within a few percent and are 2 % to 13 % faster than wasmtime on the large models.
 - The counters of the integrator are the same in wasmtime, Node and Chrome for every configuration (one `engine.wasm`, the same bits), and every timed simulation repeated the bits of the first.
 - `KLU_THRESHOLD` is now 16 (was 64): KLU with the analytic Jacobian is as fast as the dense solver at 11 to 20 states and faster above (0.65 of the dense time at 64 states).
@@ -52,7 +52,7 @@ The brief's list has no model with events; `repeated_dose` was added to measure 
 
 ## Ratios against roadrunner
 
-The analytic Jacobian of the engine; ms the median time of a simulation; ratio the time over roadrunner's (dense against roadrunner dense, KLU against roadrunner KLU). The rows of hctz, midazolam, mp_core, Chen and mp_flat (every host and roadrunner) were measured again after the root finding of the conditions of `piecewise` (Task 18b); the rows of `repeated_dose`, which has no `piecewise`, are of the first run.
+The analytic Jacobian of the engine; ms the median time of a simulation; ratio the time over roadrunner's (dense against roadrunner dense, KLU against roadrunner KLU). The rows of hctz, midazolam and mp_flat (every host and roadrunner) were measured again after the root finding of the conditions of `piecewise` (Task 18b), the rows of mp_core and Chen once more after its guard against roots which chatter (fix round 1 of Task 18b); the rows of `repeated_dose`, which has no `piecewise`, are of the first run.
 
 | model | states | solver | output | roadrunner ms | wasmtime ms | ratio | Node ms | ratio | Chrome ms | ratio |
 |---|---:|---|---|---:|---:|---:|---:|---:|---:|---:|
@@ -64,17 +64,17 @@ The analytic Jacobian of the engine; ms the median time of a simulation; ratio t
 | repeated_dose | 4 | klu | times | 1.68 | 2.49 | 1.49 | 1.66 | 0.99 | 1.59 | 0.95 |
 | repeated_dose | 4 | dense | steps | 5.01 | 2.89 | 0.58 | 2.16 | 0.43 | 2.12 | 0.42 |
 | repeated_dose | 4 | klu | steps | 5.47 | 3.22 | 0.59 | 2.28 | 0.42 | 2.31 | 0.42 |
-| mp_core | 43 | dense | times | 135 | 147 | 1.09 | 138 | 1.02 | 128 | 0.95 |
-| mp_core | 43 | klu | times | 7.13 | 9.13 | 1.28 | 8.28 | 1.16 | 8.28 | 1.16 |
-| chen | 500 | dense | times | 1047 | 1498 | 1.43 | 1340 | 1.28 | 1308 | 1.25 |
-| chen | 500 | klu | times | 456 | 527 | 1.16 | 467 | 1.02 | 490 | 1.07 |
+| mp_core | 43 | dense | times | 134 | 140 | 1.04 | 127 | 0.95 | 122 | 0.91 |
+| mp_core | 43 | klu | times | 7.18 | 9.29 | 1.30 | 8.36 | 1.17 | 8.08 | 1.13 |
+| chen | 500 | dense | times | 1049 | 1492 | 1.42 | 1331 | 1.27 | 1313 | 1.25 |
+| chen | 500 | klu | times | 455 | 530 | 1.16 | 472 | 1.04 | 493 | 1.08 |
 | mp_flat | 919 | dense | times | 2967 | 4289 | 1.45 | 3841 | 1.29 | 3755 | 1.27 |
 | mp_flat | 919 | klu | times | 83.4 | 116 | 1.39 | 113 | 1.36 | 114 | 1.37 |
 
 Where the ratios above 1 come from:
 
-- mp_flat and Chen: the work differs, the cost per step barely. The engine takes more steps than roadrunner (mp_flat KLU 2694 against 2306, dense 2798 against 2060; Chen KLU 2853 against 2641, dense 2930 against 2812). Per step the engine in wasmtime is at 1.06 of roadrunner on mp_flat dense (the dense LU of SUNDIALS on 919 x 919 in both), 1.19 on mp_flat KLU, 1.37 on Chen dense and 1.07 on Chen KLU; in Node and Chrome at 0.93 to 0.95, 1.16 to 1.17, 1.20 to 1.23 and 0.95 to 0.99. The step counts depend on the last bits of the right hand side and the Jacobian (the analytic Jacobian against roadrunner's difference quotients, the order of the terms), as in the spike (2184 / 2304 steps of the spike's engine against 2060 / 2306); the solutions are in the same accuracy class (below). Chen dense with the analytic Jacobian is slower than with the difference quotient (1498 against 1146 ms, 2930 against 2837 steps). roadrunner dense took 1047 ms on Chen in this session against 1127 ms in the first run (the engine 1498 against 1484), so the ratio of Chen dense in wasmtime moved from 1.32 to 1.43.
-- mp_core: the oxygen of the cell sits at 0 within the absolute tolerance for the whole perfusion, exactly at the threshold of `s_hyp = piecewise(1, o2_cell <= 0, ...)`, and its sign changes with the noise of the integration; every change is a root and a restart, in roadrunner and in the engine. With KLU both do nearly the same work (2313 against 2274 steps, 158 against 161 restarts), and the engine is at 1.26 of roadrunner per step in wasmtime (the root functions are evaluated after every step and in the root finding: 4605 calls). With the dense solver the engine restarts more often than roadrunner (6850 against 4648 restarts, 20066 against 14345 steps), and is at 0.78 of roadrunner per step (roadrunner's dense difference quotient costs 43 right hand sides per Jacobian, 4658 of them).
+- mp_flat and Chen: the work differs, the cost per step barely. The engine takes more steps than roadrunner (mp_flat KLU 2694 against 2306, dense 2798 against 2060; Chen KLU 2853 against 2641, dense 2930 against 2812). Per step the engine in wasmtime is at 1.06 of roadrunner on mp_flat dense (the dense LU of SUNDIALS on 919 x 919 in both), 1.19 on mp_flat KLU, 1.36 on Chen dense and 1.08 on Chen KLU; in Node and Chrome at 0.93 to 0.95, 1.16 to 1.17, 1.20 to 1.22 and 0.96 to 1.0. The step counts depend on the last bits of the right hand side and the Jacobian (the analytic Jacobian against roadrunner's difference quotients, the order of the terms), as in the spike (2184 / 2304 steps of the spike's engine against 2060 / 2306); the solutions are in the same accuracy class (below). Chen dense with the analytic Jacobian is slower than with the difference quotient (1498 against 1146 ms, 2930 against 2837 steps). roadrunner dense took 1047 ms on Chen in this session against 1127 ms in the first run (the engine 1498 against 1484), so the ratio of Chen dense in wasmtime moved from 1.32 to 1.42.
+- mp_core: the oxygen of the cell sits at 0 within the absolute tolerance for the whole perfusion, exactly at the threshold of `s_hyp = piecewise(1, o2_cell <= 0, ...)`, and its sign changes with the noise of the integration; every change is a root and a restart, in roadrunner and in the engine (but the roots roadrunner's guard ignores, the third and later root within the relative tolerance, as a time, of the last restart in one output interval; the guard took the restarts of the engine dense from 6850 to 6456). With KLU both do nearly the same work (2313 against 2274 steps, 158 against 161 restarts), and the engine is at 1.27 of roadrunner per step in wasmtime (the root functions are evaluated after every step and in the root finding: 4605 calls). With the dense solver the engine restarts more often than roadrunner (6456 against 4648 restarts, 19368 against 14345 steps), and is at 0.77 of roadrunner per step (roadrunner's dense difference quotient costs 43 right hand sides per Jacobian, 4658 of them).
 - repeated_dose in wasmtime: 3594 steps of a model of 4 states, 0.62 µs per step against 0.42 in Node and Chrome and 0.40 in roadrunner; the engine is bound by its own overhead per step (events, root functions, output) on such a small model, which Cranelift compiles less well than V8. The output of the steps of the integrator is 0.4 to 0.6 of roadrunner's.
 
 ## Compilation and instantiation
@@ -175,41 +175,41 @@ rhs: the calls of the right hand side by CVODE (roadrunner: `num_rhs_evals`); DQ
 
 | host | solver | Jacobian | output | median ms | µs per step | steps | rhs | Jacobians | DQ rhs | lin setups | err test fails | nonlin iters | conv fails | roots | integrations | probe rhs |
 |---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| roadrunner dense | dense | difference_quotient | times | 134.5 | 9.38 | 14345 | 37690 | 4658 | 200294 | 11978 | 1871 | 23743 | 0 | - | 4649 | - |
-| roadrunner 2.12.0 KLU | klu | sparse_difference_quotient | times | 7.105 | 3.12 | 2274 | 3755 | 175 | - | 1094 | 192 | 3269 | 0 | - | 162 | - |
-| roadrunner KLU | klu | sparse_difference_quotient | times | 7.126 | 3.13 | 2274 | 3755 | 175 | - | 1094 | 192 | 3269 | 0 | - | 162 | - |
-| wasmtime | dense | analytic | times | 146.7 | 7.31 | 20066 | 53247 | 6858 | 0 | 16340 | 2443 | 32675 | 0 | 91398 | 6851 | 0 |
-| wasmtime | dense | difference | times | 126.8 | 7.82 | 16225 | 42536 | 5309 | 58399 | 13435 | 2083 | 26633 | 0 | 73544 | 5301 | 0 |
-| wasmtime | klu | analytic | times | 9.126 | 3.95 | 2313 | 3768 | 173 | 0 | 1095 | 189 | 3291 | 1 | 4605 | 159 | 0 |
-| wasmtime | klu | difference | times | 9.465 | 4.12 | 2295 | 3759 | 173 | 1903 | 1091 | 190 | 3279 | 0 | 4629 | 160 | 0 |
-| Node | dense | analytic | times | 137.7 | 6.86 | 20066 | 53247 | 6858 | 0 | 16340 | 2443 | 32675 | 0 | 91398 | 6851 | 0 |
-| Node | dense | difference | times | 119.1 | 7.34 | 16225 | 42536 | 5309 | 58399 | 13435 | 2083 | 26633 | 0 | 73544 | 5301 | 0 |
-| Node | klu | analytic | times | 8.278 | 3.58 | 2313 | 3768 | 173 | 0 | 1095 | 189 | 3291 | 1 | 4605 | 159 | 0 |
-| Node | klu | difference | times | 8.533 | 3.72 | 2295 | 3759 | 173 | 1903 | 1091 | 190 | 3279 | 0 | 4629 | 160 | 0 |
-| Chrome | dense | analytic | times | 128.1 | 6.38 | 20066 | 53247 | 6858 | 0 | 16340 | 2443 | 32675 | 0 | 91398 | 6851 | 0 |
-| Chrome | dense | difference | times | 116.2 | 7.16 | 16225 | 42536 | 5309 | 58399 | 13435 | 2083 | 26633 | 0 | 73544 | 5301 | 0 |
-| Chrome | klu | analytic | times | 8.285 | 3.58 | 2313 | 3768 | 173 | 0 | 1095 | 189 | 3291 | 1 | 4605 | 159 | 0 |
-| Chrome | klu | difference | times | 8.442 | 3.68 | 2295 | 3759 | 173 | 1903 | 1091 | 190 | 3279 | 0 | 4629 | 160 | 0 |
+| roadrunner dense | dense | difference_quotient | times | 134.1 | 9.35 | 14345 | 37690 | 4658 | 200294 | 11978 | 1871 | 23743 | 0 | - | 4649 | - |
+| roadrunner 2.12.0 KLU | klu | sparse_difference_quotient | times | 6.97 | 3.07 | 2274 | 3755 | 175 | - | 1094 | 192 | 3269 | 0 | - | 162 | - |
+| roadrunner KLU | klu | sparse_difference_quotient | times | 7.176 | 3.16 | 2274 | 3755 | 175 | - | 1094 | 192 | 3269 | 0 | - | 162 | - |
+| wasmtime | dense | analytic | times | 139.9 | 7.22 | 19368 | 51021 | 6464 | 0 | 15549 | 2353 | 31623 | 0 | 88361 | 6457 | 0 |
+| wasmtime | dense | difference | times | 125.4 | 7.76 | 16154 | 42038 | 5128 | 56408 | 13396 | 2122 | 26678 | 0 | 73447 | 5120 | 0 |
+| wasmtime | klu | analytic | times | 9.294 | 4.02 | 2313 | 3768 | 173 | 0 | 1095 | 189 | 3291 | 1 | 4605 | 159 | 0 |
+| wasmtime | klu | difference | times | 9.321 | 4.06 | 2295 | 3759 | 173 | 1903 | 1091 | 190 | 3279 | 0 | 4629 | 160 | 0 |
+| Node | dense | analytic | times | 127.3 | 6.57 | 19368 | 51021 | 6464 | 0 | 15549 | 2353 | 31623 | 0 | 88361 | 6457 | 0 |
+| Node | dense | difference | times | 118.6 | 7.34 | 16154 | 42038 | 5128 | 56408 | 13396 | 2122 | 26678 | 0 | 73447 | 5120 | 0 |
+| Node | klu | analytic | times | 8.364 | 3.62 | 2313 | 3768 | 173 | 0 | 1095 | 189 | 3291 | 1 | 4605 | 159 | 0 |
+| Node | klu | difference | times | 8.543 | 3.72 | 2295 | 3759 | 173 | 1903 | 1091 | 190 | 3279 | 0 | 4629 | 160 | 0 |
+| Chrome | dense | analytic | times | 122.4 | 6.32 | 19368 | 51021 | 6464 | 0 | 15549 | 2353 | 31623 | 0 | 88361 | 6457 | 0 |
+| Chrome | dense | difference | times | 115.7 | 7.16 | 16154 | 42038 | 5128 | 56408 | 13396 | 2122 | 26678 | 0 | 73447 | 5120 | 0 |
+| Chrome | klu | analytic | times | 8.085 | 3.5 | 2313 | 3768 | 173 | 0 | 1095 | 189 | 3291 | 1 | 4605 | 159 | 0 |
+| Chrome | klu | difference | times | 8.28 | 3.61 | 2295 | 3759 | 173 | 1903 | 1091 | 190 | 3279 | 0 | 4629 | 160 | 0 |
 
 #### chen
 
 | host | solver | Jacobian | output | median ms | µs per step | steps | rhs | Jacobians | DQ rhs | lin setups | err test fails | nonlin iters | conv fails | roots | integrations | probe rhs |
 |---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| roadrunner dense | dense | difference_quotient | times | 1047 | 372 | 2812 | 4383 | 86 | 43000 | 606 | 242 | 4373 | 48 | - | 5 | - |
-| roadrunner 2.12.0 KLU | klu | sparse_difference_quotient | times | 479 | 181 | 2641 | 4048 | 88 | - | 578 | 221 | 4035 | 55 | - | 5 | - |
-| roadrunner KLU | klu | sparse_difference_quotient | times | 456.2 | 173 | 2641 | 4048 | 88 | - | 578 | 221 | 4035 | 55 | - | 5 | - |
-| wasmtime | dense | analytic | times | 1498 | 511 | 2930 | 4583 | 92 | 0 | 658 | 265 | 4570 | 51 | 3140 | 5 | 0 |
-| wasmtime | dense | difference | times | 1146 | 404 | 2837 | 4314 | 93 | 13392 | 597 | 229 | 4301 | 53 | 3047 | 5 | 0 |
-| wasmtime | klu | analytic | times | 527.2 | 185 | 2853 | 4446 | 90 | 0 | 599 | 241 | 4433 | 51 | 3063 | 5 | 0 |
-| wasmtime | klu | difference | times | 515.3 | 189 | 2731 | 4134 | 90 | 12960 | 564 | 212 | 4121 | 53 | 2941 | 5 | 0 |
-| Node | dense | analytic | times | 1340 | 457 | 2930 | 4583 | 92 | 0 | 658 | 265 | 4570 | 51 | 3140 | 5 | 0 |
-| Node | dense | difference | times | 1047 | 369 | 2837 | 4314 | 93 | 13392 | 597 | 229 | 4301 | 53 | 3047 | 5 | 0 |
-| Node | klu | analytic | times | 467.5 | 164 | 2853 | 4446 | 90 | 0 | 599 | 241 | 4433 | 51 | 3063 | 5 | 0 |
-| Node | klu | difference | times | 449.1 | 164 | 2731 | 4134 | 90 | 12960 | 564 | 212 | 4121 | 53 | 2941 | 5 | 0 |
-| Chrome | dense | analytic | times | 1308 | 446 | 2930 | 4583 | 92 | 0 | 658 | 265 | 4570 | 51 | 3140 | 5 | 0 |
-| Chrome | dense | difference | times | 1016 | 358 | 2837 | 4314 | 93 | 13392 | 597 | 229 | 4301 | 53 | 3047 | 5 | 0 |
-| Chrome | klu | analytic | times | 489.9 | 172 | 2853 | 4446 | 90 | 0 | 599 | 241 | 4433 | 51 | 3063 | 5 | 0 |
-| Chrome | klu | difference | times | 471.6 | 173 | 2731 | 4134 | 90 | 12960 | 564 | 212 | 4121 | 53 | 2941 | 5 | 0 |
+| roadrunner dense | dense | difference_quotient | times | 1049 | 373 | 2812 | 4383 | 86 | 43000 | 606 | 242 | 4373 | 48 | - | 5 | - |
+| roadrunner 2.12.0 KLU | klu | sparse_difference_quotient | times | 452.6 | 171 | 2641 | 4048 | 88 | - | 578 | 221 | 4035 | 55 | - | 5 | - |
+| roadrunner KLU | klu | sparse_difference_quotient | times | 455.3 | 172 | 2641 | 4048 | 88 | - | 578 | 221 | 4035 | 55 | - | 5 | - |
+| wasmtime | dense | analytic | times | 1492 | 509 | 2930 | 4583 | 92 | 0 | 658 | 265 | 4570 | 51 | 3140 | 5 | 0 |
+| wasmtime | dense | difference | times | 1149 | 405 | 2837 | 4314 | 93 | 13392 | 597 | 229 | 4301 | 53 | 3047 | 5 | 0 |
+| wasmtime | klu | analytic | times | 530.1 | 186 | 2853 | 4446 | 90 | 0 | 599 | 241 | 4433 | 51 | 3063 | 5 | 0 |
+| wasmtime | klu | difference | times | 510.5 | 187 | 2731 | 4134 | 90 | 12960 | 564 | 212 | 4121 | 53 | 2941 | 5 | 0 |
+| Node | dense | analytic | times | 1331 | 454 | 2930 | 4583 | 92 | 0 | 658 | 265 | 4570 | 51 | 3140 | 5 | 0 |
+| Node | dense | difference | times | 1043 | 368 | 2837 | 4314 | 93 | 13392 | 597 | 229 | 4301 | 53 | 3047 | 5 | 0 |
+| Node | klu | analytic | times | 472.2 | 166 | 2853 | 4446 | 90 | 0 | 599 | 241 | 4433 | 51 | 3063 | 5 | 0 |
+| Node | klu | difference | times | 456.2 | 167 | 2731 | 4134 | 90 | 12960 | 564 | 212 | 4121 | 53 | 2941 | 5 | 0 |
+| Chrome | dense | analytic | times | 1313 | 448 | 2930 | 4583 | 92 | 0 | 658 | 265 | 4570 | 51 | 3140 | 5 | 0 |
+| Chrome | dense | difference | times | 1015 | 358 | 2837 | 4314 | 93 | 13392 | 597 | 229 | 4301 | 53 | 3047 | 5 | 0 |
+| Chrome | klu | analytic | times | 493.2 | 173 | 2853 | 4446 | 90 | 0 | 599 | 241 | 4433 | 51 | 3063 | 5 | 0 |
+| Chrome | klu | difference | times | 467.6 | 171 | 2731 | 4134 | 90 | 12960 | 564 | 212 | 4121 | 53 | 2941 | 5 | 0 |
 
 #### mp_flat
 
@@ -310,14 +310,19 @@ roadrunner (its LLVM model generator, sys-bio/roadrunner#1383) makes a root func
 
 | model | root functions | solver | ms before | ms after | integrations before / after | roadrunner integrations |
 |---|---:|---|---:|---:|---|---:|
-| mp_core | 2 | dense | 3.31 | 147 | 1 / 6851 | 4649 |
-| mp_core | 2 | klu | 2.35 | 9.13 | 1 / 159 | 162 |
-| chen | 4 | dense | 1484 | 1498 | 1 / 5 | 5 |
-| chen | 4 | klu | 553 | 527 | 1 / 5 | 5 |
+| mp_core | 2 | dense | 3.31 | 140 | 1 / 6457 | 4649 |
+| mp_core | 2 | klu | 2.35 | 9.29 | 1 / 159 | 162 |
+| chen | 4 | dense | 1484 | 1492 | 1 / 5 | 5 |
+| chen | 4 | klu | 553 | 530 | 1 / 5 | 5 |
 | mp_flat | 63 | dense | 4312 | 4289 | 1 / 1 | 1 |
 | mp_flat | 63 | klu | 113 | 116 | 1 / 1 | 1 |
 
-On mp_core the engine now does roadrunner's work (its earlier 0.02 and 0.33 of roadrunner were the work it skipped); on Chen the 4 restarts at the stimulation change little; on mp_flat, whose 63 root functions never change their sign, the evaluation of the root functions after every step (2998 calls) costs nothing measurable. 27 cases of the SBML Test Suite which pass have root functions of `piecewise` conditions; the suite gives 1581 pass and no difference to the baseline with the repeat checks under `auto`, `--jacobian difference` and `--no-optimize`, and Node equals wasmtime byte for byte on every case.
+(The rows of mp_core and Chen are of fix round 1, with the guard below.) On mp_core the engine now does roadrunner's work (its earlier 0.02 and 0.33 of roadrunner were the work it skipped); on Chen the 4 restarts at the stimulation change little; on mp_flat, whose 63 root functions never change their sign, the evaluation of the root functions after every step (2998 calls) costs nothing measurable. 27 cases of the SBML Test Suite which pass have root functions of `piecewise` conditions; the suite gives 1581 pass and no difference to the baseline with the repeat checks under `auto`, `--jacobian difference` and `--no-optimize`, and Node equals wasmtime byte for byte on every case.
+
+**Roots which chatter (fix round 1).** roadrunner ignores, in one output interval of an output of times, the third and later root within its relative tolerance (as a distance in time) of the last root it applied (`strikes` in `CVODEIntegrator::integrate`: neither its events nor a restart; every step of its output of the integrator steps is a call of its own, so there it ignores none). The engine applies the same count to its restarts at the roots of discontinuities (every return at a root counts; events execute whatever the count, sbmlsim's semantics), in the output of times and in the horizons of a steady state; besides, a root of a discontinuity at the time of the last restart restarts nothing (CVODE started at a zero of a root function with a first step below the rounding of the time returns that zero again), and in the output of times the steps towards one output time are bounded by `maximum_num_steps` across the returns at roots and the restarts (CVODE counts one call, which every root ends), so a chattering model ends in a result or with CVODE's flag `CV_TOO_MUCH_WORK` (-1) within the step limit; the output of the integrator steps is bounded by the limit of the output. On two chattering models (host tests `a_sliding_mode_ends_as_in_roadrunner`, `a_guard_at_noise_level_agrees_with_roadrunner`):
+
+- `x' = piecewise(-1, x > 0, 1)` (a sliding mode at 0 from t = 1): at rtol 1e-6, atol 1e-12 CVODE never accepts a step across 0 and creeps towards it; roadrunner fails with `CV_TOO_MUCH_WORK` at t = 1.00000000157277, the engine at 1.00000000157206. In the steps of the integrator roadrunner stops at its `max_output_rows` (100000 rows, a warning), the engine at the limit of its output (flag -1000, 14 s): neither has a step limit there (ruling R20). At rtol 1e-3, atol 1e-4 up to 2 both end within the absolute tolerance of the exact solution `max(1 - t, 0)` (roadrunner 6.7e-6, the engine 5.5e-6) and of each other (1.1e-5); the engine restarts at about 3000 roots, roadrunner at none (the trajectories chatter differently). At rtol 1e-3, atol 1e-6 roadrunner ends after 28.6 million steps (25 s, 5981 restarts: every root return starts its count of steps again), the engine ends with `CV_TOO_MUCH_WORK` after at most 20000 steps of one output interval (6 ms). The sliding mode is chaotic at noise level: the engine at end 1.1 and at end 3 takes other roots.
+- `piecewise(0, S < 0, k * S)` as the rate of a decay (a guard at noise level): one restart in roadrunner and in the engine (times and steps), and against `exp(-t)` at rtol 1e-10, atol 1e-12 the largest excess of the engine is 1.67745 against roadrunner's 1.67732 dense and 1.67745 KLU (times) and 1.90227 against 1.90231 (steps): R47b passes.
 
 ## Agreement with roadrunner
 
@@ -340,7 +345,7 @@ On mp_core the engine now does roadrunner's work (its earlier 0.02 and 0.33 of r
 | repeated_dose | dense | pass | 1.7386 | 1.7379 | 1 | 1 | 1.74e-07 (distribution) | 0.0176 |
 | repeated_dose | klu | pass | 1.7383 | 1.7383 | 1 | 1 | 1.74e-07 (distribution) | 0.0618 |
 
-Every model passes with both solvers; the script exits with 0. Only the rows of mp_core changed with the root finding of the conditions of `piecewise` (Task 18b); the other models have no root of such a condition in their simulation (mp_flat has 63 root functions whose signs do not change, its rows are the same bits).
+Every model passes with both solvers; the script exits with 0. (Run again after fix round 1 of Task 18b, the guard against roots which chatter: the same numbers.) Only the rows of mp_core changed with the root finding of the conditions of `piecewise` (Task 18b); the other models have no root of such a condition in their simulation (mp_flat has 63 root functions whose signs do not change, its rows are the same bits).
 
 - hctz: with both solvers the engine is at least as close to the converged solution as roadrunner (dense 1.75 against 1.78, KLU 0.47 against 1.78); the largest excesses are transport rates and concentrations at 7.2 min, e.g. `[Clu_hctz]` 1.1303e-5 relative 3.3e-7, where roadrunner at 1e-10 misses the converged solution by as much. KLU is closer than dense, so the KLU path is not less accurate; the informative excess of 2.24 against roadrunner at 1e-10 is the distance between two solutions of the same error class, not an error of KLU. With `KLU_THRESHOLD = 64` hctz ran dense in the criterion of the first round (against roadrunner at 1e-10), which is why it passed there.
 - mp_flat: the engine dense (7.9) is closer to the converged solution than roadrunner dense (9.9), KLU (5.2) closer than roadrunner KLU (7.2). Against roadrunner's default KLU at 1e-10 (7.21) the engine dense would be above it, which is why the criterion pairs the linear solvers, as the benchmark does.

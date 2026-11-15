@@ -19,7 +19,8 @@
 //! triggers are located and the events execute as in a simulation (`events`), the end of a
 //! horizon is a stop like an output time, so an event whose trigger becomes true at the end of a
 //! horizon executes once; CVODE starts again at the zero of a root function of a discontinuity
-//! of the math, as in a simulation. The simulation then starts at its start from the state at the
+//! of the math, as in an output of times (`roots`: every horizon an interval of libroadrunner's
+//! count of roots and of the budget of steps). The simulation then starts at its start from the state at the
 //! steady state, with the triggers as they were at its end (an event whose trigger is false at
 //! the end of the steady state and true at the start executes at the start) and every pending
 //! execution with the time it had left (sbmlsim's roadrunner keeps such an execution at the time
@@ -30,6 +31,7 @@ use sbmlsim_csolvers::ffi::{CV_NORMAL, CV_ROOT_RETURN, CV_TSTOP_RETURN};
 
 use crate::cvode::{Cvode, Problem};
 use crate::events::{Events, Probe};
+use crate::roots::RootGuard;
 use crate::segments::too_close;
 use crate::{EngineError, STEADY_STATE_FLAG};
 
@@ -122,6 +124,8 @@ fn with_events(
     let m = problem.n_model;
     let mut started = false;
     let mut current = stop;
+    // a horizon is an interval of libroadrunner's count of roots and of the budget of steps
+    let mut guard = RootGuard::new(t, settings, true, cvode.steps());
     while !(t >= stop || too_close(t, stop)) {
         let tstop = events.next_time().map_or(stop, |x| x.min(stop));
         if too_close(t, tstop) {
@@ -139,6 +143,7 @@ fn with_events(
                 }
                 current = tstop;
             }
+            guard.limit(cvode, t)?;
             let (tret, flag) = cvode.integrate(problem, tstop, CV_NORMAL)?;
             t = if flag == CV_TSTOP_RETURN || (flag != CV_ROOT_RETURN && tret >= tstop) {
                 tstop
@@ -147,13 +152,17 @@ fn with_events(
             };
             y.copy_from_slice(cvode.state());
             // a zero of a root function of a discontinuity: CVODE starts again from the state
-            // there
-            if flag == CV_ROOT_RETURN && cvode.at_discontinuity(problem)? {
-                started = false;
+            // there (unless the guard of the restarts ignores it)
+            if flag == CV_ROOT_RETURN {
+                let found = cvode.at_discontinuity(problem)?;
+                if guard.root(t, found) {
+                    started = false;
+                }
             }
         }
         if events.execute(t, &mut y[..m], &mut problem.p, false)? {
             started = false;
+            guard.executed(cvode.steps());
         }
     }
     Ok(())

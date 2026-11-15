@@ -520,6 +520,8 @@ pub(crate) struct Cvode {
     /// Whether the counters of the memory belong to the running simulation (a segment of it
     /// was started since [`Cvode::begin`]).
     live: bool,
+    /// The roots found at the last return at a root (`CVodeGetRootInfo`), one per root function.
+    found: Vec<c_int>,
 }
 
 impl Drop for Cvode {
@@ -577,6 +579,7 @@ impl Cvode {
             errors: Box::default(),
             totals: CvodeCounts::default(),
             live: false,
+            found: Vec::new(),
         };
         let n = config.n as sunindextype;
         // SAFETY: the objects are created in the context and owned by `cvode`, which frees them
@@ -804,10 +807,32 @@ impl Cvode {
         if first == n {
             return Ok(false);
         }
-        let mut found: Vec<c_int> = vec![0; n];
-        // SAFETY: the memory was initialized with `n` root functions, so CVODE writes `n` values.
-        unsafe { self.flag(CVodeGetRootInfo(self.mem, found.as_mut_ptr()), f64::NAN)? };
-        Ok(found[first..].iter().any(|&f| f != 0))
+        self.found.resize(n, 0);
+        // SAFETY: the memory was initialized with `n` root functions, so CVODE writes `n` values
+        // into the buffer of `n`.
+        unsafe {
+            let flag = CVodeGetRootInfo(self.mem, self.found.as_mut_ptr());
+            self.flag(flag, f64::NAN)?;
+        }
+        Ok(self.found[first..].iter().any(|&f| f != 0))
+    }
+
+    /// The steps of CVODE in the simulation since [`Cvode::begin`].
+    pub fn steps(&self) -> u64 {
+        let mut current: c_long = 0;
+        if self.live && self.initialized {
+            // SAFETY: the memory is initialized; the out-pointer is a local.
+            unsafe { CVodeGetNumSteps(self.mem, &mut current) };
+        }
+        self.totals.steps + current.max(0) as u64
+    }
+
+    /// Sets the largest number of steps of the next call of [`Cvode::integrate`] (until the next
+    /// start, which sets the one of the settings).
+    pub fn set_max_steps(&mut self, steps: u64) -> Result<(), EngineError> {
+        let steps = steps.min(c_long::MAX as u64) as c_long;
+        // SAFETY: the memory is initialized (a segment was started).
+        unsafe { self.flag(CVodeSetMaxNumSteps(self.mem, steps), f64::NAN) }
     }
 
     /// Integrates towards `tout` (`CV_NORMAL`) or takes one step (`CV_ONE_STEP`); returns the

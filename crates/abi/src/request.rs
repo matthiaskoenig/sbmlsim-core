@@ -147,7 +147,9 @@ pub struct IntegratorSettings {
     pub relative_tolerance: f64,
     /// The absolute tolerance.
     pub absolute_tolerance: Tolerance,
-    /// The largest number of steps of one call.
+    /// The largest number of steps of one call of CVODE; in an output of times (and in a horizon
+    /// of a steady state) the steps towards one output time, summed over the returns of CVODE at
+    /// roots without an execution of an event and its restarts at the roots of discontinuities.
     pub maximum_num_steps: u32,
     /// The largest step in time; `0.0` is not set (CVODE chooses).
     pub maximum_time_step: f64,

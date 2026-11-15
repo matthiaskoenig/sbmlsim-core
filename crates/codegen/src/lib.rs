@@ -136,25 +136,32 @@ fn emit_limited(
     // the kind of the Jacobian and its reason are those of the model as written, with and
     // without the optimizer
     let jacobian = choose_jacobian(model, choice, limits)?;
+    // the root functions of the discontinuities, computed once for every function of the module
+    // and the description
+    let discontinuities = model.discontinuity_roots();
+    let d = &discontinuities;
     let wasm = if optimized {
         // the common subexpressions add locals: without them when a function is above the
         // limits with them, and as written when it is above them still (the folding of a
         // literal boolean may add bytes), whose model_jac is known to be within them
-        let plan = |cse| optimize::plan(model, &jacobian, cse);
+        let plan = |cse| optimize::plan(model, &jacobian, d, cse);
         let within = |result: Result<Vec<u8>, CompileError>, next: &dyn Fn() -> _| match result {
             Err(error) if wasm::is_above_the_limits(&error) => next(),
             other => other,
         };
-        within(module(model, &jacobian, limits, Some(&plan(true))), &|| {
-            within(
-                module(model, &jacobian, limits, Some(&plan(false))),
-                &|| module(model, &jacobian, limits, None),
-            )
-        })?
+        within(
+            module(model, &jacobian, d, limits, Some(&plan(true))),
+            &|| {
+                within(
+                    module(model, &jacobian, d, limits, Some(&plan(false))),
+                    &|| module(model, &jacobian, d, limits, None),
+                )
+            },
+        )?
     } else {
-        module(model, &jacobian, limits, None)?
+        module(model, &jacobian, d, limits, None)?
     };
-    Ok((wasm, description(model, jacobian)))
+    Ok((wasm, description(model, jacobian, d)))
 }
 
 /// Adds `model_jac(t, y, p, values)` as written to the module: the rules, their derivatives, the
@@ -304,15 +311,18 @@ fn returning<'e>(program: &'e Program, end: fn(&'e Expr) -> End<'e>) -> Branch<'
     }
 }
 
-/// The module of a model: the code as written, or the programs of `plan` (the optimizer).
+/// The module of a model with the root functions of its discontinuities
+/// ([`Model::discontinuity_roots`]): the code as written, or the programs of `plan` (the
+/// optimizer).
 fn module(
     model: &Model,
     jacobian: &JacobianIr,
+    discontinuities: &[Expr],
     limits: Limits,
     plan: Option<&Plan>,
 ) -> Result<Vec<u8>, CompileError> {
     if let Some(plan) = plan {
-        return optimized_module(model, jacobian, limits, plan);
+        return optimized_module(model, jacobian, discontinuities, limits, plan);
     }
     let mut m = ModuleBuilder::default();
     m.limits = limits;
@@ -339,7 +349,7 @@ fn module(
 
     // model_roots(t, y, p, g): the root functions of the triggers, in the order of the events,
     // then those of the discontinuities
-    let roots = root_functions(model);
+    let roots = root_functions(model, discontinuities);
     let mut stmts: Vec<Stmt<'_>> = Vec::new();
     if !roots.is_empty() {
         stmts.extend(rule_lets(model));
@@ -458,7 +468,7 @@ fn module(
         .collect();
     m.sequence(&sig(abi::ASSIGN, &[F64, I32, I32], &[], VECTORS), &assign)?;
 
-    size_functions(&mut m, model, jacobian)?;
+    size_functions(&mut m, model, jacobian, discontinuities)?;
     Ok(m.finish())
 }
 
@@ -529,8 +539,9 @@ fn size_functions(
     m: &mut ModuleBuilder,
     model: &Model,
     jacobian: &JacobianIr,
+    discontinuities: &[Expr],
 ) -> Result<(), CompileError> {
-    let sizes = sizes(model, jacobian);
+    let sizes = sizes(model, jacobian, discontinuities);
     let none = Ctx { t: 0, y: 0, p: 0 };
     let words: Vec<Stmt<'_>> = sizes
         .words()
@@ -562,6 +573,7 @@ fn size_functions(
 fn optimized_module(
     model: &Model,
     jacobian: &JacobianIr,
+    discontinuities: &[Expr],
     limits: Limits,
     plan: &Plan,
 ) -> Result<Vec<u8>, CompileError> {
@@ -673,29 +685,34 @@ fn optimized_module(
         }),
     )?;
 
-    size_functions(&mut m, model, jacobian)?;
+    size_functions(&mut m, model, jacobian, discontinuities)?;
     Ok(m.finish())
 }
 
 /// The root functions of `model_roots`: those of the triggers of the events in their order,
-/// then those of the discontinuities of the math.
-fn root_functions(model: &Model) -> Vec<Expr> {
+/// then those of the discontinuities of the math (`discontinuities`).
+fn root_functions(model: &Model, discontinuities: &[Expr]) -> Vec<Expr> {
     model
         .events
         .iter()
         .flat_map(|e| e.root_functions())
-        .chain(model.discontinuity_roots())
+        .chain(discontinuities.iter().cloned())
         .collect()
 }
 
 /// The sizes of the module of a model; the entries of the Jacobian are those of its pattern.
-fn sizes(model: &Model, jacobian: &JacobianIr) -> ModelSizes {
+fn sizes(model: &Model, jacobian: &JacobianIr, discontinuities: &[Expr]) -> ModelSizes {
     ModelSizes {
         states: model.states.len() as u32,
         parameters: model.parameters.len() as u32,
         selections: model.selections.len() as u32,
         jacobian_entries: jacobian.pattern().nnz() as u32,
-        roots: root_functions(model).len() as u32,
+        roots: model
+            .events
+            .iter()
+            .map(|e| e.root_functions().len() as u32)
+            .sum::<u32>()
+            + discontinuities.len() as u32,
         assignments: model
             .events
             .iter()
@@ -838,9 +855,9 @@ pub fn initial_values(model: &Model) -> (Vec<f64>, Vec<f64>) {
 }
 
 /// The description of a model.
-fn description(model: &Model, jacobian: JacobianIr) -> ModelDescription {
-    let n_roots = sizes(model, &jacobian).roots;
-    let n_discontinuity_roots = model.discontinuity_roots().len() as u32;
+fn description(model: &Model, jacobian: JacobianIr, discontinuities: &[Expr]) -> ModelDescription {
+    let n_roots = sizes(model, &jacobian, discontinuities).roots;
+    let n_discontinuity_roots = discontinuities.len() as u32;
     let (p, y) = initial_values(model);
     let entity = |e: &sbmlsim_ir::Entity, initial: f64| Entity {
         id: e.id.clone(),
@@ -1087,7 +1104,7 @@ mod tests {
             written.limits = limits;
             let mut optimized = ModuleBuilder::default();
             optimized.limits = limits;
-            let plan = optimize::plan(&m, &analytic, true);
+            let plan = optimize::plan(&m, &analytic, &m.discontinuity_roots(), true);
             let program = plan.jac.as_ref().unwrap();
             let out = |k, e| Stmt::StoreAt { ptr: 3, k, expr: e };
             let jac = sig(abi::JAC, &[F64, I32, I32, I32], &[], VECTORS);
