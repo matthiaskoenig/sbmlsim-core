@@ -529,3 +529,138 @@ fn compiled_preinit_takes_the_selections_of_sbmlsim() {
         assert_eq!(result.values[1..5], expected, "{id}");
     }
 }
+
+const TIME: &str =
+    r#"<csymbol encoding="text" definitionURL="http://www.sbml.org/sbml/symbols/time">t</csymbol>"#;
+
+#[test]
+fn a_change_converts_with_the_size_of_a_compartment_of_a_rule() {
+    // the compartment C := 1 + time, S of the initial concentration 1, the change [S] = 3 at 5;
+    // sbmlsim (libroadrunner 2.11.1, Task 14 report, fix round 1, probe 4): at 5 C = 6, S = 1
+    // and [S] = 1/6 before, S = 18 and [S] = 3 after, at 10 C = 11, S = 18, [S] = 18/11
+    let sbml = format!(
+        r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2"><model id="cr">
+<listOfCompartments><compartment id="C" spatialDimensions="3" constant="false"/></listOfCompartments>
+<listOfSpecies><species id="S" compartment="C" initialConcentration="1" hasOnlySubstanceUnits="false" boundaryCondition="false" constant="false"/></listOfSpecies>
+<listOfRules><assignmentRule variable="C"><math {MATH}><apply><plus/><cn>1</cn>{TIME}</apply></math></assignmentRule></listOfRules>
+</model></sbml>"#
+    );
+    let compiled = compile(&sbml, &CompileOptions::default()).unwrap();
+    for with_steps in [false, true] {
+        let mut req = request(10.0, 2, &["time", "C", "S", "[S]"]);
+        if with_steps {
+            req.output = Output::IntegratorSteps;
+        }
+        req.changes = vec![sbmlsim_abi::Change {
+            time: 5.0,
+            values: vec![("[S]".to_string(), 3.0)],
+        }];
+        let result = runtime()
+            .instantiate(&compiled.wasm, &compiled.description)
+            .unwrap()
+            .simulate(&req)
+            .unwrap();
+        let k = result.columns.len();
+        let rows: Vec<&[f64]> = (0..result.n_rows)
+            .map(|i| &result.values[i * k..(i + 1) * k])
+            .filter(|r| r[0] == 5.0)
+            .collect();
+        assert_eq!(rows.len(), 2, "{with_steps}");
+        assert_eq!(rows[0][1..3], [6.0, 1.0], "{with_steps}");
+        assert!((rows[0][3] - 1.0 / 6.0).abs() < 1e-15, "{with_steps}");
+        assert_eq!(rows[1][1..], [6.0, 18.0, 3.0], "{with_steps}");
+        let last = &result.values[result.values.len() - k..];
+        assert_eq!(last[..3], [10.0, 11.0, 18.0], "{with_steps}");
+        assert!((last[3] - 18.0 / 11.0).abs() < 1e-15, "{with_steps}");
+    }
+}
+
+#[test]
+fn initial_assignments_see_the_time_zero() {
+    // x := time + 1, y := 2 x (y of the rate rule 0): sbmlsim initializes at the time 0, also
+    // for a simulation from 5 or -3 and with a steady state (Task 14 report, fix round 1,
+    // probe 4): x = 1, y = 2; with the pre-initialization x = 4: x = 4, y = 8
+    let sbml = format!(
+        r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2"><model id="ia">
+<listOfParameters><parameter id="x" constant="false"/><parameter id="y" value="0" constant="false"/></listOfParameters>
+<listOfInitialAssignments><initialAssignment symbol="x"><math {MATH}><apply><plus/>{TIME}<cn>1</cn></apply></math></initialAssignment>
+<initialAssignment symbol="y"><math {MATH}><apply><times/><cn>2</cn><ci>x</ci></apply></math></initialAssignment></listOfInitialAssignments>
+<listOfRules><rateRule variable="y"><math {MATH}><cn>0</cn></math></rateRule></listOfRules>
+</model></sbml>"#
+    );
+    let compiled = compile(&sbml, &CompileOptions::default()).unwrap();
+    for start in [5.0, -3.0] {
+        for steady in [false, true] {
+            for (preinit, expected) in [(None, [1.0, 2.0]), (Some(4.0), [4.0, 8.0])] {
+                let mut req = request(start + 1.0, 1, &["time", "x", "y"]);
+                req.start = start;
+                req.preinit = preinit.map(|x| ("x".to_string(), x)).into_iter().collect();
+                req.steady_state = steady.then(sbmlsim_abi::SteadyState::default);
+                let result = runtime()
+                    .instantiate(&compiled.wasm, &compiled.description)
+                    .unwrap()
+                    .simulate(&req)
+                    .unwrap();
+                assert_eq!(result.values[..3], [start, expected[0], expected[1]]);
+                assert_eq!(result.values[4..], expected, "{start} {steady} {preinit:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn a_failed_request_leaves_the_instance_as_a_fresh_one() {
+    // z' = 1 never reaches a steady state; one step is too few; then a good request with an
+    // event, a change and the pre-initialization equals the one of a fresh instance, bitwise
+    let sbml = format!(
+        r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2"><model id="ramp">
+<listOfParameters><parameter id="z" value="0" constant="false"/><parameter id="n" value="0" constant="false"/></listOfParameters>
+<listOfRules><rateRule variable="z"><math {MATH}><cn>1</cn></math></rateRule></listOfRules>
+<listOfEvents><event id="e" useValuesFromTriggerTime="true"><trigger initialValue="false" persistent="true"><math {MATH}><apply><gt/><ci>z</ci><cn>0.5</cn></apply></math></trigger>
+<listOfEventAssignments><eventAssignment variable="n"><math {MATH}><apply><plus/><ci>n</ci><cn>1</cn></apply></math></eventAssignment></listOfEventAssignments></event></listOfEvents>
+</model></sbml>"#
+    );
+    let compiled = compile(&sbml, &CompileOptions::default()).unwrap();
+    let mut never = request(1.0, 2, &[]);
+    never.steady_state = Some(sbmlsim_abi::SteadyState {
+        max_time: 20.0,
+        ..sbmlsim_abi::SteadyState::default()
+    });
+    let mut one_step = request(1.0, 2, &[]);
+    one_step.settings.maximum_num_steps = 1;
+    one_step.settings.relative_tolerance = 1e-12;
+    one_step.end = 1e6;
+    let mut good = request(2.0, 8, &[]);
+    good.preinit = vec![("n".to_string(), 3.0)];
+    good.changes = vec![sbmlsim_abi::Change {
+        time: 1.0,
+        values: vec![("z".to_string(), 0.0)],
+    }];
+    let mut instance = runtime()
+        .instantiate(&compiled.wasm, &compiled.description)
+        .unwrap();
+    let error = instance.simulate(&never).unwrap_err().to_string();
+    assert!(error.contains("steady state"), "{error}");
+    assert!(instance.simulate(&one_step).is_err());
+    let after_failures = instance.simulate(&good).unwrap();
+    let fresh = runtime()
+        .instantiate(&compiled.wasm, &compiled.description)
+        .unwrap()
+        .simulate(&good)
+        .unwrap();
+    let bits = |r: &sbmlsim_abi::SimulationResult| {
+        r.values.iter().map(|v| v.to_bits()).collect::<Vec<_>>()
+    };
+    assert_eq!(bits(&after_failures), bits(&fresh));
+    // the event executed at z = 0.5 and again after the change
+    let n = after_failures
+        .columns
+        .iter()
+        .position(|c| c == "n")
+        .unwrap();
+    let k = after_failures.columns.len();
+    assert_eq!(
+        after_failures.values[after_failures.values.len() - k + n],
+        5.0
+    );
+}

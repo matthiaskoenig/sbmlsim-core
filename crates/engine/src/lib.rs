@@ -19,9 +19,9 @@
 //!
 //! The initialization is `defaults`, then the pre-initialization values of the request and of
 //! its steady state (fixed for `init`, in the selections of sbmlsim as the changes), then `init`
-//! at the start time; then the steady state, if the request has one (integrated from the time
-//! 0); the integration runs in absolute time from the start, in segments
-//! between the changes.
+//! at the time 0 ([`INIT_TIME`], as sbmlsim); then the steady state, if the request has one
+//! (integrated from the time 0); the integration runs in absolute time from the start, in
+//! segments between the changes.
 
 mod changes;
 mod cvode;
@@ -64,6 +64,11 @@ pub const EVENT_LIMIT_FLAG: i32 = -1002;
 /// The flag of the [`EngineError::Integration`] of an event whose delay is negative or NaN when
 /// it is triggered: an engine code, distinct from CVODE's and the other engine flags.
 pub const DELAY_FLAG: i32 = -1003;
+
+/// The time of the initialization (`model_init`): 0, whatever the start of the simulation, as
+/// sbmlsim initializes roadrunner at its time 0 (an initial assignment which reads `time` sees
+/// 0 also for a simulation from 5 or -3, with and without a steady state).
+pub const INIT_TIME: f64 = 0.0;
 
 /// The flag of the [`EngineError::Integration`] of a steady state which is not reached by its
 /// `max_time`: an engine code, distinct from CVODE's and the other engine flags.
@@ -394,7 +399,7 @@ fn check_steady_state(
 }
 
 /// The parameters and the state at the start: `defaults`, the pre-initialization values (fixed
-/// for `init`), `init`.
+/// for `init`), `init` at [`INIT_TIME`].
 ///
 /// A value which needs the size of a compartment (the amount of a species which stores its
 /// concentration, the concentration of a species which stores its amount) is converted with
@@ -405,7 +410,6 @@ fn initial_values(
     model: &dyn ModelFns,
     desc: &ModelDescription,
     preinit: &[(Target, f64)],
-    start: f64,
 ) -> (Vec<f64>, Vec<f64>) {
     let (np, ns) = (desc.parameters.len(), desc.states.len());
     let mut p = vec![0.0; np];
@@ -418,7 +422,7 @@ fn initial_values(
         .any(|(target, _)| target.compartment().is_some())
         .then(|| {
             let (mut lp, mut ly) = (p.clone(), y.clone());
-            model.init(start, &mut lp, &mut ly, &fixed);
+            model.init(INIT_TIME, &mut lp, &mut ly, &fixed);
             (lp, ly)
         });
     let get = |p: &[f64], y: &[f64], i: usize| if i < np { p[i] } else { y[i - np] };
@@ -441,7 +445,7 @@ fn initial_values(
         }
         fixed[index] = 1;
     }
-    model.init(start, &mut p, &mut y, &fixed);
+    model.init(INIT_TIME, &mut p, &mut y, &fixed);
     (p, y)
 }
 
@@ -475,7 +479,7 @@ fn run(
     }
     let preinit = resolve_preinit(desc, &preinit)?;
     // 2. the initialization
-    let (p, mut y0) = initial_values(model, desc, &preinit, start);
+    let (p, mut y0) = initial_values(model, desc, &preinit);
     let with_events = !desc.events.is_empty() || desc.n_roots > 0;
 
     // a model without states but with events integrates one state of the rate 0, so CVODE

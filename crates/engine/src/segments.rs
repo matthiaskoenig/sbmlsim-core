@@ -259,13 +259,19 @@ struct Outputs<'t> {
     end: f64,
     /// The number of states of the model.
     m: usize,
+    /// The time of the next change which is not applied yet (infinity without): an output time
+    /// at it or after it is never written before the change, also when it is too close to the
+    /// time of a stop to integrate to.
+    limit: f64,
 }
 
 impl Outputs<'_> {
-    /// Whether the next output time is at `t` (or before it, or too close to integrate to).
+    /// Whether the next output time is at `t` (or before it, or too close to integrate to and
+    /// before the next change).
     fn here(&self, t: f64) -> bool {
         self.next < self.times.len()
-            && (self.times[self.next] <= t || too_close(t, self.times[self.next]))
+            && (self.times[self.next] <= t
+                || (too_close(t, self.times[self.next]) && self.times[self.next] < self.limit))
     }
 
     /// Writes the rows of the output times at `t`, every one up to the end for `all`.
@@ -324,8 +330,9 @@ impl Outputs<'_> {
     }
 
     /// The integration reached the change `k` at its time `t`, without executing the events at
-    /// `t`: the rows of the state before the change (a step of the integrator always, an output
-    /// of times when `t` is its next time), the change, the events at `t` with the triggers
+    /// `t`: the rows of the state before the change (a step of the integrator always; the output
+    /// times before `t`, also too close to it to integrate to, and `t` once when it is an output
+    /// time), the change, the events at `t` with the triggers
     /// before the change ([`Probe::Change`]: the events the change triggers), the rows of the
     /// state after the change and these events, and the events right after `t` (the
     /// executions pending at `t`, the strict comparisons at their threshold); at the end all of
@@ -344,10 +351,15 @@ impl Outputs<'_> {
         let m = self.m;
         let model = events.model();
         let at_end = t >= self.end || too_close(t, self.end);
+        while self.next < self.times.len() && self.times[self.next] < t {
+            recorder.row(self.times[self.next], &y[..m], p)?;
+            self.next += 1;
+        }
         if self.steps || self.times.get(self.next) == Some(&t) {
             recorder.row(t, &y[..m], p)?;
         }
         changes.apply(k, model, &mut y[..m], p);
+        self.limit = changes.time(k + 1).unwrap_or(f64::INFINITY);
         events.execute_at(t, &mut y[..m], p, Probe::Change)?;
         if at_end {
             events.execute_at(t, &mut y[..m], p, Probe::End)?;
@@ -422,6 +434,7 @@ pub(crate) fn integrate_events(
         next: 0,
         end,
         m,
+        limit: f64::INFINITY,
     };
     let mut t = start;
 
@@ -437,6 +450,7 @@ pub(crate) fn integrate_events(
         events.execute_at(t, &mut y[..m], &mut problem.p, Probe::Change)?;
         k = 1;
     }
+    out.limit = changes.time(k).unwrap_or(f64::INFINITY);
     if steps {
         recorder.row(t, &y[..m], &problem.p)?;
         // the state before these events is the row of the start
@@ -522,8 +536,10 @@ pub(crate) fn integrate_events(
         t = if flag == CV_TSTOP_RETURN { tstop } else { tret };
         y.copy_from_slice(cvode.state());
         // the time of a change: its events execute after it (also a zero of a root function
-        // which CVODE locates at it, or too close to it to integrate to)
-        if let Some(c) = change.filter(|c| t >= *c || too_close(t, *c)) {
+        // which CVODE locates at it, or a step too close to it to integrate to); an output time
+        // before it is an output, also when it is too close to it
+        let output = !steps && !root && flag != CV_TSTOP_RETURN;
+        if let Some(c) = change.filter(|c| t >= *c || (!output && too_close(t, *c))) {
             t = c;
             out.change(t, k, changes, &mut y, &mut problem.p, events, recorder)?;
             k += 1;

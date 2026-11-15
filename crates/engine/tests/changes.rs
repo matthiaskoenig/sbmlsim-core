@@ -554,3 +554,110 @@ fn preinit_takes_the_selections_of_sbmlsim() {
         Err(EngineError::Request(m)) if m.contains("[C]")
     ));
 }
+
+/// `y' = -y`, `y(0) = 1`, with an event which never executes (its root function `time - 100`
+/// is located, so the run takes the path of the events), or without events.
+fn falling(with_event: bool) -> EventModel {
+    EventModel {
+        states: vec![("y", 1.0)],
+        parameters: vec![],
+        rhs: |_, y, _, ydot| ydot[0] = -y[0],
+        events: if with_event {
+            vec![TestEvent::new(
+                "never",
+                |t, _, _| t > 100.0,
+                vec![|t, _, _| t - 100.0],
+            )]
+        } else {
+            vec![]
+        },
+    }
+}
+
+#[test]
+fn output_times_close_to_a_change() {
+    let before = 5f64.next_down();
+    let after = 5f64.next_up();
+    assert!(before == 4.999999999999999 && after == 5.000000000000001);
+    let e5 = (-5.0f64).exp();
+    // an output time too close to a change to integrate to is before it, the time of the
+    // change has the rows before and after it
+    let mut req = request(0.0, 10.0, Output::Times(vec![0.0, before, 5.0, 10.0]));
+    req.changes = vec![change(5.0, &[("y", 7.0)])];
+    let mut results = Vec::new();
+    for with_event in [false, true] {
+        let result = events(&falling(with_event), &req).unwrap();
+        assert_eq!(
+            column(&result, "time"),
+            [0.0, before, 5.0, 5.0, 10.0],
+            "{with_event}"
+        );
+        let y = column(&result, "y");
+        assert!(close(y[1], e5) && close(y[2], e5), "{with_event}: {y:?}");
+        assert_eq!(y[3], 7.0, "{with_event}");
+        assert!(close(y[4], 7.0 * e5), "{with_event}: {y:?}");
+        results.push(y);
+    }
+    // two changes too close to integrate between them: each time has its rows before and
+    // after its change
+    let mut req = request(0.0, 10.0, Output::Times(vec![0.0, 5.0, after, 10.0]));
+    req.changes = vec![change(5.0, &[("y", 7.0)]), change(after, &[("y", 8.0)])];
+    for with_event in [false, true] {
+        let result = events(&falling(with_event), &req).unwrap();
+        assert_eq!(
+            column(&result, "time"),
+            [0.0, 5.0, 5.0, after, after, 10.0],
+            "{with_event}"
+        );
+        let y = column(&result, "y");
+        assert!(close(y[1], e5), "{with_event}: {y:?}");
+        assert_eq!(y[2..5], [7.0, 7.0, 8.0], "{with_event}");
+        assert!(close(y[5], 8.0 * e5), "{with_event}: {y:?}");
+    }
+}
+
+#[test]
+fn a_failed_request_leaves_the_engine_as_a_fresh_one() {
+    // a steady state which is not reached, an integration which fails (one step), then a
+    // request with events, a change and a steady state: equal to a fresh engine, bitwise
+    let model = EventModel {
+        states: vec![("y", 0.0)],
+        parameters: vec![("b", 1.0), ("x", 0.0)],
+        rhs: |_, y, p, ydot| ydot[0] = p[0] - p[1] * y[0],
+        events: vec![TestEvent {
+            assignments: vec![(Target::Param(0), (|_, _, p| p[0] + 1.0) as Fun)],
+            initial_value: false,
+            ..TestEvent::new("step", |t, _, _| t >= 0.5, vec![|t, _, _| t - 0.5])
+        }],
+    };
+    let mut never = request(0.0, 1.0, Output::Uniform { steps: 2 });
+    never.steady_state = Some(SteadyState {
+        max_time: 20.0,
+        ..SteadyState::default()
+    });
+    let mut one_step = request(0.0, 10.0, Output::Uniform { steps: 2 });
+    one_step.settings.maximum_num_steps = 1;
+    let mut good = request(0.0, 2.0, Output::IntegratorSteps);
+    good.preinit = vec![("x".to_string(), 1.0)];
+    good.changes = vec![change(1.0, &[("y", 0.0)])];
+    good.steady_state = Some(SteadyState::default());
+    let mut engine = Engine::new(Box::new(model.clone()), model.description()).unwrap();
+    assert!(matches!(
+        engine.simulate(&never),
+        Err(EngineError::Integration {
+            flag: STEADY_STATE_FLAG,
+            ..
+        })
+    ));
+    assert!(matches!(
+        engine.simulate(&one_step),
+        Err(EngineError::Integration { flag: -1, .. })
+    ));
+    let after_failures = engine.simulate(&good).unwrap();
+    let fresh = Engine::new(Box::new(model.clone()), model.description())
+        .unwrap()
+        .simulate(&good)
+        .unwrap();
+    let bits = |r: &SimulationResult| r.values.iter().map(|v| v.to_bits()).collect::<Vec<_>>();
+    assert_eq!(bits(&after_failures), bits(&fresh));
+}

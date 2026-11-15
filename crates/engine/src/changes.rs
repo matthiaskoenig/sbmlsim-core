@@ -16,7 +16,9 @@
 //! as sbmlsim reads the concentration and sets it again. A species which stores its
 //! concentration keeps it as it is. The compartments are set first, then every other value, so
 //! a concentration `[S]` set with its compartment is a concentration in the new compartment
-//! (sbmlsim's order). Then the assignment rules are evaluated (`model_assign`).
+//! (sbmlsim's order); the size of a compartment of an assignment rule is the value of its rule
+//! at the time of the change (the rules are evaluated before the values are set). Then the
+//! assignment rules are evaluated again (`model_assign`).
 //!
 //! The pre-initialization takes the same ids (`resolve_values`, sbmlsim's selections), set
 //! before `init` (see `initial_values` of the crate).
@@ -29,6 +31,12 @@
 //! variable of an assignment rule without math is settable (the rule is ignored, as
 //! libroadrunner does), sbmlsim refuses to change it; an entity named `time` is set as an
 //! entity, sbmlsim sets the clock of roadrunner.
+//!
+//! A parameter which an assignment rule of a compartment reads and a concentration `[S]` in
+//! that compartment set by one change: the concentration is converted with the size of the
+//! rule before the change (the rules are evaluated first, then the values set); sbmlsim sets
+//! the values one after the other in the order of the change, so its result depends on that
+//! order (a known difference).
 //!
 //! Note that an event keeps the amounts when it changes a compartment (as libroadrunner does,
 //! see `model_event_apply` of `sbmlsim_abi`): a change and an event differ there, as in sbmlsim.
@@ -267,6 +275,9 @@ impl Changes {
     /// parameters `p`, then evaluates the assignment rules.
     pub fn apply(&self, k: usize, model: &dyn ModelFns, y: &mut [f64], p: &mut [f64]) {
         let change = &self.changes[k];
+        // the values of the assignment rules at the time of the change, so the size of a
+        // compartment of a rule which converts a value is the current one
+        model.assign(change.time, y, p);
         let np = self.n_parameters;
         let get = |y: &[f64], p: &[f64], i: usize| if i < np { p[i] } else { y[i - np] };
         let set = |y: &mut [f64], p: &mut [f64], i: usize, v: f64| {

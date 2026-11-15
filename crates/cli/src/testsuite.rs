@@ -313,14 +313,15 @@ pub fn check_commits(dirs: &[PathBuf], baseline_commit: &str) -> anyhow::Result<
 /// The test tag of the cases whose simultaneous events execute in a random order.
 pub const RANDOM_EVENT_EXECUTION: &str = "RandomEventExecution";
 
-/// The request of a case for `fraction` of its duration with as many of its steps (at least
-/// one), with a steady state before it of at most the duration of the case for `steady`.
+/// The request of a case for `fraction` of its duration with as many of its steps (rounded half
+/// to even, as Python's `round` in sbmlsim's `case_simulation`, at least one), with a steady
+/// state before it of at most the duration of the case for `steady`.
 pub fn case_request_of(settings: &CaseSettings, fraction: f64, steady: bool) -> SimulationRequest {
     let mut req = case_request(settings);
     if fraction != 1.0 {
         req.end = settings.start + settings.duration * fraction;
         req.output = Output::Uniform {
-            steps: ((settings.steps as f64 * fraction).round() as u32).max(1),
+            steps: ((settings.steps as f64 * fraction).round_ties_even() as u32).max(1),
         };
     }
     if steady {

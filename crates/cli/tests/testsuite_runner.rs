@@ -419,7 +419,16 @@ fn requests_of_the_repeat_checks() {
     assert_eq!(case_request_of(&s, 1.0, false), full);
     let half = case_request_of(&s, 0.5, false);
     assert_eq!((half.start, half.end), (2.0, 7.0));
+    // 25.5 rounds half to even (Python's `round`), as 2.5 and 3.5
     assert_eq!(half.output, sbmlsim_abi::Output::Uniform { steps: 26 });
+    for (steps, half) in [(5, 2), (7, 4), (50, 25), (101, 50)] {
+        s.steps = steps;
+        assert_eq!(
+            case_request_of(&s, 0.5, false).output,
+            sbmlsim_abi::Output::Uniform { steps: half },
+            "{steps}"
+        );
+    }
     assert_eq!(half.steady_state, None);
     s.steps = 1;
     assert_eq!(
