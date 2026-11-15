@@ -7,10 +7,12 @@
 // `mathlib.wasm`; without it the tests write those of the command line into a temporary one.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { Worker } from "node:worker_threads";
 
 import { createRuntime } from "../loader.mjs";
 
@@ -132,5 +134,47 @@ export function request(fields = {}) {
     },
     seed: 0,
     ...fields,
+  };
+}
+
+/** A worker of the pool (`pool.mjs`) as a worker thread of Node. */
+export function nodeWorker(url) {
+  return new Worker(url);
+}
+
+/** `fetch` of `file:` URLs (Node's `fetch` has none): a `Response` of the bytes, a 404 without. */
+export async function fileFetch(url) {
+  try {
+    return new Response(await readFile(fileURLToPath(new URL(url))));
+  } catch {
+    return new Response("", { status: 404 });
+  }
+}
+
+/** The key of the model of the panel bundle of the tests. */
+export const PANEL_MODEL = "default-5d1a3c9e0f27";
+
+let panelBundlePath = null;
+
+/**
+ * The panel bundle of the tests (`fixtures/panel-bundle`), copied into a temporary directory with
+ * its model compiled by the command line; gives the path of its `bundle.json`.
+ */
+export function panelBundle() {
+  if (panelBundlePath) return panelBundlePath;
+  const dir = tempDir("sbmlsim-core-panel-bundle-");
+  cpSync(path.join(ROOT, "js", "test", "fixtures", "panel-bundle"), dir, { recursive: true });
+  const model = path.join(dir, "models", PANEL_MODEL);
+  runCli(["compile", path.join(model, "model.xml"), "-o", model]);
+  panelBundlePath = path.join(dir, "bundle.json");
+  return panelBundlePath;
+}
+
+/** The `file:` URLs of `engine.wasm` and `mathlib.wasm` of the command line. */
+export function runtimeUrls() {
+  const dir = runtimeDir();
+  return {
+    engine: pathToFileURL(path.join(dir, "engine.wasm")),
+    mathlib: pathToFileURL(path.join(dir, "mathlib.wasm")),
   };
 }
