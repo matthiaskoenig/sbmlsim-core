@@ -422,3 +422,131 @@ fn klu_and_dense_agree_on_an_analytic_model() {
         }
     }
 }
+
+/// A model of species of amounts (`id`, initial amount) and reactions which consume one species
+/// each at a rate (MathML), without products.
+fn consumed(species: &[(&str, f64)], reactions: &[(&str, &str)], parameters: &str) -> String {
+    let species: String = species
+        .iter()
+        .map(|(id, x)| {
+            format!(
+                r#"<species id="{id}" compartment="C" initialAmount="{x}" hasOnlySubstanceUnits="true" boundaryCondition="false" constant="false"/>"#
+            )
+        })
+        .collect();
+    let reactions: String = reactions
+        .iter()
+        .enumerate()
+        .map(|(k, (s, law))| {
+            format!(
+                r#"<reaction id="R{k}" reversible="false"><listOfReactants><speciesReference species="{s}" stoichiometry="1" constant="true"/></listOfReactants><kineticLaw><math {MATH}>{law}</math></kineticLaw></reaction>"#
+            )
+        })
+        .collect();
+    format!(
+        r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2"><model id="m"><listOfCompartments><compartment id="C" size="1" constant="true"/></listOfCompartments><listOfSpecies>{species}</listOfSpecies><listOfParameters>{parameters}</listOfParameters><listOfReactions>{reactions}</listOfReactions></model></sbml>"#
+    )
+}
+
+/// The analytic Jacobian of a model has an entry which is not finite at its initial state, and
+/// the simulation with it (`Auto`) integrates and agrees with the colored difference quotient
+/// within the tolerances of the integration.
+fn falls_back(sbml: &str, selections: &[&str]) {
+    let analytic = compile(sbml, &CompileOptions::default()).unwrap();
+    assert!(matches!(
+        analytic.description.jacobian,
+        JacobianKind::Analytic(_)
+    ));
+    let desc = &analytic.description;
+    let y: Vec<f64> = desc.states.iter().map(|e| e.initial).collect();
+    let p: Vec<f64> = desc.parameters.iter().map(|e| e.initial).collect();
+    let entries = runtime()
+        .model_functions(&analytic.wasm, desc)
+        .unwrap()
+        .jac(0.0, &y, &p)
+        .unwrap();
+    assert!(entries.iter().any(|v| !v.is_finite()), "{entries:?}");
+    let difference = compile(
+        sbml,
+        &CompileOptions {
+            jacobian: JacobianChoice::DifferenceQuotient,
+            ..CompileOptions::default()
+        },
+    )
+    .unwrap();
+    let req = SimulationRequest {
+        contract: SIMULATION_CONTRACT.to_string(),
+        start: 0.0,
+        end: 10.0,
+        output: Output::Uniform { steps: 10 },
+        preinit: vec![],
+        changes: vec![],
+        steady_state: None,
+        selections: selections.iter().map(|s| s.to_string()).collect(),
+        settings: IntegratorSettings {
+            relative_tolerance: 1e-8,
+            absolute_tolerance: Tolerance::Scalar(1e-12),
+            ..IntegratorSettings::default()
+        },
+        seed: 0,
+    };
+    let simulate = |c: &CompiledModel, solver: LinearSolver| {
+        let mut req = req.clone();
+        req.settings.linear_solver = solver;
+        runtime()
+            .instantiate(&c.wasm, &c.description)
+            .unwrap()
+            .simulate(&req)
+            .unwrap()
+    };
+    for solver in [LinearSolver::Dense, LinearSolver::Klu] {
+        let (a, d) = (simulate(&analytic, solver), simulate(&difference, solver));
+        assert_eq!(a.n_rows, 11);
+        for (x, y) in a.values.iter().zip(&d.values) {
+            assert!(
+                x.is_finite() && (x - y).abs() <= 1e-6 * y.abs() + 1e-10,
+                "{solver:?}: {:?} {:?}",
+                a.values,
+                d.values
+            );
+        }
+    }
+}
+
+#[test]
+fn an_infinite_derivative_at_a_finite_state_falls_back_to_the_difference_quotient() {
+    // the probe of the review: S(0) = 0 consumed at k * sqrt(S), whose analytic derivative
+    // 0.5 * pow(S, -0.5) is infinite at S = 0, and an unrelated decay of Q; and P(0) = 0
+    // consumed at pow(P, Q), whose derivative pow(P, Q) * ln(P) by Q is NaN at P = 0
+    let sbml = consumed(
+        &[("S", 0.0), ("Q", 1.0), ("P", 0.0)],
+        &[
+            (
+                "S",
+                "<apply><times/><ci>k</ci><apply><root/><ci>S</ci></apply></apply>",
+            ),
+            ("Q", "<apply><times/><ci>k</ci><ci>Q</ci></apply>"),
+            ("P", "<apply><power/><ci>P</ci><ci>Q</ci></apply>"),
+        ],
+        r#"<parameter id="k" value="0.5" constant="true"/>"#,
+    );
+    falls_back(&sbml, &["time", "S", "Q", "P"]);
+}
+
+#[test]
+fn a_power_0_at_0_falls_back_to_the_difference_quotient() {
+    // x^0 at x = 0: the derivative 0 * pow(0, -1) is NaN; S(0) = 0 is consumed at k * S^0 * S,
+    // so it stays at 0 and every Jacobian has the NaN
+    let sbml = consumed(
+        &[("S", 0.0), ("Q", 1.0)],
+        &[
+            (
+                "S",
+                "<apply><times/><ci>k</ci><apply><power/><ci>S</ci><cn>0</cn></apply><ci>S</ci></apply>",
+            ),
+            ("Q", "<apply><times/><ci>k</ci><ci>Q</ci></apply>"),
+        ],
+        r#"<parameter id="k" value="0.5" constant="true"/>"#,
+    );
+    falls_back(&sbml, &["time", "S", "Q"]);
+}

@@ -78,6 +78,25 @@ impl MathFn {
 /// A signature of a function.
 type Signature = (Vec<ValType>, Vec<ValType>);
 
+/// The limits a function is checked against.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Limits {
+    /// The largest body in bytes.
+    pub bytes: usize,
+    /// The most locals, with the parameters.
+    pub locals: usize,
+}
+
+impl Default for Limits {
+    /// The limits of WebAssembly engines, [`MAX_FUNCTION_BYTES`] and [`MAX_LOCALS`].
+    fn default() -> Self {
+        Limits {
+            bytes: MAX_FUNCTION_BYTES,
+            locals: MAX_LOCALS,
+        }
+    }
+}
+
 /// The module being built.
 #[derive(Default)]
 pub(crate) struct ModuleBuilder {
@@ -85,6 +104,8 @@ pub(crate) struct ModuleBuilder {
     math: Vec<MathFn>,
     math_index: BTreeMap<MathFn, u32>,
     functions: Vec<DefinedFunction>,
+    /// The limits of every function (the defaults but in tests).
+    pub limits: Limits,
 }
 
 /// A function the module defines and exports.
@@ -470,12 +491,15 @@ impl Body<'_> {
     pub(crate) fn finish(mut self) -> Result<(), CompileError> {
         self.sink().end();
         let locals = (self.n_params + self.n_locals) as usize;
-        if self.code.len() > MAX_FUNCTION_BYTES || locals > MAX_LOCALS {
+        let limits = self.module.limits;
+        if self.code.len() > limits.bytes || locals > limits.locals {
             return Err(CompileError::Unsupported {
                 feature: format!(
                     "a function above the limits of WebAssembly engines ({} bytes, {locals} \
-                     locals; at most {MAX_FUNCTION_BYTES} bytes and {MAX_LOCALS} locals)",
-                    self.code.len()
+                     locals; at most {} bytes and {} locals)",
+                    self.code.len(),
+                    limits.bytes,
+                    limits.locals
                 ),
                 element: self.export.to_string(),
             });

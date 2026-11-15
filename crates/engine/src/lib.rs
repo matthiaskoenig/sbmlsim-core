@@ -251,25 +251,16 @@ fn linear_of(
     })
 }
 
-/// The sparse difference quotient of a configuration of `linear`, `None` for another source
-/// of the Jacobian: over the colors of the description, or the greedy coloring of the pattern
-/// of an analytic Jacobian.
-fn difference_of(desc: &ModelDescription, linear: Linear) -> Option<Difference> {
-    let (Linear::Dense {
-        jacobian: Jacobian::Difference,
-    }
-    | Linear::Klu {
-        jacobian: Jacobian::Difference,
-        ..
-    }) = linear
-    else {
-        return None;
-    };
+/// The sparse difference quotient of a stiff configuration with a pattern: the Jacobian of
+/// [`Jacobian::Difference`], the fallback of [`Jacobian::Analytic`] for a call with an entry
+/// which is not finite; over the colors of the description, or the greedy coloring of the
+/// pattern of an analytic Jacobian.
+fn difference_of(desc: &ModelDescription) -> Difference {
     let n = desc.states.len();
-    Some(match &desc.jacobian {
+    match &desc.jacobian {
         JacobianKind::ColoredDifference { colors, .. } => Difference::new(n, colors),
         JacobianKind::Analytic(pattern) => Difference::new(n, &pattern.greedy_colors()),
-    })
+    }
 }
 
 /// Checks the settings of the integrator for a model of `n` states.
@@ -509,6 +500,7 @@ fn run(
     let n_cvode = if with_events { n.max(1) } else { n };
     let mut pattern = None;
     let mut difference = None;
+    let mut analytic = false;
     let cvode = if n_cvode == 0 {
         None
     } else {
@@ -523,7 +515,16 @@ fn run(
             };
             if n > 0 {
                 pattern = Some(pattern_of(desc));
-                difference = difference_of(desc, linear);
+                difference = Some(difference_of(desc));
+                analytic = matches!(
+                    linear,
+                    Linear::Dense {
+                        jacobian: Jacobian::Analytic
+                    } | Linear::Klu {
+                        jacobian: Jacobian::Analytic,
+                        ..
+                    }
+                );
             }
             Method::Bdf(linear)
         } else {
@@ -552,6 +553,7 @@ fn run(
         p,
         pattern,
         jac_values: vec![0.0; pattern.map_or(0, |p| p.row_idx.len())],
+        analytic,
         difference,
         mem: std::ptr::null_mut(),
     };

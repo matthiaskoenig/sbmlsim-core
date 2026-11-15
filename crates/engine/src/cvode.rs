@@ -15,6 +15,14 @@
 //! of the right hand side per color instead of per state. CVODE's own difference quotient is
 //! only used for the one state of the rate 0 of a model without states, which has no pattern.
 //!
+//! An analytic Jacobian with an entry which is not finite (an infinite derivative at a finite
+//! state, e.g. `0.5 * pow(x, -0.5)` of `sqrt(x)` at `x = 0`, or a NaN of `0 * pow(0, -1)` of
+//! `x^0`, where CVODE's difference quotient sees a finite slope) would make the factorization of
+//! `I - gamma J` NaN and the corrector fail. Such a call computes its whole Jacobian with the
+//! sparse difference quotient over the greedy coloring of the pattern instead; the analytic
+//! entries are evaluated first in every call, so the choice depends on the state alone and the
+//! bits are the same on every host and in every run.
+//!
 //! SUNDIALS writes nothing: the library is built without logging (`SUNDIALS_LOGGING_LEVEL 0`),
 //! the default error handlers of the context, which print, are removed and an error handler of
 //! the wrapper records the message of the last error instead, which
@@ -145,7 +153,12 @@ pub(crate) struct Problem<'a> {
     pub pattern: Option<&'a SparsityPattern>,
     /// The values of the Jacobian in the CSC order of the pattern.
     pub jac_values: Vec<f64>,
-    /// The sparse difference quotient, `None` for the analytic Jacobian.
+    /// Whether the Jacobian is the analytic one of the model (with the sparse difference
+    /// quotient for a call with an entry which is not finite), else the sparse difference
+    /// quotient.
+    pub analytic: bool,
+    /// The sparse difference quotient: the Jacobian, or the fallback of the analytic one; `None`
+    /// without a pattern.
     pub difference: Option<Difference>,
     /// The CVODE memory of the running integration, set by [`Cvode::integrate`] (the sparse
     /// difference quotient reads its error weights and step size).
@@ -232,8 +245,9 @@ unsafe extern "C" fn roots(
 }
 
 /// The values of the Jacobian at `(t, y)` into `problem.jac_values`: the analytic one of the
-/// model, or the sparse difference quotient; `fy` is the right hand side at `y` and `ewt` a
-/// vector of `n` values CVODE lends. Returns the return code of the callback.
+/// model where all its entries are finite, else the sparse difference quotient; `fy` is the
+/// right hand side at `y` and `ewt` a vector of `n` values CVODE lends. Returns the return code
+/// of the callback.
 ///
 /// # Safety
 /// `y`, `fy` and `ewt` are serial vectors of `problem.n` values, `problem.mem` is the CVODE
@@ -250,11 +264,16 @@ unsafe fn jacobian_values(
     // SAFETY: as documented; the vectors are not aliased by the slices of the problem.
     unsafe {
         let y_values = values(y, n);
-        let Some(dq) = problem.difference.as_mut() else {
+        if problem.analytic {
             problem
                 .model
                 .jac(t, y_values, &problem.p, &mut problem.jac_values);
-            return 0;
+            if problem.jac_values.iter().all(|v| v.is_finite()) {
+                return 0;
+            }
+        }
+        let Some(dq) = problem.difference.as_mut() else {
+            return -1;
         };
         // the increments of `cvLsDenseDQJac` (SUNDIALS 7.9.0), in its order of operations
         if CVodeGetErrWeights(problem.mem, ewt) != 0 {
@@ -667,6 +686,15 @@ mod tests {
     /// Integrates Robertson with a configuration to `4e10`, returns the state at the outputs
     /// `0.4 * 10^i` and the number of steps.
     fn robertson(linear: Linear, difference: Option<Difference>) -> (Vec<f64>, c_long) {
+        let analytic = matches!(
+            linear,
+            Linear::Dense {
+                jacobian: Jacobian::Analytic
+            } | Linear::Klu {
+                jacobian: Jacobian::Analytic,
+                ..
+            }
+        );
         let model = Robertson;
         let desc = model.description();
         let (mut p, mut y) = (vec![0.0; 3], vec![0.0; 3]);
@@ -690,6 +718,7 @@ mod tests {
             p,
             pattern: Some(desc.jacobian.pattern()),
             jac_values: vec![0.0; desc.jacobian.pattern().nnz()],
+            analytic,
             difference,
             mem: ptr::null_mut(),
         };
@@ -704,6 +733,129 @@ mod tests {
         // SAFETY: the memory is initialized.
         unsafe { CVodeGetNumSteps(cvode.mem, &mut steps) };
         (out, steps)
+    }
+
+    /// A stiff chain of `N` states, `y_i' = 1000 (y_{i-1}^2 - y_i^3)` (`y_{-1}` = 1): the
+    /// Jacobian is bidiagonal, so the greedy coloring groups every second column.
+    struct Chain;
+
+    const N: usize = 7;
+
+    impl ModelFns for Chain {
+        fn defaults(&self, _p: &mut [f64], y: &mut [f64]) {
+            y.fill(0.0);
+        }
+        fn init(&self, _t: f64, _p: &mut [f64], _y: &mut [f64], _fixed: &[u8]) {}
+        fn rhs(&self, _t: f64, y: &[f64], _p: &[f64], ydot: &mut [f64]) {
+            for i in 0..N {
+                let before = if i == 0 { 1.0 } else { y[i - 1] * y[i - 1] };
+                ydot[i] = 1000.0 * (before - y[i] * y[i] * y[i]);
+            }
+        }
+        fn jac(&self, _t: f64, _y: &[f64], _p: &[f64], _values: &mut [f64]) {
+            unreachable!("the chain has no analytic Jacobian")
+        }
+        fn roots(&self, _t: f64, _y: &[f64], _p: &[f64], _g: &mut [f64]) {}
+        fn trigger(&self, _i: u32, _t: f64, _y: &[f64], _p: &[f64]) -> bool {
+            false
+        }
+        fn priority(&self, _i: u32, _t: f64, _y: &[f64], _p: &[f64]) -> f64 {
+            0.0
+        }
+        fn delay(&self, _i: u32, _t: f64, _y: &[f64], _p: &[f64]) -> f64 {
+            0.0
+        }
+        fn event_values(&self, _i: u32, _t: f64, _y: &[f64], _p: &[f64], _out: &mut [f64]) {}
+        fn event_apply(&self, _i: u32, _t: f64, _v: &[f64], _y: &mut [f64], _p: &mut [f64]) {}
+        fn selections(&self, _t: f64, _y: &[f64], _p: &[f64], _out: &mut [f64]) {}
+        fn assign(&self, _t: f64, _y: &mut [f64], _p: &mut [f64]) {}
+        fn sizes(&self) -> sbmlsim_abi::ModelSizes {
+            unreachable!("not loaded into an engine")
+        }
+    }
+
+    /// The bidiagonal pattern of the chain: column `j` has the rows `j` and `j + 1`.
+    fn chain_pattern() -> SparsityPattern {
+        let mut col_ptr = vec![0u32];
+        let mut row_idx = Vec::new();
+        for j in 0..N as u32 {
+            row_idx.push(j);
+            if (j as usize) + 1 < N {
+                row_idx.push(j + 1);
+            }
+            col_ptr.push(row_idx.len() as u32);
+        }
+        SparsityPattern {
+            n: N as u32,
+            col_ptr,
+            row_idx,
+        }
+    }
+
+    /// Integrates the chain to `t = 10` with a configuration; the state at `0.01 * 10^i` and the
+    /// number of steps.
+    fn chain(linear: Linear, difference: Option<Difference>) -> (Vec<f64>, c_long) {
+        let pattern = chain_pattern();
+        let mut cvode = Cvode::new(Config {
+            n: N,
+            method: Method::Bdf(linear),
+        })
+        .unwrap();
+        let settings = IntegratorSettings {
+            relative_tolerance: 1e-8,
+            absolute_tolerance: Tolerance::Scalar(1e-12),
+            ..IntegratorSettings::default()
+        };
+        cvode.start(0.0, &[0.0; N], 10.0, &settings, 0).unwrap();
+        let mut problem = Problem {
+            n: N,
+            n_model: N,
+            n_roots: 0,
+            model: &Chain,
+            p: vec![],
+            pattern: Some(&pattern),
+            jac_values: vec![0.0; pattern.nnz()],
+            analytic: false,
+            difference,
+            mem: ptr::null_mut(),
+        };
+        let mut out = Vec::new();
+        for i in 0..4 {
+            cvode
+                .integrate(&mut problem, 0.01 * 10f64.powi(i), CV_NORMAL)
+                .unwrap();
+            out.extend_from_slice(cvode.state());
+        }
+        let mut steps: c_long = 0;
+        // SAFETY: the memory is initialized.
+        unsafe { CVodeGetNumSteps(cvode.mem, &mut steps) };
+        (out, steps)
+    }
+
+    #[test]
+    fn colors_of_several_columns_give_the_difference_quotient_of_cvode_bitwise() {
+        // a color holds every second column of the bidiagonal pattern: one right hand side per
+        // color gives the entries of all its columns, each the forward difference of CVODE
+        let pattern = chain_pattern();
+        let colors = pattern.greedy_colors();
+        assert_eq!(colors, [0, 1, 0, 1, 0, 1, 0]);
+        let internal = chain(
+            Linear::Dense {
+                jacobian: Jacobian::Internal,
+            },
+            None,
+        );
+        let sparse = chain(
+            Linear::Dense {
+                jacobian: Jacobian::Difference,
+            },
+            Some(Difference::new(N, &colors)),
+        );
+        assert!(internal.1 > 50, "{} steps", internal.1);
+        assert_eq!(internal.1, sparse.1);
+        let bits = |v: &[f64]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+        assert_eq!(bits(&internal.0), bits(&sparse.0));
+        assert!(internal.0.iter().all(|y| y.is_finite() && *y > 0.0));
     }
 
     #[test]
@@ -734,7 +886,7 @@ mod tests {
         // (the criterion of `dense_and_klu_same_result`: the step sequences part after t = 4)
         let klu = robertson(
             Linear::Klu {
-                nnz: 7,
+                nnz: desc.jacobian.pattern().nnz(),
                 jacobian: Jacobian::Difference,
             },
             Some(Difference::new(3, &colors)),

@@ -48,7 +48,7 @@ use sbmlsim_ir::derive::{self, JacobianIr};
 use sbmlsim_ir::{CompileError, EntityKind, Event, Expr, Model, SpeciesValue, Symbol};
 use wasm_encoder::ValType::{F64, I32};
 
-use wasm::{Ctx, ModuleBuilder};
+use wasm::{Ctx, Limits, ModuleBuilder};
 pub use wasm::{MAX_FUNCTION_BYTES, MAX_LOCALS};
 
 /// The reason of a difference quotient which was asked for.
@@ -67,9 +67,22 @@ pub fn emit(model: &Model) -> Result<(Vec<u8>, ModelDescription), CompileError> 
 /// `DifferenceQuotient` the colored difference quotient (with the reason
 /// [`DIFFERENCE_REQUESTED`]), `Analytic` the analytic Jacobian, refused (`Unsupported`, with the
 /// reason) for a model which has none.
+///
+/// A `model_jac` of the analytic Jacobian above the limits of WebAssembly engines is the
+/// colored difference quotient under `Auto` (with the reason naming its size) and refused
+/// under `Analytic`.
 pub fn emit_with(
     model: &Model,
     choice: JacobianChoice,
+) -> Result<(Vec<u8>, ModelDescription), CompileError> {
+    emit_limited(model, choice, Limits::default())
+}
+
+/// [`emit_with`] with the limits of the functions given (lower ones in tests).
+fn emit_limited(
+    model: &Model,
+    choice: JacobianChoice,
+    limits: Limits,
 ) -> Result<(Vec<u8>, ModelDescription), CompileError> {
     let jacobian = match (derive::jacobian(model), choice) {
         (jacobian, JacobianChoice::DifferenceQuotient) => {
@@ -83,13 +96,27 @@ pub fn emit_with(
         }
         (jacobian, _) => jacobian,
     };
-    let wasm = module(model, &jacobian)?;
+    let (wasm, jacobian) = match module(model, &jacobian, limits) {
+        Ok(wasm) => (wasm, jacobian),
+        // the analytic Jacobian is too large for one function: the difference quotient, which
+        // needs no model_jac, unless the analytic one was asked for
+        Err(CompileError::Unsupported { feature, element })
+            if element == abi::JAC
+                && choice == JacobianChoice::Auto
+                && matches!(jacobian, JacobianIr::Analytic { .. }) =>
+        {
+            let jacobian = jacobian.into_difference(format!("model_jac would be {feature}"));
+            (module(model, &jacobian, limits)?, jacobian)
+        }
+        Err(error) => return Err(error),
+    };
     Ok((wasm, description(model, jacobian)))
 }
 
 /// The module of a model.
-fn module(model: &Model, jacobian: &JacobianIr) -> Result<Vec<u8>, CompileError> {
+fn module(model: &Model, jacobian: &JacobianIr, limits: Limits) -> Result<Vec<u8>, CompileError> {
     let mut m = ModuleBuilder::default();
+    m.limits = limits;
     // a function which reads no symbol
     let none = Ctx { t: 0, y: 0, p: 0 };
 
@@ -497,5 +524,74 @@ fn description(model: &Model, jacobian: JacobianIr) -> ModelDescription {
             .iter()
             .filter_map(|s| Some((s.id.clone(), s.unit.clone()?)))
             .collect::<BTreeMap<_, _>>(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MATH: &str = r#"xmlns="http://www.w3.org/1998/Math/MathML""#;
+
+    /// `x' = -b` with the rule `b = x * x + y` and `y' = 1`: `model_jac` has one more local than
+    /// any other function (the derivative `x + x` of the rule).
+    fn chain() -> Model {
+        let xml = format!(
+            r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2"><model id="m">
+<listOfParameters><parameter id="x" value="1" constant="false"/><parameter id="y" value="1" constant="false"/><parameter id="b" constant="false"/></listOfParameters>
+<listOfRules>
+<assignmentRule variable="b"><math {MATH}><apply><plus/><apply><times/><ci>x</ci><ci>x</ci></apply><ci>y</ci></apply></math></assignmentRule>
+<rateRule variable="x"><math {MATH}><apply><minus/><ci>b</ci></apply></math></rateRule>
+<rateRule variable="y"><math {MATH}><cn>1</cn></math></rateRule>
+</listOfRules></model></sbml>"#
+        );
+        sbmlsim_ir::build(&sbmlsim_sbml::read(&xml).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn a_model_jac_above_the_limits_is_the_difference_quotient_under_auto() {
+        let m = chain();
+        let JacobianIr::Analytic { derivatives, .. } = derive::jacobian(&m) else {
+            panic!()
+        };
+        assert_eq!(derivatives.len(), 1);
+        // 4 parameters of model_jac, the rule and its derivative: 6 locals; every other
+        // function has at most 5 (model_rhs and model_selections: 4 parameters and the rule)
+        let limits = Limits {
+            bytes: MAX_FUNCTION_BYTES,
+            locals: 5,
+        };
+        let (_, d) = emit_limited(&m, JacobianChoice::Auto, limits).unwrap();
+        let JacobianKind::ColoredDifference {
+            pattern, reason, ..
+        } = &d.jacobian
+        else {
+            panic!("{:?}", d.jacobian)
+        };
+        assert_eq!(pattern.row_idx, [0, 0]);
+        assert_eq!(
+            reason,
+            "model_jac would be a function above the limits of WebAssembly engines (\
+             74 bytes, 6 locals; at most 7654321 bytes and 5 locals)"
+        );
+        // the analytic Jacobian asked for is refused with the error of the limits
+        let error = emit_limited(&m, JacobianChoice::Analytic, limits).unwrap_err();
+        assert!(
+            matches!(&error, CompileError::Unsupported { element, .. } if element == abi::JAC),
+            "{error:?}"
+        );
+        // within the limits it is analytic
+        let (_, d) = emit_limited(&m, JacobianChoice::Auto, Limits::default()).unwrap();
+        assert!(matches!(d.jacobian, JacobianKind::Analytic(_)));
+        // a function other than model_jac above the limits stays an error
+        let tight = Limits {
+            bytes: MAX_FUNCTION_BYTES,
+            locals: 4,
+        };
+        let error = emit_limited(&m, JacobianChoice::Auto, tight).unwrap_err();
+        assert!(
+            matches!(&error, CompileError::Unsupported { element, .. } if element != abi::JAC),
+            "{error:?}"
+        );
     }
 }

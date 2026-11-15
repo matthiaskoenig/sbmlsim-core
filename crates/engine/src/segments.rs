@@ -591,6 +591,7 @@ mod tests {
             p: p.clone(),
             pattern: Some(crate::pattern_of(&desc)),
             jac_values: vec![0.0],
+            analytic: true,
             difference: None,
             mem: std::ptr::null_mut(),
         };

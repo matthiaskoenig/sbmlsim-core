@@ -450,7 +450,10 @@ impl SparsityPattern {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum JacobianKind {
-    /// `model_jac` computes it on the pattern, in its CSC order.
+    /// `model_jac` computes it on the pattern, in its CSC order. A call whose entries are not
+    /// all finite (an infinite derivative at a finite state, e.g. of `sqrt(x)` at `x = 0`) is
+    /// computed by the engine with the sparse difference quotient over the greedy coloring of
+    /// the pattern ([`SparsityPattern::greedy_colors`]) instead.
     Analytic(SparsityPattern),
     /// Difference quotients over the colors of the columns of the pattern; `model_jac` traps.
     ColoredDifference {
