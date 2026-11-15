@@ -84,12 +84,13 @@ pub fn emit_with(
 
 /// [`emit_with`] with the optimizer ([`sbmlsim_ir::optimize`]): the functions are the programs
 /// of [`optimize::plan`] of the model and of its Jacobian as [`emit_with`] derives it, so the
-/// module is smaller and faster and gives the bits of the module of [`emit_with`]; the
-/// description is the same.
+/// module is smaller and faster and gives the bits of the module of [`emit_with`].
 ///
-/// A function with the common subexpressions above the limits of WebAssembly engines (they add
-/// locals) is emitted without them; a `model_jac` above the limits without them as well is the
-/// colored difference quotient under `Auto`, as in [`emit_with`].
+/// The kind of the Jacobian (and its refusal under `Analytic`) is decided from `model_jac` as
+/// written, as in [`emit_with`], so the description is the one of [`emit_with`] also near the
+/// limits, where an optimized `model_jac` may be within them and the one as written not. A
+/// module whose common subexpressions put a function above the limits (they add locals) is
+/// emitted without them, and as written when it is above them still.
 pub fn emit_optimized(
     model: &Model,
     choice: JacobianChoice,
@@ -105,9 +106,75 @@ fn emit_limited(
     limits: Limits,
     optimized: bool,
 ) -> Result<(Vec<u8>, ModelDescription), CompileError> {
+    // the kind of the Jacobian and its reason are those of the model as written, with and
+    // without the optimizer
+    let jacobian = choose_jacobian(model, choice, limits)?;
+    let wasm = if optimized {
+        // the common subexpressions add locals: without them when a function is above the
+        // limits with them, and as written when it is above them still (the folding of a
+        // literal boolean may add bytes), whose model_jac is known to be within them
+        let plan = |cse| optimize::plan(model, &jacobian, cse);
+        let within = |result: Result<Vec<u8>, CompileError>, next: &dyn Fn() -> _| match result {
+            Err(error) if wasm::is_above_the_limits(&error) => next(),
+            other => other,
+        };
+        within(module(model, &jacobian, limits, Some(&plan(true))), &|| {
+            within(
+                module(model, &jacobian, limits, Some(&plan(false))),
+                &|| module(model, &jacobian, limits, None),
+            )
+        })?
+    } else {
+        module(model, &jacobian, limits, None)?
+    };
+    Ok((wasm, description(model, jacobian)))
+}
+
+/// Adds `model_jac(t, y, p, values)` as written to the module: the rules, their derivatives, the
+/// entries; it traps for the colored difference quotient.
+fn written_jac(
+    m: &mut ModuleBuilder,
+    model: &Model,
+    jacobian: &JacobianIr,
+) -> Result<(), CompileError> {
+    let ctx = Ctx { t: 0, y: 1, p: 2 };
+    let mut f = m.function(abi::JAC, &[F64, I32, I32, I32], &[], ctx);
+    match jacobian {
+        JacobianIr::Analytic {
+            derivatives,
+            entries,
+            ..
+        } => {
+            if !entries.is_empty() {
+                f.assign_locals(&model.assignment_rules);
+            }
+            for (k, d) in derivatives.iter().enumerate() {
+                f.assign_local(Symbol::Derivative(k as u32), d);
+            }
+            for (k, e) in entries.iter().enumerate() {
+                f.store_at(3, k as u32, e);
+            }
+        }
+        JacobianIr::ColoredDifference { .. } => f.unreachable(),
+    }
+    f.finish()
+}
+
+/// The Jacobian of a model for `choice`, decided from the model as written: the analytic one
+/// where the model has one, unless the difference quotient is asked for or `model_jac` as
+/// written is above the limits (then the colored difference quotient under `Auto`, with the
+/// reason naming the size of that function, and refused under `Analytic`).
+///
+/// The size of a function does not depend on the others: an import of mathlib has an index
+/// below 128 in any order of the imports, one byte in the code.
+fn choose_jacobian(
+    model: &Model,
+    choice: JacobianChoice,
+    limits: Limits,
+) -> Result<JacobianIr, CompileError> {
     let jacobian = match (derive::jacobian(model), choice) {
         (jacobian, JacobianChoice::DifferenceQuotient) => {
-            jacobian.into_difference(DIFFERENCE_REQUESTED)
+            return Ok(jacobian.into_difference(DIFFERENCE_REQUESTED));
         }
         (JacobianIr::ColoredDifference { reason, .. }, JacobianChoice::Analytic) => {
             return Err(CompileError::Unsupported {
@@ -117,42 +184,20 @@ fn emit_limited(
         }
         (jacobian, _) => jacobian,
     };
-    // the module of a Jacobian: as written, or optimized with the common subexpressions and,
-    // when a function is above the limits with them, without them
-    let build = |jacobian: &JacobianIr| -> Result<Vec<u8>, CompileError> {
-        if !optimized {
-            return module(model, jacobian, limits, None);
-        }
-        module(
-            model,
-            jacobian,
-            limits,
-            Some(&optimize::plan(model, jacobian, true)),
-        )
-        .or_else(|_| {
-            module(
-                model,
-                jacobian,
-                limits,
-                Some(&optimize::plan(model, jacobian, false)),
-            )
-        })
-    };
-    let (wasm, jacobian) = match build(&jacobian) {
-        Ok(wasm) => (wasm, jacobian),
+    if matches!(jacobian, JacobianIr::ColoredDifference { .. }) {
+        return Ok(jacobian);
+    }
+    let mut m = ModuleBuilder::default();
+    m.limits = limits;
+    match written_jac(&mut m, model, &jacobian) {
+        Ok(()) => Ok(jacobian),
         // the analytic Jacobian is too large for one function: the difference quotient, which
         // needs no model_jac, unless the analytic one was asked for
-        Err(CompileError::Unsupported { feature, element })
-            if element == abi::JAC
-                && choice == JacobianChoice::Auto
-                && matches!(jacobian, JacobianIr::Analytic { .. }) =>
-        {
-            let jacobian = jacobian.into_difference(format!("model_jac would be {feature}"));
-            (build(&jacobian)?, jacobian)
+        Err(CompileError::Unsupported { feature, .. }) if choice == JacobianChoice::Auto => {
+            Ok(jacobian.into_difference(format!("model_jac would be {feature}")))
         }
-        Err(error) => return Err(error),
-    };
-    Ok((wasm, description(model, jacobian)))
+        Err(error) => Err(error),
+    }
 }
 
 /// Emits the statements of a program: a let into a local, the output `k` with `output`.
@@ -226,28 +271,7 @@ fn module(
     }
     f.finish()?;
 
-    // model_jac(t, y, p, values): the rules, their derivatives, the entries
-    let ctx = Ctx { t: 0, y: 1, p: 2 };
-    let mut f = m.function(abi::JAC, &[F64, I32, I32, I32], &[], ctx);
-    match jacobian {
-        JacobianIr::Analytic {
-            derivatives,
-            entries,
-            ..
-        } => {
-            if !entries.is_empty() {
-                f.assign_locals(&model.assignment_rules);
-            }
-            for (k, d) in derivatives.iter().enumerate() {
-                f.assign_local(Symbol::Derivative(k as u32), d);
-            }
-            for (k, e) in entries.iter().enumerate() {
-                f.store_at(3, k as u32, e);
-            }
-        }
-        JacobianIr::ColoredDifference { .. } => f.unreachable(),
-    }
-    f.finish()?;
+    written_jac(&mut m, model, jacobian)?;
 
     // model_roots(t, y, p, g): the root functions of the triggers, in the order of the events
     let roots: Vec<Expr> = model
@@ -651,8 +675,9 @@ pub fn initial_values(model: &Model) -> (Vec<f64>, Vec<f64>) {
             Symbol::State(i) => y[i as usize],
             Symbol::Param(i) => p[i as usize],
             Symbol::Time => 0.0,
-            Symbol::Derivative(_) | Symbol::Common(_) => {
-                unreachable!("an initial value reads no derivative")
+            Symbol::Derivative(_) => unreachable!("an initial value reads no derivative"),
+            Symbol::Common(_) => {
+                unreachable!("an initial value as written reads no common subexpression")
             }
         });
         match a.target {
@@ -822,6 +847,99 @@ mod tests {
             locals: 3,
         };
         assert!(emit_limited(&m, JacobianChoice::Auto, tight, true).is_err());
+    }
+
+    /// The kind of the Jacobian and the description do not depend on the optimizer, at, below
+    /// and above the limits of bytes and of locals, also where only `model_jac` as written is
+    /// above them.
+    #[test]
+    fn the_jacobian_is_chosen_from_the_model_as_written() {
+        let m = chain();
+        let mut limits: Vec<Limits> = (1..=10)
+            .map(|locals| Limits {
+                bytes: MAX_FUNCTION_BYTES,
+                locals,
+            })
+            .collect();
+        limits.extend((1..=120).map(|bytes| Limits {
+            bytes,
+            locals: MAX_LOCALS,
+        }));
+        let mut compared = 0;
+        for limits in limits {
+            for choice in [
+                JacobianChoice::Auto,
+                JacobianChoice::Analytic,
+                JacobianChoice::DifferenceQuotient,
+            ] {
+                let written = emit_limited(&m, choice, limits, false);
+                let optimized = emit_limited(&m, choice, limits, true);
+                match (written, optimized) {
+                    (Ok((_, a)), Ok((_, b))) => {
+                        assert_eq!(a, b, "{limits:?} {choice:?}");
+                        compared += 1;
+                    }
+                    (Err(a), Err(b)) => assert_eq!(a, b, "{limits:?} {choice:?}"),
+                    // a function as written above the limits which the optimizer makes smaller
+                    (Err(a), Ok((_, b))) => {
+                        assert!(
+                            !matches!(&a, CompileError::Unsupported { element, .. } if element == abi::JAC),
+                            "{limits:?} {choice:?}: {a:?}"
+                        );
+                        assert_eq!(
+                            b.jacobian.pattern(),
+                            derive::jacobian(&m).pattern(),
+                            "{limits:?} {choice:?}"
+                        );
+                    }
+                    (Ok(_), Err(b)) => panic!("{limits:?} {choice:?}: only optimized {b:?}"),
+                }
+            }
+        }
+        assert!(compared > 200, "{compared}");
+
+        // 5 locals: model_jac as written has 6 (the rule b and its derivative), the optimized
+        // one 5 (no rule b, which the derivative x + x does not read), every other function 5
+        let limits = Limits {
+            bytes: MAX_FUNCTION_BYTES,
+            locals: 5,
+        };
+        let analytic = derive::jacobian(&m);
+        for cse in [true, false] {
+            let plan = optimize::plan(&m, &analytic, cse);
+            assert!(module(&m, &analytic, limits, Some(&plan)).is_ok());
+        }
+        let reason = "model_jac would be a function above the limits of WebAssembly engines (74 \
+                      bytes, 6 locals; at most 7654321 bytes and 5 locals)";
+        for optimized in [false, true] {
+            let (_, d) = emit_limited(&m, JacobianChoice::Auto, limits, optimized).unwrap();
+            let JacobianKind::ColoredDifference { reason: r, .. } = &d.jacobian else {
+                panic!("{:?}", d.jacobian)
+            };
+            assert_eq!(r, reason);
+            let error = emit_limited(&m, JacobianChoice::Analytic, limits, optimized).unwrap_err();
+            assert!(
+                matches!(&error, CompileError::Unsupported { element, .. } if element == abi::JAC),
+                "{error:?}"
+            );
+        }
+        // within the limits of model_jac as written both are analytic
+        let limits = Limits {
+            bytes: 74,
+            locals: 6,
+        };
+        for optimized in [false, true] {
+            let (_, d) = emit_limited(&m, JacobianChoice::Analytic, limits, optimized).unwrap();
+            assert!(matches!(d.jacobian, JacobianKind::Analytic(_)));
+        }
+        let limits = Limits {
+            bytes: 73,
+            locals: 6,
+        };
+        for optimized in [false, true] {
+            let (_, d) = emit_limited(&m, JacobianChoice::Auto, limits, optimized).unwrap();
+            assert!(matches!(d.jacobian, JacobianKind::ColoredDifference { .. }));
+        }
     }
 
     #[test]

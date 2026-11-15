@@ -224,9 +224,9 @@ impl Context for Builder<'_> {
                 }
                 Ok(Expr::Number(0.0))
             }
-            Symbol::Time | Symbol::Derivative(_) | Symbol::Common(_) => {
-                unreachable!("no entity is time")
-            }
+            Symbol::Time => unreachable!("no entity is time"),
+            Symbol::Derivative(_) => unreachable!("no entity is a derivative of a Jacobian"),
+            Symbol::Common(_) => unreachable!("no entity is a common subexpression"),
         }
     }
 

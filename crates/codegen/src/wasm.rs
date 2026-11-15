@@ -26,6 +26,14 @@ pub const MAX_FUNCTION_BYTES: usize = 7_654_321;
 /// The most locals (with the parameters) of a function V8 compiles.
 pub const MAX_LOCALS: usize = 50_000;
 
+/// The feature of the error of a function above the limits ([`Body::finish`]).
+pub(crate) const ABOVE_THE_LIMITS: &str = "a function above the limits of WebAssembly engines";
+
+/// Whether an error is the one of a function above the limits.
+pub(crate) fn is_above_the_limits(error: &CompileError) -> bool {
+    matches!(error, CompileError::Unsupported { feature, .. } if feature.starts_with(ABOVE_THE_LIMITS))
+}
+
 /// A function of mathlib a model calls.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum MathFn {
@@ -500,8 +508,8 @@ impl Body<'_> {
         if self.code.len() > limits.bytes || locals > limits.locals {
             return Err(CompileError::Unsupported {
                 feature: format!(
-                    "a function above the limits of WebAssembly engines ({} bytes, {locals} \
-                     locals; at most {} bytes and {} locals)",
+                    "{ABOVE_THE_LIMITS} ({} bytes, {locals} locals; at most {} bytes and {} \
+                     locals)",
                     self.code.len(),
                     limits.bytes,
                     limits.locals

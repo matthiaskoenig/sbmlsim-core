@@ -176,7 +176,8 @@ pub(crate) fn build(m: &Sbml) -> Result<Model, CompileError> {
         Symbol::State(i) => states[i as usize].id.clone(),
         Symbol::Param(i) => parameters[i as usize].id.clone(),
         Symbol::Time => "time".to_string(),
-        Symbol::Derivative(_) | Symbol::Common(_) => unreachable!("no rule assigns a derivative"),
+        Symbol::Derivative(_) => unreachable!("no rule assigns a derivative"),
+        Symbol::Common(_) => unreachable!("no rule assigns a common subexpression"),
     };
     let assignment_rules = ordered(rules.clone(), id_of, "assignment rules")?;
     let mut entries = b.initial_values()?;

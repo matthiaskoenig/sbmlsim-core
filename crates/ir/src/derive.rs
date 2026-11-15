@@ -185,7 +185,10 @@ fn states_read(e: &Expr, position: &HashMap<Symbol, usize>, deps: &[Vec<u32>]) -
                 out.extend(d.iter().copied());
             }
         }
-        Symbol::Time | Symbol::Derivative(_) | Symbol::Common(_) => {}
+        Symbol::Time | Symbol::Derivative(_) => {}
+        Symbol::Common(_) => {
+            unreachable!("common subexpressions are only in the programs of the optimizer")
+        }
     });
     out.into_iter().collect()
 }

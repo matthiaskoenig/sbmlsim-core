@@ -274,9 +274,9 @@ impl<'m> Builder<'m> {
             match self.symbols[id] {
                 Symbol::State(k) => states.push((k, entity)),
                 Symbol::Param(k) => params.push((k, entity)),
-                Symbol::Time | Symbol::Derivative(_) | Symbol::Common(_) => {
-                    unreachable!("no entity is time")
-                }
+                Symbol::Time => unreachable!("no entity is time"),
+                Symbol::Derivative(_) => unreachable!("no entity is a derivative of a Jacobian"),
+                Symbol::Common(_) => unreachable!("no entity is a common subexpression"),
             }
         };
         // the missing values of libroadrunner: a compartment 1, a species 0, a stoichiometry 1;
