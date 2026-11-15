@@ -4,7 +4,7 @@
 //! vectors of the states `y` and of the parameters `p`, the assignment rules in their order of
 //! dependency, the initial evaluations in their order of dependency, one rate per state, the
 //! events and the selections, every math an [`Expr`] over resolved [`Symbol`]s. Code generation
-//! (Task 11) emits the functions of `model/1` from it, as written or as the programs of the
+//! (`sbmlsim-codegen`) emits the functions of `model/1` from it, as written or as the programs of the
 //! optimizer ([`optimize`]), with the Jacobian of [`derive`](mod@derive) and the meanings of
 //! [`eval`]; nothing here does file system, environment or OS access, so the crate builds for
 //! `wasm32-unknown-unknown`.

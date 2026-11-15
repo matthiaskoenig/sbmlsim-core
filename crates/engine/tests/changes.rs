@@ -584,7 +584,7 @@ fn requests_on_one_instance_are_independent() {
 fn steady_state_from_time_zero() {
     // y' = (time < 50 ? 1 : 2) - y: integrated from 0 the steady state is 2 (the horizon to 100
     // passes 50), from -1000 it would be 1; sbmlsim integrates it from 0 whatever the start
-    // (probe 3 of the report: y = 1.9999999999999496 at the starts -1000, 0 and 200)
+    // (probed with sbmlsim: y = 1.9999999999999496 at the starts -1000, 0 and 200)
     let model = EventModel {
         states: vec![("y", 0.0)],
         parameters: vec![],
@@ -616,7 +616,7 @@ fn steady_state_from_time_zero() {
 
 #[test]
 fn preinit_takes_the_selections_of_sbmlsim() {
-    // probed with libroadrunner 2.11.1 through sbmlsim (probe 3 of the report): `R` is the
+    // probed with libroadrunner 2.11.1 through sbmlsim: `R` is the
     // amount and `[R]` the concentration of a species which stores its concentration, `[S]`
     // the concentration of one which stores its amount, in the compartment of the size as
     // loaded or as an earlier value of the pre-initialization sets it

@@ -439,7 +439,7 @@ fn a_trap_poisons_the_instance() {
     }
 }
 
-/// R15: no WASI call during `engine_load` and `engine_simulate`.
+/// No WASI call during `engine_load` and `engine_simulate`.
 ///
 /// Every import of the engine which the host satisfies is a function of WASI preview1 (the
 /// model and mathlib are linked as instances, their calls never leave wasm), so the calls of the

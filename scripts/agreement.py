@@ -29,13 +29,13 @@ with `sbmlsim-core simulate` (wasmtime), 201 uniform output times. The absolute 
 scalar of the run, which sbmlsim scales per state; the engine gets the very vector roadrunner
 integrates with (by the ids of the state vector).
 
-The criterion (ruling R47a): the reference is roadrunner at rtol 1e-12 and atol 1e-14, the
+The criterion: the reference is roadrunner at rtol 1e-12 and atol 1e-14, the
 converged solution. The engine at rtol 1e-10 and atol 1e-12, with the dense solver and with KLU
 (both forced, whatever `KLU_THRESHOLD`), is compared with it with
 `sbmlsim.comparison.diff.DataSetsComparison` (`tol_rel = 1e-7`, `tol_abs = 1e-12`) on every
 column both have: a value passes when `|c - u| <= 1e-12 + 1e-7 |c|`, its excess is
 `|c - u| / (1e-12 + 1e-7 |c|)`. A solver passes when every value passes, or when its largest
-excess is at most 1 % above the one (`EXCESS_MARGIN`, ruling R47b) of roadrunner at rtol 1e-10 and atol 1e-12 with the same linear
+excess is at most 1 % above the one (`EXCESS_MARGIN`) of roadrunner at rtol 1e-10 and atol 1e-12 with the same linear
 solver (dense with CVODE's difference quotient, KLU with the sparse difference quotient) against
 the same reference: the engine is as close to the converged solution as roadrunner at the same
 tolerances. The reference itself is roadrunner with the defaults of its libroadrunner (2.12: KLU
@@ -66,7 +66,7 @@ from prepare_model import PreparationError, prepare, resolve_source
 
 ROOT = Path(__file__).resolve().parent.parent
 RELATIVE_LIMIT = 1e-7
-# ruling R47b: the engine passes the second half of R47a when its largest excess is at most
+# the engine passes the second half of the criterion when its largest excess is at most
 # EXCESS_MARGIN times roadrunner's; without the margin the event model failed by a tie (its
 # largest excess is the same value in both, 1.73855 against 1.73789, where the engine dense and
 # roadrunner dense differ by 2.6e-14 relative)
@@ -85,7 +85,7 @@ MODELS: dict[str, tuple[str, float, dict[str, float]]] = {
     "demo": ("sbmlsim:Koenig_demo_14.xml", 20.0, {}),
     "mp_core": ("bench:mp_core", 360.0, {}),
     "mp_flat": ("bench:mp_flat", 360.0, {}),
-    # the event model of the benchmark (not one of the brief, the events of the engine)
+    # the event model of the benchmark (the events of the engine)
     "repeated_dose": ("bench:repeated_dose", 168.0, {}),
 }
 

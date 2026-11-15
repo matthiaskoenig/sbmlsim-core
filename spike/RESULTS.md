@@ -1,6 +1,6 @@
 # Results of the spike: CVODE and KLU in wasm
 
-The spike asks whether "one wasm everywhere" (the same `engine.wasm` with CVODE and KLU and a `model.wasm` per model, run natively in wasmtime and in the browser) is fast enough against roadrunner native before the compiler is built. This file reports the numbers; the gate (at most 2x roadrunner native, dense and KLU, in wasmtime and Chrome) is decided by the owner. Everything else of the spike was throwaway and is not committed.
+The spike asks whether "one wasm everywhere" (the same `engine.wasm` with CVODE and KLU and a `model.wasm` per model, run natively in wasmtime and in the browser) is fast enough against roadrunner native before the compiler is built. This file reports the numbers; the gate (at most 2x roadrunner native, dense and KLU, in wasmtime and Chrome) is decided outside this file. Everything else of the spike was throwaway and is not committed.
 
 ## Ratios against roadrunner native
 
@@ -22,19 +22,19 @@ The only ratio above 1.2 is mp_flat dense without SIMD (1.6x to 1.9x): 919 state
 ## Setup
 
 - Machine: Intel Core i7-12700 (8 performance cores with 2 threads, 4 efficiency cores; 20 logical CPUs), Linux 7.0, governor `powersave`. Single threaded measurements are pinned with `taskset` to performance cores (core 2 for the command line hosts, cores 4 to 15 for Chrome); without pinning a run lands on an efficiency core now and then and the numbers vary by 2x.
-- roadrunner: libroadrunner 2.11.1 (develop build of the sbmlsim environment, LLJIT, optimization level `DEFAULT` = `O2` as sbmlsim sets it through `LoadSBMLOptions`); `roadrunner-sparsedq` build at `~/rr-enzyme/build-sparsedq` (same version, `jacobian = "sparse_difference_quotient"`, `linear_solver = "klu"`, also LLJIT `O2`).
+- roadrunner: libroadrunner 2.11.1 (develop build of the sbmlsim environment, LLJIT, optimization level `DEFAULT` = `O2` as sbmlsim sets it through `LoadSBMLOptions`); a local `roadrunner-sparsedq` build (same version, `jacobian = "sparse_difference_quotient"`, `linear_solver = "klu"`, also LLJIT `O2`).
 - Engine hosts: native C (gcc 13.3, `-O3`, glibc libm), wasmtime 50.0.1 (Cranelift, defaults), Node 24.21.0, Chrome 157.0.8103.78 headless through Playwright (`channel: "chrome"`), page served with cross-origin isolation so `performance.now` in the workers is fine grained.
 - Models (time unit min, no events): `hctz_body_flat.xml` (28 states: 21 species amounts and 7 rate rules; 49 parameters; 88 Jacobian non-zeros) with an oral dose `PODOSE_hctz = 25` mg as the initial state (the model as loaded has no dose and nothing happens), end 1440 min (24 h); `machine_perfusion_liver_core.xml` (43 states, 190 non-zeros) and `machine_perfusion_liver_flat.xml` (919 states: 839 species and 80 rate rules; 1007 reactions; 4262 non-zeros) as loaded, end 360 min: the experiments of the perfusion package (`donors.py` `END = 6.0`, `flow_rate.py` `end=6.0` h) simulate a 6 h perfusion.
 - Settings everywhere: BDF (maximum order 5), relative tolerance 1e-6, absolute tolerance 1e-12 as roadrunner applies it (roadrunner scales the absolute tolerance per state; the engine takes the vector of `integrator.getAbsoluteToleranceVector()` after a simulation, checked equal in every roadrunner run), `maximum_num_steps` 20000, 201 output points with `CV_NORMAL` to each output time (as roadrunner does), the same initial state, no fast math anywhere. A measurement is the median of 20 runs after 3 warm ups; the configurations take turns, 3 rounds, the table has the median of the round medians. A run of the engine creates and frees the CVODE memory, the matrix and the linear solver; roadrunner's time is `simulate` after `resetAll` and the setup, and the timed region includes the conversion of its result to a numpy array (`np.array(r.simulate(...))`, `bench.py`), a few microseconds which favor the wasm hosts slightly on hctz (about 1 ms per simulation) and are negligible on the other models.
 
 ## Step 1: build recipe
 
-Sources, cloned at the latest release tags into `spike/third_party/` (Task 4 vendors them as submodules):
+Sources, cloned at the latest release tags into `spike/third_party/` (the Rust build vendors them as submodules):
 
 - SUNDIALS `v7.9.0` (commit `312fc0f3684f27209ca9dc9249d194436eb41a7a`)
 - SuiteSparse `v7.14.1` (commit `e202a5bcef55f5a780c26830ebd6ff13af193baf`, KLU 2.3.6)
 
-wasi-sdk 34 (clang 23.1.0, wasi-libc 2e6fb9d8ee0c), toolchain file `$WASI_SDK_PATH/share/cmake/wasi-sdk-p1.cmake` with `-DWASI_SDK_PREFIX=$WASI_SDK_PATH` (the brief's `wasi-sdk.cmake` is named `wasi-sdk-p1.cmake` in wasi-sdk 34). Native with gcc. No source patches were needed for either target.
+wasi-sdk 34 (clang 23.1.0, wasi-libc 2e6fb9d8ee0c), toolchain file `$WASI_SDK_PATH/share/cmake/wasi-sdk-p1.cmake` with `-DWASI_SDK_PREFIX=$WASI_SDK_PATH` (`wasi-sdk.cmake` is named `wasi-sdk-p1.cmake` in wasi-sdk 34). Native with gcc. No source patches were needed for either target.
 
 SuiteSparse (first; only the KLU part):
 
@@ -76,7 +76,7 @@ Check against roadrunner at 20 states (a random row of roadrunner's time course,
 | mp_core | 3.4e-15 | 6.8e-21 | 7.9e-7 | PASS |
 | mp_flat | 4.9e-13 | 3.5e-18 | 7.8e-9 | PASS |
 
-A first version printed the values from sympy, which reorders products; it passed hctz and mp_core but missed 1e-12 on mp_flat (3.5e-12), where a rate of change is a sum of reaction rates which nearly cancel. Printing from the AST in the order of the SBML fixed it, which the compiler of Task 3 should keep in mind (emit the operations as written).
+A first version printed the values from sympy, which reorders products; it passed hctz and mp_core but missed 1e-12 on mp_flat (3.5e-12), where a rate of change is a sum of reaction rates which nearly cancel. Printing from the AST in the order of the SBML fixed it, which the compiler should keep in mind (emit the operations as written).
 
 The solutions agree in the accuracy class of the tolerances: against a reference of roadrunner at relative tolerance 1e-12 and absolute 1e-16, in units of `atol_i + rtol max_t |x_i|`, hctz is 2.6 (roadrunner dense and KLU) and 2.5 (engine dense and KLU), mp_core 139 / 76 (roadrunner dense / KLU) and 6.4 / 9.7 (engine), mp_flat 70 / 362 (roadrunner) and 286 / 57 (engine). The column "error (tol)" below is against the released roadrunner, pointwise (`atol_i + rtol |x_ref|`) and scaled (`atol_i + rtol max_t |x_ref|`); roadrunner's own KLU differs from its dense by as much.
 
@@ -228,8 +228,8 @@ mp_flat with KLU scales to 9.5x on 19 workers (the performance cores with their 
 ## Problems and notes for the next tasks
 
 - The work on mp_core differs because roadrunner root-finds piecewise conditions (sys-bio/roadrunner#1383) and restarts CVODE at each root; an engine with the same root finding would take roadrunner's steps. Its per step numbers are in the summary.
-- The dense ratio of mp_flat is the dense LU of SUNDIALS in wasm without SIMD; SIMD (`-msimd128`, supported by wasmtime and every current browser) is the single largest lever on it (6.0 s to 3.8 s in wasmtime, 5.0 s to 3.3 s in Chrome) and makes the KLU numbers 10 % to 15 % faster as well. The Rust build of Task 4 should compile SUNDIALS and KLU with it.
-- glibc and wasi-libc `pow` differ in the last bits, so native and wasm solutions of the stiff mp_flat take different steps (Ruling R2 of the ledger expects that); all wasm hosts agree.
+- The dense ratio of mp_flat is the dense LU of SUNDIALS in wasm without SIMD; SIMD (`-msimd128`, supported by wasmtime and every current browser) is the single largest lever on it (6.0 s to 3.8 s in wasmtime, 5.0 s to 3.3 s in Chrome) and makes the KLU numbers 10 % to 15 % faster as well. The Rust build should compile SUNDIALS and KLU with it.
+- glibc and wasi-libc `pow` differ in the last bits, so native and wasm solutions of the stiff mp_flat take different steps (expected: the bits of native and wasm differ, the wasm hosts agree); all wasm hosts agree.
 - Analytic Jacobians need care at concentrations 0 (`x^n / x`), and the right hand side must be emitted in the order of the SBML to agree with roadrunner to 1e-12 on cancelling sums.
 - roadrunner's python API has no `getStateVectorRate`; `getRatesOfChange()` is the state vector rate in state order (its docstring says floating species, which is outdated).
 - Timing on the hybrid CPU needs pinning to performance cores; the first native measurements without it were off by up to 5x.

@@ -490,7 +490,7 @@ fn unknown_elements_are_named() {
     assert!(matches!(read("<notxml"), Err(ReadError::Xml(_))));
 }
 
-/// Reads every normalized case of Task 10 when `testdata/cases` exists.
+/// Reads every prepared case of the SBML Test Suite when `testdata/cases` exists.
 #[test]
 fn reads_all_cases() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/cases");

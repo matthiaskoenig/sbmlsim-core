@@ -37,7 +37,7 @@
 //! the branch, where only the one branch of the index runs.
 //!
 //! A statement which alone (with the lets it reads) is above the limits is an error: a `model_jac`
-//! as written with such an entry is the colored difference quotient under `Auto` (R41/R43).
+//! as written with such an entry is the colored difference quotient under `Auto`.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 

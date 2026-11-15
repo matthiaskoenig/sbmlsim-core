@@ -393,7 +393,7 @@ fn same_steps(a: &SimulationResult, b: &SimulationResult, what: &str) -> usize {
 
 #[test]
 fn klu_and_dense_agree_on_an_analytic_model() {
-    // as R11 of Task 4/5: within 1e-10 relative while the step counts agree (the integrator
+    // within 1e-10 relative while the step counts agree (the integrator
     // steps have the same times), with the analytic Jacobian and with the colored difference
     // quotient (the two Jacobians differ in the last bits, so their step sequences part after a
     // few steps; each run ends within 1e-4 of the reference y1(4e10) of `cvRoberts_dns`)
@@ -515,7 +515,7 @@ fn falls_back(sbml: &str, selections: &[&str]) {
 
 #[test]
 fn an_infinite_derivative_at_a_finite_state_falls_back_to_the_difference_quotient() {
-    // the probe of the review: S(0) = 0 consumed at k * sqrt(S), whose analytic derivative
+    // S(0) = 0 consumed at k * sqrt(S), whose analytic derivative
     // 0.5 * pow(S, -0.5) is infinite at S = 0, and an unrelated decay of Q; and P(0) = 0
     // consumed at pow(P, Q), whose derivative pow(P, Q) * ln(P) by Q is NaN at P = 0
     let sbml = consumed(

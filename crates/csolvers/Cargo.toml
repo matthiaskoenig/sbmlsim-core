@@ -2,6 +2,9 @@
 name = "sbmlsim-csolvers"
 version.workspace = true
 edition.workspace = true
+# not on crates.io yet: the workspace builds from files outside the crate directories
+# (THIRD_PARTY.md, third_party)
+publish = false
 # the code of the crate is MIT; it builds and links SUNDIALS (BSD-3-Clause) and KLU, AMD, COLAMD, BTF
 # and SuiteSparse_config (LGPL-2.1-or-later and BSD-3-Clause), whose license files are in third_party
 # (THIRD_PARTY.md has their versions, commits and texts)

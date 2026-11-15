@@ -199,7 +199,7 @@ fn a_discontinuity_at_the_time_of_an_event() {
     let x = column(&result, "x");
     assert!((x[2] - 1.0).abs() < 1e-11, "{x:?}");
     // the steps: the event executes once, at its root at 1 (its two rows; a step evaluates the
-    // triggers at its time only, ruling R49), and the discontinuity has its two rows of one
+    // triggers at its time only), and the discontinuity has its two rows of one
     // state there or right after it. At atol 1e-14 CVODE failed with the flag -3 when the event
     // executed at a step within the probe of its trigger, 4.6e-13 before 1, and CVODE started
     // again from there into the jump of the rate at 1
@@ -309,7 +309,7 @@ fn a_guard_at_noise_level_agrees_with_roadrunner() {
     // 2.12.0.dev683: 1 restart, dense and KLU). Against the solution exp(-t), in units of the
     // criterion of the agreement, 1e-12 + 1e-7 |c|, roadrunner at rtol 1e-10 and atol 1e-12 has
     // the largest excess 1.67732 (dense) and 1.67745 (KLU) at the output 11.67; the engine
-    // passes R47b (at most 1 % above roadrunner's excess); in the steps of the integrator
+    // passes the agreement (at most 1 % above roadrunner's excess); in the steps of the integrator
     // (roadrunner dense: 464 rows, largest excess 1.90231) likewise
     const ROADRUNNER_EXCESS: f64 = 1.6773194722192153;
     const ROADRUNNER_STEPS_EXCESS: f64 = 1.9023145427845396;

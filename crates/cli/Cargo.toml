@@ -2,6 +2,9 @@
 name = "sbmlsim-cli"
 version.workspace = true
 edition.workspace = true
+# not on crates.io yet: the workspace builds from files outside the crate directories
+# (THIRD_PARTY.md, third_party)
+publish = false
 # MIT code; it embeds engine.wasm (through sbmlsim-host), which statically links SUNDIALS
 # (BSD-3-Clause) and KLU, BTF (LGPL-2.1-or-later), AMD, COLAMD and SuiteSparse_config
 # (BSD-3-Clause), see THIRD_PARTY.md

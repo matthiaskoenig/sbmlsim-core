@@ -724,7 +724,7 @@ fn sizes(model: &Model, jacobian: &JacobianIr, discontinuities: &[Expr]) -> Mode
 
 /// The body of `model_event_apply` for the event `e`; the values are in the local 2.
 ///
-/// As libroadrunner 2.11 (probed, Task 13 report): the assignments are stored in document
+/// As libroadrunner 2.11 (probed): the assignments are stored in document
 /// order, those of compartments last; a species of a concentration gets the amount of its value
 /// times its compartment as it is at its turn (a compartment the event assigns is still the one
 /// before the event, one of an assignment rule follows the assignments before it); every other

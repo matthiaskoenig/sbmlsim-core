@@ -35,7 +35,7 @@
 //!   kinetic laws with local parameters have them too, libroadrunner's none (a slip of its
 //!   generator).
 //! - The steps towards one output time are bounded by `maximum_num_steps` across the returns of
-//!   CVODE at roots and its restarts at the roots of discontinuities (`roots`, ruling R50);
+//!   CVODE at roots and its restarts at the roots of discontinuities (`roots`);
 //!   libroadrunner counts the steps of one call of CVODE, which every return at a root ends,
 //!   so a model whose roots chatter may run far longer there (the sliding mode
 //!   `x' = piecewise(-1, x > 0, 1)` at rtol 1e-3, atol 1e-6: 28.6 million steps in
@@ -889,7 +889,7 @@ mod tests {
 
     #[test]
     fn every_jacobian_works_with_every_linear_solver() {
-        // R4 ends: a model without an analytic Jacobian takes KLU as well, with the sparse
+        // a model without an analytic Jacobian takes KLU as well, with the sparse
         // difference quotient
         let settings = IntegratorSettings::default();
         let colored = |n: usize| {
@@ -916,7 +916,7 @@ mod tests {
                 jacobian: difference
             }
         );
-        // R16: the difference quotient of an analytic model is the sparse difference quotient,
+        // the difference quotient of an analytic model is the sparse difference quotient,
         // the analytic Jacobian of a model without one is refused with the reason
         let dq = IntegratorSettings {
             jacobian: JacobianChoice::DifferenceQuotient,

@@ -122,6 +122,8 @@ uv run scripts/roadrunner_reference.py bench/models.toml --json target/bench/roa
 uv run scripts/agreement.py                                        # the engine at rtol 1e-10 against roadrunner at 1e-12 (dense, KLU)
 ```
 
+The KLU baseline of roadrunner is a `roadrunner-sparsedq` build (libroadrunner with KLU and its colored sparse difference quotient) when `SBMLSIM_CORE_SPARSEDQ_BUILD` names its `site-packages` directory (or `--sparse-build`); without it `roadrunner_reference.py` takes the KLU of the libroadrunner 2.12 of its environment (KLU with the sparse difference quotient by default). `js/bench.mjs` reads `engine.wasm` from `SBMLSIM_CORE_RUNTIME`, else `js/runtime` (`sbmlsim-core runtime -o js/runtime`).
+
 The counters of the integrator of the last simulation are `Instance::stats` (wasmtime) and `instance.stats()` (`js/loader.mjs`).
 
 No model of the benchmark takes more than 2x the time of roadrunner native, dense or with KLU, in wasmtime, Node or Chrome (the largest 1.60, the event model in wasmtime), and every model agrees with roadrunner at tight tolerances. The engine locates the discontinuities of the math as roadrunner does: CVODE stops where the branch of a `piecewise` of a rule, a kinetic law or a trigger changes and starts again from the state there (the root functions after those of the triggers in `model_roots`, `n_discontinuity_roots` in `model.json`).

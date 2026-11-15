@@ -348,8 +348,8 @@ impl Outputs<'_> {
 
     /// The integration stopped at `t` (`kind`): the events at `t` execute and the outputs at
     /// `t` are written. In the steps of the integrator: a step of the integrator is one row and
-    /// its events execute with the triggers at its time only (no probe right after it, ruling
-    /// R49: a trigger which becomes true right after a step is located by its root function in
+    /// its events execute with the triggers at its time only (no probe right after it: a
+    /// trigger which becomes true right after a step is located by its root function in
     /// the next step, so its event executes at its root, as in libroadrunner, and not up to the
     /// window of the probe before it); a stop at a stop time is one row; at a zero of a root
     /// function of a discontinuity, where the integration starts again, two rows of the state

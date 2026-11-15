@@ -29,8 +29,11 @@ tolerance (roadrunner scales it per state, checked equal to the vector of `<sbml
 which the engine integrates with), at most 20000 steps, LLJIT at the optimization level `O2`
 (`DEFAULT`, as sbmlsim loads models), in a process of its own pinned with `taskset` to one CPU
 (`--cpu`, a performance core). roadrunner dense is the libroadrunner of this environment (dense,
-CVODE's difference quotient); roadrunner KLU is the `roadrunner-sparsedq` build (`--sparse-build`,
-KLU with its colored sparse difference quotient; the released libroadrunner has no KLU). A
+CVODE's difference quotient); roadrunner KLU is a `roadrunner-sparsedq` build (`--sparse-build`,
+default the environment variable `SBMLSIM_CORE_SPARSEDQ_BUILD`, the `site-packages` directory of
+that build: KLU with its colored sparse difference quotient), and without one the KLU of the
+libroadrunner of this environment (2.12, `roadrunner 2.12.0 KLU`, KLU with the sparse difference
+quotient by default), which the tables then take as the KLU baseline. A
 measurement is the wall time of `np.array(r.simulate(0, end, points))` (and of the steps of the
 integrator for a model with `steps = true`, `variable_step_size`), the median of `--reps` after
 `--warmups`; the two builds take turns over `--rounds` rounds and a time is the median of the
@@ -56,7 +59,8 @@ import tomllib
 from pathlib import Path
 from statistics import median
 
-SPARSE_BUILD = Path.home() / "rr-enzyme/build-sparsedq/lib/site-packages"
+# the `site-packages` of a roadrunner-sparsedq build, the KLU baseline when it is given
+SPARSE_BUILD = os.environ.get("SBMLSIM_CORE_SPARSEDQ_BUILD")
 
 
 def read_models(toml: Path) -> dict[str, dict]:
@@ -220,15 +224,16 @@ def measure(args: argparse.Namespace) -> int:
     """Measure every model with both builds; write the JSON."""
     models = read_models(args.models)
     only = set(args.only.split(",")) if args.only else None
-    builds = ["release", "sparsedq"] if args.sparse_build.exists() else ["release"]
-    if "sparsedq" not in builds:
+    sparse = args.sparse_build is not None and args.sparse_build.exists()
+    builds = ["release", "sparsedq"] if sparse else ["release"]
+    if args.sparse_build is not None and not sparse:
         print(f"warning: no roadrunner-sparsedq build at {args.sparse_build}", file=sys.stderr)
     import roadrunner
 
     results = {
         "host": "roadrunner",
         "roadrunner": roadrunner.__version__,
-        "sparse_build": str(args.sparse_build),
+        "sparse_build": str(args.sparse_build) if sparse else None,
         "rounds": args.rounds,
         "warmups": args.warmups,
         "reps": args.reps,
@@ -363,7 +368,13 @@ def main() -> int:
     parser.add_argument("--warmups", type=int, default=3)
     parser.add_argument("--reps", type=int, default=20)
     parser.add_argument("--cpu", default="2", help="the CPU the workers are pinned to")
-    parser.add_argument("--sparse-build", type=Path, default=SPARSE_BUILD)
+    parser.add_argument(
+        "--sparse-build",
+        type=Path,
+        default=Path(SPARSE_BUILD) if SPARSE_BUILD else None,
+        help="the site-packages of a roadrunner-sparsedq build (default $SBMLSIM_CORE_SPARSEDQ_BUILD); "
+        "without one the KLU of the libroadrunner of this environment is the KLU baseline",
+    )
     parser.add_argument("--compare", type=Path, nargs="+", help="print the tables of results")
     parser.add_argument(
         "--export",

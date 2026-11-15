@@ -327,7 +327,7 @@ type Shape<'a> = (Option<&'a str>, &'a [(&'a str, &'a str)], [f64; 5]);
 
 #[test]
 fn species_keep_their_amounts_when_an_event_changes_their_compartment() {
-    // [S, [S], A, [A], C] at 1, the values of libroadrunner 2.11.1 (Task 13 report, fix round 1)
+    // [S, [S], A, [A], C] at 1, the values of libroadrunner 2.11.1
     let k = Some("<ci>k</ci>");
     let x = Some("<apply><plus/><cn>1</cn><ci>X</ci></apply>");
     let cases: [Shape; 8] = [
@@ -420,7 +420,7 @@ type ChangeCase<'a> = (&'a [(&'a str, f64)], [f64; 7]);
 
 #[test]
 fn compiled_changes_keep_concentrations() {
-    // the values of libroadrunner 2.11.1 through sbmlsim (Task 14 report, probe 1): a
+    // the values of libroadrunner 2.11.1 through sbmlsim: a
     // compartment set by a change keeps the concentrations of its species of a concentration,
     // the species of an amount keeps its amount; `R` is the amount, `[R]` the concentration
     let compiled = compile(&species_model(), &CompileOptions::default()).unwrap();
@@ -507,8 +507,7 @@ fn requests_on_one_instance_are_independent() {
 
 #[test]
 fn compiled_preinit_takes_the_selections_of_sbmlsim() {
-    // the values of libroadrunner 2.11.1 through sbmlsim (Task 14 report, pre-review fix,
-    // probe 3), the compartment of the size 2: `R` the amount, `[R]` the concentration of the
+    // the values of libroadrunner 2.11.1 through sbmlsim, the compartment of the size 2: `R` the amount, `[R]` the concentration of the
     // species of the rate rule, `S` and `[S]` of the species without a rule
     let sbml = species_model().replace(r#"id="C" size="1""#, r#"id="C" size="2""#);
     let compiled = compile(&sbml, &CompileOptions::default()).unwrap();
@@ -536,7 +535,7 @@ const TIME: &str =
 #[test]
 fn a_change_converts_with_the_size_of_a_compartment_of_a_rule() {
     // the compartment C := 1 + time, S of the initial concentration 1, the change [S] = 3 at 5;
-    // sbmlsim (libroadrunner 2.11.1, Task 14 report, fix round 1, probe 4): at 5 C = 6, S = 1
+    // sbmlsim (libroadrunner 2.11.1): at 5 C = 6, S = 1
     // and [S] = 1/6 before, S = 18 and [S] = 3 after, at 10 C = 11, S = 18, [S] = 18/11
     let sbml = format!(
         r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2"><model id="cr">
@@ -578,8 +577,8 @@ fn a_change_converts_with_the_size_of_a_compartment_of_a_rule() {
 #[test]
 fn initial_assignments_see_the_time_zero() {
     // x := time + 1, y := 2 x (y of the rate rule 0): sbmlsim initializes at the time 0, also
-    // for a simulation from 5 or -3 and with a steady state (Task 14 report, fix round 1,
-    // probe 4): x = 1, y = 2; with the pre-initialization x = 4: x = 4, y = 8
+    // for a simulation from 5 or -3 and with a steady state (probed with libroadrunner 2.11.1
+    // through sbmlsim): x = 1, y = 2; with the pre-initialization x = 4: x = 4, y = 8
     let sbml = format!(
         r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2"><model id="ia">
 <listOfParameters><parameter id="x" constant="false"/><parameter id="y" value="0" constant="false"/></listOfParameters>

@@ -2,6 +2,9 @@
 name = "sbmlsim-compiler"
 version.workspace = true
 edition.workspace = true
+# not on crates.io yet: the workspace builds from files outside the crate directories
+# (THIRD_PARTY.md, third_party)
+publish = false
 license.workspace = true
 authors.workspace = true
 description = "Compiles SBML to model.wasm and its description"
