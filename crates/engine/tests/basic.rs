@@ -320,3 +320,27 @@ fn unsupported_until_later_tasks() {
     let desc: ModelDescription = Decay { k: 0.5 }.description();
     assert!(desc.events.is_empty());
 }
+
+#[test]
+fn time_is_the_first_column() {
+    let cases: [(&[&str], &[&str]); 3] = [
+        (&["y"], &["time", "y"]),
+        (&["time", "y"], &["time", "y"]),
+        (&["y", "time"], &["time", "y", "time"]),
+    ];
+    for (selections, columns) in cases {
+        let req = request(0.0, 10.0, Output::Uniform { steps: 10 }, selections);
+        let result = decay(0.5, &req).unwrap();
+        assert_eq!(result.columns, columns, "{selections:?}");
+        assert_eq!(result.values.len(), result.n_rows * columns.len());
+        assert_eq!(column(&result, "time")[10], 10.0);
+        assert_decay(&result, 0.5, 0.0, 1e-9);
+        if columns.len() == 3 {
+            // a later `time` is a copy of the time of the row, bitwise
+            for i in 0..result.n_rows {
+                let row = &result.values[i * 3..i * 3 + 3];
+                assert_eq!(row[2].to_bits(), row[0].to_bits(), "row {i}");
+            }
+        }
+    }
+}

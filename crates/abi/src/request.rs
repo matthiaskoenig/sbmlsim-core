@@ -20,7 +20,11 @@ pub struct SimulationRequest {
     pub changes: Vec<Change>,
     /// A steady state to reach before the start.
     pub steady_state: Option<SteadyState>,
-    /// The ids of the selections to write as columns.
+    /// The ids of the selections to write as columns, after the column `time`.
+    ///
+    /// The first column of a result is always `time`, the time of the row: a leading `"time"`
+    /// here is that column (not repeated), otherwise it is prepended; a later `"time"` is another
+    /// copy of the time of the row. Empty is `time` followed by every selection of the model.
     pub selections: Vec<String>,
     /// The settings of the integrator.
     pub settings: IntegratorSettings,

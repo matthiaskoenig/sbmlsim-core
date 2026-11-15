@@ -213,7 +213,8 @@ fn output_times(output: &Output, start: f64, end: f64) -> Result<Vec<f64>, Engin
     }
 }
 
-/// The columns of a request: the requested ones, or the time and every selection of the model.
+/// The columns of a request: the time, then the requested selections (a leading `time` of the
+/// request is the time column, not repeated), or the time and every selection of the model.
 fn columns_of(
     desc: &ModelDescription,
     req: &SimulationRequest,
@@ -228,13 +229,14 @@ fn columns_of(
             .map(|s| Column::Selection(s.index as usize))
             .ok_or_else(|| request(format!("model {} has no selection {id}", desc.id)))
     };
-    let names: Vec<String> = if req.selections.is_empty() {
-        std::iter::once("time".to_string())
-            .chain(desc.selections.iter().map(|s| s.id.clone()))
-            .collect()
-    } else {
-        req.selections.clone()
+    // the first column is always the time of the row (as sbmlsim's `output_columns`): a leading
+    // `time` of the request is that column, else it is prepended; a later `time` is a copy of it
+    let rest: Vec<String> = match req.selections.split_first() {
+        None => desc.selections.iter().map(|s| s.id.clone()).collect(),
+        Some((first, rest)) if first == "time" => rest.to_vec(),
+        Some(_) => req.selections.clone(),
     };
+    let names: Vec<String> = std::iter::once("time".to_string()).chain(rest).collect();
     let columns = names
         .iter()
         .map(|id| selection(id))
