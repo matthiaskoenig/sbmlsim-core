@@ -172,6 +172,12 @@ dependencies = [
 [[package]]
 name = "sbmlsim-engine"
 version = "0.1.0"
+dependencies = [
+ "sbmlsim-abi",
+ "sbmlsim-csolvers",
+ "sbmlsim-engine",
+ "thiserror",
+]
 
 [[package]]
 name = "sbmlsim-host"

@@ -235,8 +235,9 @@ fn require(path: &Path) {
 /// Writes `sundials/sundials_config.h` and `sundials/sundials_export.h` into `include`.
 ///
 /// The configuration is the one CMake writes for this build: double precision, `int64_t`
-/// indices, `long int` counters, KLU, no MPI, the logging level 2 (errors and warnings), and the
-/// modules of [`SUNDIALS_SOURCES`].
+/// indices, `long int` counters, KLU, no MPI, the logging level 0 (no logging: the logger of a
+/// context reads no environment variable and writes nothing, the engine records the errors with
+/// an error handler of its own), and the modules of [`SUNDIALS_SOURCES`].
 fn write_config(include: &Path, compiler: &str, flags: &str) {
     let dir = include.join("sundials");
     fs::create_dir_all(&dir).unwrap();
@@ -288,7 +289,7 @@ fn write_config(include: &Path, compiler: &str, flags: &str) {
         ("SUNDIALS_INDEX_TYPE", "int64_t"),
         ("SUNDIALS_COUNTER_TYPE", "long int"),
         ("SUNDIALS_HAVE_POSIX_TIMERS", ""),
-        ("SUNDIALS_LOGGING_LEVEL", "2"),
+        ("SUNDIALS_LOGGING_LEVEL", "0"),
         ("SUN_C_COMPILER", &format!("\"{compiler}\"")),
         ("SUN_C_COMPILER_VERSION", "\"\""),
         ("SUN_C_COMPILER_FLAGS", &format!("\"{flags}\"")),

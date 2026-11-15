@@ -3,13 +3,14 @@
 //! The signatures are the ones of the headers of SUNDIALS v7.9.0 (`sundials_context.h`,
 //! `sundials_nvector.h`, `nvector_serial.h`, `sundials_matrix.h`, `sunmatrix_dense.h`,
 //! `sunmatrix_sparse.h`, `sundials_linearsolver.h`, `sunlinsol_dense.h`, `sunlinsol_klu.h`,
-//! `cvode.h`, `cvode_ls.h`) as this crate configures them: `sunrealtype` is `double`,
+//! `sundials_nonlinearsolver.h`, `sunnonlinsol_fixedpoint.h`, `cvode.h`, `cvode_ls.h`) as this
+//! crate configures them: `sunrealtype` is `double`,
 //! `sunindextype` is `int64_t`, the counters are `long int` (32 bits on wasm32) and `SUNComm` is
 //! `int` (no MPI).
 
 #![allow(non_camel_case_types, non_snake_case)]
 
-use std::ffi::{c_int, c_long, c_void};
+use std::ffi::{c_char, c_int, c_long, c_void};
 
 /// The floating point type of SUNDIALS, `double`.
 pub type sunrealtype = f64;
@@ -48,6 +49,8 @@ opaque! {
     SUNMatrix => _generic_SUNMatrix;
     /// A linear solver (`SUNLinearSolver`).
     SUNLinearSolver => _generic_SUNLinearSolver;
+    /// A nonlinear solver (`SUNNonlinearSolver`).
+    SUNNonlinearSolver => _generic_SUNNonlinearSolver;
 }
 
 /// The right hand side `ydot = f(t, y)`; returns 0 on success, a positive value for a
@@ -83,6 +86,20 @@ pub type CVLsJacFn = Option<
     ) -> c_int,
 >;
 
+/// An error handler of a context: the line, the function and the file of the error, its message,
+/// its code, the user data given to [`SUNContext_PushErrHandler`] and the context.
+pub type SUNErrHandlerFn = Option<
+    unsafe extern "C" fn(
+        line: c_int,
+        func: *const c_char,
+        file: *const c_char,
+        msg: *const c_char,
+        err_code: SUNErrCode,
+        err_user_data: *mut c_void,
+        sunctx: SUNContext,
+    ),
+>;
+
 /// The linear multistep method Adams-Moulton (non-stiff).
 pub const CV_ADAMS: c_int = 1;
 /// The linear multistep method BDF (stiff).
@@ -108,6 +125,12 @@ unsafe extern "C" {
     pub fn SUNContext_Free(ctx: *mut SUNContext) -> SUNErrCode;
     /// Removes the error handlers of a context, so an error is only returned and not printed.
     pub fn SUNContext_ClearErrHandlers(sunctx: SUNContext) -> SUNErrCode;
+    /// Pushes an error handler onto the stack of a context, called with `err_user_data`.
+    pub fn SUNContext_PushErrHandler(
+        sunctx: SUNContext,
+        err_fn: SUNErrHandlerFn,
+        err_user_data: *mut c_void,
+    ) -> SUNErrCode;
 
     // vectors
     pub fn N_VNew_Serial(vec_length: sunindextype, sunctx: SUNContext) -> N_Vector;
@@ -140,6 +163,12 @@ unsafe extern "C" {
     pub fn SUNLinSol_KLU(y: N_Vector, a: SUNMatrix, sunctx: SUNContext) -> SUNLinearSolver;
     pub fn SUNLinSolFree(s: SUNLinearSolver) -> SUNErrCode;
 
+    // nonlinear solvers
+    /// The fixed point (functional) iteration with `m` acceleration vectors (0 is none).
+    pub fn SUNNonlinSol_FixedPoint(y: N_Vector, m: c_int, sunctx: SUNContext)
+    -> SUNNonlinearSolver;
+    pub fn SUNNonlinSolFree(nls: SUNNonlinearSolver) -> SUNErrCode;
+
     // CVODE
     pub fn CVodeCreate(lmm: c_int, sunctx: SUNContext) -> *mut c_void;
     pub fn CVodeInit(cvode_mem: *mut c_void, f: CVRhsFn, t0: sunrealtype, y0: N_Vector) -> c_int;
@@ -164,6 +193,7 @@ unsafe extern "C" {
     pub fn CVodeSetRootDirection(cvode_mem: *mut c_void, rootdir: *mut c_int) -> c_int;
     pub fn CVodeSetLinearSolver(cvode_mem: *mut c_void, ls: SUNLinearSolver, a: SUNMatrix)
     -> c_int;
+    pub fn CVodeSetNonlinearSolver(cvode_mem: *mut c_void, nls: SUNNonlinearSolver) -> c_int;
     pub fn CVodeSetJacFn(cvode_mem: *mut c_void, jac: CVLsJacFn) -> c_int;
     pub fn CVode(
         cvode_mem: *mut c_void,
