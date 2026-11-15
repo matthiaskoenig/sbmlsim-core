@@ -4,5 +4,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
+description = "Compiles SBML to model.wasm and its description"
 
 [dependencies]
+sbmlsim-abi = { path = "../abi" }
+sbmlsim-ir = { path = "../ir" }
+sbmlsim-sbml = { path = "../sbml" }

@@ -1,0 +1,705 @@
+//! `sbmlsim-core testsuite <cases-dir>`: runs the prepared cases of the SBML Test Suite.
+//!
+//! A case is a directory made by `scripts/prepare_testsuite.py`: `model.xml` (SBML L3V2, `comp`
+//! flattened), `case.json` (the simulation, the selections, the tolerances and the tags, or
+//! `not_converted` with a message) and `expected.csv`. The runner compiles every model, runs it
+//! with the integrator at the absolute and relative tolerance `1e-12` and compares the result
+//! with the expected values by the rule of the suite: a value `u` agrees with the expected `c` if
+//! `|c - u| <= abs_tol + rel_tol * |c|`; a `NaN` agrees with a `NaN` and an infinity with the
+//! same infinity. The columns are matched by position, `time` is the first one and is not
+//! compared (as in sbmlsim). Every failure is a [`Status`], none is raised.
+//!
+//! The statuses are compared with the baseline (`testdata/testsuite_baseline.json`, the format of
+//! `sbmlsim.testsuite.baseline`) in both directions: a case which fails and is not listed is a
+//! regression, a case which is listed and passes is a baseline which is out of date; a listed
+//! case with another status and, in a run of all cases, a listed case which was not run are
+//! differences as well. The command exits with 0 only without differences.
+
+use std::collections::BTreeMap;
+use std::fmt::Write as _;
+use std::fs;
+use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::path::{Path, PathBuf};
+
+use anyhow::Context;
+use clap::Args;
+use rayon::prelude::*;
+use sbmlsim_abi::{
+    IntegratorSettings, Output, SIMULATION_CONTRACT, SimulationRequest, SimulationResult, Tolerance,
+};
+use sbmlsim_compiler::{CompileOptions, compile};
+use sbmlsim_host::Runtime;
+use serde::{Deserialize, Serialize};
+
+/// The absolute and the relative tolerance of the integrator in a run of the suite.
+pub const INTEGRATOR_TOLERANCE: f64 = 1e-12;
+
+/// The seed of the random generator which orders simultaneous events.
+pub const EVENT_SEED: u64 = 1;
+
+/// The reason of a case in the baseline which nobody wrote down.
+pub const MISSING_REASON: &str = "reason missing";
+
+/// The longest message of a result in characters.
+const MAX_MESSAGE: usize = 300;
+
+/// How many differences the console lists of each kind.
+const LISTED_DIFFERENCES: usize = 40;
+
+/// The outcome of a case.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Status {
+    /// The results are within the tolerances (and the repeat checks agree).
+    Pass,
+    /// The results are outside the tolerances.
+    Tolerance,
+    /// The model was not converted or not compiled.
+    NotCompiled,
+    /// The instantiation or the simulation failed.
+    SimulationError,
+    /// A column or a row of the expected results is missing from the simulation.
+    MissingVariable,
+    /// A repeated simulation does not equal the first (not checked yet).
+    Repeat,
+}
+
+impl Status {
+    /// Every status, in the order of the report.
+    pub const ALL: [Status; 6] = [
+        Status::Pass,
+        Status::Tolerance,
+        Status::NotCompiled,
+        Status::SimulationError,
+        Status::MissingVariable,
+        Status::Repeat,
+    ];
+
+    /// The name of the status in the baseline and in the JSON.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Status::Pass => "pass",
+            Status::Tolerance => "tolerance",
+            Status::NotCompiled => "not_compiled",
+            Status::SimulationError => "simulation_error",
+            Status::MissingVariable => "missing_variable",
+            Status::Repeat => "repeat",
+        }
+    }
+}
+
+/// The result of a case.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CaseResult {
+    /// The identifier of the case, e.g. `00001`.
+    pub cid: String,
+    /// The outcome.
+    pub status: Status,
+    /// What failed, empty for a case which passes.
+    pub message: String,
+    /// The largest absolute difference to the expected values, where something was compared.
+    pub max_difference: Option<f64>,
+}
+
+impl CaseResult {
+    fn new(cid: &str, status: Status, message: impl Into<String>) -> Self {
+        let mut message: String = message.into();
+        if let Some((end, _)) = message.char_indices().nth(MAX_MESSAGE) {
+            message.truncate(end);
+        }
+        CaseResult {
+            cid: cid.to_string(),
+            status,
+            message,
+            max_difference: None,
+        }
+    }
+}
+
+/// The `case.json` of a case.
+#[derive(Debug, Clone, Deserialize)]
+pub struct CaseSettings {
+    /// The identifier of the case.
+    pub cid: String,
+    /// The start time.
+    pub start: f64,
+    /// The duration.
+    pub duration: f64,
+    /// The number of steps, so the results have `steps + 1` rows.
+    pub steps: u32,
+    /// The selections, `time` first.
+    pub selections: Vec<String>,
+    /// The absolute tolerance of the comparison.
+    pub absolute_tolerance: f64,
+    /// The relative tolerance of the comparison.
+    pub relative_tolerance: f64,
+    /// Set when the model was not converted by the preparation: the message.
+    #[serde(default)]
+    pub not_converted: Option<String>,
+}
+
+/// A table of numbers, row major, `time` in the first column.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Table {
+    /// The number of columns.
+    pub n_cols: usize,
+    /// `n_rows * n_cols` values.
+    pub values: Vec<f64>,
+}
+
+impl Table {
+    /// Reads `expected.csv`: a header line and the rows; `NaN`, `Inf` and `-Inf` are values.
+    pub fn from_csv(text: &str) -> anyhow::Result<Table> {
+        let mut lines = text.lines().filter(|l| !l.trim().is_empty());
+        let header = lines.next().context("the results are empty")?;
+        let n_cols = header.split(',').count();
+        let mut values = Vec::new();
+        for (i, line) in lines.enumerate() {
+            let before = values.len();
+            for field in line.split(',') {
+                let field = field.trim();
+                values.push(
+                    field
+                        .parse::<f64>()
+                        .with_context(|| format!("row {}: '{field}' is no number", i + 1))?,
+                );
+            }
+            anyhow::ensure!(
+                values.len() - before == n_cols,
+                "row {} has {} columns, the header {n_cols}",
+                i + 1,
+                values.len() - before
+            );
+        }
+        Ok(Table { n_cols, values })
+    }
+
+    fn n_rows(&self) -> usize {
+        self.values.len() / self.n_cols.max(1)
+    }
+}
+
+/// Whether the observed value agrees with the expected one under the rule of the suite.
+fn within(expected: f64, observed: f64, abs_tol: f64, rel_tol: f64) -> bool {
+    if expected.is_nan() {
+        return observed.is_nan();
+    }
+    if expected.is_infinite() {
+        return expected == observed;
+    }
+    (expected - observed).abs() <= abs_tol + rel_tol * expected.abs()
+}
+
+/// Compares a result with the expected values, the columns by position.
+///
+/// `time` (the first column) is not compared. Returns the largest absolute difference of the
+/// finite values, or the failure with the status `tolerance` (the worst point is named) or
+/// `missing_variable` (a column or a row is missing).
+pub fn compare(
+    expected: &Table,
+    observed: &SimulationResult,
+    abs_tol: f64,
+    rel_tol: f64,
+) -> Result<f64, CaseResult> {
+    let fail = |status, message: String, max| CaseResult {
+        cid: String::new(),
+        status,
+        message,
+        max_difference: max,
+    };
+    let k = observed.columns.len();
+    if k < expected.n_cols {
+        let missing = expected.n_cols - k;
+        return Err(fail(
+            Status::MissingVariable,
+            format!("{missing} of {} columns are not simulated", expected.n_cols),
+            None,
+        ));
+    }
+    let n_rows = expected.n_rows();
+    if observed.n_rows != n_rows || observed.values.len() != observed.n_rows * k {
+        return Err(fail(
+            Status::MissingVariable,
+            format!(
+                "{} rows are simulated, {n_rows} expected (point count)",
+                observed.n_rows
+            ),
+            None,
+        ));
+    }
+    let (mut n_points, mut n_bad) = (0usize, 0usize);
+    let mut max_difference: f64 = 0.0;
+    let mut worst: Option<(f64, usize, usize)> = None;
+    for row in 0..n_rows {
+        for col in 1..expected.n_cols {
+            let c = expected.values[row * expected.n_cols + col];
+            let u = observed.values[row * k + col];
+            n_points += 1;
+            if within(c, u, abs_tol, rel_tol) {
+                if c.is_finite() && u.is_finite() {
+                    max_difference = max_difference.max((c - u).abs());
+                }
+                continue;
+            }
+            n_bad += 1;
+            let excess = if c.is_finite() && u.is_finite() {
+                (c - u).abs() - (abs_tol + rel_tol * c.abs())
+            } else {
+                f64::INFINITY
+            };
+            if c.is_finite() && u.is_finite() {
+                max_difference = max_difference.max((c - u).abs());
+            }
+            if worst.is_none_or(|(w, _, _)| excess > w) {
+                worst = Some((excess, row, col));
+            }
+        }
+    }
+    match worst {
+        None => Ok(max_difference),
+        Some((_, row, col)) => {
+            let c = expected.values[row * expected.n_cols + col];
+            let u = observed.values[row * k + col];
+            let time = observed.values[row * k];
+            Err(fail(
+                Status::Tolerance,
+                format!(
+                    "{n_bad} of {n_points} points outside the tolerances, worst '{}' at t={time:.6e}: expected {c:e}, simulated {u:e}",
+                    observed.columns[col]
+                ),
+                Some(max_difference),
+            ))
+        }
+    }
+}
+
+/// The hook of the repeat checks (a simulation of the loaded model again, after half the
+/// duration, and a steady state must equal the first one bitwise): not implemented yet, so
+/// every case which agrees with its expected results has no repeat difference. Returns the
+/// message of a difference.
+pub fn repeat_check(_settings: &CaseSettings, _observed: &SimulationResult) -> Option<String> {
+    None
+}
+
+/// The request of a case.
+pub fn case_request(settings: &CaseSettings) -> SimulationRequest {
+    SimulationRequest {
+        contract: SIMULATION_CONTRACT.to_string(),
+        start: settings.start,
+        end: settings.start + settings.duration,
+        output: Output::Uniform {
+            steps: settings.steps,
+        },
+        preinit: Vec::new(),
+        changes: Vec::new(),
+        steady_state: None,
+        selections: settings.selections.clone(),
+        settings: IntegratorSettings {
+            relative_tolerance: INTEGRATOR_TOLERANCE,
+            absolute_tolerance: Tolerance::Scalar(INTEGRATOR_TOLERANCE),
+            ..IntegratorSettings::default()
+        },
+        seed: EVENT_SEED,
+    }
+}
+
+/// Runs the case in a directory; every failure is the status of the result.
+pub fn run_case(runtime: &Runtime, dir: &Path) -> CaseResult {
+    let cid = dir
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    match catch_unwind(AssertUnwindSafe(|| run_case_inner(runtime, dir, &cid))) {
+        Ok(result) => result,
+        Err(panic) => {
+            let message = panic
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string()))
+                .unwrap_or_default();
+            CaseResult::new(&cid, Status::SimulationError, format!("panic: {message}"))
+        }
+    }
+}
+
+fn run_case_inner(runtime: &Runtime, dir: &Path, cid: &str) -> CaseResult {
+    let settings: CaseSettings = match fs::read(dir.join("case.json"))
+        .map_err(anyhow::Error::from)
+        .and_then(|b| serde_json::from_slice(&b).map_err(anyhow::Error::from))
+    {
+        Ok(settings) => settings,
+        Err(error) => {
+            return CaseResult::new(cid, Status::SimulationError, format!("case.json: {error}"));
+        }
+    };
+    if let Some(message) = &settings.not_converted {
+        return CaseResult::new(
+            cid,
+            Status::NotCompiled,
+            format!("not converted: {message}"),
+        );
+    }
+    let sbml = match fs::read_to_string(dir.join("model.xml")) {
+        Ok(sbml) => sbml,
+        Err(error) => {
+            return CaseResult::new(cid, Status::SimulationError, format!("model.xml: {error}"));
+        }
+    };
+    let compiled = match compile(&sbml, &CompileOptions::default()) {
+        Ok(compiled) => compiled,
+        Err(error) => return CaseResult::new(cid, Status::NotCompiled, error.to_string()),
+    };
+    let observed = match runtime
+        .instantiate(&compiled.wasm, &compiled.description)
+        .map_err(|e| format!("{e:#}"))
+        .and_then(|mut instance| {
+            instance
+                .simulate(&case_request(&settings))
+                .map_err(|e| e.to_string())
+        }) {
+        Ok(observed) => observed,
+        Err(message) => return CaseResult::new(cid, Status::SimulationError, message),
+    };
+    let expected = match fs::read_to_string(dir.join("expected.csv"))
+        .map_err(anyhow::Error::from)
+        .and_then(|text| Table::from_csv(&text))
+    {
+        Ok(expected) => expected,
+        Err(error) => {
+            return CaseResult::new(
+                cid,
+                Status::SimulationError,
+                format!("expected.csv: {error:#}"),
+            );
+        }
+    };
+    match compare(
+        &expected,
+        &observed,
+        settings.absolute_tolerance,
+        settings.relative_tolerance,
+    ) {
+        Err(mut failure) => {
+            failure.cid = cid.to_string();
+            CaseResult::new(cid, failure.status, failure.message)
+                .with_difference(failure.max_difference)
+        }
+        Ok(max_difference) => match repeat_check(&settings, &observed) {
+            Some(message) => CaseResult::new(cid, Status::Repeat, message),
+            None => CaseResult::new(cid, Status::Pass, "").with_difference(Some(max_difference)),
+        },
+    }
+}
+
+impl CaseResult {
+    fn with_difference(mut self, max_difference: Option<f64>) -> Self {
+        self.max_difference = max_difference;
+        self
+    }
+}
+
+/// A case of the baseline.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Expected {
+    /// The status the case has.
+    pub status: String,
+    /// Why it does not pass.
+    pub reason: String,
+}
+
+/// The baseline of the suite: the cases which do not pass, with their reasons.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Baseline {
+    /// The commit of the suite.
+    pub suite_commit: String,
+    /// The number of cases.
+    pub n_cases: usize,
+    /// The number of cases which pass.
+    pub n_passed: usize,
+    /// The cases which do not pass, by identifier.
+    pub expected_failures: BTreeMap<String, Expected>,
+}
+
+/// A case whose outcome is not the recorded one.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Difference {
+    /// The identifier of the case.
+    pub cid: String,
+    /// The recorded status (`pass` for a case which is not listed).
+    pub expected: String,
+    /// The observed status, `not run` for a listed case which was not run.
+    pub observed: String,
+    /// The recorded reason of a listed case, else the message of the result.
+    pub reason: String,
+}
+
+/// The cases which do not have the outcome the baseline records.
+///
+/// `full` is a run of every case: a listed case which was not run is a difference then.
+pub fn differences(results: &[CaseResult], baseline: &Baseline, full: bool) -> Vec<Difference> {
+    let mut found = Vec::new();
+    for result in results {
+        let recorded = baseline.expected_failures.get(&result.cid);
+        let expected = recorded.map_or("pass", |e| e.status.as_str());
+        if result.status.as_str() != expected {
+            found.push(Difference {
+                cid: result.cid.clone(),
+                expected: expected.to_string(),
+                observed: result.status.as_str().to_string(),
+                reason: recorded.map_or_else(|| result.message.clone(), |e| e.reason.clone()),
+            });
+        }
+    }
+    if full {
+        for (cid, recorded) in &baseline.expected_failures {
+            if !results.iter().any(|r| &r.cid == cid) {
+                found.push(Difference {
+                    cid: cid.clone(),
+                    expected: recorded.status.clone(),
+                    observed: "not run".to_string(),
+                    reason: recorded.reason.clone(),
+                });
+            }
+        }
+    }
+    found.sort_by(|a, b| a.cid.cmp(&b.cid));
+    found
+}
+
+/// The baseline of a full run: the cases which do not pass, with the message of the result as
+/// the reason.
+pub fn baseline_of(results: &[CaseResult], suite_commit: &str) -> Baseline {
+    let expected_failures: BTreeMap<String, Expected> = results
+        .iter()
+        .filter(|r| r.status != Status::Pass)
+        .map(|r| {
+            let reason = if r.message.is_empty() {
+                MISSING_REASON
+            } else {
+                &r.message
+            };
+            (
+                r.cid.clone(),
+                Expected {
+                    status: r.status.as_str().to_string(),
+                    reason: reason.to_string(),
+                },
+            )
+        })
+        .collect();
+    Baseline {
+        suite_commit: suite_commit.to_string(),
+        n_cases: results.len(),
+        n_passed: results.len() - expected_failures.len(),
+        expected_failures,
+    }
+}
+
+/// A selection of cases: `00001-00100`, `00007`, or a comma separated list of both.
+pub fn parse_selection(text: &str) -> anyhow::Result<Vec<(u32, u32)>> {
+    text.split(',')
+        .map(|part| {
+            let part = part.trim();
+            let (a, b) = part.split_once('-').unwrap_or((part, part));
+            let a: u32 = a
+                .trim()
+                .parse()
+                .with_context(|| format!("'{part}' is no case range"))?;
+            let b: u32 = b
+                .trim()
+                .parse()
+                .with_context(|| format!("'{part}' is no case range"))?;
+            anyhow::ensure!(a <= b, "'{part}' is an empty range");
+            Ok((a, b))
+        })
+        .collect()
+}
+
+/// The arguments of `sbmlsim-core testsuite`.
+#[derive(Args, Debug)]
+pub struct TestsuiteArgs {
+    /// The directory of the prepared cases (`scripts/prepare_testsuite.py`).
+    pub cases_dir: PathBuf,
+    /// The baseline of the expected failures.
+    #[arg(long, default_value = "testdata/testsuite_baseline.json")]
+    pub baseline: PathBuf,
+    /// Only these cases, e.g. `00001-00100` or `00007,00010-00020`.
+    #[arg(long)]
+    pub cases: Option<String>,
+    /// The number of threads (every core without).
+    #[arg(long)]
+    pub jobs: Option<usize>,
+    /// Write the baseline from this run (of every case) instead of comparing with it.
+    #[arg(long)]
+    pub write_baseline: bool,
+    /// Write the results of every case as JSON.
+    #[arg(long)]
+    pub json: Option<PathBuf>,
+}
+
+/// The case directories of a directory, in the order of their names, filtered by `selection`.
+fn case_dirs(dir: &Path, selection: Option<&[(u32, u32)]>) -> anyhow::Result<Vec<PathBuf>> {
+    let mut dirs = Vec::new();
+    for entry in fs::read_dir(dir).with_context(|| format!("cannot read {}", dir.display()))? {
+        let path = entry?.path();
+        if !path.join("case.json").is_file() {
+            continue;
+        }
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        if let Some(ranges) = selection {
+            let Ok(n) = name.parse::<u32>() else { continue };
+            if !ranges.iter().any(|&(a, b)| (a..=b).contains(&n)) {
+                continue;
+            }
+        }
+        dirs.push(path);
+    }
+    dirs.sort();
+    Ok(dirs)
+}
+
+/// The suite commit the cases were prepared from.
+fn suite_commit(dir: &Path) -> String {
+    fs::read_to_string(dir.join("SUITE_COMMIT"))
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default()
+}
+
+/// The command `testsuite`; `Ok(true)` when the run has no differences.
+pub fn run(args: &TestsuiteArgs) -> anyhow::Result<bool> {
+    let selection = args.cases.as_deref().map(parse_selection).transpose()?;
+    anyhow::ensure!(
+        !(args.write_baseline && selection.is_some()),
+        "--write-baseline needs a run of every case, without --cases"
+    );
+    let dirs = case_dirs(&args.cases_dir, selection.as_deref())?;
+    anyhow::ensure!(
+        !dirs.is_empty(),
+        "no case in {}, run scripts/prepare_testsuite.py",
+        args.cases_dir.display()
+    );
+    let runtime = Runtime::embedded()?;
+    let mut builder = rayon::ThreadPoolBuilder::new();
+    if let Some(jobs) = args.jobs {
+        anyhow::ensure!(jobs > 0, "--jobs must be positive");
+        builder = builder.num_threads(jobs);
+    }
+    let pool = builder.build()?;
+    // rayon keeps the order of the directories
+    let results: Vec<CaseResult> =
+        pool.install(|| dirs.par_iter().map(|dir| run_case(&runtime, dir)).collect());
+
+    let mut summary = String::new();
+    writeln!(summary, "{} cases", results.len())?;
+    for status in Status::ALL {
+        let n = results.iter().filter(|r| r.status == status).count();
+        if n > 0 {
+            writeln!(summary, "  {:<17}{n}", status.as_str())?;
+        }
+    }
+    print!("{summary}");
+
+    let commit = suite_commit(&args.cases_dir);
+    if args.write_baseline {
+        let baseline = baseline_of(&results, &commit);
+        fs::write(
+            &args.baseline,
+            serde_json::to_string_pretty(&baseline)? + "\n",
+        )
+        .with_context(|| format!("cannot write {}", args.baseline.display()))?;
+        println!(
+            "baseline written to {}: {} of {} cases pass",
+            args.baseline.display(),
+            baseline.n_passed,
+            baseline.n_cases
+        );
+        write_json(args, &commit, &results, &[])?;
+        return Ok(true);
+    }
+
+    let baseline: Baseline = serde_json::from_slice(
+        &fs::read(&args.baseline)
+            .with_context(|| format!("cannot read the baseline {}", args.baseline.display()))?,
+    )
+    .with_context(|| format!("cannot read the baseline {}", args.baseline.display()))?;
+    if !commit.is_empty() && commit != baseline.suite_commit {
+        println!(
+            "note: the cases are of the suite commit {commit}, the baseline of {}",
+            baseline.suite_commit
+        );
+    }
+    let found = differences(&results, &baseline, selection.is_none());
+    report_differences(&found);
+    write_json(args, &commit, &results, &found)?;
+    Ok(found.is_empty())
+}
+
+/// Selects the differences of a kind.
+type Selector = fn(&Difference) -> bool;
+
+/// Lists the differences by kind on the console.
+fn report_differences(found: &[Difference]) {
+    if found.is_empty() {
+        println!("no difference to the baseline");
+        return;
+    }
+    let kinds: [(&str, Selector); 3] = [
+        ("regressions (not listed, fail)", |d| d.expected == "pass"),
+        ("listed and pass (the baseline is out of date)", |d| {
+            d.observed == "pass"
+        }),
+        ("other differences", |d| {
+            d.expected != "pass" && d.observed != "pass"
+        }),
+    ];
+    for (title, select) in kinds {
+        let of_kind: Vec<&Difference> = found.iter().filter(|d| select(d)).collect();
+        if of_kind.is_empty() {
+            continue;
+        }
+        println!("{title}: {}", of_kind.len());
+        for d in of_kind.iter().take(LISTED_DIFFERENCES) {
+            println!(
+                "  {}: '{}' -> '{}': {}",
+                d.cid, d.expected, d.observed, d.reason
+            );
+        }
+        if of_kind.len() > LISTED_DIFFERENCES {
+            println!(
+                "  ... and {} more (--json lists every case)",
+                of_kind.len() - LISTED_DIFFERENCES
+            );
+        }
+    }
+    println!("{} differences to the baseline", found.len());
+}
+
+/// Writes the JSON of the results.
+fn write_json(
+    args: &TestsuiteArgs,
+    commit: &str,
+    results: &[CaseResult],
+    found: &[Difference],
+) -> anyhow::Result<()> {
+    let Some(path) = &args.json else {
+        return Ok(());
+    };
+    let counts: BTreeMap<&str, usize> = Status::ALL
+        .iter()
+        .map(|s| {
+            (
+                s.as_str(),
+                results.iter().filter(|r| r.status == *s).count(),
+            )
+        })
+        .collect();
+    let value = serde_json::json!({
+        "suite_commit": commit,
+        "n_cases": results.len(),
+        "counts": counts,
+        "results": results,
+        "differences": found,
+    });
+    fs::write(path, serde_json::to_string_pretty(&value)? + "\n")
+        .with_context(|| format!("cannot write {}", path.display()))
+}

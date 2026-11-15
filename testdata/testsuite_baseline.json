@@ -1,0 +1,839 @@
+{
+  "suite_commit": "bbcbc80c4daec79fea301299f981746408a1742b",
+  "n_cases": 1789,
+  "n_passed": 1581,
+  "expected_failures": {
+    "00039": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00040": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00182": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00184": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00531": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00532": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00533": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00534": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00535": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00536": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00537": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00538": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00539": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00540": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00541": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00542": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00543": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00544": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00545": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00546": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00547": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00548": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00549": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00550": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00551": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00552": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00553": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00554": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00555": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00556": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00557": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00558": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00559": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00560": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00561": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00562": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00563": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00564": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00565": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00566": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00567": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00568": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00569": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00570": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00571": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00572": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00573": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00574": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00575": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00576": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00613": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00614": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00615": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00628": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00629": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00630": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00658": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00659": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00660": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00661": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00662": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00663": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00664": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00665": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00666": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00673": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00674": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00675": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00687": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00695": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00696": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00705": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00760": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00761": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00762": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00777": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00778": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00779": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00780": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00844": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00870": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00871": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00872": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00873": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00874": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00875": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00876": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00937": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00938": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00939": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00940": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00941": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00942": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00943": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00981": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00982": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00983": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00984": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00985": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00986": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00987": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00988": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "00993": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01044": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01051": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01052": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01053": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01054": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01083": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01084": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01085": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01086": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01108": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01142": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01173": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01174": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01176": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01292": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01318": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01319": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01320": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01350": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01359": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01368": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01377": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01386": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01396": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01397": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01398": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01399": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01400": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01401": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01403": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01404": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01406": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01407": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01409": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01410": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01411": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01412": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01413": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01414": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01415": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01416": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01417": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01418": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01419": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01454": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01479": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01480": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01481": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01482": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01483": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01484": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01499": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01500": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01501": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01502": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01503": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01518": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01519": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01520": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01521": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01522": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01523": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01524": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01534": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01535": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01536": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01537": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01538": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01539": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01544": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01545": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01546": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01547": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01548": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01549": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01550": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01551": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01558": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01559": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01560": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01565": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01567": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01568": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01569": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01570": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01571": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01572": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01575": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01576": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01577": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01578": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01579": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01589": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01592": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01593": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01785": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01786": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01787": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01788": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01789": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01790": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01791": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01792": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01793": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    },
+    "01794": {
+      "status": "not_compiled",
+      "reason": "not read by sbmlsim (status not_read)"
+    }
+  }
+}

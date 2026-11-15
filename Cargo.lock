@@ -1252,7 +1252,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "rayon",
  "sbmlsim-abi",
+ "sbmlsim-compiler",
  "sbmlsim-host",
  "serde",
  "serde_json",
@@ -1265,6 +1267,11 @@ version = "0.1.0"
 [[package]]
 name = "sbmlsim-compiler"
 version = "0.1.0"
+dependencies = [
+ "sbmlsim-abi",
+ "sbmlsim-ir",
+ "sbmlsim-sbml",
+]
 
 [[package]]
 name = "sbmlsim-csolvers"

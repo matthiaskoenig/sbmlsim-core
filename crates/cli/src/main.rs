@@ -20,6 +20,7 @@ use std::process::ExitCode;
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 use sbmlsim_abi::{ModelDescription, SimulationRequest, SimulationResult};
+use sbmlsim_cli::testsuite::{self, TestsuiteArgs};
 use sbmlsim_host::Runtime;
 
 /// The command line of sbmlsim-core.
@@ -43,6 +44,8 @@ enum Command {
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
+    /// Runs the prepared cases of the SBML Test Suite and compares them with the baseline.
+    Testsuite(TestsuiteArgs),
 }
 
 fn main() -> ExitCode {
@@ -51,10 +54,12 @@ fn main() -> ExitCode {
             model_dir,
             request,
             output,
-        } => simulate(&model_dir, &request, output.as_deref()),
+        } => simulate(&model_dir, &request, output.as_deref()).map(|()| true),
+        Command::Testsuite(args) => testsuite::run(&args),
     };
     match result {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(true) => ExitCode::SUCCESS,
+        Ok(false) => ExitCode::FAILURE,
         Err(error) => {
             eprintln!("error: {error:#}");
             ExitCode::FAILURE

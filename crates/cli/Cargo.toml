@@ -14,6 +14,12 @@ path = "src/main.rs"
 anyhow = "1"
 clap = { version = "4.5", features = ["derive"] }
 sbmlsim-abi = { path = "../abi" }
+sbmlsim-compiler = { path = "../compiler" }
 sbmlsim-host = { path = "../host" }
+rayon = "1.10"
 serde.workspace = true
 serde_json.workspace = true
+
+[lib]
+name = "sbmlsim_cli"
+path = "src/lib.rs"
