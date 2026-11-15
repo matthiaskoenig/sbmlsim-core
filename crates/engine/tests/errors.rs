@@ -55,6 +55,22 @@ fn integration_failure_is_an_error() {
         }
         other => panic!("{other:?}"),
     }
+    // the steps of the integrator stall at 1 and end with an error, quickly
+    let started = std::time::Instant::now();
+    let req = request(0.0, 2.0, Output::IntegratorSteps);
+    match simulate(&model, &model.description(), &req) {
+        Err(EngineError::Integration {
+            flag,
+            time,
+            message,
+        }) => {
+            assert!(time <= 1.0, "{time}");
+            assert_eq!(flag, sbmlsim_engine::STALL_FLAG);
+            assert!(message.contains("stalled"), "{message}");
+            assert!(started.elapsed().as_secs_f64() < 5.0);
+        }
+        other => panic!("{other:?}"),
+    }
     // too many steps for one call of CVODE, on Robertson: CV_TOO_MUCH_WORK
     let model = Robertson;
     let mut req = request(0.0, 4e10, Output::Uniform { steps: 1 });
@@ -97,6 +113,16 @@ fn invalid_requests_are_refused() {
         (vec![change(5.0, f64::INFINITY)], "inf"),
     ] {
         assert_request(decay(&with(&|r| r.changes = changes.clone())), &[text]);
+    }
+    // a change of an unknown entity and of one which is not settable
+    for id in ["nothing", "t_half"] {
+        let r = with(&|r| {
+            r.changes = vec![Change {
+                time: 5.0,
+                values: vec![(id.to_string(), 1.0)],
+            }]
+        });
+        assert_request(decay(&r), &[id]);
     }
     // output times out of order, outside the simulation, not finite
     for times in [vec![1.0, 0.5], vec![-1.0], vec![11.0], vec![f64::NAN]] {

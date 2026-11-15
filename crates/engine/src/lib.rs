@@ -36,6 +36,11 @@ pub const MAX_OUTPUT_VALUES: usize = 1 << 27;
 /// The flag of the [`EngineError::Integration`] of an output which exceeds
 /// [`MAX_OUTPUT_VALUES`]: an engine code, distinct from the flags of CVODE (`-1` to `-99`).
 pub const OUTPUT_LIMIT_FLAG: i32 = -1000;
+
+/// The flag of the [`EngineError::Integration`] of a run of the integrator steps which stalls
+/// (a step does not advance the time): an engine code, distinct from CVODE's and from
+/// [`OUTPUT_LIMIT_FLAG`].
+pub const STALL_FLAG: i32 = -1001;
 pub use model::ModelFns;
 
 use cvode::{Config, Cvode, Linear, Method, Problem};
@@ -340,7 +345,12 @@ fn resolve_preinit(
 }
 
 /// Checks the changes: finite values in `(start, end]` in non-decreasing order of the time.
-fn check_changes(changes: &[Change], start: f64, end: f64) -> Result<(), EngineError> {
+fn check_changes(
+    desc: &ModelDescription,
+    changes: &[Change],
+    start: f64,
+    end: f64,
+) -> Result<(), EngineError> {
     let mut previous = start;
     for change in changes {
         let t = change.time;
@@ -350,6 +360,7 @@ fn check_changes(changes: &[Change], start: f64, end: f64) -> Result<(), EngineE
                  order of the time"
             )));
         }
+        resolve_preinit(desc, &change.values)?;
         if let Some((id, value)) = change.values.iter().find(|(_, v)| !v.is_finite()) {
             return Err(request(format!(
                 "the value {value} of {id} at t = {t} is not finite"
@@ -425,7 +436,7 @@ fn run(
     check_settings(&req.settings, n)?;
     let (names, columns) = columns_of(desc, req)?;
     let times = output_times(&req.output, start, end, names.len())?;
-    check_changes(&req.changes, start, end)?;
+    check_changes(desc, &req.changes, start, end)?;
     if let Some(steady) = &req.steady_state {
         check_steady_state(desc, steady)?;
     }

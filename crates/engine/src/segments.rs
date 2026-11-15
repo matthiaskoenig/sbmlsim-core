@@ -5,7 +5,7 @@ use sbmlsim_csolvers::ffi::{CV_NORMAL, CV_ONE_STEP, CV_TSTOP_RETURN};
 
 use crate::cvode::{Cvode, Problem};
 use crate::model::ModelFns;
-use crate::{EngineError, OUTPUT_LIMIT_FLAG};
+use crate::{EngineError, OUTPUT_LIMIT_FLAG, STALL_FLAG};
 
 /// A column of the result.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -164,8 +164,20 @@ pub(crate) fn integrate(
                 return Ok(());
             }
             cvode.start(t0, y0, end, settings)?;
+            let mut previous = t0;
             loop {
                 let (t, flag) = cvode.integrate(problem, end, CV_ONE_STEP)?;
+                // a step which does not advance the time (CVODE's `t + h = t`) never ends
+                if flag != CV_TSTOP_RETURN && t <= previous {
+                    return Err(EngineError::Integration {
+                        flag: STALL_FLAG,
+                        time: t,
+                        message: format!(
+                            "the integrator stalled: a step did not advance the time past {previous}"
+                        ),
+                    });
+                }
+                previous = t;
                 // CVODE returns the stop time exactly when it reaches it
                 let t = if flag == CV_TSTOP_RETURN { end } else { t };
                 recorder.row(t, cvode.state(), p)?;
