@@ -2,7 +2,7 @@
   "name": "sbmlsim-core",
   "version": "0.1.0",
   "description": "The JavaScript loader of sbmlsim-core: engine.wasm, mathlib.wasm and a compiled model.wasm in Node and browsers",
-  "license": "MIT",
+  "license": "MIT AND BSD-3-Clause AND LGPL-2.1-or-later",
   "private": true,
   "type": "module",
   "exports": "./loader.mjs",

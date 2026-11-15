@@ -692,12 +692,18 @@ pub fn description_json(desc: &ModelDescription) -> anyhow::Result<Vec<u8>> {
     Ok(json)
 }
 
-/// Writes the `engine.wasm` and `mathlib.wasm` of this build into `dir`.
+/// Writes the `engine.wasm` and `mathlib.wasm` of this build into `dir`, and next to them
+/// `THIRD_PARTY.md`, the notices of the libraries `engine.wasm` links statically (a
+/// redistributed `engine.wasm` carries them).
 pub fn write_runtime(dir: &Path) -> anyhow::Result<()> {
     fs::create_dir_all(dir).with_context(|| format!("cannot create {}", dir.display()))?;
     for (name, bytes) in [
         ("engine.wasm", sbmlsim_host::ENGINE_WASM),
         ("mathlib.wasm", sbmlsim_host::MATHLIB_WASM),
+        (
+            "THIRD_PARTY.md",
+            sbmlsim_host::THIRD_PARTY_NOTICES.as_bytes(),
+        ),
     ] {
         let path = dir.join(name);
         fs::write(&path, bytes).with_context(|| format!("cannot write {}", path.display()))?;

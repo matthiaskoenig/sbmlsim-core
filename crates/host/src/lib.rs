@@ -41,6 +41,12 @@ pub static ENGINE_WASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/engine
 /// `mathlib.wasm` of this build (`sbmlsim-mathlib` for `wasm32-unknown-unknown`).
 pub static MATHLIB_WASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/mathlib.wasm"));
 
+/// The notices of the libraries [`ENGINE_WASM`] links statically (SUNDIALS, BSD-3-Clause; KLU
+/// and BTF, LGPL-2.1-or-later; AMD, COLAMD and SuiteSparse_config, BSD-3-Clause) with their
+/// versions, the commits of their submodules and their license texts: `THIRD_PARTY.md` of the
+/// repository, which `sbmlsim-core runtime -o` writes next to the modules.
+pub static THIRD_PARTY_NOTICES: &str = include_str!("../../../THIRD_PARTY.md");
+
 /// The module of the WASI preview1 imports of the engine.
 const WASI_MODULE: &str = "wasi_snapshot_preview1";
 

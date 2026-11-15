@@ -154,3 +154,23 @@ fn compile_reports_a_refusal() {
     );
     assert!(!out.join("model.wasm").exists());
 }
+
+#[test]
+fn runtime_writes_the_modules_and_the_notices_of_the_engine() {
+    let dir = std::env::temp_dir().join(format!("sbmlsim-core-runtime-{}", std::process::id()));
+    let output = run(&["runtime".as_ref(), "-o".as_ref(), dir.as_os_str()]);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        std::fs::read(dir.join("engine.wasm")).unwrap(),
+        sbmlsim_host::ENGINE_WASM
+    );
+    assert_eq!(
+        std::fs::read(dir.join("mathlib.wasm")).unwrap(),
+        sbmlsim_host::MATHLIB_WASM
+    );
+    let notices = std::fs::read_to_string(dir.join("THIRD_PARTY.md")).unwrap();
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../THIRD_PARTY.md");
+    assert_eq!(notices, std::fs::read_to_string(repository).unwrap());
+    assert!(notices.contains("LGPL-2.1-or-later") && notices.contains("SUNDIALS"));
+    std::fs::remove_dir_all(dir).unwrap();
+}

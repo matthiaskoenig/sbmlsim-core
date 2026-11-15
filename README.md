@@ -117,4 +117,4 @@ No model of the benchmark takes more than 2x the time of roadrunner native, dens
 
 ## License
 
-MIT, see `LICENSE`.
+The code of sbmlsim-core is MIT licensed, see `LICENSE`. `engine.wasm` statically links SUNDIALS 7.9.0 (BSD-3-Clause) and, from SuiteSparse 7.14.1, KLU and BTF (LGPL-2.1-or-later) and AMD, COLAMD and SuiteSparse_config (BSD-3-Clause), built from the submodules in `third_party`. So `engine.wasm` and the packages which build or embed it (`sbmlsim-csolvers`, `sbmlsim-host`, `sbmlsim-cli` and the JavaScript package with its runtime) are under `MIT AND BSD-3-Clause AND LGPL-2.1-or-later`. `THIRD_PARTY.md` has the versions, the commits of the submodules, the license texts and how to rebuild `engine.wasm` with a modified KLU or BTF; `sbmlsim-core runtime -o DIR` writes it next to `engine.wasm` and `mathlib.wasm`, and `sbmlsim_host::THIRD_PARTY_NOTICES` is its text.
