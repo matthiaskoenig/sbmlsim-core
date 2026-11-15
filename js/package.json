@@ -35,7 +35,7 @@
     "./package.json": "./package.json"
   },
   "bin": {
-    "sbmlsim-core-simulate": "./simulate.mjs"
+    "sbmlsim-core-simulate": "simulate.mjs"
   },
   "files": [
     "loader.mjs",
