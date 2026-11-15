@@ -4,7 +4,7 @@ The spike asks whether "one wasm everywhere" (the same `engine.wasm` with CVODE 
 
 ## Ratios against roadrunner native
 
-Wall time of `simulate(0, end, 201)` divided by roadrunner's: dense against the released libroadrunner (LLJIT `O2`, dense, CVODE's difference quotient), KLU against the `roadrunner-sparsedq` build (KLU with its sparse difference quotient). The engine uses the analytic Jacobian. "scalar" is the wasm build without SIMD, "simd" the same build with `-msimd128` (same results, same CVODE counters).
+Wall time of `simulate(0, end, 201)` divided by roadrunner's: dense against the released libroadrunner (LLJIT `O2`, dense, CVODE's difference quotient), KLU against the `roadrunner-sparsedq` build (KLU with its sparse difference quotient). The baselines differ from the engine in two ways: the KLU baseline is the `roadrunner-sparsedq` prototype build, not a release (the released libroadrunner has no KLU), and both roadrunner baselines compute the Jacobian by difference quotients (dense: CVODE's own, KLU: the colored sparse one of the prototype), while the engine of the spike uses the analytic Jacobian of the generated C. "scalar" is the wasm build without SIMD, "simd" the same build with `-msimd128` (same results, same CVODE counters).
 
 | model | solver | wasmtime scalar | wasmtime simd | Chrome scalar | Chrome simd | Node scalar | Node simd | native C |
 |---|---|---:|---:|---:|---:|---:|---:|---:|
@@ -25,7 +25,7 @@ The only ratio above 1.2 is mp_flat dense without SIMD (1.6x to 1.9x): 919 state
 - roadrunner: libroadrunner 2.11.1 (develop build of the sbmlsim environment, LLJIT, optimization level `DEFAULT` = `O2` as sbmlsim sets it through `LoadSBMLOptions`); `roadrunner-sparsedq` build at `~/rr-enzyme/build-sparsedq` (same version, `jacobian = "sparse_difference_quotient"`, `linear_solver = "klu"`, also LLJIT `O2`).
 - Engine hosts: native C (gcc 13.3, `-O3`, glibc libm), wasmtime 50.0.1 (Cranelift, defaults), Node 24.21.0, Chrome 157.0.8103.78 headless through Playwright (`channel: "chrome"`), page served with cross-origin isolation so `performance.now` in the workers is fine grained.
 - Models (time unit min, no events): `hctz_body_flat.xml` (28 states: 21 species amounts and 7 rate rules; 49 parameters; 88 Jacobian non-zeros) with an oral dose `PODOSE_hctz = 25` mg as the initial state (the model as loaded has no dose and nothing happens), end 1440 min (24 h); `machine_perfusion_liver_core.xml` (43 states, 190 non-zeros) and `machine_perfusion_liver_flat.xml` (919 states: 839 species and 80 rate rules; 1007 reactions; 4262 non-zeros) as loaded, end 360 min: the experiments of the perfusion package (`donors.py` `END = 6.0`, `flow_rate.py` `end=6.0` h) simulate a 6 h perfusion.
-- Settings everywhere: BDF (maximum order 5), relative tolerance 1e-6, absolute tolerance 1e-12 as roadrunner applies it (roadrunner scales the absolute tolerance per state; the engine takes the vector of `integrator.getAbsoluteToleranceVector()` after a simulation, checked equal in every roadrunner run), `maximum_num_steps` 20000, 201 output points with `CV_NORMAL` to each output time (as roadrunner does), the same initial state, no fast math anywhere. A measurement is the median of 20 runs after 3 warm ups; the configurations take turns, 3 rounds, the table has the median of the round medians. A run of the engine creates and frees the CVODE memory, the matrix and the linear solver; roadrunner's time is `simulate` after `resetAll` and the setup.
+- Settings everywhere: BDF (maximum order 5), relative tolerance 1e-6, absolute tolerance 1e-12 as roadrunner applies it (roadrunner scales the absolute tolerance per state; the engine takes the vector of `integrator.getAbsoluteToleranceVector()` after a simulation, checked equal in every roadrunner run), `maximum_num_steps` 20000, 201 output points with `CV_NORMAL` to each output time (as roadrunner does), the same initial state, no fast math anywhere. A measurement is the median of 20 runs after 3 warm ups; the configurations take turns, 3 rounds, the table has the median of the round medians. A run of the engine creates and frees the CVODE memory, the matrix and the linear solver; roadrunner's time is `simulate` after `resetAll` and the setup, and the timed region includes the conversion of its result to a numpy array (`np.array(r.simulate(...))`, `bench.py`), a few microseconds which favor the wasm hosts slightly on hctz (about 1 ms per simulation) and are negligible on the other models.
 
 ## Step 1: build recipe
 
@@ -82,7 +82,7 @@ The solutions agree in the accuracy class of the tolerances: against a reference
 
 ## Step 3: timings
 
-`ratio to roadrunner`: dense against `roadrunner release dense`, KLU against `roadrunner sparsedq klu`. `rhs` counts the right hand sides of CVODE including those of the difference quotient of a dense Jacobian (`num_lin_rhs_evals`); roadrunner's KLU counters do not include the model evaluations of its colored sparse difference quotient. `reinits` are roadrunner's restarts at roots. All wasm hosts give the same counters (one wasm, same bits); native C differs from wasm on mp_flat (2020 / 2415 against 2184 / 2304 steps) because glibc's and wasi-libc's `pow` differ in the last bits.
+`ratio to roadrunner`: dense against `roadrunner release dense`, KLU against `roadrunner sparsedq klu`. `rhs` counts the right hand sides of CVODE including those of the difference quotient of a dense Jacobian (`num_lin_rhs_evals`); roadrunner's KLU counters do not include the model evaluations of its colored sparse difference quotient. `reinits` are roadrunner's restarts at roots. All wasm hosts give the same counters (one wasm, same bits); the counters of the Chrome rows are Chrome's own, returned by the engine in the Web Worker. The Chrome rows have no error column: the Chrome runs did not return the output, so their solution was not compared with roadrunner; that it is the solution of the other wasm hosts rests on the equal counters, not on a comparison of the output. native C differs from wasm on mp_flat (2020 / 2415 against 2184 / 2304 steps) because glibc's and wasi-libc's `pow` differ in the last bits.
 
 
 #### hctz
@@ -157,8 +157,6 @@ The variant of the design: the host creates the memory, `math.wasm` (the math fu
 
 | model | solver | host | single module ms | opaque math ms | cross-module ms | cross / single |
 |---|---|---|---:|---:|---:|---:|
-| model | solver | host | single module ms | opaque math ms | cross-module ms | cross / single |
-|---|---|---|---:|---:|---:|---:|
 | hctz | dense | wasmtime | 0.84 | 0.89 | 0.94 | 1.12 |
 | hctz | dense | wasmtime simd | 0.71 | 0.75 | 0.77 | 1.09 |
 | hctz | dense | node | 0.97 | - | 1.01 | 1.04 |
@@ -190,14 +188,14 @@ The variant of the design: the host creates the memory, `math.wasm` (the math fu
 | mp_flat | klu | chrome | 89 | - | 89.8 | 1.01 |
 | mp_flat | klu | chrome simd | 76.3 | - | 77.9 | 1.02 |
 
-The cross-module build costs up to 15 % (the larger values on hctz, whose right hand side is a few hundred nanoseconds; one outlier of 37 %, Node simd hctz KLU, 0.64 against 0.87 ms, which the other hosts do not show); a quarter to a half of it is the opaque math, the rest the calls across instances. On the large model it is 1 % to 5 %.
+The cross-module build costs up to 15 % (the larger values on hctz, whose right hand side is a few hundred nanoseconds; one outlier of 37 %, Node simd hctz KLU, 0.64 against 0.87 ms, which the other hosts do not show and which was not re-measured); a quarter to a half of it is the opaque math, the rest the calls across instances. On the large model it is 1 % to 5 %.
 
 ## Worker pool in Chrome
 
-`spike/web/index.html`: the compiled `WebAssembly.Module` is posted to each Web Worker, each instantiates it and runs 3 warm up simulations (V8 tiers the code up from Liftoff to TurboFan), then the workers take the 64 simulations (the parameters matching `Vmax`, for hctz `Ka_dis_hctz`, `f_renal_function`, `BW`, scaled by a factor in [0.8, 1.25] per simulation) one at a time from the page. `navigator.hardwareConcurrency` is 20, N = 19. Wall time from the first task to the last result; "startup" is the instantiation and the warm ups of all workers. Chrome was not pinned here.
+`spike/web/index.html`: the compiled `WebAssembly.Module` is posted to each Web Worker, each instantiates it and runs 3 warm up simulations (V8 tiers the code up from Liftoff to TurboFan), then the workers take the 64 simulations (the parameters matching `Vmax`, for hctz `Ka_dis_hctz`, `f_renal_function`, `BW`, scaled by a factor in [0.8, 1.25] per simulation) one at a time from the page. `navigator.hardwareConcurrency` is 20, N = 19. Wall time from the first task to the last result; "startup" is the instantiation and the warm ups of all workers.
 
-| model | solver | workers | wall s | speedup | simulations/s | median per simulation ms | startup ms |
-|---|---|---:|---:|---:|---:|---:|---:|
+Caveats of these numbers: the pool run was not pinned to CPUs (unlike the single runs), and it is a different harness from the single run measurements (the page hands out the tasks by messages, the simulations have varied parameters). The scaling numbers are indicative only. With 19 workers the workers run on performance cores, their second threads and the efficiency cores at once, so the "median per simulation" at 19 workers mixes performance and efficiency cores and is no per core figure.
+
 | model | solver | workers | wall s | speedup | simulations/s | median per simulation ms | startup ms |
 |---|---|---:|---:|---:|---:|---:|---:|
 | hctz | dense | 1 | 0.0461 | 1.00 | 1.39e+03 | 0.65 | 12.8 |
