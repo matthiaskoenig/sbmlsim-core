@@ -4,5 +4,22 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
+description = "The wasmtime host of sbmlsim-core: links mathlib, a compiled model and the engine"
 
 [dependencies]
+anyhow = "1"
+sbmlsim-abi = { path = "../abi" }
+# `EngineError`, which the host gives back as the native engine does
+sbmlsim-engine = { path = "../engine" }
+serde.workspace = true
+serde_json.workspace = true
+# the call hook counts the calls of the engine into the host (its WASI imports), wasmparser
+# checks the sections of a model
+wasmtime = { version = "50.0.1", features = ["call-hook", "reexport-wasmparser"] }
+wasmtime-wasi = "50.0.1"
+
+[dev-dependencies]
+# the native test model `Decay`, which the wasm chain is compared with
+sbmlsim-engine = { path = "../engine", features = ["test-models"] }
+serde_json.workspace = true
+wat = "1"

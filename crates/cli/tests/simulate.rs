@@ -1,0 +1,106 @@
+//! `sbmlsim-core simulate` on the decay model of `crates/host/tests/decay-model`.
+
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
+
+use sbmlsim_abi::{ModelDescription, SimulationRequest};
+use sbmlsim_host::Runtime;
+
+/// The model directory of the decay model.
+fn model_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../host/tests/decay-model")
+}
+
+/// Runs the command line with `args`.
+fn run(args: &[&std::ffi::OsStr]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_sbmlsim-core"))
+        .args(args)
+        .output()
+        .expect("the command runs")
+}
+
+/// The CSV of the result of the request of the model directory, through the host.
+fn expected_rows() -> (Vec<String>, Vec<Vec<f64>>) {
+    let dir = model_dir();
+    let desc: ModelDescription =
+        serde_json::from_slice(&std::fs::read(dir.join("model.json")).unwrap()).unwrap();
+    let req: SimulationRequest =
+        serde_json::from_slice(&std::fs::read(dir.join("request.json")).unwrap()).unwrap();
+    let wasm = std::fs::read(dir.join("model.wasm")).unwrap();
+    let result = Runtime::embedded()
+        .unwrap()
+        .instantiate(&wasm, &desc)
+        .unwrap()
+        .simulate(&req)
+        .unwrap();
+    let k = result.columns.len();
+    let rows = result.values.chunks(k).map(<[f64]>::to_vec).collect();
+    (result.columns, rows)
+}
+
+/// Asserts that a CSV is the expected result, every number read back bitwise.
+fn assert_csv(csv: &str) {
+    let (columns, rows) = expected_rows();
+    let mut lines = csv.lines();
+    assert_eq!(lines.next().unwrap(), columns.join(","));
+    let read: Vec<Vec<f64>> = lines
+        .map(|line| line.split(',').map(|v| v.parse().unwrap()).collect())
+        .collect();
+    assert_eq!(read.len(), 11);
+    for (r, e) in read.iter().zip(&rows) {
+        let bits = |v: &[f64]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+        assert_eq!(bits(r), bits(e));
+    }
+}
+
+#[test]
+fn simulate_writes_the_csv() {
+    let dir = model_dir();
+    let out = Path::new(env!("CARGO_TARGET_TMPDIR")).join("decay.csv");
+    let _ = std::fs::remove_file(&out);
+    let output = run(&[
+        "simulate".as_ref(),
+        dir.as_os_str(),
+        dir.join("request.json").as_os_str(),
+        "-o".as_ref(),
+        out.as_os_str(),
+    ]);
+    assert!(output.status.success(), "{output:?}");
+    assert!(output.stdout.is_empty());
+    let csv = std::fs::read_to_string(&out).unwrap();
+    assert!(csv.starts_with("time,y\n0,1\n1,"), "{csv}");
+    assert_csv(&csv);
+    // without -o the CSV goes to stdout
+    let output = run(&[
+        "simulate".as_ref(),
+        dir.as_os_str(),
+        dir.join("request.json").as_os_str(),
+    ]);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), csv);
+}
+
+#[test]
+fn errors_are_reported() {
+    let dir = model_dir();
+    let tmp = Path::new(env!("CARGO_TARGET_TMPDIR"));
+    let request = std::fs::read_to_string(dir.join("request.json")).unwrap();
+    let bad = tmp.join("no-steps.json");
+    std::fs::write(&bad, request.replace("\"steps\": 10", "\"steps\": 0")).unwrap();
+    let output = run(&["simulate".as_ref(), dir.as_os_str(), bad.as_os_str()]);
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("invalid request"), "{stderr}");
+    // a directory without a model
+    let output = run(&[
+        "simulate".as_ref(),
+        tmp.as_os_str(),
+        dir.join("request.json").as_os_str(),
+    ]);
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("model.wasm"), "{stderr}");
+    // a usage error
+    let output = run(&["simulate".as_ref()]);
+    assert_eq!(output.status.code(), Some(2));
+}

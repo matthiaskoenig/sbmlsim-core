@@ -8,6 +8,8 @@
 //! - `cvode`: the wrapper of CVODE, created once per configuration and re-initialized per
 //!   segment.
 //! - `segments`: the integration of a segment and the rows of its output.
+//! - `exports` (wasm32 and the feature `exports`): the exports of `engine.wasm` and the model it
+//!   imports.
 //!
 //! The initialization is `defaults`, then the pre-initialization values (fixed for `init`), then
 //! `init` at the start time; the integration runs in absolute time from the start. Events,
@@ -15,6 +17,8 @@
 //! then.
 
 mod cvode;
+#[cfg(all(target_arch = "wasm32", feature = "exports"))]
+mod exports;
 pub mod model;
 mod segments;
 
@@ -65,6 +69,11 @@ pub enum EngineError {
     /// The engine does not simulate this yet.
     #[error("unsupported: {0}")]
     Unsupported(String),
+    /// The engine failed in itself: a panic of `engine.wasm`, a trap of its instance (also one
+    /// of the model it calls) or a failure of the host around it. The host does not use such an
+    /// instance again; the native engine never gives this error.
+    #[error("internal error of the engine: {0}")]
+    Internal(String),
 }
 
 /// A loaded model with the CVODE memory of its last simulation, which the next simulation of

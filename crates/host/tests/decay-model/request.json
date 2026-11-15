@@ -1,0 +1,30 @@
+{
+  "contract": "simulation/1",
+  "start": 0.0,
+  "end": 10.0,
+  "output": {
+    "uniform": {
+      "steps": 10
+    }
+  },
+  "preinit": [],
+  "changes": [],
+  "steady_state": null,
+  "selections": [
+    "time",
+    "y"
+  ],
+  "settings": {
+    "relative_tolerance": 1e-10,
+    "absolute_tolerance": {
+      "scalar": 1e-12
+    },
+    "maximum_num_steps": 20000,
+    "maximum_time_step": 0.0,
+    "initial_time_step": 0.0,
+    "stiff": false,
+    "linear_solver": "auto",
+    "jacobian": "auto"
+  },
+  "seed": 0
+}

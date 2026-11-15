@@ -24,6 +24,14 @@ cargo test
 cargo build -p sbmlsim-abi --target wasm32-unknown-unknown
 ```
 
+## Simulate
+
+`sbmlsim-host` runs a compiled model with `engine.wasm` and `mathlib.wasm` in wasmtime; it embeds both, built by its build script with `WASI_SDK_PATH` (or copied from `SBMLSIM_CORE_WASM_DIR`, a directory with a prebuilt `engine.wasm` and `mathlib.wasm`). The command line simulates a model directory (`model.wasm` and `model.json`) with a request of `simulation/1` and writes the result as CSV:
+
+```bash
+cargo run -p sbmlsim-cli -- simulate crates/host/tests/decay-model crates/host/tests/decay-model/request.json [-o out.csv]
+```
+
 ## License
 
 MIT, see `LICENSE`.

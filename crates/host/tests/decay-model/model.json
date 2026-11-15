@@ -1,0 +1,50 @@
+{
+  "contract": "model/1",
+  "id": "decay",
+  "states": [
+    {
+      "id": "y",
+      "kind": "parameter",
+      "initial": 1.0,
+      "settable": true
+    }
+  ],
+  "parameters": [
+    {
+      "id": "k",
+      "kind": "parameter",
+      "initial": 0.5,
+      "settable": true
+    },
+    {
+      "id": "t_half",
+      "kind": "parameter",
+      "initial": 1.3862943611198906,
+      "settable": false
+    }
+  ],
+  "selections": [
+    {
+      "id": "y",
+      "index": 0
+    },
+    {
+      "id": "t_half",
+      "index": 1
+    }
+  ],
+  "jacobian": {
+    "analytic": {
+      "n": 1,
+      "col_ptr": [
+        0,
+        1
+      ],
+      "row_idx": [
+        0
+      ]
+    }
+  },
+  "events": [],
+  "units": {}
+}

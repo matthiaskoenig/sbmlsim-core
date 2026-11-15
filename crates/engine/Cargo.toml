@@ -9,11 +9,19 @@ description = "The engine of sbmlsim-core: integrates a compiled model with CVOD
 [features]
 # the test models `Decay` and `Robertson` of `model.rs`, for the tests of this and other crates
 test-models = []
+# the exports of engine.wasm (`src/exports.rs`, wasm32 only); off in the wasm binaries of the
+# tests, which would import the functions of a model
+exports = ["dep:serde", "dep:serde_json"]
 
 [dependencies]
 sbmlsim-abi = { path = "../abi" }
 sbmlsim-csolvers = { path = "../csolvers" }
 thiserror.workspace = true
+
+# the JSON of the exports of engine.wasm (`src/exports.rs`)
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
 
 [dev-dependencies]
 # the integration tests use the test models
