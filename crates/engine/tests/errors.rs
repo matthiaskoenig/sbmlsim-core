@@ -6,7 +6,7 @@ use sbmlsim_abi::{
     SIMULATION_CONTRACT, SimulationRequest, SimulationResult, SteadyState, Tolerance,
 };
 use sbmlsim_engine::model::{Decay, Derived, NanRhs, Robertson};
-use sbmlsim_engine::{Engine, EngineError, MAX_OUTPUT_VALUES, ModelFns, simulate};
+use sbmlsim_engine::{Engine, EngineError, MAX_OUTPUT_VALUES, simulate};
 
 /// A request from `start` to `end` with the given output, all selections, the default settings.
 fn request(start: f64, end: f64, output: Output) -> SimulationRequest {
@@ -294,7 +294,8 @@ fn features_of_later_tasks_are_unsupported() {
         &["maximum time"],
     );
 
-    // events: of the description ...
+    // events are simulated: a description of events which the model does not have is a
+    // description of another model, refused by the check of the sizes
     let mut desc: ModelDescription = model.description();
     desc.events = vec![EventInfo {
         id: "e".to_string(),
@@ -305,61 +306,7 @@ fn features_of_later_tasks_are_unsupported() {
         use_values_from_trigger_time: false,
         n_assignments: 1,
     }];
-    assert!(matches!(
-        simulate(&model, &desc, &base),
-        Err(EngineError::Unsupported(m)) if m.contains("events")
-    ));
-    // ... and of the functions of the model (root functions)
-    struct Rooted(Decay);
-    impl ModelFns for Rooted {
-        fn defaults(&self, p: &mut [f64], y: &mut [f64]) {
-            self.0.defaults(p, y)
-        }
-        fn init(&self, t: f64, p: &mut [f64], y: &mut [f64], fixed: &[u8]) {
-            self.0.init(t, p, y, fixed)
-        }
-        fn rhs(&self, t: f64, y: &[f64], p: &[f64], ydot: &mut [f64]) {
-            self.0.rhs(t, y, p, ydot)
-        }
-        fn jac(&self, t: f64, y: &[f64], p: &[f64], values: &mut [f64]) {
-            self.0.jac(t, y, p, values)
-        }
-        fn roots(&self, _t: f64, _y: &[f64], _p: &[f64], g: &mut [f64]) {
-            g[0] = 1.0;
-        }
-        fn trigger(&self, i: u32, t: f64, y: &[f64], p: &[f64]) -> bool {
-            self.0.trigger(i, t, y, p)
-        }
-        fn priority(&self, i: u32, t: f64, y: &[f64], p: &[f64]) -> f64 {
-            self.0.priority(i, t, y, p)
-        }
-        fn delay(&self, i: u32, t: f64, y: &[f64], p: &[f64]) -> f64 {
-            self.0.delay(i, t, y, p)
-        }
-        fn event_values(&self, i: u32, t: f64, y: &[f64], p: &[f64], out: &mut [f64]) {
-            self.0.event_values(i, t, y, p, out)
-        }
-        fn event_apply(&self, i: u32, values: &[f64], y: &mut [f64], p: &mut [f64]) {
-            self.0.event_apply(i, values, y, p)
-        }
-        fn selections(&self, t: f64, y: &[f64], p: &[f64], out: &mut [f64]) {
-            self.0.selections(t, y, p, out)
-        }
-        fn assign(&self, t: f64, y: &mut [f64], p: &mut [f64]) {
-            self.0.assign(t, y, p)
-        }
-        fn n_roots(&self) -> usize {
-            1
-        }
-    }
-    let rooted = Rooted(model);
-    assert!(matches!(
-        simulate(&rooted, &model.description(), &base),
-        Err(EngineError::Unsupported(m)) if m.contains("events")
-    ));
-    // the plain model has neither
-    assert!(model.description().events.is_empty());
-    assert_eq!(model.n_roots(), 0);
+    assert_request(simulate(&model, &desc, &base), &["1 events", "0 events"]);
     simulate(&model, &model.description(), &base).unwrap();
 }
 

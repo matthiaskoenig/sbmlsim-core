@@ -7,16 +7,19 @@
 //! - [`model`]: the functions of a compiled model and the test models.
 //! - `cvode`: the wrapper of CVODE, created once per configuration and re-initialized per
 //!   segment.
-//! - `segments`: the integration of a segment and the rows of its output.
+//! - `segments`: the integration of a segment and the rows of its output, without and with
+//!   events.
+//! - `events`: the triggers, the pending executions and the execution of the events at one
+//!   time.
 //! - `exports` (wasm32 and the feature `exports`): the exports of `engine.wasm` and the model it
 //!   imports.
 //!
 //! The initialization is `defaults`, then the pre-initialization values (fixed for `init`), then
-//! `init` at the start time; the integration runs in absolute time from the start. Events,
-//! changes and steady states come with later tasks and are [`EngineError::Unsupported`] until
-//! then.
+//! `init` at the start time; the integration runs in absolute time from the start. Changes and
+//! steady states come with a later task and are [`EngineError::Unsupported`] until then.
 
 mod cvode;
+mod events;
 #[cfg(all(target_arch = "wasm32", feature = "exports"))]
 mod exports;
 pub mod model;
@@ -24,7 +27,7 @@ mod segments;
 
 use sbmlsim_abi::{
     Change, IntegratorSettings, JacobianChoice, JacobianKind, LinearSolver, MODEL_CONTRACT,
-    ModelDescription, Output, SIMULATION_CONTRACT, SimulationRequest, SimulationResult,
+    ModelDescription, ModelSizes, Output, SIMULATION_CONTRACT, SimulationRequest, SimulationResult,
     SparsityPattern, Tolerance, check_contract,
 };
 
@@ -45,9 +48,21 @@ pub const OUTPUT_LIMIT_FLAG: i32 = -1000;
 /// (a step does not advance the time): an engine code, distinct from CVODE's and from
 /// [`OUTPUT_LIMIT_FLAG`].
 pub const STALL_FLAG: i32 = -1001;
+
+/// The flag of the [`EngineError::Integration`] of an event which executes more than
+/// [`MAX_EXECUTIONS_PER_EVENT`] times at one time (events which trigger each other in a cycle):
+/// an engine code, distinct from CVODE's and the other engine flags.
+pub const EVENT_LIMIT_FLAG: i32 = -1002;
+
+/// The flag of the [`EngineError::Integration`] of an event whose delay is negative or NaN when
+/// it is triggered: an engine code, distinct from CVODE's and the other engine flags.
+pub const DELAY_FLAG: i32 = -1003;
+
+pub use events::MAX_EXECUTIONS_PER_EVENT;
 pub use model::ModelFns;
 
 use cvode::{Config, Cvode, Linear, Method, Problem};
+use events::Events;
 use segments::{Column, Recorder, SegmentOutput};
 
 /// The error of a simulation.
@@ -88,6 +103,7 @@ impl Engine {
     /// Loads a model with its description; checks the contract and the pattern of the Jacobian.
     pub fn new(model: Box<dyn ModelFns>, desc: ModelDescription) -> Result<Engine, EngineError> {
         check_description(&desc)?;
+        check_sizes(&*model, &desc)?;
         Ok(Engine {
             model,
             desc,
@@ -113,7 +129,22 @@ pub fn simulate(
     req: &SimulationRequest,
 ) -> Result<SimulationResult, EngineError> {
     check_description(desc)?;
+    check_sizes(model, desc)?;
     run(model, desc, &mut None, req)
+}
+
+/// Checks that the sizes of a model are the ones of its description: a description of another
+/// model would make the model read and write past its vectors.
+fn check_sizes(model: &dyn ModelFns, desc: &ModelDescription) -> Result<(), EngineError> {
+    let (sizes, described) = (model.sizes(), ModelSizes::of(desc));
+    if sizes != described {
+        return Err(request(format!(
+            "the description of model {} is not the one of its model: the model has {sizes}, \
+             the description {described}",
+            desc.id
+        )));
+    }
+    Ok(())
 }
 
 /// The error of an invalid request.
@@ -456,17 +487,22 @@ fn run(
     if req.steady_state.is_some() {
         return Err(EngineError::Unsupported("steady states".into()));
     }
-    if !desc.events.is_empty() || model.n_roots() > 0 {
-        return Err(EngineError::Unsupported("events".into()));
-    }
     let (p, y0) = initial_values(model, desc, &preinit, start);
+    let with_events = !desc.events.is_empty() || desc.n_roots > 0;
 
+    // a model without states but with events integrates one state of the rate 0, so CVODE
+    // locates the zeros of its root functions
+    let n_cvode = if with_events { n.max(1) } else { n };
     let mut pattern = None;
-    let cvode = if n == 0 {
+    let cvode = if n_cvode == 0 {
         None
     } else {
         let method = if req.settings.stiff {
-            let linear = linear_of(desc, &req.settings)?;
+            let linear = if n == 0 {
+                Linear::Dense { analytic: false }
+            } else {
+                linear_of(desc, &req.settings)?
+            };
             if !matches!(linear, Linear::Dense { analytic: false }) {
                 pattern = Some(pattern_of(desc));
             }
@@ -474,17 +510,27 @@ fn run(
         } else {
             Method::Adams
         };
-        let config = Config { n, method };
+        let config = Config { n: n_cvode, method };
         if cache.as_ref().map(Cvode::config) != Some(config) {
             *cache = None;
             *cache = Some(Cvode::new(config)?);
         }
         cache.as_mut()
     };
+    let settings = match (&req.settings.absolute_tolerance, n_cvode > n) {
+        // the state of the rate 0 of a model without states gets the tolerance of no state
+        (Tolerance::PerState(_), true) => IntegratorSettings {
+            absolute_tolerance: Tolerance::Scalar(1.0),
+            ..req.settings.clone()
+        },
+        _ => req.settings.clone(),
+    };
     let mut problem = Problem {
-        n,
+        n: n_cvode,
+        n_model: n,
+        n_roots: desc.n_roots as usize,
         model,
-        p: &p,
+        p,
         pattern,
         jac_values: vec![0.0; pattern.map_or(0, |p| p.row_idx.len())],
     };
@@ -505,16 +551,32 @@ fn run(
         Output::IntegratorSteps => SegmentOutput::Steps,
         _ => SegmentOutput::Times(&times),
     };
-    segments::integrate(
-        cvode,
-        &mut problem,
-        &req.settings,
-        start,
-        &y0,
-        end,
-        output,
-        &mut recorder,
-    )?;
+    match cvode {
+        Some(cvode) if with_events => {
+            let mut events = Events::new(model, desc, req.seed, start, end);
+            segments::integrate_events(
+                cvode,
+                &mut problem,
+                &settings,
+                start,
+                &y0,
+                end,
+                output,
+                &mut recorder,
+                &mut events,
+            )?;
+        }
+        cvode => segments::integrate(
+            cvode,
+            &mut problem,
+            &settings,
+            start,
+            &y0,
+            end,
+            output,
+            &mut recorder,
+        )?,
+    }
     Ok(SimulationResult {
         columns: names,
         n_rows: recorder.n_rows,

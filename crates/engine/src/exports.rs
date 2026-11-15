@@ -41,7 +41,7 @@ use std::alloc::{Layout, alloc, dealloc};
 use std::cell::RefCell;
 use std::sync::Once;
 
-use sbmlsim_abi::{ModelDescription, SimulationRequest, SimulationResult};
+use sbmlsim_abi::{ModelDescription, ModelSizes, SimulationRequest, SimulationResult};
 use serde::Serialize;
 
 use crate::{Engine, EngineError, ModelFns};
@@ -61,22 +61,20 @@ mod imports {
         pub fn model_priority(i: u32, t: f64, y: *const f64, p: *const f64) -> f64;
         pub fn model_delay(i: u32, t: f64, y: *const f64, p: *const f64) -> f64;
         pub fn model_event_values(i: u32, t: f64, y: *const f64, p: *const f64, out: *mut f64);
-        pub fn model_event_apply(i: u32, values: *const f64, y: *mut f64, p: *mut f64);
+        pub fn model_event_apply(i: u32, t: f64, values: *const f64, y: *mut f64, p: *mut f64);
         pub fn model_selections(t: f64, y: *const f64, p: *const f64, out: *mut f64);
         pub fn model_assign(t: f64, y: *mut f64, p: *mut f64);
+        pub fn model_sizes(out: *mut u32);
     }
 }
 
 /// The model of the instance: [`ModelFns`] over the imports of the module `model`.
 ///
 /// The slices the engine passes live in the memory the model imports, so a pointer of a slice
-/// is the offset the model reads and writes; the model accesses no more than the sizes of its
-/// description, which are the sizes of the slices.
-struct ImportedModel {
-    /// The number of root functions: 0, since the description of `model/1` does not carry it
-    /// yet and the engine refuses events until it does.
-    n_roots: usize,
-}
+/// is the offset the model reads and writes; the model accesses no more than its sizes
+/// (`model_sizes`), which the engine checks against the description when it loads the model,
+/// and which are the sizes of the slices.
+struct ImportedModel;
 
 // SAFETY (every call below): the imported function reads and writes the given slices within
 // the lengths the description of the model gives, which are their lengths.
@@ -108,8 +106,8 @@ impl ModelFns for ImportedModel {
     fn event_values(&self, i: u32, t: f64, y: &[f64], p: &[f64], out: &mut [f64]) {
         unsafe { imports::model_event_values(i, t, y.as_ptr(), p.as_ptr(), out.as_mut_ptr()) }
     }
-    fn event_apply(&self, i: u32, values: &[f64], y: &mut [f64], p: &mut [f64]) {
-        unsafe { imports::model_event_apply(i, values.as_ptr(), y.as_mut_ptr(), p.as_mut_ptr()) }
+    fn event_apply(&self, i: u32, t: f64, values: &[f64], y: &mut [f64], p: &mut [f64]) {
+        unsafe { imports::model_event_apply(i, t, values.as_ptr(), y.as_mut_ptr(), p.as_mut_ptr()) }
     }
     fn selections(&self, t: f64, y: &[f64], p: &[f64], out: &mut [f64]) {
         unsafe { imports::model_selections(t, y.as_ptr(), p.as_ptr(), out.as_mut_ptr()) }
@@ -117,8 +115,11 @@ impl ModelFns for ImportedModel {
     fn assign(&self, t: f64, y: &mut [f64], p: &mut [f64]) {
         unsafe { imports::model_assign(t, y.as_mut_ptr(), p.as_mut_ptr()) }
     }
-    fn n_roots(&self) -> usize {
-        self.n_roots
+    fn sizes(&self) -> ModelSizes {
+        let mut words = [0u32; ModelSizes::WORDS];
+        // SAFETY: the model writes its six sizes into the buffer of six `u32`
+        unsafe { imports::model_sizes(words.as_mut_ptr()) };
+        ModelSizes::from_words(words.map(u32::from_le))
     }
 }
 
@@ -304,7 +305,7 @@ pub unsafe extern "C" fn engine_load(desc_ptr: i32, desc_len: i32) -> i32 {
     let loaded = serde_json::from_slice::<ModelDescription>(bytes)
         .map_err(|e| format!("the description is not one of model/1: {e}"))
         .and_then(|desc| {
-            let model = ImportedModel { n_roots: 0 };
+            let model = ImportedModel;
             Engine::new(Box::new(model), desc).map_err(|e| match e {
                 EngineError::Request(message) => message,
                 other => other.to_string(),

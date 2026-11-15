@@ -223,7 +223,7 @@ fn imports_only_memory_and_math() {
 fn exports_model_1_functions() {
     use ValType::{F64, I32};
     let p = parse(&wasm_of(&small()));
-    let expected: [(&str, &[ValType], &[ValType]); 12] = [
+    let expected: [(&str, &[ValType], &[ValType]); 13] = [
         (abi::DEFAULTS, &[I32, I32], &[]),
         (abi::INIT, &[F64, I32, I32, I32], &[]),
         (abi::RHS, &[F64, I32, I32, I32], &[]),
@@ -233,9 +233,10 @@ fn exports_model_1_functions() {
         (abi::PRIORITY, &[I32, F64, I32, I32], &[F64]),
         (abi::DELAY, &[I32, F64, I32, I32], &[F64]),
         (abi::EVENT_VALUES, &[I32, F64, I32, I32, I32], &[]),
-        (abi::EVENT_APPLY, &[I32, I32, I32, I32], &[]),
+        (abi::EVENT_APPLY, &[I32, F64, I32, I32, I32], &[]),
         (abi::SELECTIONS, &[F64, I32, I32, I32], &[]),
         (abi::ASSIGN, &[F64, I32, I32], &[]),
+        (abi::SIZES, &[I32], &[]),
     ];
     assert_eq!(p.exports.len(), expected.len());
     for (name, params, results) in expected {
@@ -311,21 +312,58 @@ fn the_description_is_of_model_1() {
 }
 
 #[test]
-fn a_model_with_events_is_refused() {
+fn the_events_are_described() {
     let m = model(
         r#"<listOfParameters><parameter id="x" value="0" constant="false"/></listOfParameters>
 <listOfEvents><event id="E" useValuesFromTriggerTime="true">
-  <trigger initialValue="false" persistent="true"><math $><apply><gt/><csymbol encoding="text" definitionURL="http://www.sbml.org/sbml/symbols/time">t</csymbol><cn>1</cn></apply></math></trigger>
+  <trigger initialValue="false" persistent="true"><math $><apply><and/><apply><gt/><csymbol encoding="text" definitionURL="http://www.sbml.org/sbml/symbols/time">t</csymbol><cn>1</cn></apply><apply><lt/><ci>x</ci><cn>2</cn><cn>3</cn></apply></apply></math></trigger>
+  <delay><math $><cn>0.5</cn></math></delay>
   <listOfEventAssignments><eventAssignment variable="x"><math $><cn>1</cn></math></eventAssignment></listOfEventAssignments>
+</event>
+<event useValuesFromTriggerTime="false">
+  <trigger initialValue="true" persistent="false"><math $><ci>x</ci></math></trigger>
+  <priority><math $><cn>2</cn></math></priority>
 </event></listOfEvents>"#,
     );
+    let (wasm, d) = emit(&m).unwrap();
+    wasmparser::Validator::new().validate_all(&wasm).unwrap();
+    // the root functions: time - 1, then 2 - x and 3 - 2 of the chain x < 2 < 3, then x
+    assert_eq!(d.n_roots, 4);
     assert_eq!(
-        emit(&m).unwrap_err(),
-        CompileError::Unsupported {
-            feature: "events".to_string(),
-            element: "E".to_string()
-        }
+        d.events,
+        [
+            abi::EventInfo {
+                id: "E".to_string(),
+                has_delay: true,
+                has_priority: false,
+                persistent: true,
+                initial_value: false,
+                use_values_from_trigger_time: true,
+                n_assignments: 1,
+            },
+            abi::EventInfo {
+                id: String::new(),
+                has_delay: false,
+                has_priority: true,
+                persistent: false,
+                initial_value: true,
+                use_values_from_trigger_time: false,
+                n_assignments: 0,
+            }
+        ]
     );
+    // model_sizes stores the sizes of the description
+    let p = parse(&wasm);
+    let stored: Vec<i32> = p
+        .body(abi::SIZES)
+        .iter()
+        .filter_map(|op| match op {
+            Operator::I32Const { value } => Some(*value),
+            _ => None,
+        })
+        .collect();
+    let words = abi::ModelSizes::of(&d).to_words().map(|x| x as i32);
+    assert_eq!(stored, words);
 }
 
 #[test]

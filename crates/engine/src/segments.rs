@@ -1,9 +1,10 @@
 //! The integration of a segment, a time interval without changes, and the rows of its output.
 
 use sbmlsim_abi::IntegratorSettings;
-use sbmlsim_csolvers::ffi::{CV_NORMAL, CV_ONE_STEP, CV_TSTOP_RETURN};
+use sbmlsim_csolvers::ffi::{CV_NORMAL, CV_ONE_STEP, CV_ROOT_RETURN, CV_TSTOP_RETURN};
 
 use crate::cvode::{Cvode, Problem};
+use crate::events::{Events, Probe};
 use crate::model::ModelFns;
 use crate::{EngineError, OUTPUT_LIMIT_FLAG, STALL_FLAG};
 
@@ -126,7 +127,8 @@ pub(crate) fn integrate(
     output: SegmentOutput<'_>,
     recorder: &mut Recorder<'_>,
 ) -> Result<(), EngineError> {
-    let p = problem.p;
+    // the parameters of the rows (a copy: CVODE borrows the problem while the rows are written)
+    let p = &problem.p.clone();
     let Some(cvode) = cvode else {
         match output {
             SegmentOutput::Times(times) => {
@@ -152,7 +154,7 @@ pub(crate) fn integrate(
                     continue;
                 }
                 if !started {
-                    cvode.start(t0, y0, end, settings)?;
+                    cvode.start(t0, y0, end, settings, 0)?;
                     started = true;
                 }
                 cvode.integrate(problem, tout, CV_NORMAL)?;
@@ -168,19 +170,13 @@ pub(crate) fn integrate(
                 recorder.row(end, y0, p)?;
                 return Ok(());
             }
-            cvode.start(t0, y0, end, settings)?;
+            cvode.start(t0, y0, end, settings, 0)?;
             let mut previous = t0;
             loop {
                 let (t, flag) = cvode.integrate(problem, end, CV_ONE_STEP)?;
                 // a step which does not advance the time (CVODE's `t + h = t`) never ends
                 if flag != CV_TSTOP_RETURN && t <= previous {
-                    return Err(EngineError::Integration {
-                        flag: STALL_FLAG,
-                        time: t,
-                        message: format!(
-                            "the integrator stalled: a step did not advance the time past {previous}"
-                        ),
-                    });
+                    return Err(stalled(t, previous));
                 }
                 previous = t;
                 // CVODE returns the stop time exactly when it reaches it
@@ -193,6 +189,225 @@ pub(crate) fn integrate(
         }
     }
     Ok(())
+}
+
+/// The error of a run of the integrator steps which does not advance the time.
+fn stalled(t: f64, previous: f64) -> EngineError {
+    EngineError::Integration {
+        flag: STALL_FLAG,
+        time: t,
+        message: format!("the integrator stalled: a step did not advance the time past {previous}"),
+    }
+}
+
+/// The outputs of a run with events and where they stand.
+struct Outputs<'t> {
+    /// The output times (empty for the integrator steps).
+    times: &'t [f64],
+    /// Whether the output is the steps of the integrator.
+    steps: bool,
+    /// The next output time.
+    next: usize,
+    /// The end of the simulation.
+    end: f64,
+    /// The number of states of the model.
+    m: usize,
+}
+
+impl Outputs<'_> {
+    /// Whether the next output time is at `t` (or before it, or too close to integrate to).
+    fn here(&self, t: f64) -> bool {
+        self.next < self.times.len()
+            && (self.times[self.next] <= t || too_close(t, self.times[self.next]))
+    }
+
+    /// Writes the rows of the output times at `t`, every one up to the end for `all`.
+    fn write(
+        &mut self,
+        t: f64,
+        y: &[f64],
+        p: &[f64],
+        all: bool,
+        recorder: &mut Recorder<'_>,
+    ) -> Result<(), EngineError> {
+        while self.next < self.times.len() && (all || self.here(t)) {
+            recorder.row(self.times[self.next], &y[..self.m], p)?;
+            self.next += 1;
+        }
+        Ok(())
+    }
+
+    /// The integration stopped at `t`: the events at `t` execute and the outputs at `t` are
+    /// written; `step` is whether `t` is a step of the integrator (not a zero of a root
+    /// function). Returns whether an event executed.
+    fn stop(
+        &mut self,
+        t: f64,
+        y: &mut [f64],
+        p: &mut [f64],
+        step: bool,
+        events: &mut Events<'_>,
+        recorder: &mut Recorder<'_>,
+    ) -> Result<bool, EngineError> {
+        let m = self.m;
+        let at_end = t >= self.end || too_close(t, self.end);
+        if self.steps {
+            let (before, p_before) = (y[..m].to_vec(), p.to_vec());
+            let executed = events.execute(t, &mut y[..m], p, at_end)?;
+            if executed {
+                recorder.row(t, &before, &p_before)?;
+                recorder.row(t, &y[..m], p)?;
+            } else if step || at_end {
+                recorder.row(t, &y[..m], p)?;
+            }
+            return Ok(executed);
+        }
+        if at_end {
+            let executed = events.execute(t, &mut y[..m], p, true)?;
+            self.write(t, y, p, true, recorder)?;
+            return Ok(executed);
+        }
+        if !self.here(t) {
+            return events.execute(t, &mut y[..m], p, false);
+        }
+        let first = events.execute_at(t, &mut y[..m], p, Probe::Exact)?;
+        self.write(t, y, p, false, recorder)?;
+        let second = events.execute_at(t, &mut y[..m], p, Probe::After)?;
+        Ok(first || second)
+    }
+}
+
+/// Integrates a model with events from `start` with the state `y0` to `end` and records its
+/// output; see `events` for the semantics.
+///
+/// CVODE locates the zeros of the root functions and stops at the time of every pending
+/// execution (its stop time); at every stop the events execute (`Events::execute`), and after an
+/// execution CVODE starts again from the new state. The output:
+///
+/// - of times: a time before an event sees the state before it, an output at the time of an
+///   event the state after it, except for an event whose trigger becomes true only right after
+///   that time (a strict comparison at its threshold), which comes after the output; at the end
+///   the output sees the state after every event at the end.
+/// - of the integrator steps: the start (the state after the events at the start), every step,
+///   and two rows at the time of every other stop at which events execute, the state before and
+///   after them (the end included).
+///
+/// `cvode` is the memory of `problem.n` states; a model without states has `problem.n_model`
+/// 0 and one state of the rate 0.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn integrate_events(
+    cvode: &mut Cvode,
+    problem: &mut Problem<'_>,
+    settings: &IntegratorSettings,
+    start: f64,
+    y0: &[f64],
+    end: f64,
+    output: SegmentOutput<'_>,
+    recorder: &mut Recorder<'_>,
+    events: &mut Events<'_>,
+) -> Result<(), EngineError> {
+    let m = problem.n_model;
+    let n_roots = problem.n_roots;
+    // the state of CVODE (of `n` values), the model reads its first `m`
+    let mut y = y0.to_vec();
+    y.resize(problem.n, 0.0);
+    let (times, steps): (&[f64], bool) = match output {
+        SegmentOutput::Times(times) => (times, false),
+        SegmentOutput::Steps => (&[], true),
+    };
+    let mut out = Outputs {
+        times,
+        steps,
+        next: 0,
+        end,
+        m,
+    };
+    let mut t = start;
+
+    // the start: the events at the start are part of the initial state; an output at the start
+    // is written before the events whose triggers become true right after it
+    let only_start = start >= end || too_close(start, end);
+    events.execute_at(t, &mut y[..m], &mut problem.p, Probe::Exact)?;
+    if steps {
+        recorder.row(t, &y[..m], &problem.p)?;
+        // the state before these events is the row of the start
+        let probe = if only_start { Probe::End } else { Probe::After };
+        if events.execute_at(t, &mut y[..m], &mut problem.p, probe)? {
+            recorder.row(t, &y[..m], &problem.p)?;
+        }
+    } else {
+        // at the end, the output sees the state after every event
+        if !only_start {
+            out.write(t, &y, &problem.p, false, recorder)?;
+        }
+        let probe = if only_start { Probe::End } else { Probe::After };
+        events.execute_at(t, &mut y[..m], &mut problem.p, probe)?;
+        if only_start {
+            out.write(t, &y, &problem.p, true, recorder)?;
+        }
+    }
+    if only_start {
+        return Ok(());
+    }
+
+    let mut started = false;
+    let mut stop = end;
+    let mut previous = t;
+    loop {
+        // an output of times ends at its last time, as without events
+        if !steps && out.next >= out.times.len() {
+            return Ok(());
+        }
+        let tstop = events.next_time().map_or(end, |x| x.min(end));
+        if too_close(t, tstop) {
+            // a stop too close to integrate to: the state at `t` is the state there
+            t = tstop;
+            if out.stop(t, &mut y, &mut problem.p, true, events, recorder)? {
+                started = false;
+            }
+            if t >= end || too_close(t, end) {
+                return Ok(());
+            }
+            continue;
+        }
+        if !started {
+            cvode.start(t, &y, tstop, settings, n_roots)?;
+            started = true;
+            stop = tstop;
+            previous = t;
+        } else if tstop != stop {
+            if tstop < stop {
+                // CVODE may have stepped past the new stop: start again from `t`
+                cvode.start(t, &y, tstop, settings, n_roots)?;
+                previous = t;
+            } else {
+                cvode.set_stop(tstop)?;
+            }
+            stop = tstop;
+        }
+        let (tret, flag) = if steps {
+            cvode.integrate(problem, tstop, CV_ONE_STEP)?
+        } else {
+            let tout = out.times.get(out.next).map_or(tstop, |x| x.min(tstop));
+            cvode.integrate(problem, tout, CV_NORMAL)?
+        };
+        let root = flag == CV_ROOT_RETURN;
+        if steps && !root && flag != CV_TSTOP_RETURN && tret <= previous {
+            return Err(stalled(tret, previous));
+        }
+        if !root {
+            previous = tret;
+        }
+        // CVODE returns the stop time exactly when it reaches it
+        t = if flag == CV_TSTOP_RETURN { tstop } else { tret };
+        y.copy_from_slice(cvode.state());
+        if out.stop(t, &mut y, &mut problem.p, !root, events, recorder)? {
+            started = false;
+        }
+        if t >= end || too_close(t, end) {
+            return Ok(());
+        }
+    }
 }
 
 #[cfg(test)]
@@ -220,8 +435,10 @@ mod tests {
         let mut cvode = Cvode::new(config).unwrap();
         let mut problem = Problem {
             n: 1,
+            n_model: 1,
+            n_roots: 0,
             model: &model,
-            p: &p,
+            p: p.clone(),
             pattern: Some(crate::pattern_of(&desc)),
             jac_values: vec![0.0],
         };

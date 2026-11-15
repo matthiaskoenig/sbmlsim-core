@@ -52,7 +52,7 @@
     (param $i i32) (param $t f64) (param $y i32) (param $p i32) (param $out i32))
 
   (func (export "model_event_apply")
-    (param $i i32) (param $values i32) (param $y i32) (param $p i32))
+    (param $i i32) (param $t f64) (param $values i32) (param $y i32) (param $p i32))
 
   (func (export "model_selections") (param $t f64) (param $y i32) (param $p i32) (param $out i32)
     (f64.store (local.get $out) (f64.load (local.get $y)))
@@ -60,4 +60,13 @@
 
   (func (export "model_assign") (param $t f64) (param $y i32) (param $p i32)
     (call $t_half (local.get $p)))
+
+  ;; the sizes: 1 state, 2 parameters, 2 selections, 0 root functions, 0 events, 0 event values
+  (func (export "model_sizes") (param $out i32)
+    (i32.store (local.get $out) (i32.const 1))
+    (i32.store offset=4 (local.get $out) (i32.const 2))
+    (i32.store offset=8 (local.get $out) (i32.const 2))
+    (i32.store offset=12 (local.get $out) (i32.const 0))
+    (i32.store offset=16 (local.get $out) (i32.const 0))
+    (i32.store offset=20 (local.get $out) (i32.const 0)))
 )

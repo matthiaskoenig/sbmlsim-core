@@ -205,3 +205,85 @@ fn a_later_time_column_is_the_entity_time() {
         .unwrap();
     assert_eq!(result.values, [0.0, 10.0, 1.0, 10.0]);
 }
+
+/// A model of events: the compartment `C` (1), the species `S` (a concentration, 1) and `R` (a
+/// concentration of the rate rule `R' = 0`, 1) in it, the parameters `n` and `x` and the
+/// assignment rule `a = 2 time`.
+///
+/// - `E1`: `time >= 1` (initial value false): `S = 3`, `C = 2`, `n = n + 1`;
+/// - `E2`: `a > 3` (at 1.5), the delay 0.25, values at the trigger: `x = a`.
+fn event_model() -> String {
+    let time = r#"<csymbol encoding="text" definitionURL="http://www.sbml.org/sbml/symbols/time">t</csymbol>"#;
+    format!(
+        r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2"><model id="ev">
+<listOfCompartments><compartment id="C" size="1" spatialDimensions="3" constant="false"/></listOfCompartments>
+<listOfSpecies>
+<species id="S" compartment="C" initialConcentration="1" hasOnlySubstanceUnits="false" boundaryCondition="false" constant="false"/>
+<species id="R" compartment="C" initialConcentration="1" hasOnlySubstanceUnits="false" boundaryCondition="false" constant="false"/>
+</listOfSpecies>
+<listOfParameters><parameter id="n" value="0" constant="false"/><parameter id="x" value="0" constant="false"/><parameter id="a" constant="false"/></listOfParameters>
+<listOfRules>
+<rateRule variable="R"><math {MATH}><cn>0</cn></math></rateRule>
+<assignmentRule variable="a"><math {MATH}><apply><times/><cn>2</cn>{time}</apply></math></assignmentRule>
+</listOfRules>
+<listOfEvents>
+<event id="E1" useValuesFromTriggerTime="true"><trigger initialValue="false" persistent="true"><math {MATH}><apply><geq/>{time}<cn>1</cn></apply></math></trigger>
+<listOfEventAssignments>
+<eventAssignment variable="S"><math {MATH}><cn>3</cn></math></eventAssignment>
+<eventAssignment variable="C"><math {MATH}><cn>2</cn></math></eventAssignment>
+<eventAssignment variable="n"><math {MATH}><apply><plus/><ci>n</ci><cn>1</cn></apply></math></eventAssignment>
+</listOfEventAssignments></event>
+<event id="E2" useValuesFromTriggerTime="true"><trigger initialValue="true" persistent="true"><math {MATH}><apply><gt/><ci>a</ci><cn>3</cn></apply></math></trigger>
+<delay><math {MATH}><cn>0.25</cn></math></delay>
+<listOfEventAssignments><eventAssignment variable="x"><math {MATH}><ci>a</ci></math></eventAssignment></listOfEventAssignments></event>
+</listOfEvents></model></sbml>"#
+    )
+}
+
+#[test]
+fn compiled_events_execute() {
+    let compiled = compile(&event_model(), &CompileOptions::default()).unwrap();
+    assert_eq!(compiled.description.n_roots, 2);
+    let req = request(2.0, 8, &["time", "S", "[S]", "R", "[R]", "C", "n", "x"]);
+    let result = runtime()
+        .instantiate(&compiled.wasm, &compiled.description)
+        .unwrap()
+        .simulate(&req)
+        .unwrap();
+    let k = result.columns.len();
+    let row = |i: usize| &result.values[i * k..(i + 1) * k];
+    // before the event at 1
+    assert_eq!(row(3), [0.75, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0]);
+    // at 1 (time >= 1 holds) the output sees the event: the amount of S is 3 times the
+    // compartment before the event, R keeps its amount in the compartment of 2
+    assert_eq!(row(4), [1.0, 3.0, 1.5, 1.0, 0.5, 2.0, 1.0, 0.0]);
+    // E2 is triggered at 1.5 (a = 3, the strict comparison right after) and executes at 1.75
+    // with the value at its trigger
+    assert_eq!(row(6)[7], 0.0);
+    let x = row(7)[7];
+    assert!((x - 3.0).abs() < 1e-9, "{x}");
+    assert_eq!(row(8)[6], 1.0, "E1 executes once");
+    // another instance gives the same result
+    let again = runtime()
+        .instantiate(&compiled.wasm, &compiled.description)
+        .unwrap()
+        .simulate(&req)
+        .unwrap();
+    assert_eq!(again, result);
+}
+
+#[test]
+fn a_description_of_another_model_is_refused() {
+    let compiled = compile(&event_model(), &CompileOptions::default()).unwrap();
+    let mut desc = compiled.description.clone();
+    desc.n_roots += 1;
+    let error = runtime()
+        .instantiate(&compiled.wasm, &desc)
+        .err()
+        .expect("refused")
+        .to_string();
+    assert!(
+        error.contains("2 root functions") && error.contains("3 root functions"),
+        "{error}"
+    );
+}

@@ -82,13 +82,26 @@ mod tests {
     }
 
     #[test]
-    fn a_refusal_of_the_code_generation_has_its_message() {
+    fn a_refusal_of_the_model_representation_has_its_message() {
+        // (code generation refuses only functions above the limits of WebAssembly engines,
+        // `sbmlsim-codegen`'s `a_function_above_the_limits_is_an_error`)
+        let algebraic = DECAY.replace(
+            "</model>",
+            r#"<listOfRules><algebraicRule id="A"><math xmlns="http://www.w3.org/1998/Math/MathML"><ci>k</ci></math></algebraicRule></listOfRules></model>"#,
+        );
+        let error = compile(&algebraic, &CompileOptions::default()).unwrap_err();
+        assert_eq!(error.to_string(), "algebraic rule is not supported (A)");
+    }
+
+    #[test]
+    fn a_model_with_events_compiles() {
         let events = DECAY.replace(
             "</model>",
             r#"<listOfEvents><event id="E" useValuesFromTriggerTime="true"><trigger initialValue="false" persistent="true"><math xmlns="http://www.w3.org/1998/Math/MathML"><true/></math></trigger></event></listOfEvents></model>"#,
         );
-        let error = compile(&events, &CompileOptions::default()).unwrap_err();
-        assert_eq!(error.to_string(), "events is not supported (E)");
+        let compiled = compile(&events, &CompileOptions::default()).unwrap();
+        assert_eq!(compiled.description.events.len(), 1);
+        assert_eq!(compiled.description.n_roots, 0);
     }
 
     #[test]

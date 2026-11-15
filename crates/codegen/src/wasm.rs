@@ -12,7 +12,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use sbmlsim_ir::{CompileError, Expr, Op, Symbol};
+use sbmlsim_ir::{Assignment, CompileError, Expr, Op, Symbol};
 use wasm_encoder::{
     BlockType, CodeSection, EntityType, ExportKind, ExportSection, Function, FunctionSection,
     Ieee64, ImportSection, InstructionSink, MemArg, MemArgTarget, MemoryType, Module, TypeSection,
@@ -310,6 +310,108 @@ impl Body<'_> {
     /// `unreachable`.
     pub(crate) fn unreachable(&mut self) {
         self.sink().unreachable();
+    }
+
+    /// Evaluates the assignment rules into locals, which later expressions read for their
+    /// targets; the locals of an earlier evaluation are forgotten.
+    pub(crate) fn assign_locals(&mut self, rules: &[Assignment]) {
+        self.rules.clear();
+        for a in rules {
+            self.assign_local(a.target, &a.expr);
+        }
+    }
+
+    /// Forgets the locals of the assignment rules: later expressions read the memory.
+    pub(crate) fn forget_rules(&mut self) {
+        self.rules.clear();
+    }
+
+    /// `if (local i == k) {`, the `i32` index in the local `i`; closed by [`Body::end`].
+    pub(crate) fn if_index(&mut self, i: u32, k: u32) {
+        self.sink()
+            .local_get(i)
+            .i32_const(k as i32)
+            .i32_eq()
+            .if_(BlockType::Empty);
+    }
+
+    /// `}` of a block.
+    pub(crate) fn end(&mut self) {
+        self.sink().end();
+    }
+
+    /// Returns the expression as a boolean (`i32`).
+    pub(crate) fn return_bool(&mut self, e: &Expr) {
+        self.bool(e);
+        self.sink().return_();
+    }
+
+    /// Returns the expression as an `f64`.
+    pub(crate) fn return_f64(&mut self, e: &Expr) {
+        self.f64(e);
+        self.sink().return_();
+    }
+
+    /// `return`.
+    pub(crate) fn return_(&mut self) {
+        self.sink().return_();
+    }
+
+    /// Pushes an `i32` constant.
+    pub(crate) fn i32_const(&mut self, x: i32) {
+        self.sink().i32_const(x);
+    }
+
+    /// `out[k] = x` for the `i32` vector `out` in the local `ptr`.
+    pub(crate) fn store_i32_at(&mut self, ptr: u32, k: u32, x: u32) {
+        let arg = MemArg {
+            offset: 4 * u64::from(k),
+            align: 2,
+            target: MemArgTarget::Memory(0),
+            ordering: None,
+        };
+        self.sink()
+            .local_get(ptr)
+            .i32_const(x as i32)
+            .i32_store(arg);
+    }
+
+    /// The value of `e` in a new local, kept to the end of the function.
+    pub(crate) fn keep(&mut self, e: &Expr) -> u32 {
+        self.f64(e);
+        let local = self.local();
+        self.sink().local_set(local);
+        local
+    }
+
+    /// `target = source`, where the source is `values[j]` (the vector in the local `values`)
+    /// or, without `j`, the current value of the target, times the local `times` and divided by
+    /// the local `divide` when they are given.
+    pub(crate) fn store_scaled(
+        &mut self,
+        target: Symbol,
+        values: u32,
+        j: Option<u32>,
+        times: Option<u32>,
+        divide: Option<u32>,
+    ) {
+        let (ptr, i) = self.address(target);
+        self.sink().local_get(ptr);
+        match j {
+            Some(j) => {
+                self.sink().local_get(values).f64_load(slot(j));
+            }
+            None => {
+                self.sink().local_get(ptr).f64_load(slot(i));
+            }
+        }
+        if let Some(t) = times {
+            self.sink().local_get(t).f64_mul();
+        }
+        if let Some(d) = divide {
+            self.sink().local_get(d).f64_div();
+        }
+        self.sink().f64_store(slot(i));
     }
 
     /// The pointer local and the index of a symbol of a state or a parameter.

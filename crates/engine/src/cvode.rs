@@ -60,10 +60,15 @@ pub(crate) struct Config {
 pub(crate) struct Problem<'a> {
     /// The number of states, the length of the vectors of CVODE.
     pub n: usize,
+    /// The number of states of the model: `n`, or 0 for a model without states which CVODE
+    /// integrates with one state of the rate 0 (to locate the zeros of its root functions).
+    pub n_model: usize,
+    /// The number of root functions of the model.
+    pub n_roots: usize,
     /// The model.
     pub model: &'a dyn ModelFns,
-    /// The parameters, constant during an integration.
-    pub p: &'a [f64],
+    /// The parameters, constant during an integration (events change them between two).
+    pub p: Vec<f64>,
     /// The pattern of the analytic Jacobian, `None` without.
     pub pattern: Option<&'a SparsityPattern>,
     /// The values of the Jacobian in the CSC order of the pattern.
@@ -122,10 +127,29 @@ unsafe extern "C" fn rhs(t: sunrealtype, y: N_Vector, ydot: N_Vector, data: *mut
     // SAFETY: CVODE passes the vectors of the problem and the user data set before the call.
     unsafe {
         let problem = problem(data);
-        let n = problem.n;
+        let (n, m) = (problem.n, problem.n_model);
+        let ydot = values(ydot, n);
         problem
             .model
-            .rhs(t, values(y, n), problem.p, values(ydot, n));
+            .rhs(t, &values(y, n)[..m], &problem.p, &mut ydot[..m]);
+        ydot[m..].fill(0.0);
+    }
+    0
+}
+
+unsafe extern "C" fn roots(
+    t: sunrealtype,
+    y: N_Vector,
+    g: *mut sunrealtype,
+    data: *mut c_void,
+) -> c_int {
+    // SAFETY: CVODE passes the state, the `n_roots` values of `g` it was initialized with and
+    // the user data set before the call.
+    unsafe {
+        let problem = problem(data);
+        let (n, m) = (problem.n, problem.n_model);
+        let g = std::slice::from_raw_parts_mut(g, problem.n_roots);
+        problem.model.roots(t, &values(y, n)[..m], &problem.p, g);
     }
     0
 }
@@ -149,7 +173,7 @@ unsafe extern "C" fn jac_dense(
         let n = pattern.n as usize;
         problem
             .model
-            .jac(t, values(y, n), problem.p, &mut problem.jac_values);
+            .jac(t, values(y, n), &problem.p, &mut problem.jac_values);
         let matrix = std::slice::from_raw_parts_mut(SUNDenseMatrix_Data(jac), n * n);
         matrix.fill(0.0);
         for j in 0..n {
@@ -188,7 +212,7 @@ unsafe extern "C" fn jac_sparse(
         }
         problem
             .model
-            .jac(t, values(y, n), problem.p, &mut problem.jac_values);
+            .jac(t, values(y, n), &problem.p, &mut problem.jac_values);
         let capacity = capacity as usize;
         let data = std::slice::from_raw_parts_mut(SUNSparseMatrix_Data(jac), capacity);
         let rows = std::slice::from_raw_parts_mut(SUNSparseMatrix_IndexValues(jac), capacity);
@@ -367,13 +391,15 @@ impl Cvode {
         unsafe { std::slice::from_raw_parts(N_VGetArrayPointer(self.y), self.config.n) }
     }
 
-    /// Starts a segment at `t0` with the state `y0` and the settings of the integrator.
+    /// Starts a segment at `t0` with the state `y0` and the settings of the integrator; with
+    /// `n_roots` root functions of the model CVODE locates their zeros.
     pub fn start(
         &mut self,
         t0: f64,
         y0: &[f64],
         tstop: f64,
         settings: &IntegratorSettings,
+        n_roots: usize,
     ) -> Result<(), EngineError> {
         let n = self.config.n;
         self.errors.message.clear();
@@ -422,8 +448,26 @@ impl Cvode {
             self.flag(CVodeSetMaxStep(self.mem, settings.maximum_time_step), t0)?;
             self.flag(CVodeSetInitStep(self.mem, settings.initial_time_step), t0)?;
             self.flag(CVodeSetStopTime(self.mem, tstop), t0)?;
+            let (nrtfn, g): (c_int, CVRootFn) = if n_roots == 0 {
+                (0, None)
+            } else {
+                let nrtfn = c_int::try_from(n_roots).map_err(|_| {
+                    EngineError::Request(format!(
+                        "{n_roots} root functions are more than CVODE takes"
+                    ))
+                })?;
+                (nrtfn, Some(roots))
+            };
+            self.flag(CVodeRootInit(self.mem, nrtfn, g), t0)?;
         }
         Ok(())
+    }
+
+    /// Sets the stop time of the running segment, which must not be behind the internal time of
+    /// CVODE.
+    pub fn set_stop(&mut self, tstop: f64) -> Result<(), EngineError> {
+        // SAFETY: the memory is initialized (a segment was started).
+        unsafe { self.flag(CVodeSetStopTime(self.mem, tstop), tstop) }
     }
 
     /// Integrates towards `tout` (`CV_NORMAL`) or takes one step (`CV_ONE_STEP`); returns the

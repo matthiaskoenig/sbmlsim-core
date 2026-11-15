@@ -11,17 +11,42 @@
 //!   states), a fixed entity keeps its value.
 //! - `model_rhs(t, y, p, ydot)` is the right hand side of the ODEs.
 //! - `model_jac(t, y, p, values)` writes the values of the Jacobian in CSC order of the pattern.
-//! - `model_roots(t, y, p, g)` writes one root function per strict or non-strict comparison of
-//!   each trigger, in the order listed in [`EventInfo`].
-//! - `model_trigger(i, t, y, p) -> i32` is the trigger of event `i`.
-//! - `model_priority(i, t, y, p) -> f64` is the priority of event `i`.
-//! - `model_delay(i, t, y, p) -> f64` is the delay of event `i`.
-//! - `model_event_values(i, t, y, p, out)` evaluates the assignments of event `i`.
-//! - `model_event_apply(i, values, y, p)` applies the evaluated assignments of event `i`.
+//! - `model_roots(t, y, p, g)` writes the [`ModelDescription::n_roots`] root functions of the
+//!   triggers: one per comparison of each trigger (`a - b` of `a > b` and `a >= b`, `b - a` of
+//!   `a < b` and `a <= b`, `a - b` of `a == b` and `a != b`, every adjacent pair of a chain) and
+//!   one per number a trigger reads as a boolean, in the order of the events and, within a
+//!   trigger, in the written order. The engine locates their zeros (in both directions) and then
+//!   evaluates the triggers themselves with `model_trigger`.
+//! - `model_trigger(i, t, y, p) -> i32` is the trigger of event `i` (1 true, 0 false).
+//! - `model_priority(i, t, y, p) -> f64` is the priority of event `i`, 0 for an event without
+//!   one.
+//! - `model_delay(i, t, y, p) -> f64` is the delay of event `i`, 0 for an event without one.
+//! - `model_event_values(i, t, y, p, out)` writes the values of the assignments of event `i`,
+//!   [`EventInfo::n_assignments`] values in document order, each in the quantity its math gives
+//!   (the concentration of a species of a concentration).
+//! - `model_event_apply(i, values, y, p)` applies values of `model_event_values` of event `i`:
+//!   every target gets its value, except that a species of a concentration keeps the amount
+//!   `value * compartment` of its compartment before the assignments of the event (as
+//!   libroadrunner 2.11 and the expected results of the SBML Test Suite, case 01506), and a
+//!   species which stores its concentration keeps its amount when the event changes its
+//!   compartment.
 //! - `model_selections(t, y, p, out)` writes every value of [`ModelDescription::selections`],
 //!   in its order.
 //! - `model_assign(t, y, p)` writes the current values of the targets of assignment rules into
 //!   `p` and `y` (after a change or an event).
+//! - `model_sizes(out)` writes the sizes of the model as six `i32` (little endian) at `out`: the
+//!   numbers of states, parameters, selections, root functions, events and event values (the
+//!   sum of the assignments of the events), [`ModelSizes`]. The engine compares them with the
+//!   description when it loads the model, so a `model.json` which does not belong to its
+//!   `model.wasm` is an error and not a model which reads or writes past its vectors.
+//!
+//! Every function but `model_init`, `model_event_apply` and `model_assign` reads `p` and `y`
+//! only, and every function computes the values of the assignment rules it reads itself, so it
+//! does not depend on the values of the targets of the rules in `p` and `y`.
+//!
+//! Revisions of `model/1` before its first release: the field [`ModelDescription::n_roots`] and
+//! the export `model_sizes` were added with the events (no version change, nothing was
+//! released).
 
 mod request;
 
@@ -60,6 +85,8 @@ pub const EVENT_APPLY: &str = "model_event_apply";
 pub const SELECTIONS: &str = "model_selections";
 /// Export name of `model_assign`.
 pub const ASSIGN: &str = "model_assign";
+/// Export name of `model_sizes`.
+pub const SIZES: &str = "model_sizes";
 
 /// A contract version which is not the expected one.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -101,8 +128,85 @@ pub struct ModelDescription {
     pub jacobian: JacobianKind,
     /// The events of the model.
     pub events: Vec<EventInfo>,
+    /// The number of root functions `model_roots` writes.
+    pub n_roots: u32,
     /// The unit expression of every entity id.
     pub units: BTreeMap<String, String>,
+}
+
+/// The sizes of a model, which `model_sizes` writes and the description gives.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ModelSizes {
+    /// The number of states.
+    pub states: u32,
+    /// The number of parameters.
+    pub parameters: u32,
+    /// The number of selections.
+    pub selections: u32,
+    /// The number of root functions.
+    pub roots: u32,
+    /// The number of events.
+    pub events: u32,
+    /// The number of event values, the sum of the assignments of the events.
+    pub event_values: u32,
+}
+
+impl ModelSizes {
+    /// The number of `i32` values `model_sizes` writes.
+    pub const WORDS: usize = 6;
+
+    /// The sizes a description gives.
+    pub fn of(desc: &ModelDescription) -> ModelSizes {
+        ModelSizes {
+            states: desc.states.len() as u32,
+            parameters: desc.parameters.len() as u32,
+            selections: desc.selections.len() as u32,
+            roots: desc.n_roots,
+            events: desc.events.len() as u32,
+            event_values: desc.events.iter().map(|e| e.n_assignments).sum(),
+        }
+    }
+
+    /// The sizes in the order of `model_sizes`.
+    pub fn to_words(self) -> [u32; Self::WORDS] {
+        [
+            self.states,
+            self.parameters,
+            self.selections,
+            self.roots,
+            self.events,
+            self.event_values,
+        ]
+    }
+
+    /// The sizes of the words `model_sizes` writes.
+    pub fn from_words(words: [u32; Self::WORDS]) -> ModelSizes {
+        let [states, parameters, selections, roots, events, event_values] = words;
+        ModelSizes {
+            states,
+            parameters,
+            selections,
+            roots,
+            events,
+            event_values,
+        }
+    }
+}
+
+impl std::fmt::Display for ModelSizes {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} states, {} parameters, {} selections, {} root functions, {} events, {} event \
+             values",
+            self.states,
+            self.parameters,
+            self.selections,
+            self.roots,
+            self.events,
+            self.event_values
+        )
+    }
 }
 
 /// A state or a parameter of a model.
@@ -220,7 +324,7 @@ pub enum JacobianKind {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EventInfo {
-    /// The id of the event.
+    /// The id of the event, empty for an event without one.
     pub id: String,
     /// Whether the event has a delay.
     pub has_delay: bool,
@@ -375,9 +479,21 @@ mod tests {
                 col_ptr: vec![0, 1],
                 row_idx: vec![0],
             }),
-            events: vec![],
+            events: vec![EventInfo {
+                id: "e".to_string(),
+                has_delay: true,
+                has_priority: false,
+                persistent: false,
+                initial_value: true,
+                use_values_from_trigger_time: true,
+                n_assignments: 2,
+            }],
+            n_roots: 3,
             units: BTreeMap::new(),
         };
+        let sizes = ModelSizes::of(&d);
+        assert_eq!(sizes.to_words(), [1, 0, 1, 3, 1, 2]);
+        assert_eq!(ModelSizes::from_words(sizes.to_words()), sizes);
         let back: ModelDescription =
             serde_json::from_str(&serde_json::to_string(&d).unwrap()).unwrap();
         assert_eq!(d, back);
