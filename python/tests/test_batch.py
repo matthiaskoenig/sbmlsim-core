@@ -17,10 +17,13 @@ ROOT = Path(__file__).resolve().parents[2]
 def request(**fields: Any) -> dict[str, Any]:
     """A request of `simulation/1` over `[0, end]` in `steps` equal intervals.
 
-    `preinit` is the pre-initialization, every other field a setting of the integrator.
+    `output` is the times of the output (`{"uniform": {"steps": n}}` from `steps`, or
+    `"integrator_steps"`, a bare string since it is a unit variant), `preinit` is the
+    pre-initialization, every other field a setting of the integrator.
     """
-    steps = fields.pop("steps")
+    steps = fields.pop("steps", None)
     end = fields.pop("end")
+    output = fields.pop("output", {"uniform": {"steps": steps}})
     preinit = fields.pop("preinit", [])
     settings = {
         "relative_tolerance": 1e-6,
@@ -36,7 +39,7 @@ def request(**fields: Any) -> dict[str, Any]:
         "contract": sbmlsim_core.SIMULATION_CONTRACT,
         "start": 0.0,
         "end": end,
-        "output": {"uniform": {"steps": steps}},
+        "output": output,
         "preinit": preinit,
         "changes": [],
         "steady_state": None,
@@ -102,6 +105,34 @@ def test_a_batch_without_threads_gives_the_results_of_one_thread(decay):
     one = decay.simulate_many(requests, threads=1)
     for a, b in zip(every, one, strict=True):
         assert a.values.tobytes() == b.values.tobytes()
+
+
+def test_a_batch_over_the_steps_of_the_integrator_is_ragged(decay):
+    # the steps of the integrator depend on the point, so the tables differ in their rows
+    requests = [request(end=end, output="integrator_steps") for end in (1.0, 10.0, 100.0)]
+    results = decay.simulate_many(requests, threads=2)
+    rows = [out.values.shape[0] for out in results]
+    assert len(set(rows)) == len(rows), rows
+    for out, end in zip(results, (1.0, 10.0, 100.0)):
+        assert out.values[0, 0] == 0.0
+        assert out.values[-1, 0] == end
+    serial = decay.simulate_many(requests, threads=1)
+    for a, b in zip(results, serial):
+        assert a.values.shape == b.values.shape
+        assert (a.values == b.values).all()
+
+
+def test_a_per_state_absolute_tolerance_is_one_value_per_state(decay):
+    n_states = 1  # y of the decay model
+    scalar = decay.simulate_many([request(end=10.0, steps=10)])[0]
+    per_state = decay.simulate_many(
+        [request(end=10.0, steps=10, absolute_tolerance={"per_state": [1e-12] * n_states})]
+    )[0]
+    assert (scalar.values == per_state.values).all()
+    wrong = decay.simulate_many(
+        [request(end=10.0, steps=10, absolute_tolerance={"per_state": [1e-12] * 3})]
+    )[0]
+    assert isinstance(wrong, sbmlsim_core.PointError)
 
 
 def test_a_batch_without_requests_is_empty(decay):
