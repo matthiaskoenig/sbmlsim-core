@@ -1,0 +1,21 @@
+[build-system]
+requires = ["maturin>=1.16,<2"]
+build-backend = "maturin"
+
+[project]
+name = "sbmlsim-core"
+dynamic = ["version"]
+description = "Compile SBML models to WebAssembly and simulate them"
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "Matthias König" }]
+requires-python = ">=3.14"
+dependencies = ["numpy"]
+
+[dependency-groups]
+dev = ["pytest"]
+
+[tool.maturin]
+manifest-path = "crates/python/Cargo.toml"
+python-source = "python"
+module-name = "sbmlsim_core._core"

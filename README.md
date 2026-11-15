@@ -102,6 +102,24 @@ The host is published to npm as [`sbmlsim-core`](https://www.npmjs.com/package/s
 
 The tests (`node --test js/test`) build the command line (`SBMLSIM_CORE_CLI` names a built one) and compare every passing case of the prepared SBML Test Suite with the wasmtime host (`SBMLSIM_CORE_EXPORT` names the output of `sbmlsim-core testsuite <cases> --export <dir>`).
 
+## Python
+
+`sbmlsim-core` is also a python package (python 3.14 or newer, built with maturin; the build needs `WASI_SDK_PATH` or `SBMLSIM_CORE_WASM_DIR` as above):
+
+```bash
+uv venv --python 3.14 && uv pip install -e . --group dev
+.venv/bin/pytest python/tests -q
+```
+
+```python
+import sbmlsim_core
+
+compiled = sbmlsim_core.compile_sbml(sbml_text)  # optimize=True, jacobian="auto"
+compiled.wasm         # the bytes of model.wasm
+compiled.description  # the dict of model.json (model/2)
+# simulating a compiled model follows in the next steps of the bindings
+```
+
 ## Test suite
 
 `sbmlsim-core testsuite testdata/cases` compiles and simulates the cases of the SBML Test Suite (prepared with `uv run scripts/prepare_testsuite.py --out testdata/cases`) and compares them with the baseline `testdata/testsuite_baseline.json`; `--write-baseline` writes the baseline from a run. In every mode (analytic and difference Jacobian, optimizer on and off) each passing case is simulated again to check that it repeats bitwise.

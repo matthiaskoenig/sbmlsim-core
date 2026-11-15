@@ -4,3 +4,8 @@
 __pycache__/
 /site/
 /js/LICENSE
+/.venv/
+/.pytest_cache/
+*.so
+*.pyd
+/dist/

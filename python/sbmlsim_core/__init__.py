@@ -1,0 +1,21 @@
+"""sbmlsim-core: compile SBML models to WebAssembly and simulate them."""
+
+from sbmlsim_core._core import (
+    MODEL_CONTRACT,
+    SIMULATION_CONTRACT,
+    CompileError,
+    CompiledModel,
+    SbmlsimCoreError,
+    __version__,
+    compile_sbml,
+)
+
+__all__ = [
+    "MODEL_CONTRACT",
+    "SIMULATION_CONTRACT",
+    "CompileError",
+    "CompiledModel",
+    "SbmlsimCoreError",
+    "__version__",
+    "compile_sbml",
+]

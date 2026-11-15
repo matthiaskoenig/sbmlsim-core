@@ -1,0 +1,21 @@
+[package]
+name = "sbmlsim-python"
+version.workspace = true
+edition.workspace = true
+# built by maturin into the python package `sbmlsim-core`, not published as a crate
+publish = false
+# the license of sbmlsim-host, whose engine.wasm (SUNDIALS, KLU and others, THIRD_PARTY.md) the
+# extension embeds once it binds the host
+license = "MIT AND BSD-3-Clause AND LGPL-2.1-or-later"
+authors.workspace = true
+description = "The python bindings of sbmlsim-core"
+
+[lib]
+name = "sbmlsim_core"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.30", features = ["extension-module", "abi3-py314"] }
+pythonize = "0.30"
+sbmlsim-abi = { path = "../abi" }
+sbmlsim-compiler = { path = "../compiler" }

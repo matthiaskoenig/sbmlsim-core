@@ -11,6 +11,7 @@ members = [
     "crates/engine",
     "crates/host",
     "crates/cli",
+    "crates/python",
 ]
 
 [workspace.package]
