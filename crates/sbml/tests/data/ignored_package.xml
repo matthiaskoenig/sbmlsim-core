@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" xmlns:layout="http://www.sbml.org/sbml/level3/version1/layout/version1" level="3" version="2" layout:required="false">
+  <model id="m">
+    <annotation><foo xmlns="urn:x"/></annotation>
+    <listOfParameters><parameter id="p" value="1" constant="true"/></listOfParameters>
+  </model>
+</sbml>

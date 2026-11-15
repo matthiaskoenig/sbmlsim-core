@@ -41,6 +41,7 @@ jobs:
       - run: cargo test
       - run: cargo run -p sbmlsim-cli -- simulate crates/host/tests/decay-model crates/host/tests/decay-model/request.json
       - run: cargo build -p sbmlsim-abi --target wasm32-unknown-unknown
+      - run: cargo build -p sbmlsim-sbml --target wasm32-unknown-unknown
       - run: cargo build -p sbmlsim-mathlib --target wasm32-unknown-unknown --release
       - run: cargo test -p sbmlsim-mathlib wasm_has_no_imports
       - run: cargo test -p sbmlsim-csolvers --target wasm32-wasip1

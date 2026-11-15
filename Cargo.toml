@@ -24,3 +24,4 @@ serde = { version = "1", features = ["derive"] }
 # every number of a request, a description or a result is read back as the double it was
 serde_json = { version = "1", features = ["float_roundtrip"] }
 thiserror = "2"
+roxmltree = "0.20"

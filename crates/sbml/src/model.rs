@@ -1,0 +1,595 @@
+//! The data model of an SBML Level 3 Version 2 core document and its reader.
+
+use crate::math::{self, Node};
+use crate::{Document, ReadError};
+use roxmltree::Node as X;
+
+/// The namespace of SBML Level 3 Version 2 core.
+pub const SBML_NS: &str = "http://www.sbml.org/sbml/level3/version2/core";
+
+/// A unit definition as a unit expression, e.g. `1e-3*mole*60*second**-1`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UnitDefinition {
+    /// The id.
+    pub id: String,
+    /// The expression a unit registry parses.
+    pub expression: String,
+}
+
+/// A function definition, `math` is its lambda.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FunctionDefinition {
+    /// The id.
+    pub id: String,
+    /// The lambda, absent when the definition has no math.
+    pub math: Option<Node>,
+}
+
+/// A compartment.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Compartment {
+    /// The id.
+    pub id: String,
+    /// The spatial dimensions.
+    pub spatial_dimensions: Option<f64>,
+    /// The size.
+    pub size: Option<f64>,
+    /// The units.
+    pub units: Option<String>,
+    /// Whether the size is constant.
+    pub constant: bool,
+}
+
+/// A species.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Species {
+    /// The id.
+    pub id: String,
+    /// The compartment.
+    pub compartment: String,
+    /// The initial amount.
+    pub initial_amount: Option<f64>,
+    /// The initial concentration.
+    pub initial_concentration: Option<f64>,
+    /// The substance units.
+    pub substance_units: Option<String>,
+    /// Whether the species is an amount.
+    pub has_only_substance_units: bool,
+    /// Whether the species is a boundary condition.
+    pub boundary_condition: bool,
+    /// Whether the species is constant.
+    pub constant: bool,
+    /// The id of the conversion factor.
+    pub conversion_factor: Option<String>,
+}
+
+/// A parameter.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Parameter {
+    /// The id.
+    pub id: String,
+    /// The value.
+    pub value: Option<f64>,
+    /// The units.
+    pub units: Option<String>,
+    /// Whether the value is constant.
+    pub constant: bool,
+}
+
+/// A parameter local to a kinetic law.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LocalParameter {
+    /// The id.
+    pub id: String,
+    /// The value.
+    pub value: Option<f64>,
+    /// The units.
+    pub units: Option<String>,
+}
+
+/// An initial assignment.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InitialAssignment {
+    /// The assigned symbol.
+    pub symbol: String,
+    /// The math.
+    pub math: Node,
+}
+
+/// A rule.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Rule {
+    /// `variable = math`.
+    Assignment {
+        /// The variable.
+        variable: String,
+        /// The math.
+        math: Node,
+    },
+    /// `d variable / dt = math`.
+    Rate {
+        /// The variable.
+        variable: String,
+        /// The math.
+        math: Node,
+    },
+    /// `0 = math`.
+    Algebraic {
+        /// The math.
+        math: Node,
+    },
+}
+
+/// A species reference of a reactant or a product.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SpeciesReference {
+    /// The species.
+    pub species: String,
+    /// The id of the reference.
+    pub id: Option<String>,
+    /// The stoichiometry.
+    pub stoichiometry: Option<f64>,
+    /// Whether the stoichiometry is constant.
+    pub constant: bool,
+}
+
+/// A modifier of a reaction.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModifierSpeciesReference {
+    /// The species.
+    pub species: String,
+    /// The id of the reference.
+    pub id: Option<String>,
+}
+
+/// A kinetic law.
+#[derive(Debug, Clone, PartialEq)]
+pub struct KineticLaw {
+    /// The math.
+    pub math: Option<Node>,
+    /// The local parameters.
+    pub local_parameters: Vec<LocalParameter>,
+}
+
+/// A reaction.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Reaction {
+    /// The id.
+    pub id: String,
+    /// Whether the reaction is reversible.
+    pub reversible: bool,
+    /// Whether the reaction is fast.
+    pub fast: bool,
+    /// The compartment.
+    pub compartment: Option<String>,
+    /// The reactants.
+    pub reactants: Vec<SpeciesReference>,
+    /// The products.
+    pub products: Vec<SpeciesReference>,
+    /// The modifiers.
+    pub modifiers: Vec<ModifierSpeciesReference>,
+    /// The kinetic law.
+    pub kinetic_law: Option<KineticLaw>,
+}
+
+/// The trigger of an event.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Trigger {
+    /// The value of the trigger before the time 0.
+    pub initial_value: bool,
+    /// Whether the trigger is persistent.
+    pub persistent: bool,
+    /// The math.
+    pub math: Node,
+}
+
+/// An assignment of an event.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EventAssignment {
+    /// The variable.
+    pub variable: String,
+    /// The math.
+    pub math: Node,
+}
+
+/// An event.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Event {
+    /// The id, absent for an event named by its position.
+    pub id: Option<String>,
+    /// Whether the assignments use the values at the time of the trigger (default true).
+    pub use_values_from_trigger_time: bool,
+    /// The trigger.
+    pub trigger: Trigger,
+    /// The delay.
+    pub delay: Option<Node>,
+    /// The priority.
+    pub priority: Option<Node>,
+    /// The assignments.
+    pub assignments: Vec<EventAssignment>,
+}
+
+/// A model.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Model {
+    /// The id.
+    pub id: Option<String>,
+    /// The default substance units.
+    pub substance_units: Option<String>,
+    /// The default time units.
+    pub time_units: Option<String>,
+    /// The default extent units.
+    pub extent_units: Option<String>,
+    /// The default volume units.
+    pub volume_units: Option<String>,
+    /// The default area units.
+    pub area_units: Option<String>,
+    /// The default length units.
+    pub length_units: Option<String>,
+    /// The id of the conversion factor.
+    pub conversion_factor: Option<String>,
+    /// The unit definitions.
+    pub unit_definitions: Vec<UnitDefinition>,
+    /// The function definitions.
+    pub function_definitions: Vec<FunctionDefinition>,
+    /// The compartments.
+    pub compartments: Vec<Compartment>,
+    /// The species.
+    pub species: Vec<Species>,
+    /// The parameters.
+    pub parameters: Vec<Parameter>,
+    /// The initial assignments.
+    pub initial_assignments: Vec<InitialAssignment>,
+    /// The rules.
+    pub rules: Vec<Rule>,
+    /// The reactions.
+    pub reactions: Vec<Reaction>,
+    /// The events.
+    pub events: Vec<Event>,
+}
+
+fn err(message: String) -> ReadError {
+    ReadError::Xml(message)
+}
+
+fn is_core(n: &X, name: &str) -> bool {
+    n.is_element() && n.tag_name().name() == name && n.tag_name().namespace() == Some(SBML_NS)
+}
+
+fn child<'a, 'i>(n: X<'a, 'i>, name: &str) -> Option<X<'a, 'i>> {
+    n.children().find(|c| is_core(c, name))
+}
+
+/// The items of `<listOf...>` named `list`, empty when the list is absent.
+fn items<'a, 'i>(n: X<'a, 'i>, list: &str, item: &str) -> Vec<X<'a, 'i>> {
+    child(n, list)
+        .map(|l| l.children().filter(|c| is_core(c, item)).collect())
+        .unwrap_or_default()
+}
+
+fn req(n: X, name: &str) -> Result<String, ReadError> {
+    n.attribute(name).map(str::to_string).ok_or_else(|| {
+        err(format!(
+            "<{}> without the attribute {name}",
+            n.tag_name().name()
+        ))
+    })
+}
+
+fn opt(n: X, name: &str) -> Option<String> {
+    n.attribute(name).map(str::to_string)
+}
+
+fn flag(n: X, name: &str, default: bool) -> Result<bool, ReadError> {
+    match n.attribute(name) {
+        None => Ok(default),
+        Some("true" | "1") => Ok(true),
+        Some("false" | "0") => Ok(false),
+        Some(v) => Err(err(format!(
+            "<{}> {name}={v:?} is no boolean",
+            n.tag_name().name()
+        ))),
+    }
+}
+
+fn double(n: X, name: &str) -> Result<Option<f64>, ReadError> {
+    n.attribute(name)
+        .map(|v| {
+            v.trim().parse::<f64>().map_err(|_| {
+                err(format!(
+                    "<{}> {name}={v:?} is no number",
+                    n.tag_name().name()
+                ))
+            })
+        })
+        .transpose()
+}
+
+fn math_of(n: X) -> Result<Option<Node>, ReadError> {
+    child_math(n).map(math::read_math).transpose()
+}
+
+fn child_math<'a, 'i>(n: X<'a, 'i>) -> Option<X<'a, 'i>> {
+    n.children().find(|c| {
+        c.is_element()
+            && c.tag_name().name() == "math"
+            && c.tag_name().namespace() == Some(math::MATHML_NS)
+    })
+}
+
+fn req_math(n: X) -> Result<Node, ReadError> {
+    math_of(n)?.ok_or_else(|| err(format!("<{}> without math", n.tag_name().name())))
+}
+
+fn unit_factor(f: f64) -> String {
+    if f.fract() == 0.0 && f.abs() < 1e15 {
+        format!("{}", f as i64)
+    } else {
+        format!("{f:e}")
+    }
+}
+
+fn unit_definition(n: X) -> Result<UnitDefinition, ReadError> {
+    let mut terms = Vec::new();
+    for u in items(n, "listOfUnits", "unit") {
+        let kind = req(u, "kind")?;
+        let exponent = double(u, "exponent")?.unwrap_or(1.0);
+        let scale = double(u, "scale")?.unwrap_or(0.0);
+        let multiplier = double(u, "multiplier")?.unwrap_or(1.0);
+        let factor = multiplier * 10f64.powf(scale);
+        if factor != 1.0 {
+            terms.push(unit_factor(factor));
+        }
+        terms.push(if exponent == 1.0 {
+            kind
+        } else {
+            format!("{kind}**{}", unit_factor(exponent))
+        });
+    }
+    let expression = if terms.is_empty() {
+        "dimensionless".to_string()
+    } else {
+        terms.join("*")
+    };
+    Ok(UnitDefinition {
+        id: req(n, "id")?,
+        expression,
+    })
+}
+
+fn species_reference(n: X) -> Result<SpeciesReference, ReadError> {
+    Ok(SpeciesReference {
+        species: req(n, "species")?,
+        id: opt(n, "id"),
+        stoichiometry: double(n, "stoichiometry")?,
+        constant: flag(n, "constant", false)?,
+    })
+}
+
+fn reaction(n: X) -> Result<Reaction, ReadError> {
+    let refs = |list, item| -> Result<Vec<SpeciesReference>, ReadError> {
+        items(n, list, item)
+            .into_iter()
+            .map(species_reference)
+            .collect()
+    };
+    let kinetic_law = child(n, "kineticLaw")
+        .map(|k| -> Result<KineticLaw, ReadError> {
+            let local_parameters = items(k, "listOfLocalParameters", "localParameter")
+                .into_iter()
+                .map(|p| {
+                    Ok(LocalParameter {
+                        id: req(p, "id")?,
+                        value: double(p, "value")?,
+                        units: opt(p, "units"),
+                    })
+                })
+                .collect::<Result<_, ReadError>>()?;
+            Ok(KineticLaw {
+                math: math_of(k)?,
+                local_parameters,
+            })
+        })
+        .transpose()?;
+    Ok(Reaction {
+        id: req(n, "id")?,
+        reversible: flag(n, "reversible", false)?,
+        fast: flag(n, "fast", false)?,
+        compartment: opt(n, "compartment"),
+        reactants: refs("listOfReactants", "speciesReference")?,
+        products: refs("listOfProducts", "speciesReference")?,
+        modifiers: items(n, "listOfModifiers", "modifierSpeciesReference")
+            .into_iter()
+            .map(|m| {
+                Ok(ModifierSpeciesReference {
+                    species: req(m, "species")?,
+                    id: opt(m, "id"),
+                })
+            })
+            .collect::<Result<_, ReadError>>()?,
+        kinetic_law,
+    })
+}
+
+/// The assigned-math children (`priority` and `delay` hold a `<math>`).
+fn wrapped_math(n: X, name: &str) -> Result<Option<Node>, ReadError> {
+    child(n, name).map(req_math).transpose()
+}
+
+fn event(n: X) -> Result<Event, ReadError> {
+    let t = child(n, "trigger").ok_or_else(|| err("<event> without a <trigger>".into()))?;
+    Ok(Event {
+        id: opt(n, "id"),
+        use_values_from_trigger_time: flag(n, "useValuesFromTriggerTime", true)?,
+        trigger: Trigger {
+            initial_value: flag(t, "initialValue", true)?,
+            persistent: flag(t, "persistent", true)?,
+            math: req_math(t)?,
+        },
+        delay: wrapped_math(n, "delay")?,
+        priority: wrapped_math(n, "priority")?,
+        assignments: items(n, "listOfEventAssignments", "eventAssignment")
+            .into_iter()
+            .map(|a| {
+                Ok(EventAssignment {
+                    variable: req(a, "variable")?,
+                    math: req_math(a)?,
+                })
+            })
+            .collect::<Result<_, ReadError>>()?,
+    })
+}
+
+fn rule(n: X) -> Result<Rule, ReadError> {
+    Ok(match n.tag_name().name() {
+        "assignmentRule" => Rule::Assignment {
+            variable: req(n, "variable")?,
+            math: req_math(n)?,
+        },
+        "rateRule" => Rule::Rate {
+            variable: req(n, "variable")?,
+            math: req_math(n)?,
+        },
+        _ => Rule::Algebraic { math: req_math(n)? },
+    })
+}
+
+fn read_model(m: X) -> Result<Model, ReadError> {
+    let list = |l: &str, i: &str| items(m, l, i);
+    Ok(Model {
+        id: opt(m, "id"),
+        substance_units: opt(m, "substanceUnits"),
+        time_units: opt(m, "timeUnits"),
+        extent_units: opt(m, "extentUnits"),
+        volume_units: opt(m, "volumeUnits"),
+        area_units: opt(m, "areaUnits"),
+        length_units: opt(m, "lengthUnits"),
+        conversion_factor: opt(m, "conversionFactor"),
+        unit_definitions: list("listOfUnitDefinitions", "unitDefinition")
+            .into_iter()
+            .map(unit_definition)
+            .collect::<Result<_, _>>()?,
+        function_definitions: list("listOfFunctionDefinitions", "functionDefinition")
+            .into_iter()
+            .map(|f| {
+                Ok(FunctionDefinition {
+                    id: req(f, "id")?,
+                    math: math_of(f)?,
+                })
+            })
+            .collect::<Result<_, ReadError>>()?,
+        compartments: list("listOfCompartments", "compartment")
+            .into_iter()
+            .map(|c| {
+                Ok(Compartment {
+                    id: req(c, "id")?,
+                    spatial_dimensions: double(c, "spatialDimensions")?,
+                    size: double(c, "size")?,
+                    units: opt(c, "units"),
+                    constant: flag(c, "constant", false)?,
+                })
+            })
+            .collect::<Result<_, ReadError>>()?,
+        species: list("listOfSpecies", "species")
+            .into_iter()
+            .map(|s| {
+                Ok(Species {
+                    id: req(s, "id")?,
+                    compartment: req(s, "compartment")?,
+                    initial_amount: double(s, "initialAmount")?,
+                    initial_concentration: double(s, "initialConcentration")?,
+                    substance_units: opt(s, "substanceUnits"),
+                    has_only_substance_units: flag(s, "hasOnlySubstanceUnits", false)?,
+                    boundary_condition: flag(s, "boundaryCondition", false)?,
+                    constant: flag(s, "constant", false)?,
+                    conversion_factor: opt(s, "conversionFactor"),
+                })
+            })
+            .collect::<Result<_, ReadError>>()?,
+        parameters: list("listOfParameters", "parameter")
+            .into_iter()
+            .map(|p| {
+                Ok(Parameter {
+                    id: req(p, "id")?,
+                    value: double(p, "value")?,
+                    units: opt(p, "units"),
+                    constant: flag(p, "constant", false)?,
+                })
+            })
+            .collect::<Result<_, ReadError>>()?,
+        initial_assignments: list("listOfInitialAssignments", "initialAssignment")
+            .into_iter()
+            .map(|a| {
+                Ok(InitialAssignment {
+                    symbol: req(a, "symbol")?,
+                    math: req_math(a)?,
+                })
+            })
+            .collect::<Result<_, ReadError>>()?,
+        rules: child(m, "listOfRules")
+            .map(|l| {
+                l.children()
+                    .filter(|c| {
+                        ["assignmentRule", "rateRule", "algebraicRule"]
+                            .iter()
+                            .any(|n| is_core(c, n))
+                    })
+                    .map(rule)
+                    .collect::<Result<_, _>>()
+            })
+            .transpose()?
+            .unwrap_or_default(),
+        reactions: list("listOfReactions", "reaction")
+            .into_iter()
+            .map(reaction)
+            .collect::<Result<_, _>>()?,
+        events: list("listOfEvents", "event")
+            .into_iter()
+            .map(event)
+            .collect::<Result<_, _>>()?,
+    })
+}
+
+/// The package of a namespace URI such as `.../level3/version1/comp/version1`.
+fn package_name(uri: &str, prefix: Option<&str>) -> String {
+    let parts: Vec<&str> = uri.trim_end_matches('/').split('/').collect();
+    match parts.len().checked_sub(2).map(|i| parts[i]) {
+        Some(p) if !p.is_empty() && !p.starts_with("level") => p.to_string(),
+        _ => prefix.unwrap_or(uri).to_string(),
+    }
+}
+
+pub(crate) fn read_document(sbml: &str) -> Result<Document, ReadError> {
+    let doc = roxmltree::Document::parse(sbml).map_err(|e| err(format!("invalid XML: {e}")))?;
+    let root = doc.root_element();
+    if root.tag_name().name() != "sbml" {
+        return Err(err(format!(
+            "root element <{}> is not <sbml>",
+            root.tag_name().name()
+        )));
+    }
+    let number = |name: &str| -> Result<u32, ReadError> {
+        req(root, name)?
+            .trim()
+            .parse()
+            .map_err(|_| err(format!("<sbml> {name} is no integer")))
+    };
+    let (level, version) = (number("level")?, number("version")?);
+    if (level, version) != (3, 2) {
+        return Err(ReadError::NotLevel3Version2 { level, version });
+    }
+    for a in root.attributes() {
+        if a.name() == "required"
+            && let Some(ns) = a.namespace()
+            && a.value() == "true"
+        {
+            return Err(ReadError::Package(package_name(ns, root.lookup_prefix(ns))));
+        }
+    }
+    let model = child(root, "model").ok_or_else(|| err("<sbml> without a <model>".into()))?;
+    Ok(Document {
+        level,
+        version,
+        model: read_model(model)?,
+    })
+}
