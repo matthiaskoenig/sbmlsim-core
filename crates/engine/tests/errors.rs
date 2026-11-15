@@ -183,11 +183,11 @@ fn invalid_requests_are_refused() {
     );
     let model = Decay { k: 0.5 };
     let mut desc = model.description();
-    desc.contract = "model/2".to_string();
-    assert_request(simulate(&model, &desc, &base), &["model/2", MODEL_CONTRACT]);
+    desc.contract = "model/1".to_string();
+    assert_request(simulate(&model, &desc, &base), &["model/1", MODEL_CONTRACT]);
     assert_request(
         Engine::new(Box::new(model), desc).map(|_| ()),
-        &["model/2", MODEL_CONTRACT],
+        &["model/1", MODEL_CONTRACT],
     );
 }
 

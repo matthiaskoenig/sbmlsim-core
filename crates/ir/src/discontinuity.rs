@@ -102,7 +102,7 @@ fn varies(e: &Expr, varying: &[bool]) -> bool {
         any |= match s {
             Symbol::Time | Symbol::State(_) => true,
             Symbol::Param(i) => varying[i as usize],
-            Symbol::Derivative(_) | Symbol::Common(_) => false,
+            Symbol::Derivative(_) | Symbol::Common(_) | Symbol::Constant(_) => false,
         }
     });
     any

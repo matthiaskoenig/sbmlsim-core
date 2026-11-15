@@ -1,7 +1,7 @@
-;; A hand-written model of the contract model/1: y' = -k y, y(0) = 1, k = 0.5, with the
+;; A hand-written model of the contract model/2: y' = -k y, y(0) = 1, k = 0.5, with the
 ;; assignment rule t_half = ln(2) / k. It is the native test model `Decay { k: 0.5 }` of the
 ;; engine: the parameters are [k, t_half] (t_half is not settable), the state is [y], the
-;; selections are [y, t_half]; it has no events.
+;; selections are [y, t_half]; it has no events and no constants.
 ;;
 ;; As every compiled model it imports the memory of the engine and its math from mathlib, and
 ;; has no memory, data, globals or stack of its own: every pointer is an offset into the
@@ -54,22 +54,28 @@
   (func (export "model_event_apply")
     (param $i i32) (param $t f64) (param $values i32) (param $y i32) (param $p i32))
 
-  (func (export "model_selections") (param $t f64) (param $y i32) (param $p i32) (param $out i32)
-    (f64.store (local.get $out) (f64.load (local.get $y)))
-    (f64.store offset=8 (local.get $out) (f64.load offset=8 (local.get $p))))
+  ;; the selections of the mask; t_half from k, not from the memory (the target of a rule)
+  (func (export "model_selections")
+    (param $t f64) (param $y i32) (param $p i32) (param $mask i32) (param $out i32)
+    (if (i32.load8_u (local.get $mask))
+      (then (f64.store (local.get $out) (f64.load (local.get $y)))))
+    (if (i32.load8_u offset=1 (local.get $mask))
+      (then (f64.store offset=8 (local.get $out)
+        (f64.div (call $log (f64.const 2)) (f64.load (local.get $p)))))))
 
   (func (export "model_assign") (param $t f64) (param $y i32) (param $p i32)
     (call $t_half (local.get $p)))
 
   ;; the sizes: 1 state, 2 parameters, 2 selections, 1 entry of the Jacobian, 0 root functions,
-  ;; 0 events (so model_event_sizes writes nothing)
+  ;; 0 constants, 0 events (so model_event_sizes writes nothing)
   (func (export "model_sizes") (param $out i32)
     (i32.store (local.get $out) (i32.const 1))
     (i32.store offset=4 (local.get $out) (i32.const 2))
     (i32.store offset=8 (local.get $out) (i32.const 2))
     (i32.store offset=12 (local.get $out) (i32.const 1))
     (i32.store offset=16 (local.get $out) (i32.const 0))
-    (i32.store offset=20 (local.get $out) (i32.const 0)))
+    (i32.store offset=20 (local.get $out) (i32.const 0))
+    (i32.store offset=24 (local.get $out) (i32.const 0)))
 
   (func (export "model_event_sizes") (param $out i32))
 )

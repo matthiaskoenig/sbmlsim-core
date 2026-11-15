@@ -16,6 +16,16 @@ fn runtime() -> &'static Runtime {
     RUNTIME.get_or_init(|| Runtime::embedded().unwrap())
 }
 
+/// A description as JSON (where a NaN equals a NaN) but its number of constants, which only the
+/// optimizer computes: the descriptions of a model with and without it are otherwise equal.
+fn but_constants(desc: &sbmlsim_abi::ModelDescription) -> String {
+    let desc = sbmlsim_abi::ModelDescription {
+        n_constants: 0,
+        ..desc.clone()
+    };
+    serde_json::to_string(&desc).unwrap()
+}
+
 fn testdata() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata")
 }
@@ -62,9 +72,7 @@ fn compare(dir: &Path, choice: JacobianChoice) -> (Option<String>, usize, usize)
     let written = compile(&sbml, &options(false)).unwrap();
     let optimized = compile(&sbml, &options(true)).unwrap();
     let sizes = (written.wasm.len(), optimized.wasm.len());
-    // as JSON, where a NaN equals a NaN
-    let json = |d| serde_json::to_string(d).unwrap();
-    if json(&written.description) != json(&optimized.description) {
+    if but_constants(&written.description) != but_constants(&optimized.description) {
         return (
             Some(format!("{cid}: the descriptions differ")),
             sizes.0,
@@ -76,13 +84,13 @@ fn compare(dir: &Path, choice: JacobianChoice) -> (Option<String>, usize, usize)
     req.selections = std::iter::once("time".to_string())
         .chain(written.description.selections.iter().map(|s| s.id.clone()))
         .collect();
-    let run = |wasm: &[u8]| {
+    let run = |compiled: &sbmlsim_compiler::CompiledModel| {
         runtime()
-            .instantiate(wasm, &written.description)
+            .instantiate(&compiled.wasm, &compiled.description)
             .unwrap()
             .simulate(&req)
     };
-    let difference = match (run(&written.wasm), run(&optimized.wasm)) {
+    let difference = match (run(&written), run(&optimized)) {
         (Ok(a), Ok(b)) => repeat_difference(&a, &b, "the optimized model")
             .map(|d| format!("{cid} ({choice:?}): {d}")),
         (Err(a), Err(b)) if a.to_string() == b.to_string() => None,
@@ -255,14 +263,14 @@ fn edge_values_keep_their_bits() {
         req.selections = std::iter::once("time".to_string())
             .chain(written.description.selections.iter().map(|s| s.id.clone()))
             .collect();
-        let run = |wasm: &[u8]| {
+        let run = |compiled: &sbmlsim_compiler::CompiledModel| {
             runtime()
-                .instantiate(wasm, &written.description)
+                .instantiate(&compiled.wasm, &compiled.description)
                 .unwrap()
                 .simulate(&req)
                 .unwrap()
         };
-        let (a, b) = (run(&written.wasm), run(&optimized.wasm));
+        let (a, b) = (run(&written), run(&optimized));
         // the values are those of the edges
         let column = |id: &str| a.columns.iter().position(|c| c == id).unwrap();
         let first = |id: &str| a.values[column(id)];
@@ -474,9 +482,11 @@ fn literal_folding_gives_the_bits_of_the_code() {
         let written = compile(&sbml, &options(false)).unwrap();
         let optimized = compile(&sbml, &options(true)).unwrap();
         assert_eq!(
-            serde_json::to_string(&written.description).unwrap(),
-            serde_json::to_string(&optimized.description).unwrap()
+            but_constants(&written.description),
+            but_constants(&optimized.description)
         );
+        assert_eq!(written.description.n_constants, 0);
+        assert!(optimized.description.n_constants > 0);
         assert!(optimized.wasm.len() < written.wasm.len());
         for requested in [
             sbmlsim_abi::JacobianChoice::Auto,
@@ -504,14 +514,14 @@ fn literal_folding_gives_the_bits_of_the_code() {
                 },
                 seed: 0,
             };
-            let run = |wasm: &[u8]| {
+            let run = |compiled: &sbmlsim_compiler::CompiledModel| {
                 runtime()
-                    .instantiate(wasm, &written.description)
+                    .instantiate(&compiled.wasm, &compiled.description)
                     .unwrap()
                     .simulate(&req)
                     .unwrap()
             };
-            let (a, b) = (run(&written.wasm), run(&optimized.wasm));
+            let (a, b) = (run(&written), run(&optimized));
             assert_eq!(a.n_rows, 31);
             // the event fired: x falls below 0.3 and is raised by 0.2
             let x = a.columns.iter().position(|c| c == "x").unwrap();

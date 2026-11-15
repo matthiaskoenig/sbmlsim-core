@@ -45,8 +45,27 @@
 //!    compute. A subtree all of whose occurrences are lazy stays in its branches.
 //!
 //! A program of an assignment rule whose expression is a common subexpression of later
-//! statements reuses the local of the rule. The programs of the functions of a model are
-//! [`plan`]; codegen emits them (and the code as written without the optimizer).
+//! statements reuses the local of the rule.
+//!
+//! 4. **Constants** ([`Constants`]): a subtree which reads nothing but literals and the
+//!    parameters which no assignment rule assigns (directly, or through the assignment rules
+//!    whose values are such subtrees: `BSA = sqrt(BW * HEIGHT / 3600)` of the parameters `BW`
+//!    and `HEIGHT`) is the same in every call between two changes of the parameters. The
+//!    largest such subtrees of the functions which the integration calls (`model_rhs`,
+//!    `model_jac`, `model_roots`, the functions of an event index and `model_selections`) are
+//!    the constants of the model ([`Symbol::Constant`], equal trees with the bits of their
+//!    numbers are one), which `model_init` and `model_assign` compute into `p` behind the
+//!    parameters ([`Plan::constants`]) and the functions read from there. Of a left fold (`+`,
+//!    `*`, `max`, `min`) the leading arguments which are such subtrees are one: `k * V * x` is
+//!    `(k * V) * x`, whose `k * V` is a constant; `x * k * V` is `(x * k) * V` and stays. A
+//!    boolean is no constant (the slots are doubles), its operands may be. The constant is the
+//!    double the code as written computes from the same parameters, since every expression is
+//!    pure and neither an `f64` operation nor a call of mathlib traps (a constant of a branch of
+//!    a `piecewise` which the code does not take is computed and not read). `model_init`,
+//!    `model_assign` and `model_event_apply` (which write the parameters) read no constants.
+//!
+//! The programs of the functions of a model are [`plan`]; codegen emits them (and the code as
+//! written without the optimizer).
 //!
 //! The crate does no file system or OS access.
 
@@ -54,7 +73,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::derive::JacobianIr;
 use crate::eval::{eval, eval_bool, is_boolean};
-use crate::{Assignment, Event, Expr, Model, Op, Symbol, index};
+use crate::{Assignment, Event, Expr, Model, Op, Symbol, index, is_boolean_valued};
 
 /// A function as a list of statements.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -111,6 +130,10 @@ pub struct Plan {
     /// `model_assign`: the value of every assignment rule in its order, which the code stores
     /// into the memory before the next one (so a later rule reads the memory).
     pub assign: Program,
+    /// The constants ([`Constants`]): the value of every constant in its order, which
+    /// `model_init` and `model_assign` store behind the parameters before the next one (a
+    /// constant reads the parameters and the constants before it).
+    pub constants: Program,
 }
 
 /// The programs of the functions of a model and of its Jacobian, with the common
@@ -122,6 +145,7 @@ pub struct Plan {
 /// already), which the caller computes once for the module and its description.
 pub fn plan(model: &Model, jacobian: &JacobianIr, discontinuities: &[Expr], cse: bool) -> Plan {
     let rules = &model.assignment_rules;
+    let mut constants = Constants::new(model);
     let mut init_commons = 0;
     let init = model
         .initial
@@ -142,7 +166,7 @@ pub fn plan(model: &Model, jacobian: &JacobianIr, discontinuities: &[Expr], cse:
                     expr: d.clone(),
                 }))
                 .collect();
-            Some(program(&lets, entries, cse, &mut 0))
+            Some(hoisted(&lets, entries, cse, &mut constants))
         }
         JacobianIr::ColoredDifference { .. } => None,
     };
@@ -152,24 +176,60 @@ pub fn plan(model: &Model, jacobian: &JacobianIr, discontinuities: &[Expr], cse:
         .flat_map(Event::root_functions)
         .chain(discontinuities.iter().cloned())
         .collect();
-    let part = |f: &dyn Fn(&Event) -> Option<Vec<Expr>>| -> Branches {
+    let mut part = |f: &dyn Fn(&Event) -> Option<Vec<Expr>>| -> Branches {
         let outputs: Vec<Option<Vec<Expr>>> = model.events.iter().map(f).collect();
-        branches(rules, &outputs, cse)
+        branches_with(rules, &outputs, cse, Some(&mut constants))
     };
+    let trigger = part(&|e| Some(vec![e.trigger.clone()]));
+    let priority = part(&|e| e.priority.clone().map(|x| vec![x]));
+    let delay = part(&|e| e.delay.clone().map(|x| vec![x]));
+    let event_values = part(&|e| Some(e.assignments.iter().map(|a| a.value.clone()).collect()));
     let selections: Vec<Expr> = model.selections.iter().map(|s| s.expr.clone()).collect();
     let values: Vec<Expr> = rules.iter().map(|a| a.expr.clone()).collect();
+    let rhs = hoisted(rules, &model.rates, cse, &mut constants);
+    let roots = hoisted(rules, &roots, cse, &mut constants);
+    let selections = hoisted(rules, &selections, cse, &mut constants);
+    let mut assign_commons = 0;
+    let assign = program(&[], &values, cse, &mut assign_commons);
+    // the constants follow the statements of `model_init` and `model_assign` in their functions,
+    // so their common subexpressions are numbered after those of both
+    let mut commons = init_commons.max(assign_commons);
+    let constants = program(&[], &constants.exprs, cse, &mut commons);
     Plan {
         init,
-        rhs: program(rules, &model.rates, cse, &mut 0),
+        rhs,
         jac,
-        roots: program(rules, &roots, cse, &mut 0),
-        trigger: part(&|e| Some(vec![e.trigger.clone()])),
-        priority: part(&|e| e.priority.clone().map(|x| vec![x])),
-        delay: part(&|e| e.delay.clone().map(|x| vec![x])),
-        event_values: part(&|e| Some(e.assignments.iter().map(|a| a.value.clone()).collect())),
-        selections: program(rules, &selections, cse, &mut 0),
-        assign: program(&[], &values, cse, &mut 0),
+        roots,
+        trigger,
+        priority,
+        delay,
+        event_values,
+        selections,
+        assign,
+        constants,
     }
+}
+
+impl Plan {
+    /// The number of constants of the model ([`Plan::constants`]).
+    pub fn n_constants(&self) -> u32 {
+        let outputs = self.constants.statements.iter();
+        index(
+            outputs
+                .filter(|s| matches!(s, Statement::Output(_)))
+                .count(),
+        )
+    }
+}
+
+/// [`program`] with the largest subtrees of the constants of the model read from `constants`
+/// (which gets the new ones).
+fn hoisted(lets: &[Assignment], outputs: &[Expr], cse: bool, constants: &mut Constants) -> Program {
+    let outputs: Vec<Expr> = outputs.iter().map(fold).collect();
+    let mut roots = live(lets, &outputs);
+    roots.extend(outputs.into_iter().map(Root::Output));
+    let roots = constants.hoist_roots(roots, &mut HashMap::new());
+    common_subexpressions(roots, cse, &mut 0)
 }
 
 /// The program of a function which evaluates `lets` into locals in their order (each reads only
@@ -186,22 +246,237 @@ pub fn program(lets: &[Assignment], outputs: &[Expr], cse: bool, commons: &mut u
 /// The programs of a function of an event index ([`Branches`]): the lets any branch reads, then
 /// per event its outputs, each a scope of common subexpressions of its own.
 pub fn branches(lets: &[Assignment], outputs: &[Option<Vec<Expr>>], cse: bool) -> Branches {
+    branches_with(lets, outputs, cse, None)
+}
+
+/// [`branches`], with the constants of the model read from `constants` when given.
+fn branches_with(
+    lets: &[Assignment],
+    outputs: &[Option<Vec<Expr>>],
+    cse: bool,
+    mut constants: Option<&mut Constants>,
+) -> Branches {
     let outputs: Vec<Option<Vec<Expr>>> = outputs
         .iter()
         .map(|o| o.as_ref().map(|o| o.iter().map(fold).collect()))
         .collect();
     let all: Vec<Expr> = outputs.iter().flatten().flatten().cloned().collect();
     let mut commons = 0;
-    let prefix = common_subexpressions(live(lets, &all), cse, &mut commons);
+    // the lets the prefix keeps; the branches read the constants of the others
+    let mut symbols = HashMap::new();
+    let mut prefix = live(lets, &all);
+    if let Some(c) = constants.as_deref_mut() {
+        prefix = c.hoist_roots(prefix, &mut symbols);
+    }
+    let prefix = common_subexpressions(prefix, cse, &mut commons);
     let branches = outputs
         .into_iter()
         .map(|o| {
             o.map(|o| {
-                common_subexpressions(o.into_iter().map(Root::Output).collect(), cse, &mut commons)
+                let mut roots: Vec<Root> = o.into_iter().map(Root::Output).collect();
+                if let Some(c) = constants.as_deref_mut() {
+                    roots = c.hoist_roots(roots, &mut symbols);
+                }
+                common_subexpressions(roots, cse, &mut commons)
             })
         })
         .collect();
     Branches { prefix, branches }
+}
+
+/// The constants of a model (see the module documentation): the largest subtrees of the
+/// functions which read nothing but literals, the parameters which no assignment rule assigns
+/// and the assignment rules of such subtrees, each once (equal trees with the bits of their
+/// numbers), in the order they were found, every one reading only the parameters and the
+/// constants before it.
+#[derive(Debug, Clone, Default)]
+pub struct Constants {
+    /// The expression of every constant.
+    pub exprs: Vec<Expr>,
+    /// The constant of a tree, by [`tree_key`].
+    index: HashMap<String, u32>,
+    /// Whether each parameter is assigned by no assignment rule.
+    free: Vec<bool>,
+}
+
+impl Constants {
+    /// No constants yet, of the parameters of `model`.
+    pub fn new(model: &Model) -> Constants {
+        let mut free = vec![true; model.parameters.len()];
+        for a in &model.assignment_rules {
+            if let Symbol::Param(i) = a.target {
+                free[i as usize] = false;
+            }
+        }
+        Constants {
+            free,
+            ..Constants::default()
+        }
+    }
+
+    /// The statements with their largest constant subtrees read from the constants; a let whose
+    /// value is a constant (or a literal or a symbol of one) is dropped, and the later
+    /// statements read its value instead of its symbol (`symbols`, which the statements of one
+    /// function share).
+    fn hoist_roots(&mut self, roots: Vec<Root>, symbols: &mut HashMap<Symbol, Expr>) -> Vec<Root> {
+        let mut out = Vec::with_capacity(roots.len());
+        for root in roots {
+            match root {
+                Root::Let(symbol, e) => {
+                    let (e, constant) = self.hoist(&e, symbols);
+                    if constant && !is_boolean_valued(&e) {
+                        let value = self.materialize(e);
+                        symbols.insert(symbol, value);
+                    } else if constant {
+                        out.push(Root::Let(symbol, self.materialize(e)));
+                    } else {
+                        out.push(Root::Let(symbol, e));
+                    }
+                }
+                Root::Output(e) => {
+                    let (e, constant) = self.hoist(&e, symbols);
+                    out.push(Root::Output(if constant { self.materialize(e) } else { e }));
+                }
+            }
+        }
+        out
+    }
+
+    /// The expression with the largest constant subtrees below it read from the constants,
+    /// and whether it is a constant itself (then it is returned as it is, for the caller to
+    /// decide on the largest subtree).
+    fn hoist(&mut self, e: &Expr, symbols: &HashMap<Symbol, Expr>) -> (Expr, bool) {
+        match e {
+            Expr::Number(_) | Expr::Bool(_) => (e.clone(), true),
+            Expr::Symbol(s) => match (symbols.get(s), s) {
+                (Some(value), _) => (value.clone(), true),
+                (None, Symbol::Param(i)) => (e.clone(), self.free[*i as usize]),
+                _ => (e.clone(), false),
+            },
+            Expr::Apply { op, args } => {
+                let parts: Vec<(Expr, bool)> =
+                    args.iter().map(|a| self.hoist(a, symbols)).collect();
+                if parts.iter().all(|(_, c)| *c) {
+                    return (
+                        Expr::apply(*op, parts.into_iter().map(|(a, _)| a).collect()),
+                        true,
+                    );
+                }
+                let lead = parts.iter().take_while(|(_, c)| *c).count();
+                let mut parts = parts.into_iter();
+                let mut args = Vec::with_capacity(args.len());
+                if matches!(op, Op::Plus | Op::Times | Op::Max | Op::Min) && lead >= 2 {
+                    // the leading constants are the first operations of the left fold
+                    let first: Vec<Expr> = parts.by_ref().take(lead).map(|(a, _)| a).collect();
+                    args.push(self.materialize(Expr::apply(*op, first)));
+                }
+                for (a, constant) in parts {
+                    args.push(if constant { self.materialize(a) } else { a });
+                }
+                (Expr::apply(*op, args), false)
+            }
+            Expr::Piecewise { pieces, otherwise } => {
+                let pieces: Vec<((Expr, bool), (Expr, bool))> = pieces
+                    .iter()
+                    .map(|(v, c)| (self.hoist(v, symbols), self.hoist(c, symbols)))
+                    .collect();
+                let otherwise = otherwise.as_deref().map(|o| self.hoist(o, symbols));
+                let constant = pieces.iter().all(|((_, a), (_, b))| *a && *b)
+                    && otherwise.as_ref().is_none_or(|(_, c)| *c);
+                if constant {
+                    return (
+                        Expr::Piecewise {
+                            pieces: pieces.into_iter().map(|((v, _), (c, _))| (v, c)).collect(),
+                            otherwise: otherwise.map(|(o, _)| Box::new(o)),
+                        },
+                        true,
+                    );
+                }
+                let mut part = |(e, constant): (Expr, bool)| {
+                    if constant { self.materialize(e) } else { e }
+                };
+                let pieces = pieces
+                    .into_iter()
+                    .map(|(v, c)| (part(v), part(c)))
+                    .collect();
+                let otherwise = otherwise.map(|o| Box::new(part(o)));
+                (Expr::Piecewise { pieces, otherwise }, false)
+            }
+        }
+    }
+
+    /// The expression of a constant subtree as the code reads it: a literal or a symbol as it
+    /// is, a boolean with its operands read from the constants, any other tree from its
+    /// constant.
+    fn materialize(&mut self, e: Expr) -> Expr {
+        match e {
+            Expr::Number(_) | Expr::Bool(_) | Expr::Symbol(_) => e,
+            _ if is_boolean_valued(&e) => match e {
+                Expr::Apply { op, args } => {
+                    Expr::apply(op, args.into_iter().map(|a| self.materialize(a)).collect())
+                }
+                Expr::Piecewise { pieces, otherwise } => Expr::Piecewise {
+                    pieces: pieces
+                        .into_iter()
+                        .map(|(v, c)| (self.materialize(v), self.materialize(c)))
+                        .collect(),
+                    otherwise: otherwise.map(|o| Box::new(self.materialize(*o))),
+                },
+                _ => unreachable!("a literal or a symbol is no boolean tree"),
+            },
+            _ => {
+                let key = tree_key(&e);
+                let k = match self.index.get(&key) {
+                    Some(&k) => k,
+                    None => {
+                        let k = index(self.exprs.len());
+                        self.exprs.push(e);
+                        self.index.insert(key, k);
+                        k
+                    }
+                };
+                Expr::Symbol(Symbol::Constant(k))
+            }
+        }
+    }
+}
+
+/// A key of a tree which tells apart the bits of its numbers (also NaNs of other payloads).
+fn tree_key(e: &Expr) -> String {
+    fn write(e: &Expr, out: &mut String) {
+        use std::fmt::Write;
+        match e {
+            Expr::Number(x) => write!(out, "n{:x}", x.to_bits()),
+            Expr::Bool(b) => write!(out, "b{b}"),
+            Expr::Symbol(s) => write!(out, "{s:?}"),
+            Expr::Apply { op, args } => {
+                write!(out, "({op:?}").expect("a string");
+                for a in args {
+                    out.push(' ');
+                    write(a, out);
+                }
+                write!(out, ")")
+            }
+            Expr::Piecewise { pieces, otherwise } => {
+                out.push_str("(piecewise");
+                for (v, c) in pieces {
+                    out.push(' ');
+                    write(v, out);
+                    out.push(' ');
+                    write(c, out);
+                }
+                if let Some(o) = otherwise {
+                    out.push_str(" otherwise ");
+                    write(o, out);
+                }
+                write!(out, ")")
+            }
+        }
+        .expect("a string");
+    }
+    let mut out = String::new();
+    write(e, &mut out);
+    out
 }
 
 /// A statement before the common subexpressions.

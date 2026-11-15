@@ -2,7 +2,7 @@
 //!
 //! The module imports the memory of the engine as `env.memory` and the functions of mathlib it
 //! calls as `math.<name>`, in the order of their first call; it defines the functions of
-//! `model/1` and exports them, and has no memory, table, global, data segment or start function
+//! `model/2` and exports them, and has no memory, table, global, data segment or start function
 //! of its own. A function is a list of statements, each one store of one expression into the
 //! memory or into a local; temporaries are locals. Every function is checked against the limits
 //! [`MAX_FUNCTION_BYTES`] (the whole encoded body, the declaration of its locals included) and
@@ -118,9 +118,11 @@ pub(crate) struct ModuleBuilder {
     functions: Vec<DefinedFunction>,
     /// The limits of every function (the defaults but in tests).
     pub limits: Limits,
+    /// The slot of the first constant in `p` (`Symbol::Constant`): the number of parameters.
+    pub constants: u32,
 }
 
-/// A function the module defines: a function of `model/1` it exports, or a helper function of a
+/// A function the module defines: a function of `model/2` it exports, or a helper function of a
 /// split one.
 struct DefinedFunction {
     export: Option<&'static str>,
@@ -453,6 +455,14 @@ impl Body<'_> {
             .f64_store(slot(i));
     }
 
+    /// `if mask[k] != 0 {`, `mask` the pointer in the local `mask`; closed by [`Body::end`].
+    pub(crate) fn if_masked(&mut self, mask: u32, k: u32) {
+        self.sink()
+            .local_get(mask)
+            .i32_load8_u(byte(k))
+            .if_(BlockType::Empty);
+    }
+
     /// `if fixed[k] == 0 {`, `fixed` the pointer in the local `fixed`; closed by [`Body::end`].
     pub(crate) fn if_not_fixed(&mut self, fixed: u32, k: u32) {
         self.sink()
@@ -623,6 +633,7 @@ impl Body<'_> {
         match target {
             Symbol::State(i) => (self.ctx.y, i),
             Symbol::Param(i) => (self.ctx.p, i),
+            Symbol::Constant(k) => (self.ctx.p, self.module.constants + k),
             Symbol::Time | Symbol::Derivative(_) | Symbol::Common(_) => {
                 unreachable!("{target:?} is no entity of the memory")
             }

@@ -40,12 +40,15 @@ use crate::model::ModelFns;
 /// The number of states above which [`LinearSolver::Auto`](sbmlsim_abi::LinearSolver::Auto)
 /// takes KLU, else the dense solver.
 ///
-/// Measured with the analytic Jacobian in wasmtime and Node (bench/RESULTS.md, the scaling
-/// models of `scripts/scaling_models.py`): KLU is as fast as the dense solver at 11 to 20 states
-/// (a banded chain at 16 to 20, a whole body model whose pools couple to every organ at 11 to
-/// 14) and faster above, 0.9 of the dense time at 17 to 28 states, 0.65 at 64 and 0.1 to 0.25 at
-/// 512; the PBPK models of 28 to 43 states take 0.7 to 0.9 of the dense time with KLU.
-pub const KLU_THRESHOLD: usize = 16;
+/// Measured with the analytic Jacobian in wasmtime (bench/RESULTS.md, the scaling models of
+/// `scripts/scaling_models.py`), with KLU in the ordering AMD, 32-bit indices and its symbolic
+/// analysis kept across restarts: KLU is as fast as the dense solver at 11 to 12 states (a
+/// banded chain at 12, a whole body model whose pools couple to every organ at 11) and faster
+/// above, 0.9 of the dense time at 14 to 28 states, 0.6 at 64 and 0.03 to 0.1 at 512; below 11
+/// states the dense solver is faster. The PBPK models of 28 to 43 states take 0.6 to 0.9 of the
+/// dense time with KLU. (Before, with COLAMD, the crossover was at 11 to 20 states and the
+/// threshold 16.)
+pub const KLU_THRESHOLD: usize = 12;
 
 /// The source of the Jacobian of a stiff configuration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -562,9 +565,34 @@ fn not_created(what: &str) -> EngineError {
     }
 }
 
+/// Checks that the vectors and the matrix of a configuration fit the 32 bit indices of SUNDIALS
+/// (`sunindextype` is `int32_t`): `n` states, the `n * n` entries of the dense matrix, or the
+/// `nnz` entries of the pattern and the `n` diagonal entries CVODE may add for KLU.
+pub(crate) fn check_index_range(config: &Config) -> Result<(), EngineError> {
+    let n = config.n as u128;
+    let (entries, matrix) = match config.method {
+        Method::Adams => (n, "the state vector"),
+        Method::Bdf(Linear::Dense { .. }) => (n * n, "the dense matrix of the Jacobian"),
+        Method::Bdf(Linear::Klu { nnz, .. }) => {
+            (nnz as u128 + n, "the sparse matrix of the Jacobian")
+        }
+    };
+    let max = sunindextype::MAX as u128;
+    if n > max || entries > max {
+        return Err(EngineError::Request(format!(
+            "{matrix} of {} states needs {entries} entries, more than the {max} the 32 bit \
+             indices of SUNDIALS allow",
+            config.n
+        )));
+    }
+    Ok(())
+}
+
 impl Cvode {
-    /// Creates the memory of a configuration.
+    /// Creates the memory of a configuration; refuses one which exceeds the indices of
+    /// SUNDIALS ([`check_index_range`]).
     pub fn new(config: Config) -> Result<Cvode, EngineError> {
+        check_index_range(&config)?;
         let mut cvode = Cvode {
             config,
             ctx: ptr::null_mut(),
@@ -634,7 +662,23 @@ impl Cvode {
                     let capacity = nnz.max(1) as sunindextype;
                     cvode.matrix = SUNSparseMatrix(n, n, capacity, CSC_MAT, cvode.ctx);
                     if !cvode.matrix.is_null() {
-                        cvode.solver = SUNLinSol_KLU(cvode.y, cvode.matrix, cvode.ctx);
+                        // the pattern of the matrix is the same in every segment (`jac_sparse`
+                        // writes the pattern of the model, CVODE adds the missing diagonal), so
+                        // KLU keeps its symbolic analysis across the restarts, with bitwise the
+                        // results of `SUNLinSol_KLU`
+                        cvode.solver = sbmlsim_SUNLinSol_KLUKept(cvode.y, cvode.matrix, cvode.ctx);
+                        // the ordering AMD, the default of KLU, which `SUNLinSol_KLU` replaces
+                        // with COLAMD: on the symmetric patterns of the Jacobians of models
+                        // COLAMD gives much more fill (chen KLU 489 ms -> 72 ms natively, 74%
+                        // of the time was the refactorization; 556 -> 89 ms in wasmtime;
+                        // mp_flat 120 -> 97 ms in wasmtime, fewer steps and about 2 to 10%
+                        // faster per step; hctz and mp_core about equal)
+                        if !cvode.solver.is_null() {
+                            check(
+                                SUNLinSol_KLUSetOrdering(cvode.solver, SUNKLU_ORDERING_AMD),
+                                "SUNLinSol_KLUSetOrdering",
+                            )?;
+                        }
                     }
                 }
             }
@@ -962,7 +1006,7 @@ mod tests {
         }
         fn event_values(&self, _i: u32, _t: f64, _y: &[f64], _p: &[f64], _out: &mut [f64]) {}
         fn event_apply(&self, _i: u32, _t: f64, _v: &[f64], _y: &mut [f64], _p: &mut [f64]) {}
-        fn selections(&self, _t: f64, _y: &[f64], _p: &[f64], _out: &mut [f64]) {}
+        fn selections(&self, _t: f64, _y: &[f64], _p: &[f64], _mask: &[u8], _out: &mut [f64]) {}
         fn assign(&self, _t: f64, _y: &mut [f64], _p: &mut [f64]) {}
         fn sizes(&self) -> sbmlsim_abi::ModelSizes {
             unreachable!("not loaded into an engine")
@@ -1027,6 +1071,121 @@ mod tests {
         // SAFETY: the memory is initialized.
         unsafe { CVodeGetNumSteps(cvode.mem, &mut steps) };
         (out, steps)
+    }
+
+    /// Integrates Robertson with KLU and the analytic Jacobian to `4e10`, restarting CVODE
+    /// (`CVodeReInit`) at every output `0.4 * 10^i`; with `plain` the linear solver is
+    /// `SUNLinSol_KLU` (with AMD as well), which analyzes the pattern again after every restart.
+    /// The states at the outputs, the steps of every segment and the counters of the solver of
+    /// the memory (the symbolic analyses and the factorizations which reused one).
+    fn robertson_restarted(plain: bool) -> (Vec<f64>, Vec<c_long>, Option<(c_long, c_long)>) {
+        let model = Robertson;
+        let desc = model.description();
+        let pattern = desc.jacobian.pattern();
+        let (mut p, mut y) = (vec![0.0; 3], vec![0.0; 3]);
+        model.defaults(&mut p, &mut y);
+        let mut cvode = Cvode::new(Config {
+            n: 3,
+            method: Method::Bdf(Linear::Klu {
+                nnz: pattern.nnz(),
+                jacobian: Jacobian::Analytic,
+            }),
+        })
+        .unwrap();
+        if plain {
+            // SAFETY: the solver is not attached yet (the first `start` attaches it)
+            unsafe {
+                SUNLinSolFree(cvode.solver);
+                cvode.solver = SUNLinSol_KLU(cvode.y, cvode.matrix, cvode.ctx);
+                assert!(!cvode.solver.is_null());
+                // the ordering of the solver of `Cvode::new`
+                assert_eq!(
+                    SUNLinSol_KLUSetOrdering(cvode.solver, SUNKLU_ORDERING_AMD),
+                    0
+                );
+            }
+        }
+        let settings = IntegratorSettings {
+            relative_tolerance: 1e-8,
+            absolute_tolerance: Tolerance::PerState(vec![1e-12, 1e-14, 1e-10]),
+            ..IntegratorSettings::default()
+        };
+        let mut problem = Problem {
+            n: 3,
+            n_model: 3,
+            n_roots: 0,
+            n_discontinuity_roots: 0,
+            model: &model,
+            p,
+            pattern: Some(pattern),
+            jac_values: vec![0.0; pattern.nnz()],
+            analytic: true,
+            difference: None,
+            mem: ptr::null_mut(),
+            counts: Counts::default(),
+        };
+        let (mut out, mut steps, mut t) = (Vec::new(), Vec::new(), 0.0);
+        for i in 0..11 {
+            let y0 = if i == 0 {
+                y.clone()
+            } else {
+                cvode.state().to_vec()
+            };
+            cvode.start(t, &y0, 4e10, &settings, 0).unwrap();
+            t = 0.4 * 10f64.powi(i);
+            cvode.integrate(&mut problem, t, CV_NORMAL).unwrap();
+            out.extend_from_slice(cvode.state());
+            let mut n: c_long = 0;
+            // SAFETY: the memory is initialized.
+            unsafe { CVodeGetNumSteps(cvode.mem, &mut n) };
+            steps.push(n);
+        }
+        let (mut analyses, mut reuses): (c_long, c_long) = (0, 0);
+        // SAFETY: the solver belongs to the memory; another one than the kept KLU is refused.
+        let stats = unsafe {
+            sbmlsim_SUNLinSol_KLUKeptStats(cvode.solver, &mut analyses, &mut reuses) == 0
+        };
+        (out, steps, stats.then_some((analyses, reuses)))
+    }
+
+    #[test]
+    fn configurations_beyond_the_32_bit_indices_are_refused() {
+        let jacobian = Jacobian::Analytic;
+        let config = |n, method| Config { n, method };
+        let dense = |n| config(n, Method::Bdf(Linear::Dense { jacobian }));
+        let klu = |n, nnz| config(n, Method::Bdf(Linear::Klu { nnz, jacobian }));
+        // 46340^2 fits, 46341^2 does not
+        assert!(check_index_range(&dense(46_340)).is_ok());
+        let err = check_index_range(&dense(46_341)).unwrap_err();
+        assert!(
+            matches!(&err, EngineError::Request(m) if m.contains("dense matrix")
+                && m.contains("2147488281 entries")),
+            "{err:?}"
+        );
+        let max = i32::MAX as usize;
+        assert!(check_index_range(&klu(1000, max - 1000)).is_ok());
+        let err = check_index_range(&klu(1000, max - 999)).unwrap_err();
+        assert!(
+            matches!(&err, EngineError::Request(m) if m.contains("sparse matrix")),
+            "{err:?}"
+        );
+        assert!(check_index_range(&config(max, Method::Adams)).is_ok());
+        assert!(check_index_range(&config(max + 1, Method::Adams)).is_err());
+        assert!(check_index_range(&klu(max + 1, 0)).is_err());
+    }
+
+    #[test]
+    fn klu_keeps_its_symbolic_analysis_across_restarts_with_the_same_bits() {
+        let kept = robertson_restarted(false);
+        let plain = robertson_restarted(true);
+        // one analysis at the first factorization; every restart (10) reuses it at its first
+        // factorization
+        assert_eq!(kept.2, Some((1, 10)));
+        assert_eq!(plain.2, None);
+        assert!(kept.1.iter().sum::<c_long>() > 500, "{:?} steps", kept.1);
+        assert_eq!(kept.1, plain.1);
+        let bits = |v: &[f64]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+        assert_eq!(bits(&kept.0), bits(&plain.0));
     }
 
     #[test]

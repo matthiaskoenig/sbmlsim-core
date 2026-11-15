@@ -86,6 +86,246 @@ fn matches_std_within_one_ulp() {
     }
 }
 
+/// True if `a` and `b` are the same bits, or both NaN.
+fn same(a: f64, b: f64) -> bool {
+    a.to_bits() == b.to_bits() || (a.is_nan() && b.is_nan())
+}
+
+#[test]
+fn pow_special_cases_match_std() {
+    let tiny = f64::from_bits(1); // smallest subnormal
+    let xs = [
+        0.0,
+        -0.0,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NAN,
+        -f64::NAN,
+        1.0,
+        -1.0,
+        0.5,
+        -0.5,
+        2.0,
+        -2.0,
+        3.0,
+        -3.0,
+        1.0 + f64::EPSILON,
+        1.0 - f64::EPSILON / 2.0,
+        -(1.0 + f64::EPSILON),
+        tiny,
+        -tiny,
+        1e-310,
+        -1e-310,
+        f64::MIN_POSITIVE,
+        -f64::MIN_POSITIVE,
+        f64::MAX,
+        f64::MIN,
+        1e-300,
+        1e300,
+        -1e300,
+        10.0,
+        -10.0,
+    ];
+    let ys = [
+        0.0,
+        -0.0,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NAN,
+        1.0,
+        -1.0,
+        2.0,
+        -2.0,
+        3.0,
+        -3.0,
+        0.5,
+        -0.5,
+        2.5,
+        -2.5,
+        1e-20,
+        -1e-20,
+        2f64.powi(-70),
+        -(2f64.powi(-70)),
+        2f64.powi(63),
+        -(2f64.powi(63)),
+        2f64.powi(53) - 1.0, // odd
+        2f64.powi(52) + 1.0, // odd
+        2f64.powi(53),       // even
+        1e300,
+        -1e300,
+        1023.0,
+        1024.0,
+        -1074.0,
+        -1075.0,
+        tiny,
+        -tiny,
+        f64::MAX,
+        f64::MIN,
+    ];
+    for &x in &xs {
+        for &y in &ys {
+            let (a, b) = (f::math_pow(x, y), x.powf(y));
+            // special values (NaN, infinities, zeros with their sign, exact powers) are the same bits; the
+            // others within the error of glibc (0.52 ulp) and of the port (0.54 ulp)
+            let exact = !b.is_finite() || b == 0.0 || b.abs() == 1.0 || !a.is_finite() || a == 0.0;
+            if exact {
+                assert!(same(a, b), "pow({x:e}, {y:e}) = {a:e}, std {b:e}");
+            } else {
+                assert!(ulps(a, b) <= 1, "pow({x:e}, {y:e}) = {a:e}, std {b:e}");
+            }
+        }
+    }
+}
+
+#[test]
+fn pow_matches_std_across_ranges() {
+    let mut rng = Rng(0x2545F4914F6CDD1D);
+    let mut logu = |lo: f64, hi: f64| rng.range(lo.ln(), hi.ln()).exp();
+    let mut cases = Vec::new();
+    for _ in 0..20_000 {
+        let (x, y) = (logu(1e-300, 1e300), logu(1e-3, 5.0));
+        cases.push((x, y));
+        cases.push((x, -y));
+        // near overflow and underflow, and subnormal results
+        let x = logu(1e-3, 1e3);
+        let t = logu(900.0, 1080.0);
+        cases.push((x, t / x.log2()));
+        cases.push((x, -t / x.log2()));
+        // negative bases with integer exponents
+        let (x, y) = (-logu(1e-5, 1e5), logu(1.0, 60.0).round());
+        cases.push((x, y));
+        cases.push((x, -y));
+        // x near 1 with huge exponents
+        let x = 1.0 + (logu(1e-15, 1e-8) - 0.5e-8);
+        let y = logu(1e8, 1e18);
+        cases.push((x, y));
+        cases.push((x, -y));
+        // subnormal bases
+        let x = logu(5e-324, 2e-308);
+        cases.push((x, logu(1e-3, 1.0)));
+        cases.push((x, -logu(1e-3, 1.0)));
+    }
+    for (x, y) in cases {
+        let (a, b) = (f::math_pow(x, y), x.powf(y));
+        assert!(ulps(a, b) <= 1, "pow({x:e}, {y:e}) = {a:e}, std {b:e}");
+        if b == 0.0 || !b.is_finite() {
+            assert!(same(a, b), "pow({x:e}, {y:e}) = {a:e}, std {b:e}");
+        }
+    }
+}
+
+#[test]
+fn exp_log_special_cases_match_std() {
+    let tiny = f64::from_bits(1);
+    for x in [
+        0.0,
+        -0.0,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NAN,
+        1e-300,
+        -1e-300,
+        tiny,
+        709.78,
+        709.79,
+        710.0,
+        -708.4,
+        -745.13,
+        -745.14,
+        -746.0,
+        1024.0,
+        -1024.0,
+        f64::MAX,
+        f64::MIN,
+    ] {
+        let (a, b) = (f::math_exp(x), x.exp());
+        assert!(ulps(a, b) <= 1, "exp({x:e}) = {a:e}, std {b:e}");
+        if !b.is_finite() || b == 0.0 || b == 1.0 {
+            assert!(same(a, b), "exp({x:e}) = {a:e}, std {b:e}");
+        }
+    }
+    for x in [
+        0.0,
+        -0.0,
+        -1.0,
+        -tiny,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NAN,
+        1.0,
+        tiny,
+        1e-310,
+        f64::MIN_POSITIVE,
+        f64::MAX,
+        0.9375,
+        1.064697265625,
+        1.0 + f64::EPSILON,
+        1.0 - f64::EPSILON / 2.0,
+    ] {
+        let (a, b) = (f::math_log(x), x.ln());
+        assert!(ulps(a, b) <= 1, "log({x:e}) = {a:e}, std {b:e}");
+        if !b.is_finite() || b == 0.0 {
+            assert!(same(a, b), "log({x:e}) = {a:e}, std {b:e}");
+        }
+    }
+}
+
+#[test]
+fn exp_log_pow_are_the_arm_port_without_fma() {
+    // values of ARM optimized-routines compiled without fma (`HAVE_FAST_FMA=0`, `-ffp-contract=off`), where
+    // glibc on x86_64 with fma differs in the last bit; the results must be the same bits on every platform
+    let pow_cases: [(f64, f64, f64); 6] = [
+        (565.0549497813068, 1.5627591172616029, 19991.933907224455),
+        (153.42129004388946, 11.680907057032872, 3.412926091965182e25),
+        (
+            510.74484552606043,
+            -7.909889122912066,
+            3.7879714575568175e-22,
+        ),
+        (
+            647.1296956217755,
+            -1.7637981073639644,
+            1.1014855739433778e-5,
+        ),
+        (199.71713639166168, 3.63888541065279, 234935033.80471897),
+        (596.6088334305709, -3.125839835821548, 2.106874315019019e-9),
+    ];
+    for (x, y, want) in pow_cases {
+        let got = f::math_pow(x, y);
+        assert_eq!(
+            got.to_bits(),
+            want.to_bits(),
+            "pow({x:e}, {y:e}) = {got:e}, want {want:e}"
+        );
+    }
+    let exp_cases: [(f64, f64); 3] = [
+        (-23.13037816490405, 9.007502651721375e-11),
+        (-0.1058063601605852, 0.8995988293840191),
+        (8.823963524003965, 6795.144037986818),
+    ];
+    for (x, want) in exp_cases {
+        let got = f::math_exp(x);
+        assert_eq!(
+            got.to_bits(),
+            want.to_bits(),
+            "exp({x:e}) = {got:e}, want {want:e}"
+        );
+    }
+    let log_cases: [(f64, f64); 3] = [
+        (1.0545194869556107, 0.053085200572116936),
+        (0.9630579463045228, -0.03764169630010693),
+        (0.9487063981367649, -0.05265590849646057),
+    ];
+    for (x, want) in log_cases {
+        let got = f::math_log(x);
+        assert_eq!(
+            got.to_bits(),
+            want.to_bits(),
+            "log({x:e}) = {got:e}, want {want:e}"
+        );
+    }
+}
+
 #[test]
 fn atanh_matches_exact_values() {
     // correctly rounded values computed with 40 digit arithmetic

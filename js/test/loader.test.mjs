@@ -150,7 +150,7 @@ test("errors of the engine are EngineErrors of their kind", async () => {
   const desc = JSON.parse(json);
   desc.states = [];
   await assert.rejects(runtime.instantiate(wasm, desc), /refuses the description of model decay/);
-  await assert.rejects(runtime.instantiate(wasm, { ...JSON.parse(json), contract: "model/2" }), /contract model\/2/);
+  await assert.rejects(runtime.instantiate(wasm, { ...JSON.parse(json), contract: "model/1" }), /contract model\/1/);
 });
 
 test("the output is aligned to 8 and the memory grows to at most 2 GiB", async () => {

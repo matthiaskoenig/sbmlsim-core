@@ -1,4 +1,10 @@
-//! The benchmark of the command line: `sbmlsim-core bench <models.toml> [--json FILE]`.
+//! The benchmark of the command line: `sbmlsim-core bench <models.toml> [--json FILE]
+//! [--host wasmtime|native]`.
+//!
+//! `--host native` measures the native engine instead of `engine.wasm` in wasmtime:
+//! `sbmlsim-engine` compiled for the machine, with the model in wasmtime
+//! (`Runtime::instantiate_native`); its results are not bitwise those of `engine.wasm` (the C
+//! library of the host in the step sizes of CVODE).
 //!
 //! Every model of the benchmark file (`bench/models.toml`, prepared with
 //! `scripts/prepare_model.py --bench`) is compiled (the median of `--compile-reps` compilations
@@ -34,7 +40,7 @@ use sbmlsim_abi::{
     SIMULATION_CONTRACT, SimulationRequest, SimulationStats, Tolerance,
 };
 use sbmlsim_compiler::CompileOptions;
-use sbmlsim_host::{Instance, Runtime};
+use sbmlsim_host::{Instance, NativeInstance, Runtime};
 use serde::{Deserialize, Serialize};
 
 /// The arguments of `bench`.
@@ -69,6 +75,35 @@ pub struct BenchArgs {
     /// Write the models and the requests for the JavaScript hosts into this directory.
     #[arg(long)]
     pub export: Option<PathBuf>,
+    /// The engine: `wasmtime` (`engine.wasm`) or `native` (the engine compiled for the machine,
+    /// the model in wasmtime).
+    #[arg(long, default_value = "wasmtime")]
+    pub host: String,
+}
+
+/// A loaded model of the engine of `--host`.
+enum Loaded {
+    Wasm(Box<Instance>),
+    Native(Box<NativeInstance>),
+}
+
+impl Loaded {
+    fn simulate(
+        &mut self,
+        req: &SimulationRequest,
+    ) -> anyhow::Result<sbmlsim_abi::SimulationResult> {
+        Ok(match self {
+            Loaded::Wasm(i) => i.simulate(req)?,
+            Loaded::Native(i) => i.simulate(req)?,
+        })
+    }
+
+    fn stats(&mut self) -> anyhow::Result<SimulationStats> {
+        Ok(match self {
+            Loaded::Wasm(i) => i.stats()?,
+            Loaded::Native(i) => i.stats(),
+        })
+    }
 }
 
 /// A model of the benchmark file.
@@ -359,7 +394,7 @@ fn bits(values: &[f64]) -> Vec<u64> {
 /// One round of a configuration: the median of the timed simulations, the rows, whether they
 /// repeat bitwise and the counters.
 fn measure(
-    instance: &mut Instance,
+    instance: &mut Loaded,
     req: &SimulationRequest,
     warmups: usize,
     reps: usize,
@@ -396,7 +431,18 @@ pub fn run(args: &BenchArgs) -> anyhow::Result<bool> {
         .transpose()?;
     let solvers = checked_list("--solvers", &args.solvers, &["dense", "klu"])?;
     let jacobians = checked_list("--jacobians", &args.jacobians, &["analytic", "difference"])?;
+    let host: &'static str = match args.host.as_str() {
+        "wasmtime" => "wasmtime",
+        "native" => "native",
+        other => bail!("--host: unknown value {other} (wasmtime or native)"),
+    };
     let runtime = Runtime::embedded()?;
+    let load = |wasm: &[u8], desc: &ModelDescription| -> anyhow::Result<Loaded> {
+        Ok(match host {
+            "native" => Loaded::Native(Box::new(runtime.instantiate_native(wasm, desc)?)),
+            _ => Loaded::Wasm(Box::new(runtime.instantiate(wasm, desc)?)),
+        })
+    };
     let mut results = Vec::new();
     let mut manifest = Manifest {
         rounds: args.rounds,
@@ -424,7 +470,7 @@ pub fn run(args: &BenchArgs) -> anyhow::Result<bool> {
         })?;
         let desc = compiled.description.clone();
         let instantiate_s = time_median(args.compile_reps, || {
-            runtime.instantiate(&compiled.wasm, &desc)?;
+            load(&compiled.wasm, &desc)?;
             Ok(())
         })?;
         let json = crate::testsuite::description_json(&desc)?;
@@ -491,7 +537,7 @@ pub fn run(args: &BenchArgs) -> anyhow::Result<bool> {
                 configs: entries,
             });
         }
-        let mut instance = runtime.instantiate(&compiled.wasm, &desc)?;
+        let mut instance = load(&compiled.wasm, &desc)?;
         let mut rounds: Vec<Vec<f64>> = vec![Vec::new(); configs.len()];
         let mut last = vec![(0usize, true, SimulationStats::default()); configs.len()];
         for round in 0..args.rounds.max(1) {
@@ -550,7 +596,7 @@ pub fn run(args: &BenchArgs) -> anyhow::Result<bool> {
         .iter()
         .all(|m| m.configs.iter().all(|c| c.repeat_bitwise));
     let result = BenchResult {
-        host: "wasmtime",
+        host,
         models_file: args.models.display().to_string(),
         rounds: args.rounds,
         warmups: args.warmups,

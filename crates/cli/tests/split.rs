@@ -214,7 +214,7 @@ fn split_bits_equal() {
                 dirs.len(),
                 failures[..failures.len().min(20)].join("\n")
             );
-            // many cases are split, most functions of model/1 in some of them
+            // many cases are split, most functions of model/2 in some of them
             assert!(split > 500, "{split}");
             assert!(exports.len() >= 8, "{exports:?}");
         }

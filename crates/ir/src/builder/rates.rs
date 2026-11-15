@@ -226,7 +226,9 @@ impl Context for Builder<'_> {
             }
             Symbol::Time => unreachable!("no entity is time"),
             Symbol::Derivative(_) => unreachable!("no entity is a derivative of a Jacobian"),
-            Symbol::Common(_) => unreachable!("no entity is a common subexpression"),
+            Symbol::Common(_) | Symbol::Constant(_) => {
+                unreachable!("no entity is a symbol of the optimizer")
+            }
         }
     }
 

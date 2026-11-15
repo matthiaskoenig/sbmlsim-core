@@ -1,16 +1,18 @@
 //! The one implementation of every math function of a model.
 //!
-//! Every `model.wasm` imports these functions under the module name `math`, so a result is bitwise identical on every wasm host. The functions are those of the `libm` crate, never the builtin math of a host or of the compiler (no fast math). The crate does no file system or OS access and `mathlib.wasm` imports nothing.
+//! Every `model.wasm` imports these functions under the module name `math`, so a result is bitwise identical on every wasm host. The functions are `exp`, `log` and `pow` of ARM optimized-routines (the ones of glibc and musl, ported without fused multiply add in [`arm`]) and the others of the `libm` crate, never the builtin math of a host or of the compiler (no fast math); the compiler folds constants with the same Rust functions ([`f`]), so native and wasm results are the same bits. The crate does no file system or OS access and `mathlib.wasm` imports nothing.
+
+pub mod arm;
 
 /// The math functions as plain Rust functions, for native use.
 pub mod f {
     /// `e^x`.
     pub fn math_exp(x: f64) -> f64 {
-        libm::exp(x)
+        crate::arm::exp(x)
     }
     /// Natural logarithm.
     pub fn math_log(x: f64) -> f64 {
-        libm::log(x)
+        crate::arm::log(x)
     }
     /// Base 10 logarithm.
     pub fn math_log10(x: f64) -> f64 {
@@ -18,7 +20,7 @@ pub mod f {
     }
     /// `x^y`.
     pub fn math_pow(x: f64, y: f64) -> f64 {
-        libm::pow(x, y)
+        crate::arm::pow(x, y)
     }
     /// Square root.
     pub fn math_sqrt(x: f64) -> f64 {

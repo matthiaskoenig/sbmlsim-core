@@ -47,11 +47,20 @@ use wasm_encoder::ValType;
 use crate::wasm::{Body, Ctx, ModuleBuilder};
 
 /// A statement of a function.
+#[derive(Clone)]
 pub(crate) enum Stmt<'e> {
     /// The value of the expression into a local, which later statements read as the symbol.
     Let(Symbol, &'e Expr),
     /// `out[k] = expr`, `out` the pointer in the local `ptr`.
     StoreAt { ptr: u32, k: u32, expr: &'e Expr },
+    /// `if mask[k] != 0 { out[k] = expr }`, `mask` and `out` the pointers in the locals `mask`
+    /// and `ptr`.
+    Masked {
+        mask: u32,
+        ptr: u32,
+        k: u32,
+        expr: &'e Expr,
+    },
     /// `p[i] = expr` or `y[i] = expr`.
     Store(Symbol, &'e Expr),
     /// `p[i] = x` or `y[i] = x`.
@@ -78,9 +87,10 @@ impl<'e> Stmt<'e> {
     /// Calls `f` on every symbol the statement reads (in a block: every symbol of its body).
     fn visit_symbols(&self, f: &mut dyn FnMut(Symbol)) {
         match self {
-            Stmt::Let(_, e) | Stmt::StoreAt { expr: e, .. } | Stmt::Store(_, e) => {
-                e.visit_symbols(&mut |s| f(s))
-            }
+            Stmt::Let(_, e)
+            | Stmt::StoreAt { expr: e, .. }
+            | Stmt::Masked { expr: e, .. }
+            | Stmt::Store(_, e) => e.visit_symbols(&mut |s| f(s)),
             Stmt::Constant(..) | Stmt::I32At { .. } => {}
             Stmt::Unfixed { body, .. } => body.iter().for_each(|s| s.visit_symbols(f)),
         }
@@ -91,6 +101,11 @@ impl<'e> Stmt<'e> {
         match self {
             Stmt::Let(s, e) => f.let_(*s, e),
             Stmt::StoreAt { ptr, k, expr } => f.store_at(*ptr, *k, expr),
+            Stmt::Masked { mask, ptr, k, expr } => {
+                f.if_masked(*mask, *k);
+                f.store_at(*ptr, *k, expr);
+                f.end();
+            }
             Stmt::Store(target, e) => f.store(*target, e),
             Stmt::Constant(target, x) => f.store_constant(*target, *x),
             Stmt::I32At { ptr, k, x } => f.store_i32_at(*ptr, *k, *x),
@@ -144,7 +159,7 @@ impl Tail {
     }
 }
 
-/// The signature of a function of `model/1`.
+/// The signature of a function of `model/2`.
 pub(crate) struct Signature<'a> {
     pub export: &'static str,
     pub params: &'a [ValType],

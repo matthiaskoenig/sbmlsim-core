@@ -34,6 +34,10 @@ pub enum Symbol {
     /// The common subexpression of this index of a function, only in the programs of the
     /// optimizer ([`crate::optimize::Program`]).
     Common(u32),
+    /// The constant of this index of a model, behind the parameters in `p` (a subexpression
+    /// of the parameters alone, [`crate::optimize::Plan::constants`]), only in the programs of
+    /// the optimizer.
+    Constant(u32),
 }
 
 /// An operator, those of the MathML of SBML Level 3 Version 2 without the csymbols `delay` and

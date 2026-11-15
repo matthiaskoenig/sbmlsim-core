@@ -58,7 +58,7 @@ test("large_synthetic_model_instantiates_in_node", async (t) => {
   assert.equal(desc.states.length, 20000);
   assert.ok(WebAssembly.validate(wasm), "model.wasm validates");
   const sizes = functionSizes(wasm);
-  // the functions are split: more than the 14 of model/1, none above 1 MB
+  // the functions are split: more than the 14 of model/2, none above 1 MB
   assert.ok(sizes.length > 14, `${sizes.length} functions`);
   assert.ok(Math.max(...sizes) <= 1_000_000, `${Math.max(...sizes)} bytes`);
   const runtime = await loaderRuntime();

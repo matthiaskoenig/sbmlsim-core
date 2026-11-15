@@ -2,7 +2,7 @@
 //! model representation.
 //!
 //! [`emit`] translates an [`sbmlsim_ir::Model`] into a WebAssembly module of the contract
-//! `model/1` (see `sbmlsim_abi`): it imports the memory of the engine as `env.memory` and the
+//! `model/2` (see `sbmlsim_abi`): it imports the memory of the engine as `env.memory` and the
 //! functions of mathlib it calls as `math.*`, and exports the fourteen functions of the contract.
 //! The expressions are emitted as written, without fast math, reassociation or folding of
 //! constants (`q / 49` is one `f64.div` by `49`), with the meaning libroadrunner gives every
@@ -60,7 +60,7 @@ use sbmlsim_abi::{
 };
 use sbmlsim_ir::derive::{self, JacobianIr};
 use sbmlsim_ir::optimize::{self, Plan, Program, Statement};
-use sbmlsim_ir::{CompileError, EntityKind, Event, Expr, Model, SpeciesValue, Symbol};
+use sbmlsim_ir::{CompileError, EntityKind, Event, Expr, Model, Op, SpeciesValue, Symbol};
 use wasm_encoder::ValType::{F64, I32};
 
 use split::{Branch, End, Signature, Stmt, Tail};
@@ -145,10 +145,11 @@ fn emit_limited(
         // limits with them, and as written when it is above them still (the folding of a
         // literal boolean may add bytes), whose model_jac is known to be within them
         let plan = |cse| optimize::plan(model, &jacobian, d, cse);
-        let within = |result: Result<Vec<u8>, CompileError>, next: &dyn Fn() -> _| match result {
-            Err(error) if wasm::is_above_the_limits(&error) => next(),
-            other => other,
-        };
+        let within =
+            |result: Result<(Vec<u8>, u32), CompileError>, next: &dyn Fn() -> _| match result {
+                Err(error) if wasm::is_above_the_limits(&error) => next(),
+                other => other,
+            };
         within(
             module(model, &jacobian, d, limits, Some(&plan(true))),
             &|| {
@@ -161,7 +162,8 @@ fn emit_limited(
     } else {
         module(model, &jacobian, d, limits, None)?
     };
-    Ok((wasm, description(model, jacobian, d)))
+    let (wasm, n_constants) = wasm;
+    Ok((wasm, description(model, jacobian, d, n_constants)))
 }
 
 /// Adds `model_jac(t, y, p, values)` as written to the module: the rules, their derivatives, the
@@ -211,7 +213,7 @@ const VECTORS: Ctx = Ctx { t: 0, y: 1, p: 2 };
 /// The context of `(i, t, y, p, ...)`, the functions of an event index.
 const INDEXED: Ctx = Ctx { t: 1, y: 2, p: 3 };
 
-/// The signature of a function of `model/1`.
+/// The signature of a function of `model/2`.
 fn sig<'a>(
     export: &'static str,
     params: &'a [wasm_encoder::ValType],
@@ -320,9 +322,10 @@ fn module(
     discontinuities: &[Expr],
     limits: Limits,
     plan: Option<&Plan>,
-) -> Result<Vec<u8>, CompileError> {
+) -> Result<(Vec<u8>, u32), CompileError> {
     if let Some(plan) = plan {
-        return optimized_module(model, jacobian, discontinuities, limits, plan);
+        let wasm = optimized_module(model, jacobian, discontinuities, limits, plan)?;
+        return Ok((wasm, plan.n_constants()));
     }
     let mut m = ModuleBuilder::default();
     m.limits = limits;
@@ -441,22 +444,18 @@ fn module(
 
     event_apply_function(&mut m, model)?;
 
-    // model_selections(t, y, p, out)
+    // model_selections(t, y, p, mask, out)
     let selections: Vec<Stmt<'_>> = rule_lets(model)
         .chain(
             model
                 .selections
                 .iter()
                 .enumerate()
-                .map(|(k, s)| Stmt::StoreAt {
-                    ptr: 3,
-                    k: k as u32,
-                    expr: &s.expr,
-                }),
+                .map(|(k, s)| selection(k as u32, &s.expr)),
         )
         .collect();
     m.sequence(
-        &sig(abi::SELECTIONS, &[F64, I32, I32, I32], &[], VECTORS),
+        &sig(abi::SELECTIONS, &[F64, I32, I32, I32, I32], &[], VECTORS),
         &selections,
     )?;
 
@@ -468,8 +467,8 @@ fn module(
         .collect();
     m.sequence(&sig(abi::ASSIGN, &[F64, I32, I32], &[], VECTORS), &assign)?;
 
-    size_functions(&mut m, model, jacobian, discontinuities)?;
-    Ok(m.finish())
+    size_functions(&mut m, model, jacobian, discontinuities, 0)?;
+    Ok((m.finish(), 0))
 }
 
 /// The context of `model_init(t, p, y, fixed)`.
@@ -480,8 +479,34 @@ fn fixed_index(model: &Model, target: Symbol) -> u32 {
     match target {
         Symbol::Param(i) => i,
         Symbol::State(i) => model.parameters.len() as u32 + i,
-        Symbol::Time | Symbol::Derivative(_) | Symbol::Common(_) => {
+        Symbol::Time | Symbol::Derivative(_) | Symbol::Common(_) | Symbol::Constant(_) => {
             unreachable!("{target:?} is no target")
+        }
+    }
+}
+
+/// The statement of the selection `k` of `model_selections(t, y, p, mask, out)`: `out[k] = e`,
+/// in the block `if mask[k] != 0` unless `e` is cheap (a literal, a symbol, or the product or
+/// quotient of two of them, as the amount and the concentration of a species): a block per
+/// selection makes the compilation of a module of thousands of selections by the engines of
+/// the hosts several times slower, and saves nothing where the value is a load or two.
+fn selection(k: u32, e: &Expr) -> Stmt<'_> {
+    let leaf = |e: &Expr| matches!(e, Expr::Number(_) | Expr::Symbol(_));
+    let cheap = match e {
+        Expr::Apply {
+            op: Op::Times | Op::Divide,
+            args,
+        } => args.len() == 2 && args.iter().all(leaf),
+        _ => leaf(e),
+    };
+    if cheap {
+        Stmt::StoreAt { ptr: 4, k, expr: e }
+    } else {
+        Stmt::Masked {
+            mask: 3,
+            ptr: 4,
+            k,
+            expr: e,
         }
     }
 }
@@ -540,8 +565,9 @@ fn size_functions(
     model: &Model,
     jacobian: &JacobianIr,
     discontinuities: &[Expr],
+    n_constants: u32,
 ) -> Result<(), CompileError> {
-    let sizes = sizes(model, jacobian, discontinuities);
+    let sizes = sizes(model, jacobian, discontinuities, n_constants);
     let none = Ctx { t: 0, y: 0, p: 0 };
     let words: Vec<Stmt<'_>> = sizes
         .words()
@@ -579,10 +605,15 @@ fn optimized_module(
 ) -> Result<Vec<u8>, CompileError> {
     let mut m = ModuleBuilder::default();
     m.limits = limits;
+    m.constants = model.parameters.len() as u32;
 
     defaults(&mut m, model)?;
 
-    // model_init(t, p, y, fixed): each initial evaluation in the block of its target
+    // the constants behind the parameters, each stored before the next one reads it
+    let constants = program_stmts(&plan.constants, |k, e| Stmt::Store(Symbol::Constant(k), e));
+
+    // model_init(t, p, y, fixed): each initial evaluation in the block of its target, then the
+    // constants
     let init: Vec<Stmt<'_>> = model
         .initial
         .iter()
@@ -592,6 +623,7 @@ fn optimized_module(
             k: fixed_index(model, a.target),
             body: program_stmts(program, |_, e| Stmt::Store(a.target, e)),
         })
+        .chain(constants.iter().cloned())
         .collect();
     m.sequence(&sig(abi::INIT, &[F64, I32, I32, I32], &[], INIT), &init)?;
 
@@ -670,22 +702,22 @@ fn optimized_module(
     // model_event_apply(i, t, values, y, p), as written
     event_apply_function(&mut m, model)?;
 
-    // model_selections(t, y, p, out)
+    // model_selections(t, y, p, mask, out): the selections of the mask
     m.sequence(
-        &vectors(abi::SELECTIONS),
-        &program_stmts(&plan.selections, out),
+        &sig(abi::SELECTIONS, &[F64, I32, I32, I32, I32], &[], VECTORS),
+        &program_stmts(&plan.selections, selection),
     )?;
 
-    // model_assign(t, y, p): every rule stored before the next one reads the memory
+    // model_assign(t, y, p): every rule stored before the next one reads the memory, then the
+    // constants
     let rules = &model.assignment_rules;
-    m.sequence(
-        &sig(abi::ASSIGN, &[F64, I32, I32], &[], VECTORS),
-        &program_stmts(&plan.assign, |k, e| {
-            Stmt::Store(rules[k as usize].target, e)
-        }),
-    )?;
+    let mut assign = program_stmts(&plan.assign, |k, e| {
+        Stmt::Store(rules[k as usize].target, e)
+    });
+    assign.extend(constants);
+    m.sequence(&sig(abi::ASSIGN, &[F64, I32, I32], &[], VECTORS), &assign)?;
 
-    size_functions(&mut m, model, jacobian, discontinuities)?;
+    size_functions(&mut m, model, jacobian, discontinuities, plan.n_constants())?;
     Ok(m.finish())
 }
 
@@ -701,7 +733,12 @@ fn root_functions(model: &Model, discontinuities: &[Expr]) -> Vec<Expr> {
 }
 
 /// The sizes of the module of a model; the entries of the Jacobian are those of its pattern.
-fn sizes(model: &Model, jacobian: &JacobianIr, discontinuities: &[Expr]) -> ModelSizes {
+fn sizes(
+    model: &Model,
+    jacobian: &JacobianIr,
+    discontinuities: &[Expr],
+    n_constants: u32,
+) -> ModelSizes {
     ModelSizes {
         states: model.states.len() as u32,
         parameters: model.parameters.len() as u32,
@@ -713,6 +750,7 @@ fn sizes(model: &Model, jacobian: &JacobianIr, discontinuities: &[Expr]) -> Mode
             .map(|e| e.root_functions().len() as u32)
             .sum::<u32>()
             + discontinuities.len() as u32,
+        constants: n_constants,
         events: model.events.len() as u32,
         assignments: model
             .events
@@ -840,14 +878,14 @@ pub fn initial_values(model: &Model) -> (Vec<f64>, Vec<f64>) {
             Symbol::Param(i) => p[i as usize],
             Symbol::Time => 0.0,
             Symbol::Derivative(_) => unreachable!("an initial value reads no derivative"),
-            Symbol::Common(_) => {
-                unreachable!("an initial value as written reads no common subexpression")
+            Symbol::Common(_) | Symbol::Constant(_) => {
+                unreachable!("an initial value as written reads no symbol of the optimizer")
             }
         });
         match a.target {
             Symbol::State(i) => y[i as usize] = value,
             Symbol::Param(i) => p[i as usize] = value,
-            Symbol::Time | Symbol::Derivative(_) | Symbol::Common(_) => {
+            Symbol::Time | Symbol::Derivative(_) | Symbol::Common(_) | Symbol::Constant(_) => {
                 unreachable!("{:?} is no target", a.target)
             }
         }
@@ -860,8 +898,13 @@ pub fn initial_values(model: &Model) -> (Vec<f64>, Vec<f64>) {
 pub const COMPILER: &str = concat!("sbmlsim-compiler ", env!("CARGO_PKG_VERSION"));
 
 /// The description of a model.
-fn description(model: &Model, jacobian: JacobianIr, discontinuities: &[Expr]) -> ModelDescription {
-    let n_roots = sizes(model, &jacobian, discontinuities).roots;
+fn description(
+    model: &Model,
+    jacobian: JacobianIr,
+    discontinuities: &[Expr],
+    n_constants: u32,
+) -> ModelDescription {
+    let n_roots = sizes(model, &jacobian, discontinuities, n_constants).roots;
     let n_discontinuity_roots = discontinuities.len() as u32;
     let (p, y) = initial_values(model);
     let entity = |e: &sbmlsim_ir::Entity, initial: f64| Entity {
@@ -936,6 +979,7 @@ fn description(model: &Model, jacobian: JacobianIr, discontinuities: &[Expr]) ->
             .collect(),
         n_roots,
         n_discontinuity_roots,
+        n_constants,
         units: model
             .selections
             .iter()
@@ -950,17 +994,18 @@ mod tests {
 
     const MATH: &str = r#"xmlns="http://www.w3.org/1998/Math/MathML""#;
 
-    /// `x' = -(b * x * 1)` with the rule `b = x * x + y` and `y' = 1`: an entry of `model_jac`
-    /// reads the rule and its derivative at once, one more local than any statement of another
-    /// function; the rate as written (with `* 1`, which the optimizer folds) is the largest
-    /// statement of `model_rhs`.
+    /// `x' = -(b * c * x * 1)` with the rules `b = x * x + y` and `c = x * y + y` and `y' = 1`: an
+    /// entry of `model_jac` reads both rules and their derivatives at once, one more local than
+    /// any statement of another function (`model_selections` has five parameters); the rate as
+    /// written (with `* 1`, which the optimizer folds) is the largest statement of `model_rhs`.
     fn product() -> Model {
         let xml = format!(
             r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2"><model id="m">
-<listOfParameters><parameter id="x" value="1" constant="false"/><parameter id="y" value="1" constant="false"/><parameter id="b" constant="false"/></listOfParameters>
+<listOfParameters><parameter id="x" value="1" constant="false"/><parameter id="y" value="1" constant="false"/><parameter id="b" constant="false"/><parameter id="c" constant="false"/></listOfParameters>
 <listOfRules>
 <assignmentRule variable="b"><math {MATH}><apply><plus/><apply><times/><ci>x</ci><ci>x</ci></apply><ci>y</ci></apply></math></assignmentRule>
-<rateRule variable="x"><math {MATH}><apply><minus/><apply><times/><ci>b</ci><ci>x</ci><cn>1</cn></apply></apply></math></rateRule>
+<assignmentRule variable="c"><math {MATH}><apply><plus/><apply><times/><ci>x</ci><ci>y</ci></apply><ci>y</ci></apply></math></assignmentRule>
+<rateRule variable="x"><math {MATH}><apply><minus/><apply><times/><ci>b</ci><ci>c</ci><ci>x</ci><cn>1</cn></apply></apply></math></rateRule>
 <rateRule variable="y"><math {MATH}><cn>1</cn></math></rateRule>
 </listOfRules></model></sbml>"#
         );
@@ -1072,19 +1117,19 @@ mod tests {
         }
         assert!(compared > 300, "{compared}");
 
-        // 5 locals: the entry of model_jac reads the rule b and its derivative (6 locals with
-        // the parameters); the optimized module is within them (the rule is folded into the
+        // 6 locals: the entry of model_jac reads the rules b and c and a derivative (7 locals with
+        // the parameters); the optimized module is within them (the rules are folded into the
         // entry with the common subexpressions or not), model_jac as written decides
         let limits = Limits {
             bytes: MAX_FUNCTION_BYTES,
-            locals: 5,
+            locals: 6,
         };
         let analytic = derive::jacobian(&m);
         let mut written = ModuleBuilder::default();
         written.limits = limits;
         assert!(written_jac(&mut written, &m, &analytic).is_err());
         let reason = "model_jac would be a function above the limits of WebAssembly engines (one \
-                      statement: 82 bytes, 6 locals; at most 1000000 bytes and 5 locals)";
+                      statement: 132 bytes, 7 locals; at most 1000000 bytes and 6 locals)";
         for optimized in [false, true] {
             let (_, d) = emit_limited(&m, JacobianChoice::Auto, limits, optimized).unwrap();
             let JacobianKind::ColoredDifference { reason: r, .. } = &d.jacobian else {
@@ -1137,12 +1182,12 @@ mod tests {
         let JacobianIr::Analytic { derivatives, .. } = derive::jacobian(&m) else {
             panic!()
         };
-        assert_eq!(derivatives.len(), 1);
-        // 4 parameters of model_jac, the rule and its derivative: 6 locals; every other
-        // function has at most 5 (model_rhs and model_selections: 4 parameters and the rule)
+        assert_eq!(derivatives.len(), 2);
+        // 4 parameters of model_jac, the rules and a derivative: 7 locals; every other
+        // function has at most 6 (model_selections: 5 parameters, the rules given back early)
         let limits = Limits {
             bytes: MAX_FUNCTION_BYTES,
-            locals: 5,
+            locals: 6,
         };
         let (_, d) = emit_limited(&m, JacobianChoice::Auto, limits, false).unwrap();
         let JacobianKind::ColoredDifference {
@@ -1155,7 +1200,7 @@ mod tests {
         assert_eq!(
             reason,
             "model_jac would be a function above the limits of WebAssembly engines (one \
-             statement: 82 bytes, 6 locals; at most 1000000 bytes and 5 locals)"
+             statement: 132 bytes, 7 locals; at most 1000000 bytes and 6 locals)"
         );
         // the analytic Jacobian asked for is refused with the error of the limits
         let error = emit_limited(&m, JacobianChoice::Analytic, limits, false).unwrap_err();

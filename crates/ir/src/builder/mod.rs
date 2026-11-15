@@ -180,6 +180,7 @@ pub(crate) fn build(m: &Sbml) -> Result<Model, CompileError> {
         Symbol::Time => "time".to_string(),
         Symbol::Derivative(_) => unreachable!("no rule assigns a derivative"),
         Symbol::Common(_) => unreachable!("no rule assigns a common subexpression"),
+        Symbol::Constant(_) => unreachable!("no rule assigns a constant of the optimizer"),
     };
     let assignment_rules = ordered(rules.clone(), id_of, "assignment rules")?;
     let mut entries = b.initial_values()?;

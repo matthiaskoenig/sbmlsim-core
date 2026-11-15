@@ -4,11 +4,117 @@ The threshold of the project: at most 2x the simulation time of roadrunner nativ
 
 ## Summary
 
+- The performance round (below, "Performance round"): every model of the benchmark is now faster than roadrunner native in Node and Chrome but Chen and mp_flat dense (1.10 to 1.14) and the event model (0.93 to 1.04); the largest ratio of any host is 1.38 (`repeated_dose`, dense, wasmtime; was 1.60). The PBPK models take 0.45 to 0.61 of roadrunner's time natively, 0.57 to 0.83 in wasmtime, Node and Chrome; Chen with KLU 0.16 to 0.19 (KLU in the ordering AMD). The native engine (`sbmlsim-core bench --host native`) is a new column of every table. The sections after "Performance round" are the measurements before it.
+
 - No ratio is above 2x. The largest is 1.56 (the event model `repeated_dose`, dense, output of 201 times, wasmtime; Node and Chrome 1.05) (1.60 in the rerun after the bound of events which accumulate, below). On the large models the ratio is 1.04 to 1.45 (Chen dense 1.25 to 1.42, KLU 1.04 to 1.16; mp_flat dense 1.27 to 1.45, KLU 1.36 to 1.39), on the PBPK models 0.80 to 0.94, on mp_core 0.91 to 1.04 (dense) and 1.13 to 1.30 (KLU). The engine finds the roots of the conditions of `piecewise` and restarts CVODE there as roadrunner does, with roadrunner's guard against roots which chatter (below), so mp_core and Chen now do roadrunner's work (Chen 4 restarts in both, mp_core 158 against 161 with KLU and 6456 against 4648 dense).
 - Chrome (headless Chrome 157 in a module worker, pinned to the performance cores) measured directly; Node and Chrome agree within a few percent and are 2 % to 13 % faster than wasmtime on the large models.
 - The counters of the integrator are the same in wasmtime, Node and Chrome for every configuration (one `engine.wasm`, the same bits), and every timed simulation repeated the bits of the first.
-- `KLU_THRESHOLD` is now 16 (was 64): KLU with the analytic Jacobian is as fast as the dense solver at 11 to 20 states and faster above (0.65 of the dense time at 64 states).
+- `KLU_THRESHOLD` was 16 (was 64): KLU with the analytic Jacobian is as fast as the dense solver at 11 to 20 states and faster above (0.65 of the dense time at 64 states). Since the performance round it is 12.
 - Agreement (the engine at rtol 1e-10 against roadrunner at rtol 1e-12, within 1e-12 + 1e-7 |c|, or its largest excess at most 1 % above the one of roadrunner at rtol 1e-10 with the same linear solver): every model passes with the dense solver and with KLU, mp_core since the root finding of the conditions of `piecewise` (dense 371.5 against roadrunner's 383.1, was 1401). No engine or compiler defect was found.
+
+## Performance round
+
+A round of optimizations of the integrator and of the code of the models, measured on every host: roadrunner native, the native engine, wasmtime, Node and Chrome. The method is the one of the tables below (BDF, rtol 1e-6, atol 1e-12 scaled per state as roadrunner does, 201 points, the median of 20 runs after 3 warm ups, 3 rounds, the configurations taking turns; one performance core, `taskset -c 2`, Chrome on 4-15), the analytic Jacobian. "before" is the commit before the round (bc3dae2), "after" the round; roadrunner is libroadrunner 2.12.0.dev683 dense and the `roadrunner-sparsedq` build (KLU), measured in the same session.
+
+### Profile
+
+`perf` is not available on the machine (`perf_event_paranoid` 4), so the profile is V8's sampling profiler (`node --cpu-prof`, 50 µs) on `engine.wasm`, `mathlib.wasm` and `model.wasm`, whose functions it names (the name sections of the engine and of mathlib). Before the round:
+
+| model | where the time went |
+|---|---|
+| hctz (KLU, 201 points) | `libm::pow` (mathlib, the FreeBSD `e_pow.c` of the `libm` crate) 35 %, of it 16 % in `model_rhs`, 14 % in `model_selections`, 9 % in `model_assign`; the rows of the output 19 % (`model_selections` 11 %, `model_assign` 7 %); `N_VLinearSum` 12 %; KLU solve 13 % |
+| hctz, 7 daily doses (changes), 2001 points | `pow` 39 %, the rows of the output 29 % |
+| repeated_dose (dense) | the integrator itself: `N_VLinearSum` 23 %, `CVode` 20 %, dense solve 10 % |
+| mp_core (KLU, 159 restarts) | KLU 30 % (its symbolic analysis 8 %, redone at every restart), `pow` 12 % |
+| Chen (KLU) | `klu_l_refactor` 74 %: COLAMD, the ordering `SUNLinSol_KLU` sets, fills the factors of the Jacobian |
+
+After it, hctz with 7 daily doses: `N_VLinearSum` 18 %, KLU solve 20 %, `CVode` 8 %, the right hand side 7 %, the rows 8 %, `pow` 6 % (and 3 % in the C `pow` of CVODE's step sizes). What is left is the work of CVODE itself.
+
+### Changes
+
+| change | effect |
+|---|---|
+| **Constants of the model** (`model/2`, `sbmlsim_ir::optimize::Constants`): the largest subtrees of the math which read only parameters which no assignment rule assigns (and the rules of such parameters: `pow(BW, 0.75)`, a body surface area) are computed by `model_init` and `model_assign` into `p` behind the parameters, and `model_rhs`, `model_jac`, `model_roots`, the functions of the events and `model_selections` read them. The engine calls `model_assign` after every change of a parameter (a change, an event). | the bits of the code as written (the SBML Test Suite with and without the optimizer, `optimized_bits_equal`; a test of changes and events, `the_constants_follow_the_changes_and_the_events`); hctz 100 constants, midazolam 138, mp_flat 1290 |
+| **The output**: a row no longer calls `model_assign` (the selections compute the rules themselves) nor copies the state and the parameters; `model_selections` takes a mask and computes a selection which is more than a load or two (a rate of a reaction) only when a column asks for it. | the rows of hctz from 29 % to 8 % of the time |
+| **`pow`, `exp`, `log` of ARM optimized-routines** (the code of glibc and musl), ported to Rust in mathlib without fused multiply add, so native and wasm give the same bits | `pow` 38.4 to 11.0 ns in wasm (Node), `exp` 11.1 to 1.9 ns, `log` 4.2 to 2.3 ns; 99.9 % of the results bitwise those of glibc, the others within 1 ulp; the results of the models change in the last bits |
+| **KLU in the ordering AMD** (KLU's own default; `SUNLinSol_KLU` sets COLAMD) | Chen KLU 6.0x faster in wasmtime (534 to 89 ms), mp_flat 1.47x |
+| **The symbolic analysis of KLU kept across the restarts of CVODE** (`sbmlsim_SUNLinSol_KLUKept`, `crates/csolvers/csrc`; analyzed again only when the pattern changes) | the bits as before; mp_core KLU -10 % |
+| **32-bit indices** in SUNDIALS and KLU (`SUNDIALS_INT32_T`, the `int` KLU), a model whose sizes do not fit refused | the bits as before; -3 % to -6 % with KLU |
+| **`KLU_THRESHOLD` 12** (was 16), measured again on the scaling models with the KLU above: KLU as fast as dense at 11 to 12 states, 0.9 of the dense time at 14 to 28 | models of 13 to 16 states take KLU |
+
+### Ratios against roadrunner, after
+
+`uv run scripts/roadrunner_reference.py bench/models.toml --compare roadrunner.json native.json engine.json node.json chrome.json`:
+
+| model | states | solver | output | roadrunner ms | native ms | ratio | wasmtime ms | ratio | Node ms | ratio | Chrome ms | ratio |
+|---|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| hctz | 28 | dense | times | 1.12 | 0.546 | 0.49 | 0.712 | 0.64 | 0.676 | 0.61 | 0.67 | 0.60 |
+| hctz | 28 | klu | times | 0.927 | 0.418 | 0.45 | 0.617 | 0.67 | 0.542 | 0.58 | 0.532 | 0.57 |
+| midazolam | 38 | dense | times | 0.788 | 0.482 | 0.61 | 0.656 | 0.83 | 0.599 | 0.76 | 0.59 | 0.75 |
+| midazolam | 38 | klu | times | 0.613 | 0.317 | 0.52 | 0.468 | 0.76 | 0.418 | 0.68 | 0.423 | 0.69 |
+| repeated_dose | 4 | dense | times | 1.45 | 1.39 | 0.96 | 2.01 | 1.38 | 1.51 | 1.04 | 1.47 | 1.01 |
+| repeated_dose | 4 | klu | times | 1.73 | 1.42 | 0.82 | 2.17 | 1.26 | 1.63 | 0.95 | 1.61 | 0.93 |
+| repeated_dose | 4 | dense | steps | 5.13 | 2.1 | 0.41 | 2.47 | 0.48 | 1.95 | 0.38 | 1.98 | 0.39 |
+| repeated_dose | 4 | klu | steps | 5.66 | 2.13 | 0.38 | 2.76 | 0.49 | 2.09 | 0.37 | 2.15 | 0.38 |
+| mp_core | 43 | dense | times | 136 | 104 | 0.77 | 127 | 0.94 | 109 | 0.80 | 107 | 0.79 |
+| mp_core | 43 | klu | times | 7.27 | 5.28 | 0.73 | 7.21 | 0.99 | 6.31 | 0.87 | 6.29 | 0.86 |
+| chen | 500 | dense | times | 1132 | 1050 | 0.93 | 1412 | 1.25 | 1274 | 1.13 | 1245 | 1.10 |
+| chen | 500 | klu | times | 464 | 72.4 | 0.16 | 89.2 | 0.19 | 75.9 | 0.16 | 75.6 | 0.16 |
+| mp_flat | 919 | dense | times | 3009 | 2896 | 0.96 | 3948 | 1.31 | 3424 | 1.14 | 3307 | 1.10 |
+| mp_flat | 919 | klu | times | 84.6 | 70.2 | 0.83 | 81.9 | 0.97 | 79.3 | 0.94 | 78.9 | 0.93 |
+
+The native engine (`Runtime::instantiate_native`: `sbmlsim-engine` built for the machine with the CVODE and KLU of the C compiler of the host, the model in wasmtime) is the bound of the integrator without WebAssembly; the hosts of `engine.wasm` take 1.0 to 1.5 of its time. Its results are not bitwise those of `engine.wasm` (the C library of the host in the step sizes of CVODE), within the tolerances (`crates/host/tests/native.rs`).
+
+### Before and after
+
+ms, the median as above:
+
+| model | solver | output | wasmtime before | after | speedup | Node before | after | speedup | Chrome before | after | speedup |
+|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| hctz | dense | times | 0.994 | 0.712 | 1.40 | 0.967 | 0.676 | 1.43 | 0.948 | 0.670 | 1.41 |
+| hctz | klu | times | 0.854 | 0.617 | 1.38 | 0.859 | 0.542 | 1.59 | 0.855 | 0.532 | 1.61 |
+| midazolam | dense | times | 0.692 | 0.656 | 1.06 | 0.679 | 0.599 | 1.13 | 0.648 | 0.590 | 1.10 |
+| midazolam | klu | times | 0.532 | 0.468 | 1.14 | 0.523 | 0.418 | 1.25 | 0.513 | 0.423 | 1.21 |
+| repeated_dose | dense | times | 2.31 | 2.01 | 1.15 | 1.51 | 1.51 | 1.00 | 1.52 | 1.47 | 1.03 |
+| repeated_dose | klu | times | 2.49 | 2.17 | 1.15 | 1.66 | 1.63 | 1.02 | 1.67 | 1.61 | 1.04 |
+| repeated_dose | dense | steps | 2.79 | 2.47 | 1.13 | 2.06 | 1.95 | 1.05 | 2.07 | 1.98 | 1.05 |
+| repeated_dose | klu | steps | 3.01 | 2.76 | 1.09 | 2.21 | 2.09 | 1.06 | 2.30 | 2.15 | 1.06 |
+| mp_core | dense | times | 141 | 127 | 1.11 | 129 | 109 | 1.19 | 127 | 107 | 1.18 |
+| mp_core | klu | times | 9.40 | 7.21 | 1.30 | 8.65 | 6.31 | 1.37 | 8.46 | 6.29 | 1.35 |
+| chen | dense | times | 1526 | 1412 | 1.08 | 1382 | 1274 | 1.08 | 1345 | 1245 | 1.08 |
+| chen | klu | times | 534 | 89.2 | 5.98 | 493 | 75.9 | 6.50 | 504 | 75.6 | 6.67 |
+| mp_flat | dense | times | 4635 | 3948 | 1.17 | 3948 | 3424 | 1.15 | 3923 | 3307 | 1.19 |
+| mp_flat | klu | times | 121 | 81.9 | 1.47 | 115 | 79.3 | 1.45 | 116 | 78.9 | 1.48 |
+
+The steps differ in the last bits of `pow`, `exp` and `log` and with the ordering of KLU (Chen KLU 2853 to 2675, mp_flat KLU 2694 to 2585, dense 2798 to 2011); the PBPK models and the event model take the same steps. A PBPK simulation of the kind of the web apps, hctz and midazolam with 7 daily oral doses as changes of the request (2001 points over a week, KLU), in Node: hctz 5.27 to 3.04 ms (1.73x), midazolam 3.80 to 3.06 ms (1.24x).
+
+The compilation of a model takes 5 % to 15 % longer and its `model.wasm` is 10 % to 23 % larger (the constants in `model_init` and `model_assign`, the blocks of the mask); the instantiation in wasmtime (Cranelift) 6 % to 35 % longer (Chen 127 to 172 ms), in V8 (lazy) not. A block of the mask around every selection made the compilation of mp_flat by Cranelift 5x slower (0.75 against 0.16 s), so only the selections which are more than a load or two have one.
+
+### Linear algebra
+
+Libraries of the kind of LAPACK or BLAS (in C or Rust) do not make the linear algebra of these models faster. Measured on the Newton matrix `I - gamma J` of every model at the state of the middle of its simulation (ns per factorization of new values and per solve, the best of 5; `faer` 0.24, a pure Rust library of dense and sparse linear algebra with SIMD kernels, which builds for wasm32 with `simd128`):
+
+| model | n | entries | KLU (AMD) factor / solve | SUNDIALS dense | faer dense LU | faer sparse LU |
+|---|---:|---:|---|---|---|---|
+| **native** | | | | | | |
+| hctz | 28 | 88 | 301 / 151 | 634 / 341 | 1916 / 465 | 2097 / 141 |
+| midazolam | 38 | 97 | 390 / 157 | 1097 / 527 | 3473 / 704 | 2232 / 144 |
+| mp_core | 43 | 190 | 750 / 246 | 1857 / 661 | 4487 / 787 | 3697 / 208 |
+| chen | 500 | 4400 | 38177 / 4864 | 1156641 / 48606 | 1741372 / 35024 | 2080389 / 16468 |
+| mp_flat | 919 | 4262 | 24328 / 6581 | 5917336 / 171271 | 9979774 / 132315 | 241520 / 6466 |
+| **wasm (wasmtime)** | | | | | | |
+| hctz | 28 | 88 | 494 / 192 | 977 / 392 | 3874 / 576 | 3120 / 227 |
+| mp_core | 43 | 190 | 1124 / 320 | 2905 / 725 | 11873 / 1042 | 5482 / 352 |
+| chen | 500 | 4400 | 65078 / 5692 | 1651912 / 73161 | 9244396 / 68299 | 2614927 / 26138 |
+| mp_flat | 919 | 4262 | 35646 / 7981 | 8367478 / 232023 | 55024493 / 215544 | 312413 / 9600 |
+
+The matrices are small (PBPK) or very sparse (Chen, mp_flat): a factorization of a PBPK model takes 0.3 to 1.1 µs and a solve 0.15 to 0.3 µs with KLU, and the factors of KLU in the ordering AMD of the large models are 30 to 250 times faster than a dense LU, which a blocked LU with optimized kernels (LAPACK's `getrf` over an optimized BLAS) speeds up by a constant factor of a few at most (and an optimized BLAS is assembly for the CPU, which wasm does not run). The linear algebra was the ordering of KLU (above).
+
+### Tried and not taken
+
+- The fused vector operations of SUNDIALS (`N_VEnableFusedOps_Serial`): the same steps, no difference of the time (hctz 0.40 to 0.42 against 0.42 ms, repeated_dose 1.34 to 1.36 against 1.37 to 1.39 ms natively).
+- The discontinuities of the time (a `piecewise` or a trigger of the time alone) as stop times of CVODE instead of root functions: the root functions take 1.5 % of the event model (`cvRcheck3`), Chen restarts 4 times; the restart at a discontinuity is needed in either case.
+- One model with events instead of a request with changes: an event restarts CVODE as a change does; hctz with 7 daily doses as changes takes 342 steps per day against 458 of the single dose, so the restarts cost little (and less with the kept analysis of KLU).
 
 ## Setup
 
