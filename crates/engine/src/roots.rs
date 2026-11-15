@@ -154,7 +154,7 @@ impl RootGuard {
                 time: t,
                 message: format!(
                     "{} consecutive stops of the integration within the resolution of the time \
-                     ({:e}): events or discontinuities which chatter",
+                     ({:.1e}): events or discontinuities which chatter",
                     self.max_steps, self.resolution
                 ),
             });
