@@ -150,6 +150,9 @@ pub(crate) struct Problem<'a> {
     pub n_model: usize,
     /// The number of root functions of the model.
     pub n_roots: usize,
+    /// The number of root functions of the discontinuities of the math, the last ones of the
+    /// `n_roots`: at their zeros the integration starts again without executing anything.
+    pub n_discontinuity_roots: usize,
     /// The model.
     pub model: &'a dyn ModelFns,
     /// The parameters, constant during an integration (events change them between two).
@@ -792,6 +795,21 @@ impl Cvode {
         unsafe { self.flag(CVodeSetStopTime(self.mem, tstop), tstop) }
     }
 
+    /// Whether the return of CVODE at a zero of a root function (`CV_ROOT_RETURN`) is at a zero
+    /// of one of the root functions of the discontinuities of `problem` (the last
+    /// `problem.n_discontinuity_roots` of its `problem.n_roots`), in either direction.
+    pub fn at_discontinuity(&mut self, problem: &Problem<'_>) -> Result<bool, EngineError> {
+        let n = problem.n_roots;
+        let first = n - problem.n_discontinuity_roots;
+        if first == n {
+            return Ok(false);
+        }
+        let mut found: Vec<c_int> = vec![0; n];
+        // SAFETY: the memory was initialized with `n` root functions, so CVODE writes `n` values.
+        unsafe { self.flag(CVodeGetRootInfo(self.mem, found.as_mut_ptr()), f64::NAN)? };
+        Ok(found[first..].iter().any(|&f| f != 0))
+    }
+
     /// Integrates towards `tout` (`CV_NORMAL`) or takes one step (`CV_ONE_STEP`); returns the
     /// time reached and the return flag of CVODE (`CV_SUCCESS` or `CV_TSTOP_RETURN`).
     pub fn integrate(
@@ -864,6 +882,7 @@ mod tests {
             n: 3,
             n_model: 3,
             n_roots: 0,
+            n_discontinuity_roots: 0,
             model: &model,
             p,
             pattern: Some(desc.jacobian.pattern()),
@@ -962,6 +981,7 @@ mod tests {
             n: N,
             n_model: N,
             n_roots: 0,
+            n_discontinuity_roots: 0,
             model: &Chain,
             p: vec![],
             pattern: Some(&pattern),

@@ -47,5 +47,6 @@
   },
   "events": [],
   "n_roots": 0,
+  "n_discontinuity_roots": 0,
   "units": {}
 }

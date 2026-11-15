@@ -18,11 +18,12 @@
 //! The events are active: the events at the time 0 (the initialization) execute first, the
 //! triggers are located and the events execute as in a simulation (`events`), the end of a
 //! horizon is a stop like an output time, so an event whose trigger becomes true at the end of a
-//! horizon executes once. The simulation then starts at its start from the state at the steady
-//! state, with the triggers as they were at its end (an event whose trigger is false at the end
-//! of the steady state and true at the start executes at the start) and every pending execution
-//! with the time it had left (sbmlsim's roadrunner keeps such an execution at the time of its
-//! clock; this engine moves it with the simulation).
+//! horizon executes once; CVODE starts again at the zero of a root function of a discontinuity
+//! of the math, as in a simulation. The simulation then starts at its start from the state at the
+//! steady state, with the triggers as they were at its end (an event whose trigger is false at
+//! the end of the steady state and true at the start executes at the start) and every pending
+//! execution with the time it had left (sbmlsim's roadrunner keeps such an execution at the time
+//! of its clock; this engine moves it with the simulation).
 
 use sbmlsim_abi::{IntegratorSettings, SteadyState};
 use sbmlsim_csolvers::ffi::{CV_NORMAL, CV_ROOT_RETURN, CV_TSTOP_RETURN};
@@ -107,7 +108,8 @@ pub(crate) fn steady_state(
 
 /// Integrates a model with events from `t` to `stop` without output: CVODE locates the zeros
 /// of the root functions and stops at every pending execution, the events execute at every stop
-/// ([`Events::execute`], `stop` included) and CVODE starts again after an execution.
+/// ([`Events::execute`], `stop` included) and CVODE starts again after an execution and at a
+/// zero of a root function of a discontinuity.
 fn with_events(
     cvode: &mut Cvode,
     problem: &mut Problem<'_>,
@@ -144,6 +146,11 @@ fn with_events(
                 tret
             };
             y.copy_from_slice(cvode.state());
+            // a zero of a root function of a discontinuity: CVODE starts again from the state
+            // there
+            if flag == CV_ROOT_RETURN && cvode.at_discontinuity(problem)? {
+                started = false;
+            }
         }
         if events.execute(t, &mut y[..m], &mut problem.p, false)? {
             started = false;

@@ -217,6 +217,7 @@ fn relax(events: Vec<TestEvent>) -> EventModel {
         parameters: vec![("b", 1.0), ("x", 0.0)],
         rhs: |_, y, p, ydot| ydot[0] = p[0] - y[0],
         events,
+        discontinuities: vec![],
     }
 }
 
@@ -309,6 +310,7 @@ fn a_model_without_states_is_changed() {
         parameters: vec![("a", 1.0)],
         rhs: |_, _, _, _| {},
         events: vec![],
+        discontinuities: vec![],
     };
     let mut req = request(0.0, 2.0, Output::Uniform { steps: 2 });
     req.changes = vec![change(1.0, &[("a", 2.0)])];
@@ -379,6 +381,7 @@ fn steady_state_not_reached_is_an_error() {
         parameters: vec![],
         rhs: |_, _, _, ydot| ydot[0] = 1.0,
         events: vec![],
+        discontinuities: vec![],
     };
     let mut req = request(0.0, 1.0, Output::Uniform { steps: 1 });
     req.steady_state = Some(SteadyState {
@@ -487,6 +490,7 @@ fn steady_state_from_time_zero() {
         parameters: vec![],
         rhs: |t, y, _, ydot| ydot[0] = if t < 50.0 { 1.0 } else { 2.0 } - y[0],
         events: vec![],
+        discontinuities: vec![],
     };
     for start in [-1000.0, 0.0, 200.0] {
         let mut req = request(start, start + 1.0, Output::Uniform { steps: 1 });
@@ -571,6 +575,7 @@ fn falling(with_event: bool) -> EventModel {
         } else {
             vec![]
         },
+        discontinuities: vec![],
     }
 }
 
@@ -629,6 +634,7 @@ fn a_failed_request_leaves_the_engine_as_a_fresh_one() {
             initial_value: false,
             ..TestEvent::new("step", |t, _, _| t >= 0.5, vec![|t, _, _| t - 0.5])
         }],
+        discontinuities: vec![],
     };
     let mut never = request(0.0, 1.0, Output::Uniform { steps: 2 });
     never.steady_state = Some(SteadyState {

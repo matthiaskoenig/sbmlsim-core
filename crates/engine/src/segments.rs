@@ -331,13 +331,19 @@ impl Outputs<'_> {
 
     /// The integration stopped at `t`: the events at `t` execute and the outputs at `t` are
     /// written; `step` is whether `t` is a step of the integrator (not a zero of a root
-    /// function). Returns whether an event executed.
+    /// function), `discontinuity` whether it is a zero of a root function of a discontinuity,
+    /// where the integration starts again (in the steps of the integrator two rows of the state
+    /// at `t` before the end, the state before and after the new start, as libroadrunner writes
+    /// them, unless events execute, whose two rows they are). Returns whether an event
+    /// executed.
+    #[allow(clippy::too_many_arguments)]
     fn stop(
         &mut self,
         t: f64,
         y: &mut [f64],
         p: &mut [f64],
         step: bool,
+        discontinuity: bool,
         events: &mut Events<'_>,
         recorder: &mut Recorder<'_>,
     ) -> Result<bool, EngineError> {
@@ -346,7 +352,7 @@ impl Outputs<'_> {
         if self.steps {
             let (before, p_before) = (y[..m].to_vec(), p.to_vec());
             let executed = events.execute(t, &mut y[..m], p, at_end)?;
-            if executed {
+            if executed || (discontinuity && !at_end) {
                 recorder.row(t, &before, &p_before)?;
                 recorder.row(t, &y[..m], p)?;
             } else if step || at_end {
@@ -427,15 +433,20 @@ impl Outputs<'_> {
 ///
 /// CVODE locates the zeros of the root functions and stops at the time of every pending
 /// execution (its stop time); at every stop the events execute (`Events::execute`), and after an
-/// execution CVODE starts again from the new state. The output:
+/// execution CVODE starts again from the new state. At a zero of a root function of a
+/// discontinuity of the math (a condition of a `piecewise`, `problem.n_discontinuity_roots`)
+/// CVODE starts again from the state there, as libroadrunner does at its piecewise triggers;
+/// nothing executes for it (no draw of the order of ties, no count towards the limit of
+/// executions). The output:
 ///
 /// - of times: a time before an event sees the state before it, an output at the time of an
 ///   event the state after it, except for an event whose trigger becomes true only right after
 ///   that time (a strict comparison at its threshold), which comes after the output; at the end
-///   the output sees the state after every event at the end.
+///   the output sees the state after every event at the end. A discontinuity adds no row.
 /// - of the integrator steps: the start (the state after the events at the start), every step,
 ///   and two rows at the time of every other stop at which events execute, the state before and
-///   after them (the end included).
+///   after them (the end included), or else at a discontinuity before the end, the state there
+///   twice (libroadrunner's two rows of a root, before and after the new start of CVODE).
 ///
 /// The changes: one at the start is applied after the events at the start and its events
 /// execute with it ([`Probe::Change`]), before the output of the start; every other one is a
@@ -535,7 +546,7 @@ pub(crate) fn integrate_events(
                 }
                 continue;
             }
-            if out.stop(t, &mut y, &mut problem.p, true, events, recorder)? {
+            if out.stop(t, &mut y, &mut problem.p, true, false, events, recorder)? {
                 started = false;
             }
             if t >= end || too_close(t, end) {
@@ -565,6 +576,7 @@ pub(crate) fn integrate_events(
             cvode.integrate(problem, tout, CV_NORMAL)?
         };
         let root = flag == CV_ROOT_RETURN;
+        let discontinuity = root && cvode.at_discontinuity(problem)?;
         if steps && !root && flag != CV_TSTOP_RETURN && tret <= previous {
             return Err(stalled(tret, previous));
         }
@@ -588,7 +600,16 @@ pub(crate) fn integrate_events(
             }
             continue;
         }
-        if out.stop(t, &mut y, &mut problem.p, !root, events, recorder)? {
+        let executed = out.stop(
+            t,
+            &mut y,
+            &mut problem.p,
+            !root,
+            discontinuity,
+            events,
+            recorder,
+        )?;
+        if executed || discontinuity {
             started = false;
         }
         if t >= end || too_close(t, end) {
@@ -626,6 +647,7 @@ mod tests {
             n: 1,
             n_model: 1,
             n_roots: 0,
+            n_discontinuity_roots: 0,
             model: &model,
             p: p.clone(),
             pattern: Some(crate::pattern_of(&desc)),

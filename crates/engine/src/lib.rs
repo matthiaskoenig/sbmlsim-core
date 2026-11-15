@@ -256,6 +256,12 @@ fn check_description(desc: &ModelDescription) -> Result<(), EngineError> {
             ))
         })?;
     }
+    if desc.n_discontinuity_roots > desc.n_roots {
+        return Err(request(format!(
+            "model {} has {} root functions of discontinuities of {} root functions",
+            desc.id, desc.n_discontinuity_roots, desc.n_roots
+        )));
+    }
     // the selection indices are exactly 0..k, each once: the engine sizes the output of the
     // model by them and a gap or a repeat would write past it or leave a column unset
     let mut seen = vec![false; desc.selections.len()];
@@ -633,6 +639,7 @@ fn run(
         n: n_cvode,
         n_model: n,
         n_roots: desc.n_roots as usize,
+        n_discontinuity_roots: desc.n_discontinuity_roots as usize,
         model,
         p,
         pattern,

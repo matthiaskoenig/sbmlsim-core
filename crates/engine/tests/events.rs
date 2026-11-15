@@ -51,6 +51,7 @@ fn ramp(events: Vec<TestEvent>) -> EventModel {
         parameters: vec![("x", 0.0), ("n", 0.0)],
         rhs: |_, _, _, ydot| ydot[0] = 1.0,
         events,
+        discontinuities: vec![],
     }
 }
 
@@ -270,6 +271,7 @@ fn a_model_without_states_locates_its_triggers() {
         parameters: vec![("x", 0.0)],
         rhs: |_, _, _, _| {},
         events: vec![event],
+        discontinuities: vec![],
     };
     let r = run(&model, &request(0.0, 2.0, Output::Uniform { steps: 4 }, 1));
     let x = column(&r, "x");
@@ -413,6 +415,7 @@ fn a_description_of_another_jacobian_is_refused() {
         parameters: vec![],
         rhs: |_, _, _, ydot| ydot.fill(0.0),
         events: vec![],
+        discontinuities: vec![],
     };
     let mut desc = model.description();
     desc.jacobian = sbmlsim_abi::JacobianKind::Analytic(sbmlsim_abi::SparsityPattern {

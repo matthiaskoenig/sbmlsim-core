@@ -63,6 +63,7 @@
 
 mod builder;
 pub mod derive;
+mod discontinuity;
 pub mod eval;
 mod expr;
 pub mod optimize;
@@ -261,7 +262,7 @@ fn roots_of(e: &Expr, boolean: bool, out: &mut Vec<Expr>) {
 
 /// Whether every value of a piecewise is a boolean (a relation, a boolean operator or a
 /// boolean constant), so it is no number read as a boolean.
-fn is_boolean_valued(e: &Expr) -> bool {
+pub(crate) fn is_boolean_valued(e: &Expr) -> bool {
     match e {
         Expr::Bool(_) => true,
         Expr::Apply { op, .. } => matches!(

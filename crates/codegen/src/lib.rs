@@ -26,7 +26,8 @@
 //!   the CSC order of its pattern. For a model without an analytic Jacobian (the description
 //!   gives a colored difference quotient, which the engine computes) it traps.
 //! - `model_roots` evaluates the assignment rules into locals, then the root functions of the
-//!   triggers ([`sbmlsim_ir::Event::root_functions`]) in the order of the events.
+//!   triggers ([`sbmlsim_ir::Event::root_functions`]) in the order of the events, then those of
+//!   the discontinuities of the math ([`sbmlsim_ir::Model::discontinuity_roots`]).
 //! - the functions of an event index (`model_trigger`, `model_priority`, `model_delay`,
 //!   `model_event_values`, `model_event_apply`) evaluate the assignment rules into locals, then
 //!   branch on the index: one `if` per event which returns; an index which is no event gives
@@ -336,12 +337,9 @@ fn module(
 
     written_jac(&mut m, model, jacobian)?;
 
-    // model_roots(t, y, p, g): the root functions of the triggers, in the order of the events
-    let roots: Vec<Expr> = model
-        .events
-        .iter()
-        .flat_map(|e| e.root_functions())
-        .collect();
+    // model_roots(t, y, p, g): the root functions of the triggers, in the order of the events,
+    // then those of the discontinuities
+    let roots = root_functions(model);
     let mut stmts: Vec<Stmt<'_>> = Vec::new();
     if !roots.is_empty() {
         stmts.extend(rule_lets(model));
@@ -679,6 +677,17 @@ fn optimized_module(
     Ok(m.finish())
 }
 
+/// The root functions of `model_roots`: those of the triggers of the events in their order,
+/// then those of the discontinuities of the math.
+fn root_functions(model: &Model) -> Vec<Expr> {
+    model
+        .events
+        .iter()
+        .flat_map(|e| e.root_functions())
+        .chain(model.discontinuity_roots())
+        .collect()
+}
+
 /// The sizes of the module of a model; the entries of the Jacobian are those of its pattern.
 fn sizes(model: &Model, jacobian: &JacobianIr) -> ModelSizes {
     ModelSizes {
@@ -686,11 +695,7 @@ fn sizes(model: &Model, jacobian: &JacobianIr) -> ModelSizes {
         parameters: model.parameters.len() as u32,
         selections: model.selections.len() as u32,
         jacobian_entries: jacobian.pattern().nnz() as u32,
-        roots: model
-            .events
-            .iter()
-            .map(|e| e.root_functions().len() as u32)
-            .sum(),
+        roots: root_functions(model).len() as u32,
         assignments: model
             .events
             .iter()
@@ -835,6 +840,7 @@ pub fn initial_values(model: &Model) -> (Vec<f64>, Vec<f64>) {
 /// The description of a model.
 fn description(model: &Model, jacobian: JacobianIr) -> ModelDescription {
     let n_roots = sizes(model, &jacobian).roots;
+    let n_discontinuity_roots = model.discontinuity_roots().len() as u32;
     let (p, y) = initial_values(model);
     let entity = |e: &sbmlsim_ir::Entity, initial: f64| Entity {
         id: e.id.clone(),
@@ -906,6 +912,7 @@ fn description(model: &Model, jacobian: JacobianIr) -> ModelDescription {
             })
             .collect(),
         n_roots,
+        n_discontinuity_roots,
         units: model
             .selections
             .iter()

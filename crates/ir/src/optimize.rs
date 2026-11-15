@@ -95,7 +95,8 @@ pub struct Plan {
     pub rhs: Program,
     /// `model_jac`: the entries of an analytic Jacobian.
     pub jac: Option<Program>,
-    /// `model_roots`: the root functions of the triggers.
+    /// `model_roots`: the root functions of the triggers, then those of the discontinuities
+    /// ([`Model::discontinuity_roots`]).
     pub roots: Program,
     /// `model_trigger`: the trigger of every event.
     pub trigger: Branches,
@@ -116,7 +117,8 @@ pub struct Plan {
 /// subexpressions when `cse`.
 ///
 /// The root functions are those of the triggers of `model` as written, folded each
-/// ([`Event::root_functions`] of a folded trigger may be fewer).
+/// ([`Event::root_functions`] of a folded trigger may be fewer), then those of the
+/// discontinuities ([`Model::discontinuity_roots`], folded already).
 pub fn plan(model: &Model, jacobian: &JacobianIr, cse: bool) -> Plan {
     let rules = &model.assignment_rules;
     let mut init_commons = 0;
@@ -147,6 +149,7 @@ pub fn plan(model: &Model, jacobian: &JacobianIr, cse: bool) -> Plan {
         .events
         .iter()
         .flat_map(Event::root_functions)
+        .chain(model.discontinuity_roots())
         .collect();
     let part = |f: &dyn Fn(&Event) -> Option<Vec<Expr>>| -> Branches {
         let outputs: Vec<Option<Vec<Expr>>> = model.events.iter().map(f).collect();

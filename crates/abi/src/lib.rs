@@ -17,7 +17,14 @@
 //!   `a < b` and `a <= b`, `a - b` of `a == b` and `a != b`, every adjacent pair of a chain) and
 //!   one per number a trigger reads as a boolean, in the order of the events and, within a
 //!   trigger, in the written order. The engine locates their zeros (in both directions) and then
-//!   evaluates the triggers themselves with `model_trigger`.
+//!   evaluates the triggers themselves with `model_trigger`. After them come the
+//!   [`ModelDescription::n_discontinuity_roots`] root functions of the discontinuities of the
+//!   math: one per branch (but the `otherwise`) of every `piecewise` of the assignment rules,
+//!   the rates and the triggers, which changes its sign where the branch the `piecewise` selects
+//!   changes (`a - b` of a condition `a > b`, `min` and `max` of the conditions of `and` and
+//!   `or`, see `sbmlsim_ir::Model::discontinuity_roots`), without those which depend neither on
+//!   the time nor on a state. At their zeros the engine starts the integrator again from the
+//!   state there, as libroadrunner does at its piecewise triggers.
 //! - `model_trigger(i, t, y, p) -> i32` is the trigger of event `i` (1 true, 0 false).
 //! - `model_priority(i, t, y, p) -> f64` is the priority of event `i`, 0 for an event without
 //!   one.
@@ -53,7 +60,9 @@
 //! Revisions of `model/1` before its first release: the field [`ModelDescription::n_roots`],
 //! the exports `model_sizes` and `model_event_sizes` and the time of `model_event_apply` were
 //! added with the events, the field `stores_concentration` of [`EntityKind::Species`] with the
-//! changes (no version change, nothing was released).
+//! changes, the field [`ModelDescription::n_discontinuity_roots`] and the root functions of the
+//! discontinuities after those of the triggers with the root finding of the conditions of
+//! `piecewise` (no version change, nothing was released).
 
 mod request;
 
@@ -139,6 +148,9 @@ pub struct ModelDescription {
     pub events: Vec<EventInfo>,
     /// The number of root functions `model_roots` writes.
     pub n_roots: u32,
+    /// The number of root functions of the discontinuities of the math, the last ones of the
+    /// `n_roots` (the ones before them are those of the triggers of the events).
+    pub n_discontinuity_roots: u32,
     /// The unit expression of every entity id.
     pub units: BTreeMap<String, String>,
 }
@@ -646,6 +658,7 @@ mod tests {
                 n_assignments: 2,
             }],
             n_roots: 3,
+            n_discontinuity_roots: 1,
             units: BTreeMap::new(),
         };
         let sizes = ModelSizes::of(&d);

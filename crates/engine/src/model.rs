@@ -19,7 +19,8 @@ pub trait ModelFns {
     fn rhs(&self, t: f64, y: &[f64], p: &[f64], ydot: &mut [f64]);
     /// The values of the Jacobian, in the CSC order of the pattern of the description.
     fn jac(&self, t: f64, y: &[f64], p: &[f64], values: &mut [f64]);
-    /// The root functions of the triggers of the events.
+    /// The root functions of the triggers of the events, then those of the discontinuities of
+    /// the math.
     fn roots(&self, t: f64, y: &[f64], p: &[f64], g: &mut [f64]);
     /// The trigger of event `i`.
     fn trigger(&self, i: u32, t: f64, y: &[f64], p: &[f64]) -> bool;
@@ -94,6 +95,7 @@ mod test_models {
             jacobian: JacobianKind::Analytic(pattern),
             events: vec![],
             n_roots: 0,
+            n_discontinuity_roots: 0,
             units: BTreeMap::new(),
         }
     }
@@ -486,6 +488,8 @@ mod test_models {
         pub rhs: fn(f64, &[f64], &[f64], &mut [f64]),
         /// The events.
         pub events: Vec<TestEvent>,
+        /// The root functions of the discontinuities, after those of the events.
+        pub discontinuities: Vec<Fun>,
     }
 
     impl EventModel {
@@ -534,7 +538,13 @@ mod test_models {
                         n_assignments: e.assignments.len() as u32,
                     })
                     .collect(),
-                n_roots: self.events.iter().map(|e| e.roots.len() as u32).sum(),
+                n_roots: self
+                    .events
+                    .iter()
+                    .map(|e| e.roots.len() as u32)
+                    .sum::<u32>()
+                    + self.discontinuities.len() as u32,
+                n_discontinuity_roots: self.discontinuities.len() as u32,
                 units: BTreeMap::new(),
             }
         }
@@ -557,7 +567,11 @@ mod test_models {
             unreachable!("the Jacobian of an event model is a difference quotient")
         }
         fn roots(&self, t: f64, y: &[f64], p: &[f64], g: &mut [f64]) {
-            let all = self.events.iter().flat_map(|e| &e.roots);
+            let all = self
+                .events
+                .iter()
+                .flat_map(|e| &e.roots)
+                .chain(&self.discontinuities);
             for (g, root) in g.iter_mut().zip(all) {
                 *g = root(t, y, p);
             }
