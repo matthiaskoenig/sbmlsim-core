@@ -2,6 +2,9 @@
 
 from typing import Any
 
+import numpy
+import numpy.typing
+
 MODEL_CONTRACT: str
 SIMULATION_CONTRACT: str
 __version__: str
@@ -22,6 +25,64 @@ class CompiledModel:
     @property
     def description(self) -> dict[str, Any]:
         """The description of the model, `model.json` of `model/2`, as a dict."""
+
+class SimulationError(SbmlsimCoreError):
+    """The base class of the errors of a simulation."""
+
+class RequestError(SimulationError):
+    """A request which the engine refuses."""
+
+class IntegrationError(SimulationError):
+    """An integration which failed."""
+
+    flag: int
+    time: float
+
+class UnsupportedError(SimulationError):
+    """A simulation the engine does not support."""
+
+class InternalError(SimulationError):
+    """A failure of the engine itself."""
+
+class SimulationOutput:
+    """The table of a simulation."""
+
+    @property
+    def columns(self) -> list[str]:
+        """The names of the columns, `time` first."""
+
+    @property
+    def values(self) -> numpy.typing.NDArray[numpy.float64]:
+        """The values, of the shape `(n_rows, len(columns))`, in C order."""
+
+class Instance:
+    """A model in an engine of its own; simulates one request after the other."""
+
+    def simulate(self, request: dict[str, Any]) -> SimulationOutput:
+        """Simulates a request of `simulation/1` and gives its table."""
+
+    def stats(self) -> dict[str, int]:
+        """The counters of the integrator of the last simulation."""
+
+class LoadedModel:
+    """A model compiled for an engine, which makes the instances that simulate it."""
+
+    @property
+    def description(self) -> dict[str, Any]:
+        """The description of the model, `model/2`, as a dict."""
+
+    def initial_values(self) -> dict[str, float]:
+        """The values of the selections of the model as loaded."""
+
+    def instance(self) -> Instance:
+        """A new instance of the model."""
+
+class Runtime:
+    """`engine.wasm` and `mathlib.wasm`, compiled once, which load models."""
+
+    def __init__(self) -> None: ...
+    def load(self, wasm: bytes, description: dict[str, Any]) -> LoadedModel:
+        """Loads `model.wasm` with its description."""
 
 def compile_sbml(
     sbml: str, *, optimize: bool = True, jacobian: str = "auto"

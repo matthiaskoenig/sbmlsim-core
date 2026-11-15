@@ -15,7 +15,11 @@ name = "sbmlsim_core"
 crate-type = ["cdylib"]
 
 [dependencies]
+numpy = "0.30"
 pyo3 = { version = "0.30", features = ["extension-module", "abi3-py314"] }
 pythonize = "0.30"
 sbmlsim-abi = { path = "../abi" }
 sbmlsim-compiler = { path = "../compiler" }
+sbmlsim-engine = { path = "../engine" }
+sbmlsim-host = { path = "../host" }
+serde_path_to_error = "0.1.20"

@@ -104,7 +104,7 @@ The tests (`node --test js/test`) build the command line (`SBMLSIM_CORE_CLI` nam
 
 ## Python
 
-`sbmlsim-core` is also a python package (python 3.14 or newer, built with maturin; the build needs `WASI_SDK_PATH` or `SBMLSIM_CORE_WASM_DIR` as above):
+`sbmlsim-core` is also a python package (python 3.14 or newer, built with maturin; the extension embeds `engine.wasm` through `sbmlsim-host`, so the build needs `WASI_SDK_PATH` or `SBMLSIM_CORE_WASM_DIR` as above):
 
 ```bash
 uv venv --python 3.14 && uv pip install -e . --group dev
@@ -117,7 +117,15 @@ import sbmlsim_core
 compiled = sbmlsim_core.compile_sbml(sbml_text)  # optimize=True, jacobian="auto"
 compiled.wasm         # the bytes of model.wasm
 compiled.description  # the dict of model.json (model/2)
-# simulating a compiled model follows in the next steps of the bindings
+
+runtime = sbmlsim_core.Runtime()
+model = runtime.load(compiled.wasm, compiled.description)  # compiled once, shared
+model.initial_values()                                      # selection id -> value as loaded
+instance = model.instance()                                 # one per thread
+out = instance.simulate(request)                            # a dict of simulation/1
+out.columns, out.values                                     # names, float64 array (rows, columns)
+instance.stats()                                            # the counters of the integrator
+# errors: SimulationError with RequestError, IntegrationError (flag, time), UnsupportedError, InternalError
 ```
 
 ## Test suite
