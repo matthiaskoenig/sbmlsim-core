@@ -54,6 +54,11 @@ impl<'a> Recorder<'a> {
         }
     }
 
+    /// Reserves the values of `rows` more rows.
+    pub fn reserve(&mut self, rows: usize) {
+        self.values.reserve_exact(rows * self.columns.len());
+    }
+
     /// Appends the row of the time `t`, the state `y` and the parameters `p`.
     ///
     /// Fails with [`OUTPUT_LIMIT_FLAG`] when the row would exceed the cap of values of the

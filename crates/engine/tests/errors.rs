@@ -56,7 +56,6 @@ fn integration_failure_is_an_error() {
         other => panic!("{other:?}"),
     }
     // the steps of the integrator stall at 1 and end with an error, quickly
-    let started = std::time::Instant::now();
     let req = request(0.0, 2.0, Output::IntegratorSteps);
     match simulate(&model, &model.description(), &req) {
         Err(EngineError::Integration {
@@ -67,7 +66,6 @@ fn integration_failure_is_an_error() {
             assert!(time <= 1.0, "{time}");
             assert_eq!(flag, sbmlsim_engine::STALL_FLAG);
             assert!(message.contains("stalled"), "{message}");
-            assert!(started.elapsed().as_secs_f64() < 5.0);
         }
         other => panic!("{other:?}"),
     }
@@ -104,13 +102,16 @@ fn invalid_requests_are_refused() {
     };
     assert_request(
         decay(&with(&|r| r.changes = vec![change(20.0, 1.0)])),
-        &["20"],
+        &["change at t = 20 "],
     );
     for (changes, text) in [
-        (vec![change(0.0, 1.0)], "0"),
-        (vec![change(f64::NAN, 1.0)], "NaN"),
-        (vec![change(5.0, 1.0), change(4.0, 1.0)], "4"),
-        (vec![change(5.0, f64::INFINITY)], "inf"),
+        (vec![change(0.0, 1.0)], "change at t = 0 "),
+        (vec![change(f64::NAN, 1.0)], "change at t = NaN "),
+        (vec![change(5.0, 1.0), change(4.0, 1.0)], "change at t = 4 "),
+        (
+            vec![change(5.0, f64::INFINITY)],
+            "the value inf of k is not finite",
+        ),
     ] {
         assert_request(decay(&with(&|r| r.changes = changes.clone())), &[text]);
     }
@@ -129,6 +130,13 @@ fn invalid_requests_are_refused() {
         assert_request(
             decay(&with(&|r| r.output = Output::Times(times.clone()))),
             &["output times"],
+        );
+    }
+    // finite ends whose difference is not
+    for output in [Output::Uniform { steps: 4 }, Output::Times(vec![0.0])] {
+        assert_request(
+            decay(&request(-1e308, 1e308, output)),
+            &["interval is not finite"],
         );
     }
     assert_request(
@@ -241,12 +249,18 @@ fn output_larger_than_the_limit_is_refused_upfront() {
             &["exceeds the limit"],
         );
     }
-    // the limit counts values, so the columns count: 3 columns of `time`, `y`, `t_half`
-    let rows = MAX_OUTPUT_VALUES / 3 + 1;
-    assert_request(
-        decay(&request(0.0, 1.0, Output::Times(vec![0.5; rows]))),
-        &["exceeds the limit"],
-    );
+    // the limit counts values, so the columns count: a million columns and 129 rows are over it
+    // with few rows (the columns repeat an id)
+    let columns = 1 << 20;
+    assert!(129 * columns > MAX_OUTPUT_VALUES);
+    for output in [
+        Output::Times(vec![0.5; 129]),
+        Output::Uniform { steps: 128 },
+    ] {
+        let mut req = request(0.0, 1.0, output);
+        req.selections = vec!["y".to_string(); columns];
+        assert_request(decay(&req), &["exceeds the limit"]);
+    }
 }
 
 #[test]

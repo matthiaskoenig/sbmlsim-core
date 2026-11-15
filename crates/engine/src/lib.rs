@@ -429,8 +429,10 @@ fn run(
     // 1. the request is validated before any feature is refused and before any integration
     check_contract(&req.contract, SIMULATION_CONTRACT).map_err(|e| request(e.to_string()))?;
     let (start, end) = (req.start, req.end);
-    if !start.is_finite() || !end.is_finite() || end < start {
-        return Err(request(format!("simulation from {start} to {end}")));
+    if !start.is_finite() || !end.is_finite() || end < start || !(end - start).is_finite() {
+        return Err(request(format!(
+            "simulation from {start} to {end}: the interval is not finite or is negative"
+        )));
     }
     let n = desc.states.len();
     check_settings(&req.settings, n)?;
@@ -487,6 +489,12 @@ fn run(
         .max()
         .unwrap_or(0);
     let mut recorder = Recorder::new(model, columns, n_selections, MAX_OUTPUT_VALUES);
+    // the size of an output of times is known (and checked against the cap): one allocation,
+    // not a growth by doubling, whose peak would be twice the result; the steps of the
+    // integrator have no known count and grow by doubling up to the cap
+    if !matches!(req.output, Output::IntegratorSteps) {
+        recorder.reserve(times.len());
+    }
     let output = match req.output {
         Output::IntegratorSteps => SegmentOutput::Steps,
         _ => SegmentOutput::Times(&times),
