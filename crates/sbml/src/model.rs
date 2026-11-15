@@ -340,7 +340,7 @@ fn req_math(n: X) -> Result<Node, ReadError> {
 }
 
 /// A unit as `kind`, `factor*kind`, `kind**e` or `(factor*kind)**e`, the factor the double of
-/// the text `{multiplier}e{scale}`.
+/// the text `{multiplier}e{scale}` (the multiplier read as a double first).
 fn unit_term(u: X) -> Result<String, ReadError> {
     let kind = req(u, "kind")?;
     let text = |name: &str, default: &str| {
@@ -349,13 +349,18 @@ fn unit_term(u: X) -> Result<String, ReadError> {
             .unwrap_or_else(|| default.to_string())
     };
     let (multiplier, scale) = (text("multiplier", "1"), text("scale", "0"));
-    let factor = format!("{multiplier}e{scale}")
+    let no_number = |what: &str, v: &str| err(format!("<unit> {what} {v:?} is no number"));
+    let m = multiplier
         .parse::<f64>()
-        .map_err(|_| {
-            err(format!(
-                "<unit> multiplier {multiplier:?} or scale {scale:?} is no number"
-            ))
-        })?;
+        .map_err(|_| no_number("multiplier", &multiplier))?;
+    // the display of a finite double has no exponent, so the text is a valid number
+    let factor = if m.is_finite() {
+        format!("{m}e{scale}")
+            .parse::<f64>()
+            .map_err(|_| no_number("scale", &scale))?
+    } else {
+        m
+    };
     let exponent = double(u, "exponent")?.unwrap_or(1.0);
     Ok(match (factor == 1.0, exponent == 1.0) {
         (true, true) => kind,

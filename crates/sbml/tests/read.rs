@@ -127,6 +127,10 @@ fn unit_expressions() {
     assert_eq!(unit_expr(&u("metre", "2", "0", "1")), "metre**2");
     assert_eq!(unit_expr(&u("mole", "1", "0", "1")), "mole");
     assert_eq!(unit_expr(""), "dimensionless");
+    // a multiplier in e-notation
+    assert_eq!(unit_expr(&u("litre", "1", "-3", "1e2")), "0.1*litre");
+    assert_eq!(unit_expr(&u("litre", "1", "0", "1.5E1")), "15*litre");
+    assert_eq!(unit_expr(&u("litre", "-1", "-3", "1e2")), "(0.1*litre)**-1");
 }
 
 #[test]
