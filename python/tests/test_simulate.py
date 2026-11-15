@@ -6,7 +6,6 @@ from typing import Any
 
 import numpy
 import pytest
-
 import sbmlsim_core
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -137,7 +136,9 @@ def test_a_request_with_a_wrong_type_is_refused(decay):
 
 def test_a_request_the_engine_refuses_raises_a_request_error(decay):
     with pytest.raises(sbmlsim_core.RequestError):
-        decay.instance().simulate(request(end=10.0, steps=10) | {"selections": ["nope"]})
+        decay.instance().simulate(
+            request(end=10.0, steps=10) | {"selections": ["nope"]}
+        )
 
 
 def test_an_integration_which_fails_raises_with_its_flag(stiff):

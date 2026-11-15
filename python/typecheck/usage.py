@@ -13,16 +13,15 @@ Those are held by the tests of `python/tests`.
 from typing import Any
 
 import numpy
-
 import sbmlsim_core
 from sbmlsim_core import (
     CompiledModel,
     CompileError,
-    LoadError,
     Instance,
     IntegrationError,
     InternalError,
     LoadedModel,
+    LoadError,
     PointError,
     RequestError,
     Runtime,

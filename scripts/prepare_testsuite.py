@@ -92,12 +92,13 @@ def convert(path: Path) -> str:
             f"fast reaction {fast}: refused (fast reactions are out of scope; L3V2 has no fast "
             "attribute)"
         )
-    if (doc.getLevel(), doc.getVersion()) != (3, 2):
-        if not doc.setLevelAndVersion(3, 2, False):
-            raise ValueError(
-                f"cannot convert L{doc.getLevel()}V{doc.getVersion()} to L3V2: "
-                f"{_first_error(doc)}"
-            )
+    if (doc.getLevel(), doc.getVersion()) != (3, 2) and not doc.setLevelAndVersion(
+        3, 2, False
+    ):
+        raise ValueError(
+            f"cannot convert L{doc.getLevel()}V{doc.getVersion()} to L3V2: "
+            f"{_first_error(doc)}"
+        )
     sbml = libsbml.writeSBMLToString(doc)
     if not sbml:
         raise ValueError("cannot write the converted model")
@@ -139,14 +140,20 @@ def prepare(case: SemanticCase, out: Path) -> str | None:
     try:
         (target / "model.xml").write_text(convert(case.model_path), encoding="utf-8")
     except Exception as err:  # every failure is an outcome of the case
-        message = str(err).strip().splitlines()[0][:300] if str(err).strip() else repr(err)
+        message = (
+            str(err).strip().splitlines()[0][:300] if str(err).strip() else repr(err)
+        )
         info["not_converted"] = message
-    (target / "case.json").write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
+    (target / "case.json").write_text(
+        json.dumps(info, indent=2) + "\n", encoding="utf-8"
+    )
     shutil.copyfile(case.path / f"{case.cid}-results.csv", target / "expected.csv")
     return message
 
 
-BASELINE = Path(__file__).resolve().parent.parent / "testdata" / "testsuite_baseline.json"
+BASELINE = (
+    Path(__file__).resolve().parent.parent / "testdata" / "testsuite_baseline.json"
+)
 
 
 def check_commit(baseline: Path) -> str | None:

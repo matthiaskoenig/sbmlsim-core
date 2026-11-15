@@ -3,7 +3,6 @@
 from pathlib import Path
 
 import pytest
-
 import sbmlsim_core
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -65,7 +64,9 @@ def test_compile_refuses_a_level_2_document(level2_sbml: str) -> None:
         sbmlsim_core.compile_sbml(level2_sbml)
 
 
-def test_loading_a_model_which_is_no_module_raises_a_load_error(decay_sbml: str) -> None:
+def test_loading_a_model_which_is_no_module_raises_a_load_error(
+    decay_sbml: str,
+) -> None:
     compiled = sbmlsim_core.compile_sbml(decay_sbml)
     with pytest.raises(sbmlsim_core.LoadError):
         sbmlsim_core.Runtime().load(b"not a module", compiled.description)
@@ -92,7 +93,9 @@ def test_the_stub_names_what_the_module_exposes() -> None:
     exposed = {n for n in dir(_core) if not n.startswith("_") or n == "__version__"}
     assert names == exposed
     stub_class = next(
-        n for n in stub.body if isinstance(n, ast.ClassDef) and n.name == "CompiledModel"
+        n
+        for n in stub.body
+        if isinstance(n, ast.ClassDef) and n.name == "CompiledModel"
     )
     members = {n.name for n in stub_class.body if isinstance(n, ast.FunctionDef)}
     assert members == {"wasm", "description"}

@@ -79,7 +79,9 @@ def _name(element: libsbml.SBase) -> str:
         if target is not None and target():
             return f"{kind} of {target()}"
     parent = element.getParentSBMLObject()
-    while parent is not None and not (parent.isSetIdAttribute() and parent.getIdAttribute()):
+    while parent is not None and not (
+        parent.isSetIdAttribute() and parent.getIdAttribute()
+    ):
         parent = parent.getParentSBMLObject()
     if parent is not None:
         return f"{kind} of {parent.getElementName()} {parent.getIdAttribute()}"
@@ -129,7 +131,9 @@ def prepare(path: Path) -> str:
     """
     doc = libsbml.readSBMLFromFile(str(path))
     if doc.getModel() is None:
-        raise PreparationError(f"cannot read the model: {_first_error(doc) or 'no model'}")
+        raise PreparationError(
+            f"cannot read the model: {_first_error(doc) or 'no model'}"
+        )
     if doc.getPlugin("comp") is not None:
         props = libsbml.ConversionProperties()
         props.addOption("flatten comp", True)
@@ -149,9 +153,14 @@ def prepare(path: Path) -> str:
         uri = doc.getPlugin(index).getURI()
         if "/distrib/" in uri:
             prefix = doc.getPlugin(index).getPrefix()
-            if doc.enablePackage(uri, prefix, False) != libsbml.LIBSBML_OPERATION_SUCCESS:
+            if (
+                doc.enablePackage(uri, prefix, False)
+                != libsbml.LIBSBML_OPERATION_SUCCESS
+            ):
                 raise PreparationError(f"cannot strip the package distrib ({uri})")
-    if (doc.getLevel(), doc.getVersion()) != (3, 2) and not doc.setLevelAndVersion(3, 2, False):
+    if (doc.getLevel(), doc.getVersion()) != (3, 2) and not doc.setLevelAndVersion(
+        3, 2, False
+    ):
         raise PreparationError(
             f"cannot convert L{doc.getLevel()}V{doc.getVersion()} to L3V2: {_first_error(doc)}"
         )
@@ -159,7 +168,9 @@ def prepare(path: Path) -> str:
     if not sbml:
         raise PreparationError("cannot write the prepared model")
     if "distrib" in sbml.split(">", 2)[1]:
-        raise PreparationError("the package distrib is still declared after stripping it")
+        raise PreparationError(
+            "the package distrib is still declared after stripping it"
+        )
     return sbml
 
 
@@ -176,11 +187,21 @@ def resolve_source(
     if source.startswith("sbmlsim:"):
         import sbmlsim
 
-        path = Path(str(resources.files("sbmlsim.resources") / "models" / source.split(":", 1)[1]))
+        path = Path(
+            str(
+                resources.files("sbmlsim.resources")
+                / "models"
+                / source.split(":", 1)[1]
+            )
+        )
         record["sbmlsim"] = sbmlsim.__version__
     elif source.startswith("https://"):
         downloads.mkdir(parents=True, exist_ok=True)
-        path = downloads / hashlib.sha256(source.encode()).hexdigest()[:16] / Path(source).name
+        path = (
+            downloads
+            / hashlib.sha256(source.encode()).hexdigest()[:16]
+            / Path(source).name
+        )
         if not path.exists():
             path.parent.mkdir(parents=True, exist_ok=True)
             with urllib.request.urlopen(source, timeout=60) as response:
@@ -191,7 +212,10 @@ def resolve_source(
         root = Path(os.environ.get(variable) or (base / checkouts[name])).resolve()
         path = root / relative
         commit = subprocess.run(
-            ["git", "-C", str(root), "rev-parse", "HEAD"], check=False, capture_output=True, text=True
+            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            check=False,
+            capture_output=True,
+            text=True,
         )
         if commit.returncode == 0:
             record["commit"] = commit.stdout.strip()
@@ -259,12 +283,18 @@ def prepare_bench(toml: Path) -> int:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(sbml, encoding="utf-8")
         record["prepared_sha256"] = sha256(target)
-        atol = roadrunner_atol(target, model["absolute_tolerance"], model["end"], model.get("preinit", []))
-        atol_path(target).write_text(json.dumps(atol, indent=1) + "\n", encoding="utf-8")
+        atol = roadrunner_atol(
+            target, model["absolute_tolerance"], model["end"], model.get("preinit", [])
+        )
+        atol_path(target).write_text(
+            json.dumps(atol, indent=1) + "\n", encoding="utf-8"
+        )
         records[name] = record
         print(f"{name}: {target}")
     for out in out_dirs:
-        (out / "prepared.json").write_text(json.dumps(records, indent=2) + "\n", encoding="utf-8")
+        (out / "prepared.json").write_text(
+            json.dumps(records, indent=2) + "\n", encoding="utf-8"
+        )
     return failed
 
 
@@ -273,7 +303,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("model", nargs="?", type=Path, help="the SBML file")
     parser.add_argument("-o", "--output", type=Path, help="the prepared SBML file")
-    parser.add_argument("--bench", type=Path, help="prepare every model of a benchmark file")
+    parser.add_argument(
+        "--bench", type=Path, help="prepare every model of a benchmark file"
+    )
     args = parser.parse_args()
     if args.bench is not None:
         return 1 if prepare_bench(args.bench) else 0

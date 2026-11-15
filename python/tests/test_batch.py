@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 import sbmlsim_core
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -78,7 +77,9 @@ def test_a_batch_gives_one_result_per_request_in_order(decay):
 
 
 def test_a_batch_does_not_depend_on_the_number_of_threads(decay):
-    requests = [request(end=10.0, steps=10, preinit=[("y", 1.0 * n)]) for n in range(64)]
+    requests = [
+        request(end=10.0, steps=10, preinit=[("y", 1.0 * n)]) for n in range(64)
+    ]
     one = decay.simulate_many(requests, threads=1)
     many = decay.simulate_many(requests, threads=8)
     serial = [decay.instance().simulate(r) for r in requests]
@@ -91,7 +92,9 @@ def test_a_batch_does_not_depend_on_how_it_is_sliced(decay):
     # slice and 48 are three. The last 16 are the comparison, not the first: as the third
     # slice of the long batch each of them runs on an instance which has simulated 16 points
     # before it, as a batch of their own on a fresh instance, and both give the same bytes.
-    requests = [request(end=10.0, steps=10, preinit=[("y", 1.0 * n)]) for n in range(48)]
+    requests = [
+        request(end=10.0, steps=10, preinit=[("y", 1.0 * n)]) for n in range(48)
+    ]
     three_slices = decay.simulate_many(requests, threads=2)
     one_slice = decay.simulate_many(requests[32:], threads=2)
     assert len(three_slices) == 48 and len(one_slice) == 16
@@ -100,7 +103,9 @@ def test_a_batch_does_not_depend_on_how_it_is_sliced(decay):
 
 
 def test_a_batch_without_threads_gives_the_results_of_one_thread(decay):
-    requests = [request(end=10.0, steps=10, preinit=[("y", 1.0 * n)]) for n in range(32)]
+    requests = [
+        request(end=10.0, steps=10, preinit=[("y", 1.0 * n)]) for n in range(32)
+    ]
     every = decay.simulate_many(requests)
     one = decay.simulate_many(requests, threads=1)
     for a, b in zip(every, one, strict=True):
@@ -109,15 +114,17 @@ def test_a_batch_without_threads_gives_the_results_of_one_thread(decay):
 
 def test_a_batch_over_the_steps_of_the_integrator_is_ragged(decay):
     # the steps of the integrator depend on the point, so the tables differ in their rows
-    requests = [request(end=end, output="integrator_steps") for end in (1.0, 10.0, 100.0)]
+    requests = [
+        request(end=end, output="integrator_steps") for end in (1.0, 10.0, 100.0)
+    ]
     results = decay.simulate_many(requests, threads=2)
     rows = [out.values.shape[0] for out in results]
     assert len(set(rows)) == len(rows), rows
-    for out, end in zip(results, (1.0, 10.0, 100.0)):
+    for out, end in zip(results, (1.0, 10.0, 100.0), strict=True):
         assert out.values[0, 0] == 0.0
         assert out.values[-1, 0] == end
     serial = decay.simulate_many(requests, threads=1)
-    for a, b in zip(results, serial):
+    for a, b in zip(results, serial, strict=True):
         assert a.values.shape == b.values.shape
         assert (a.values == b.values).all()
 
@@ -126,7 +133,11 @@ def test_a_per_state_absolute_tolerance_is_one_value_per_state(decay):
     n_states = 1  # y of the decay model
     scalar = decay.simulate_many([request(end=10.0, steps=10)])[0]
     per_state = decay.simulate_many(
-        [request(end=10.0, steps=10, absolute_tolerance={"per_state": [1e-12] * n_states})]
+        [
+            request(
+                end=10.0, steps=10, absolute_tolerance={"per_state": [1e-12] * n_states}
+            )
+        ]
     )[0]
     assert (scalar.values == per_state.values).all()
     wrong = decay.simulate_many(

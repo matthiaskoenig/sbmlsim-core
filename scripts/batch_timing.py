@@ -21,8 +21,9 @@ import argparse
 import json
 import os
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import sbmlsim_core
 
@@ -68,7 +69,9 @@ KINDS: dict[str, Callable[[int], dict[str, Any]]] = {
         preinit=[("y", 1.0 + n)],
     ),
     "large table": lambda n: request(end=1e4, steps=20_000, preinit=[("y", 1.0 + n)]),
-    "short timecourse": lambda n: request(end=10.0, steps=100, preinit=[("y", 1.0 + n)]),
+    "short timecourse": lambda n: request(
+        end=10.0, steps=100, preinit=[("y", 1.0 + n)]
+    ),
 }
 
 
@@ -118,7 +121,9 @@ def report(name: str, measured: dict[str, Any]) -> None:
     print(f"  a python loop on one instance   {loop:7.3f} s")
     for threads, seconds in batches.items():
         speedup = f"speedup {one / seconds:5.2f}x" if seconds else ""
-        print(f"  simulate_many(threads={threads:<3})        {seconds:7.3f} s   {speedup}")
+        print(
+            f"  simulate_many(threads={threads:<3})        {seconds:7.3f} s   {speedup}"
+        )
     print(f"  simulate_many() (every CPU)     {measured['default']:7.3f} s")
 
 
