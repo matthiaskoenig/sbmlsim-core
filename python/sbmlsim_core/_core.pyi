@@ -16,6 +16,9 @@ class SbmlsimCoreError(Exception):
 class CompileError(SbmlsimCoreError):
     """An SBML model which cannot be compiled."""
 
+class LoadError(SbmlsimCoreError):
+    """A model or a runtime which cannot be loaded, or an instance which cannot be made."""
+
 class CompiledModel:
     """A model compiled to `model.wasm` and its description (`model/2`)."""
 

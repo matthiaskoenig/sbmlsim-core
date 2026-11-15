@@ -7,7 +7,7 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use sbmlsim_abi::ModelDescription;
 
-use crate::errors::SbmlsimCoreError;
+use crate::errors::LoadError;
 use crate::simulate::{Instance, batch};
 
 /// `engine.wasm` and `mathlib.wasm`, compiled once per runtime (a Cranelift compile of the
@@ -26,7 +26,7 @@ impl Runtime {
     #[pyo3(signature = (max_memory_bytes=None))]
     fn new(max_memory_bytes: Option<usize>) -> PyResult<Runtime> {
         let mut runtime = sbmlsim_host::Runtime::embedded()
-            .map_err(|error| SbmlsimCoreError::new_err(format!("{error:#}")))?;
+            .map_err(|error| LoadError::new_err(format!("{error:#}")))?;
         if let Some(bytes) = max_memory_bytes {
             runtime = runtime.with_max_memory(bytes);
         }
@@ -35,7 +35,7 @@ impl Runtime {
 
     /// Loads `model.wasm` with its description (`model/2`), as `CompiledModel.wasm` and
     /// `CompiledModel.description` give them. Raises `ValueError` for a description which is
-    /// none and `SbmlsimCoreError` for a model which does not match it.
+    /// none and `LoadError` for a model which does not match it.
     fn load(
         &self,
         py: Python<'_>,
@@ -46,7 +46,7 @@ impl Runtime {
             .map_err(|error| PyValueError::new_err(format!("description: {error}")))?;
         let model = py
             .detach(|| self.runtime.load(wasm, &description))
-            .map_err(|error| SbmlsimCoreError::new_err(format!("{error:#}")))?;
+            .map_err(|error| LoadError::new_err(format!("{error:#}")))?;
         Ok(LoadedModel {
             model: Arc::new(model),
         })
@@ -74,7 +74,7 @@ impl LoadedModel {
     fn initial_values(&self, py: Python<'_>) -> PyResult<HashMap<String, f64>> {
         let values = py
             .detach(|| self.model.initial_selections())
-            .map_err(|error| SbmlsimCoreError::new_err(format!("{error:#}")))?;
+            .map_err(|error| LoadError::new_err(format!("{error:#}")))?;
         Ok(self
             .model
             .description()
@@ -90,7 +90,7 @@ impl LoadedModel {
     fn instance(&self, py: Python<'_>) -> PyResult<Instance> {
         let instance = py
             .detach(|| self.model.instantiate())
-            .map_err(|error| SbmlsimCoreError::new_err(format!("{error:#}")))?;
+            .map_err(|error| LoadError::new_err(format!("{error:#}")))?;
         Ok(Instance::new(instance))
     }
 

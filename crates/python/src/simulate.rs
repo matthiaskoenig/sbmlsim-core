@@ -14,7 +14,7 @@ use rayon::prelude::*;
 use sbmlsim_abi::{SimulationRequest, SimulationResult, SimulationStats};
 use sbmlsim_engine::EngineError;
 
-use crate::errors::{InternalError, PointError, SbmlsimCoreError, poisoned, simulation_error};
+use crate::errors::{InternalError, LoadError, PointError, poisoned, simulation_error};
 
 /// A model in an engine of its own; simulates one request after the other.
 #[pyclass(frozen, module = "sbmlsim_core")]
@@ -237,9 +237,7 @@ pub(crate) fn batch(
     let threads = threads.min(requests.len());
     let pool = py
         .detach(|| rayon::ThreadPoolBuilder::new().num_threads(threads).build())
-        .map_err(|error| {
-            SbmlsimCoreError::new_err(format!("no pool of {threads} threads: {error}"))
-        })?;
+        .map_err(|error| LoadError::new_err(format!("no pool of {threads} threads: {error}")))?;
     let slots: Vec<Slot> = (0..threads).map(|_| Mutex::new(None)).collect();
     let mut results = Vec::with_capacity(requests.len());
     for slice in requests.chunks(SLICE_PER_THREAD * threads) {

@@ -18,6 +18,7 @@ import sbmlsim_core
 from sbmlsim_core import (
     CompiledModel,
     CompileError,
+    LoadError,
     Instance,
     IntegrationError,
     InternalError,
@@ -94,6 +95,7 @@ def hierarchy() -> None:
     simulation = InternalError()
     base: SbmlsimCoreError = simulation
     base = CompileError()
+    base = LoadError()
     base = SimulationError()
     print(base)
 

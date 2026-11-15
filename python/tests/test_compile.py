@@ -65,8 +65,15 @@ def test_compile_refuses_a_level_2_document(level2_sbml: str) -> None:
         sbmlsim_core.compile_sbml(level2_sbml)
 
 
+def test_loading_a_model_which_is_no_module_raises_a_load_error(decay_sbml: str) -> None:
+    compiled = sbmlsim_core.compile_sbml(decay_sbml)
+    with pytest.raises(sbmlsim_core.LoadError):
+        sbmlsim_core.Runtime().load(b"not a module", compiled.description)
+
+
 def test_the_errors_are_one_family() -> None:
     assert issubclass(sbmlsim_core.CompileError, sbmlsim_core.SbmlsimCoreError)
+    assert issubclass(sbmlsim_core.LoadError, sbmlsim_core.SbmlsimCoreError)
     assert issubclass(sbmlsim_core.SbmlsimCoreError, Exception)
 
 

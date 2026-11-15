@@ -16,6 +16,12 @@ pyo3::create_exception!(
     SbmlsimCoreError,
     "An SBML model which cannot be compiled: not a document of level 3, not valid, or using a feature the engine does not simulate."
 );
+pyo3::create_exception!(
+    sbmlsim_core,
+    LoadError,
+    SbmlsimCoreError,
+    "A model or a runtime which cannot be loaded: a model which does not match its description, an engine which does not start, an instance which cannot be made."
+);
 
 pyo3::create_exception!(
     sbmlsim_core,

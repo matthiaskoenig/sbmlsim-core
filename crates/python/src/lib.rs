@@ -11,8 +11,8 @@ use sbmlsim_abi::{MODEL_CONTRACT, SIMULATION_CONTRACT};
 
 use compile::{CompiledModel, compile_sbml};
 use errors::{
-    CompileError, IntegrationError, InternalError, PointError, RequestError, SbmlsimCoreError,
-    SimulationError, UnsupportedError,
+    CompileError, IntegrationError, InternalError, LoadError, PointError, RequestError,
+    SbmlsimCoreError, SimulationError, UnsupportedError,
 };
 use runtime::{LoadedModel, Runtime};
 use simulate::{Instance, SimulationOutput};
@@ -25,6 +25,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add("SbmlsimCoreError", m.py().get_type::<SbmlsimCoreError>())?;
     m.add("CompileError", m.py().get_type::<CompileError>())?;
+    m.add("LoadError", m.py().get_type::<LoadError>())?;
     m.add("SimulationError", m.py().get_type::<SimulationError>())?;
     m.add("RequestError", m.py().get_type::<RequestError>())?;
     m.add("IntegrationError", m.py().get_type::<IntegrationError>())?;
