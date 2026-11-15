@@ -8,5 +8,6 @@ description = "Compiles SBML to model.wasm and its description"
 
 [dependencies]
 sbmlsim-abi = { path = "../abi" }
+sbmlsim-codegen = { path = "../codegen" }
 sbmlsim-ir = { path = "../ir" }
 sbmlsim-sbml = { path = "../sbml" }

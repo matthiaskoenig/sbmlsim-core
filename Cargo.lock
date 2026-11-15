@@ -1263,12 +1263,21 @@ dependencies = [
 [[package]]
 name = "sbmlsim-codegen"
 version = "0.1.0"
+dependencies = [
+ "sbmlsim-abi",
+ "sbmlsim-ir",
+ "sbmlsim-mathlib",
+ "sbmlsim-sbml",
+ "wasm-encoder 0.263.0",
+ "wasmparser 0.263.0",
+]
 
 [[package]]
 name = "sbmlsim-compiler"
 version = "0.1.0"
 dependencies = [
  "sbmlsim-abi",
+ "sbmlsim-codegen",
  "sbmlsim-ir",
  "sbmlsim-sbml",
 ]
@@ -1298,6 +1307,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "sbmlsim-abi",
+ "sbmlsim-compiler",
  "sbmlsim-engine",
  "serde",
  "serde_json",
@@ -1851,8 +1861,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4f5fa0a054ae153606df820eb0a84213e28cda41bbe04ba2628e71b6ba100fcb"
 dependencies = [
  "bitflags",
+ "hashbrown 0.17.1",
  "indexmap",
  "semver",
+ "serde",
 ]
 
 [[package]]

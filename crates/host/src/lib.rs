@@ -21,7 +21,8 @@ use sbmlsim_engine::EngineError;
 use serde::Deserialize;
 use wasmtime::wasmparser::{Parser, Payload};
 use wasmtime::{
-    CallHook, Config, Engine, ExternType, Linker, Memory, MemoryType, Module, Store, TypedFunc,
+    CallHook, Config, Engine, ExternType, FuncType, Linker, Memory, MemoryType, Module, Store,
+    TypedFunc,
 };
 use wasmtime_wasi::WasiCtxBuilder;
 use wasmtime_wasi::p1::{self, WasiP1Ctx};
@@ -150,10 +151,11 @@ impl Runtime {
 
     /// Instantiates a model with its description and loads it into a new engine.
     ///
-    /// Checks the contract of the description, that the model imports only `env.memory` and
-    /// functions of mathlib and has no data segment and no start function (it would write into
-    /// the memory of the engine), and gives the error of `engine_load` for a description the
-    /// engine refuses.
+    /// Checks the contract of the description and the module of the model: it imports
+    /// `env.memory` and otherwise only functions of mathlib (each of the type mathlib exports),
+    /// and defines no memory, no mutable global, no data segment and no start function (a model
+    /// holds no state and writes nothing into the memory of the engine but where it is told);
+    /// gives the error of `engine_load` for a description the engine refuses.
     pub fn instantiate(
         &self,
         model_wasm: &[u8],
@@ -164,17 +166,28 @@ impl Runtime {
         let model_module = Module::new(&self.engine, model_wasm)
             .map_err(anyhow::Error::from)
             .context("model.wasm does not compile")?;
+        let mut memory_imported = false;
         for import in model_module.imports() {
             match (import.module(), import.name(), import.ty()) {
-                ("env", "memory", ExternType::Memory(_)) => {}
-                ("math", name, ExternType::Func(_))
-                    if self.mathlib_module.get_export(name).is_some() => {}
+                ("env", "memory", ExternType::Memory(_)) => memory_imported = true,
+                ("math", name, ExternType::Func(ty)) => {
+                    match self.mathlib_module.get_export(name) {
+                        Some(ExternType::Func(math)) if FuncType::eq(&ty, &math) => {}
+                        Some(ExternType::Func(math)) => bail!(
+                            "model.wasm imports math.{name} as {ty}, mathlib exports it as {math}"
+                        ),
+                        _ => {
+                            bail!("model.wasm imports math.{name}, which is no function of mathlib")
+                        }
+                    }
+                }
                 (module, name, _) => bail!(
                     "model.wasm imports {module}.{name}, which is neither env.memory nor a \
                      function of mathlib"
                 ),
             }
         }
+        ensure!(memory_imported, "model.wasm does not import env.memory");
         let mut store = store(&self.engine);
         let memory = Memory::new(&mut store, self.memory_type.clone())?;
         let mut linker = linker(&self.engine)?;
@@ -226,7 +239,8 @@ impl Runtime {
     }
 }
 
-/// Checks that a model has no data segment and no start function.
+/// Checks that a model defines no memory, no mutable global, no data segment and no start
+/// function.
 fn check_model_sections(model_wasm: &[u8]) -> anyhow::Result<()> {
     for payload in Parser::new(0).parse_all(model_wasm) {
         match payload.context("model.wasm is not a WebAssembly module")? {
@@ -234,6 +248,18 @@ fn check_model_sections(model_wasm: &[u8]) -> anyhow::Result<()> {
                 bail!("model.wasm has a data segment, it has no memory content of its own")
             }
             Payload::StartSection { .. } => bail!("model.wasm has a start function"),
+            Payload::MemorySection(section) if section.count() > 0 => {
+                bail!("model.wasm defines a memory, it imports env.memory")
+            }
+            Payload::GlobalSection(section) => {
+                for global in section {
+                    let global = global.context("model.wasm is not a WebAssembly module")?;
+                    ensure!(
+                        !global.ty.mutable,
+                        "model.wasm defines a mutable global, a model holds no state"
+                    );
+                }
+            }
             _ => {}
         }
     }

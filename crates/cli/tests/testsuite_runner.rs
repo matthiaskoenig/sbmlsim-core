@@ -324,17 +324,16 @@ fn command_writes_a_result_per_case() {
             .contains(&r["status"].as_str().unwrap())
         );
     }
-    // every case is not compiled now: the 5 cases are listed or regressions, never missing
-    assert_eq!(output.status.code(), Some(1));
-    let n_differences = written["differences"].as_array().unwrap().len();
-    let n_listed = written["results"].as_array().unwrap().len() - n_differences;
-    assert!(n_differences <= 5 && n_listed <= 5);
-    assert_eq!(n_differences, 5 - n_listed);
-    assert!(String::from_utf8_lossy(&output.stdout).contains("not_compiled"));
+    // the 5 cases pass, as in the baseline
+    assert!(results.iter().all(|r| r["status"] == "pass"), "{results:?}");
+    assert!(written["differences"].as_array().unwrap().is_empty());
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("pass             5"), "{stdout}");
+    assert!(stdout.contains("no difference to the baseline"), "{stdout}");
 }
 
 #[test]
-#[ignore = "passes once the compiler generates code (Task 11)"]
 fn runner_on_case_00001() {
     let Some(dir) = cases_dir() else { return };
     let runtime = sbmlsim_host::Runtime::embedded().unwrap();

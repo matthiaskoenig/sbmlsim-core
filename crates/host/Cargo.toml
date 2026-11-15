@@ -19,6 +19,8 @@ wasmtime = { version = "50.0.1", features = ["call-hook", "reexport-wasmparser"]
 wasmtime-wasi = "50.0.1"
 
 [dev-dependencies]
+# compiled models, whose description is compared with what their module computes
+sbmlsim-compiler = { path = "../compiler" }
 # the native test model `Decay`, which the wasm chain is compared with
 sbmlsim-engine = { path = "../engine", features = ["test-models"] }
 serde_json.workspace = true

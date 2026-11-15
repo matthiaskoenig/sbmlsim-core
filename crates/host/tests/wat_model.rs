@@ -241,6 +241,83 @@ fn models_with_other_imports_are_refused() {
     );
 }
 
+/// The error of instantiating a model.
+fn refusal(wasm: &[u8]) -> String {
+    format!(
+        "{:#}",
+        runtime().instantiate(wasm, &description()).err().unwrap()
+    )
+}
+
+/// `decay.wat` with `extra` after its imports.
+fn decay_with(extra: &str) -> Vec<u8> {
+    let imports = "(import \"math\" \"math_log\" (func $log (param f64) (result f64)))";
+    let wat = decay_wat();
+    assert!(wat.contains(imports));
+    wat::parse_str(wat.replace(imports, &format!("{imports}\n  {extra}"))).unwrap()
+}
+
+/// `decay.wat` with a memory of its own instead of `env.memory`.
+fn own_memory_wat() -> String {
+    let imports = "(import \"math\" \"math_log\" (func $log (param f64) (result f64)))";
+    decay_wat()
+        .replace("(import \"env\" \"memory\" (memory 0))", "")
+        .replace(imports, &format!("{imports}\n  (memory 1)"))
+}
+
+#[test]
+fn models_with_state_or_memory_of_their_own_are_refused() {
+    let cases = [
+        (
+            decay_with("(data (i32.const 0) \"x\")"),
+            "has a data segment",
+        ),
+        (decay_with("(func $s) (start $s)"), "has a start function"),
+        (
+            decay_with("(global $g (mut f64) (f64.const 0))"),
+            "defines a mutable global",
+        ),
+        (
+            wat::parse_str(own_memory_wat()).unwrap(),
+            "defines a memory",
+        ),
+        (
+            wat::parse_str("(module)").unwrap(),
+            "does not import env.memory",
+        ),
+    ];
+    for (wasm, expected) in cases {
+        let message = refusal(&wasm);
+        assert!(message.contains(expected), "{expected}: {message}");
+    }
+    // an immutable global is no state
+    let wasm = decay_with("(global $g f64 (f64.const 0))");
+    runtime().instantiate(&wasm, &description()).unwrap();
+}
+
+#[test]
+fn math_imports_are_functions_of_mathlib() {
+    // the memory mathlib exports is no function of mathlib
+    let message = refusal(&decay_with(
+        "(import \"math\" \"memory\" (func (param f64) (result f64)))",
+    ));
+    assert!(
+        message.contains("math.memory, which is no function of mathlib"),
+        "{message}"
+    );
+    let message = refusal(&decay_with("(import \"math\" \"memory\" (memory 0))"));
+    assert!(message.contains("math.memory"), "{message}");
+    // a function of mathlib with another signature
+    let message = refusal(&decay_with(
+        "(import \"math\" \"math_pow\" (func (param f64) (result f64)))",
+    ));
+    assert!(message.contains("mathlib exports it as"), "{message}");
+    let message = refusal(&decay_with(
+        "(import \"math\" \"math_nothing\" (func (param f64) (result f64)))",
+    ));
+    assert!(message.contains("math.math_nothing"), "{message}");
+}
+
 #[test]
 fn a_trap_poisons_the_instance() {
     let rhs = "(f64.store (local.get $ydot)\n      \

@@ -113,10 +113,51 @@ pub struct Entity {
     pub id: String,
     /// What the entity is.
     pub kind: EntityKind,
-    /// The initial value as loaded.
+    /// The initial value as loaded; JSON has no number for NaN and the infinities, so they are
+    /// the strings `"NaN"`, `"inf"` and `"-inf"` (as the CSV of the command line writes them).
+    #[serde(with = "nonfinite")]
     pub initial: f64,
     /// Whether a change may set it.
     pub settable: bool,
+}
+
+/// A number which may be NaN or infinite, as JSON: a finite number is a number, NaN and the
+/// infinities are the strings `"NaN"`, `"inf"` and `"-inf"` (`serde_json` would write `null`,
+/// which reads back as no number).
+mod nonfinite {
+    use serde::de::Error as _;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(x: &f64, serializer: S) -> Result<S::Ok, S::Error> {
+        match *x {
+            x if x.is_finite() => serializer.serialize_f64(x),
+            x if x.is_nan() => serializer.serialize_str("NaN"),
+            x if x > 0.0 => serializer.serialize_str("inf"),
+            _ => serializer.serialize_str("-inf"),
+        }
+    }
+
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Number {
+        Finite(f64),
+        Text(String),
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f64, D::Error> {
+        let text = match Number::deserialize(deserializer)? {
+            Number::Finite(x) => return Ok(x),
+            Number::Text(text) => text,
+        };
+        match text.as_str() {
+            "NaN" => Ok(f64::NAN),
+            "inf" => Ok(f64::INFINITY),
+            "-inf" => Ok(f64::NEG_INFINITY),
+            other => Err(D::Error::custom(format!(
+                "{other:?} is no number (a number, \"NaN\", \"inf\" or \"-inf\")"
+            ))),
+        }
+    }
 }
 
 /// The kind of an [`Entity`].
@@ -280,6 +321,34 @@ mod tests {
             (t.absolute_tolerance, t.relative_tolerance, t.max_time),
             (1e-8, 1e-6, 1e8)
         );
+    }
+
+    #[test]
+    fn initial_values_which_are_not_finite_roundtrip() {
+        let entity = |initial| Entity {
+            id: "x".to_string(),
+            kind: EntityKind::Parameter,
+            initial,
+            settable: true,
+        };
+        for (x, text) in [
+            (f64::NAN, r#""NaN""#),
+            (f64::INFINITY, r#""inf""#),
+            (f64::NEG_INFINITY, r#""-inf""#),
+            (0.1, "0.1"),
+            (-0.0, "-0.0"),
+        ] {
+            let json = serde_json::to_string(&entity(x)).unwrap();
+            assert!(json.contains(&format!(r#""initial":{text}"#)), "{json}");
+            let back: Entity = serde_json::from_str(&json).unwrap();
+            assert!(back.initial.to_bits() == x.to_bits() || (x.is_nan() && back.initial.is_nan()));
+        }
+        let json = r#"{"id":"x","kind":"parameter","initial":"infinity","settable":true}"#;
+        let error = serde_json::from_str::<Entity>(json)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("no number"), "{error}");
+        assert!(serde_json::from_str::<Entity>(&json.replace(r#""infinity""#, "null")).is_err());
     }
 
     #[test]

@@ -296,27 +296,24 @@ fn columns_of(
     req: &SimulationRequest,
 ) -> Result<(Vec<String>, Vec<Column>), EngineError> {
     let selection = |id: &str| -> Result<Column, EngineError> {
-        if id == "time" {
-            return Ok(Column::Time);
+        match desc.selections.iter().find(|s| s.id == id) {
+            Some(s) => Ok(Column::Selection(s.index as usize)),
+            None if id == "time" => Ok(Column::Time),
+            None => Err(request(format!("model {} has no selection {id}", desc.id))),
         }
-        desc.selections
-            .iter()
-            .find(|s| s.id == id)
-            .map(|s| Column::Selection(s.index as usize))
-            .ok_or_else(|| request(format!("model {} has no selection {id}", desc.id)))
     };
     // the first column is always the time of the row (as sbmlsim's `output_columns`): a leading
-    // `time` of the request is that column, else it is prepended; a later `time` is a copy of it
+    // `time` of the request is that column, else it is prepended; a later `time` is a copy of
+    // it, unless the model has an entity `time` (SBML test case 01820), whose value it is
     let rest: Vec<String> = match req.selections.split_first() {
         None => desc.selections.iter().map(|s| s.id.clone()).collect(),
         Some((first, rest)) if first == "time" => rest.to_vec(),
         Some(_) => req.selections.clone(),
     };
-    let names: Vec<String> = std::iter::once("time".to_string()).chain(rest).collect();
-    let columns = names
-        .iter()
-        .map(|id| selection(id))
+    let columns = std::iter::once(Ok(Column::Time))
+        .chain(rest.iter().map(|id| selection(id)))
         .collect::<Result<_, _>>()?;
+    let names: Vec<String> = std::iter::once("time".to_string()).chain(rest).collect();
     Ok((names, columns))
 }
 
@@ -549,6 +546,41 @@ mod tests {
             row_idx: (0..n as u32).collect(),
         });
         desc
+    }
+
+    #[test]
+    fn a_later_time_is_the_entity_time_of_a_model_which_has_one() {
+        let req = |selections: &[&str]| SimulationRequest {
+            contract: SIMULATION_CONTRACT.to_string(),
+            start: 0.0,
+            end: 1.0,
+            output: Output::Uniform { steps: 1 },
+            preinit: vec![],
+            changes: vec![],
+            steady_state: None,
+            selections: selections.iter().map(|s| s.to_string()).collect(),
+            settings: IntegratorSettings::default(),
+            seed: 0,
+        };
+        let model = Decay { k: 0.5 };
+        let mut desc = model.description();
+        let columns = |desc: &ModelDescription, selections: &[&str]| {
+            columns_of(desc, &req(selections)).unwrap().1
+        };
+        // without an entity time a later time is the time of the row
+        assert!(matches!(
+            columns(&desc, &["time", "y", "time"])[..],
+            [Column::Time, Column::Selection(0), Column::Time]
+        ));
+        // with one, it is its value; the first column is still the time of the row
+        desc.selections[1].id = "time".to_string();
+        assert!(matches!(
+            columns(&desc, &["time", "y", "time"])[..],
+            [Column::Time, Column::Selection(0), Column::Selection(1)]
+        ));
+        let result = simulate(&model, &desc, &req(&["time", "time"])).unwrap();
+        assert_eq!(result.columns, ["time", "time"]);
+        assert_eq!(result.values, [0.0, 2f64.ln() / 0.5, 1.0, 2f64.ln() / 0.5]);
     }
 
     #[test]

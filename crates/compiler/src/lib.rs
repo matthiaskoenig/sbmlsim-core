@@ -1,9 +1,9 @@
 //! The compiler: SBML to `model.wasm` and its [`ModelDescription`].
 //!
-//! [`compile`] reads the SBML ([`sbmlsim_sbml::read`]) and builds the model representation
-//! ([`sbmlsim_ir::build`]), so a refusal of the reader or of the builder surfaces with its own
-//! message. The generation of the code is not there yet: it ends with
-//! [`CompileError::Unsupported`] for `code generation`.
+//! [`compile`] reads the SBML ([`sbmlsim_sbml::read`]), builds the model representation
+//! ([`sbmlsim_ir::build`]) and emits the module and its description ([`sbmlsim_codegen::emit`]),
+//! so a refusal of the reader, of the builder or of the code generation surfaces with its own
+//! message.
 //!
 //! The crate does no file system or OS access, so it builds for `wasm32-unknown-unknown`.
 
@@ -43,11 +43,9 @@ pub struct CompiledModel {
 pub fn compile(sbml: &str, options: &CompileOptions) -> Result<CompiledModel, CompileError> {
     let _ = options;
     let doc = sbmlsim_sbml::read(sbml).map_err(from_read_error)?;
-    let _model = sbmlsim_ir::build(&doc)?;
-    Err(CompileError::Unsupported {
-        feature: "code generation".to_string(),
-        element: "model".to_string(),
-    })
+    let model = sbmlsim_ir::build(&doc)?;
+    let (wasm, description) = sbmlsim_codegen::emit(&model)?;
+    Ok(CompiledModel { wasm, description })
 }
 
 /// A failure of the reader as a failure of the compiler.
@@ -75,15 +73,22 @@ mod tests {
 </sbml>"#;
 
     #[test]
-    fn a_readable_model_ends_at_the_code_generation() {
-        let error = compile(DECAY, &CompileOptions::default()).unwrap_err();
-        assert_eq!(
-            error,
-            CompileError::Unsupported {
-                feature: "code generation".to_string(),
-                element: "model".to_string()
-            }
+    fn a_readable_model_compiles() {
+        let compiled = compile(DECAY, &CompileOptions::default()).unwrap();
+        assert!(compiled.wasm.starts_with(b"\0asm"));
+        assert_eq!(compiled.description.id, "m");
+        assert_eq!(compiled.description.parameters[0].id, "k");
+        assert_eq!(compiled.description.parameters[0].initial, 1.0);
+    }
+
+    #[test]
+    fn a_refusal_of_the_code_generation_has_its_message() {
+        let events = DECAY.replace(
+            "</model>",
+            r#"<listOfEvents><event id="E" useValuesFromTriggerTime="true"><trigger initialValue="false" persistent="true"><math xmlns="http://www.w3.org/1998/Math/MathML"><true/></math></trigger></event></listOfEvents></model>"#,
         );
+        let error = compile(&events, &CompileOptions::default()).unwrap_err();
+        assert_eq!(error.to_string(), "events is not supported (E)");
     }
 
     #[test]

@@ -1,0 +1,367 @@
+//! The module and the description of `sbmlsim_codegen::emit`.
+
+use sbmlsim_abi::{self as abi, EntityKind, JacobianKind, MODEL_CONTRACT};
+use sbmlsim_codegen::{MAX_LOCALS, emit};
+use sbmlsim_ir::{Assignment, CompileError, Entity, Expr, Model, Op, Symbol, build};
+use wasmparser::{
+    CompositeInnerType, ExternalKind, FuncType, Operator, Parser, Payload, TypeRef, ValType,
+};
+
+const MATH: &str = r#"xmlns="http://www.w3.org/1998/Math/MathML""#;
+
+/// The model of an SBML Level 3 Version 2 document around a model body; `$` in `body` is the
+/// MathML namespace declaration.
+fn model(body: &str) -> Model {
+    let xml = format!(
+        r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2"><model id="m">{}</model></sbml>"#,
+        body.replace('$', MATH)
+    );
+    build(&sbmlsim_sbml::read(&xml).unwrap()).unwrap()
+}
+
+/// `S -> P` at the rate `q / 49 * S` in `C`, with the assignment rule `a = 2 * q`, the initial
+/// assignment `b = exp(q) + max(q, 1)`, the rate rule `r' = piecewise(1, a > 3, sin(q))` and a
+/// species reference `sr`.
+fn small() -> Model {
+    model(
+        r#"<listOfCompartments><compartment id="C" size="2" constant="true"/></listOfCompartments>
+<listOfSpecies>
+  <species id="S" compartment="C" initialConcentration="3" hasOnlySubstanceUnits="false" boundaryCondition="false" constant="false"/>
+  <species id="P" compartment="C" initialAmount="0" hasOnlySubstanceUnits="true" boundaryCondition="false" constant="false"/>
+</listOfSpecies>
+<listOfParameters>
+  <parameter id="q" value="0.5" units="second" constant="true"/>
+  <parameter id="a" constant="false"/>
+  <parameter id="b" constant="true"/>
+  <parameter id="r" value="0" constant="false"/>
+</listOfParameters>
+<listOfInitialAssignments>
+  <initialAssignment symbol="b"><math $><apply><plus/><apply><exp/><ci>q</ci></apply><apply><max/><ci>q</ci><cn>1</cn></apply></apply></math></initialAssignment>
+</listOfInitialAssignments>
+<listOfRules>
+  <assignmentRule variable="a"><math $><apply><times/><cn>2</cn><ci>q</ci></apply></math></assignmentRule>
+  <rateRule variable="r"><math $><piecewise><piece><cn>1</cn><apply><gt/><ci>a</ci><cn>3</cn></apply></piece><otherwise><apply><sin/><ci>q</ci></apply></otherwise></piecewise></math></rateRule>
+</listOfRules>
+<listOfReactions>
+  <reaction id="J" reversible="false">
+    <listOfReactants><speciesReference id="sr" species="S" stoichiometry="1" constant="true"/></listOfReactants>
+    <listOfProducts><speciesReference species="P" stoichiometry="1" constant="true"/></listOfProducts>
+    <kineticLaw><math $><apply><times/><apply><divide/><ci>q</ci><cn>49</cn></apply><ci>S</ci></apply></math></kineticLaw>
+  </reaction>
+</listOfReactions>"#,
+    )
+}
+
+/// The function types, the imports, the exports and the code of the functions of a module.
+struct Parsed {
+    types: Vec<FuncType>,
+    imports: Vec<(String, String, TypeRef)>,
+    functions: Vec<u32>,
+    exports: Vec<(String, ExternalKind, u32)>,
+    bodies: Vec<Vec<Operator<'static>>>,
+    memories: u32,
+    globals: u32,
+    data: u32,
+    start: bool,
+}
+
+fn parse(wasm: &[u8]) -> Parsed {
+    let wasm: &'static [u8] = Vec::leak(wasm.to_vec());
+    let mut p = Parsed {
+        types: vec![],
+        imports: vec![],
+        functions: vec![],
+        exports: vec![],
+        bodies: vec![],
+        memories: 0,
+        globals: 0,
+        data: 0,
+        start: false,
+    };
+    for payload in Parser::new(0).parse_all(wasm) {
+        match payload.unwrap() {
+            Payload::TypeSection(s) => {
+                for t in s.into_iter_err_on_gc_types() {
+                    p.types.push(t.unwrap());
+                }
+            }
+            Payload::ImportSection(s) => {
+                for i in s.into_imports() {
+                    let i = i.unwrap();
+                    p.imports
+                        .push((i.module.to_string(), i.name.to_string(), i.ty));
+                }
+            }
+            Payload::FunctionSection(s) => {
+                p.functions = s.into_iter().map(|t| t.unwrap()).collect()
+            }
+            Payload::ExportSection(s) => {
+                for e in s {
+                    let e = e.unwrap();
+                    p.exports.push((e.name.to_string(), e.kind, e.index));
+                }
+            }
+            Payload::CodeSectionEntry(body) => {
+                let ops = body
+                    .get_operators_reader()
+                    .unwrap()
+                    .into_iter()
+                    .map(|o| o.unwrap())
+                    .collect();
+                p.bodies.push(ops);
+            }
+            Payload::MemorySection(s) => p.memories += s.count(),
+            Payload::GlobalSection(s) => p.globals += s.count(),
+            Payload::DataSection(s) => p.data += s.count(),
+            Payload::StartSection { .. } => p.start = true,
+            _ => {}
+        }
+    }
+    let _ = CompositeInnerType::Func;
+    p
+}
+
+impl Parsed {
+    /// The number of imported functions.
+    fn n_imported(&self) -> u32 {
+        self.imports
+            .iter()
+            .filter(|(_, _, t)| matches!(t, TypeRef::Func(_)))
+            .count() as u32
+    }
+
+    /// The type of the exported function `name`.
+    fn export_type(&self, name: &str) -> &FuncType {
+        let (_, kind, index) = self
+            .exports
+            .iter()
+            .find(|(n, _, _)| n == name)
+            .unwrap_or_else(|| panic!("no export {name}"));
+        assert_eq!(*kind, ExternalKind::Func);
+        let defined = (index - self.n_imported()) as usize;
+        &self.types[self.functions[defined] as usize]
+    }
+
+    /// The operators of the exported function `name`.
+    fn body(&self, name: &str) -> &[Operator<'static>] {
+        let (_, _, index) = self.exports.iter().find(|(n, _, _)| n == name).unwrap();
+        &self.bodies[(index - self.n_imported()) as usize]
+    }
+}
+
+fn wasm_of(model: &Model) -> Vec<u8> {
+    emit(model).unwrap().0
+}
+
+#[test]
+fn emitted_module_validates() {
+    let wasm = wasm_of(&small());
+    wasmparser::validate(&wasm).unwrap();
+    // a model without states, parameters or rules too
+    wasmparser::validate(&wasm_of(&model(""))).unwrap();
+}
+
+#[test]
+fn imports_only_memory_and_math() {
+    const MATHLIB: [&str; 21] = [
+        "math_exp",
+        "math_log",
+        "math_log10",
+        "math_pow",
+        "math_sqrt",
+        "math_sin",
+        "math_cos",
+        "math_tan",
+        "math_asin",
+        "math_acos",
+        "math_atan",
+        "math_sinh",
+        "math_cosh",
+        "math_tanh",
+        "math_asinh",
+        "math_acosh",
+        "math_atanh",
+        "math_floor",
+        "math_ceil",
+        "math_factorial",
+        "math_fmod",
+    ];
+    let p = parse(&wasm_of(&small()));
+    let (memory, functions): (Vec<_>, Vec<_>) = p
+        .imports
+        .iter()
+        .partition(|(_, _, t)| matches!(t, TypeRef::Memory(_)));
+    assert_eq!(memory.len(), 1);
+    assert_eq!(
+        (memory[0].0.as_str(), memory[0].1.as_str()),
+        ("env", "memory")
+    );
+    let mut names = vec![];
+    for (module, name, ty) in functions {
+        assert_eq!(module, "math");
+        assert!(MATHLIB.contains(&name.as_str()), "{name}");
+        let TypeRef::Func(t) = ty else {
+            panic!("{name} is no function")
+        };
+        let t = &p.types[*t as usize];
+        let arity = if name == "math_pow" || name == "math_fmod" {
+            2
+        } else {
+            1
+        };
+        assert_eq!(t.params(), vec![ValType::F64; arity].as_slice(), "{name}");
+        assert_eq!(t.results(), [ValType::F64], "{name}");
+        names.push(name.as_str());
+    }
+    // only what the model calls: exp, sin (rhs and selections) and nothing else
+    names.sort();
+    assert_eq!(names, ["math_exp", "math_sin"]);
+    assert_eq!((p.memories, p.globals, p.data, p.start), (0, 0, 0, false));
+}
+
+#[test]
+fn exports_model_1_functions() {
+    use ValType::{F64, I32};
+    let p = parse(&wasm_of(&small()));
+    let expected: [(&str, &[ValType], &[ValType]); 12] = [
+        (abi::DEFAULTS, &[I32, I32], &[]),
+        (abi::INIT, &[F64, I32, I32, I32], &[]),
+        (abi::RHS, &[F64, I32, I32, I32], &[]),
+        (abi::JAC, &[F64, I32, I32, I32], &[]),
+        (abi::ROOTS, &[F64, I32, I32, I32], &[]),
+        (abi::TRIGGER, &[I32, F64, I32, I32], &[I32]),
+        (abi::PRIORITY, &[I32, F64, I32, I32], &[F64]),
+        (abi::DELAY, &[I32, F64, I32, I32], &[F64]),
+        (abi::EVENT_VALUES, &[I32, F64, I32, I32, I32], &[]),
+        (abi::EVENT_APPLY, &[I32, I32, I32, I32], &[]),
+        (abi::SELECTIONS, &[F64, I32, I32, I32], &[]),
+        (abi::ASSIGN, &[F64, I32, I32], &[]),
+    ];
+    assert_eq!(p.exports.len(), expected.len());
+    for (name, params, results) in expected {
+        let t = p.export_type(name);
+        assert_eq!((t.params(), t.results()), (params, results), "{name}");
+    }
+}
+
+#[test]
+fn division_kept() {
+    let p = parse(&wasm_of(&small()));
+    let rhs = p.body(abi::RHS);
+    let divisions = rhs
+        .windows(2)
+        .filter(|w| {
+            matches!(w[0], Operator::F64Const { value } if f64::from(value) == 49.0)
+                && matches!(w[1], Operator::F64Div)
+        })
+        .count();
+    // the rate of S and the rate of P each read the kinetic law
+    assert_eq!(divisions, 2, "{rhs:?}");
+    assert!(
+        !rhs.iter()
+            .any(|o| matches!(o, Operator::F64Const { value } if f64::from(*value) == 0.5 / 49.0)),
+        "a folded constant"
+    );
+}
+
+#[test]
+fn the_description_is_of_model_1() {
+    let m = small();
+    let (_, d) = emit(&m).unwrap();
+    assert_eq!(d.contract, MODEL_CONTRACT);
+    assert_eq!(d.id, "m");
+    let ids = |v: &[abi::Entity]| v.iter().map(|e| e.id.clone()).collect::<Vec<_>>();
+    assert_eq!(ids(&d.states), ["r", "S", "P"]);
+    assert_eq!(ids(&d.parameters), ["C", "q", "a", "b", "sr"]);
+    // the values as loaded: the initial evaluations at the time 0
+    let initial = |v: &[abi::Entity], id: &str| v.iter().find(|e| e.id == id).unwrap().initial;
+    assert_eq!(initial(&d.states, "S"), 3.0 * 2.0);
+    assert_eq!(initial(&d.parameters, "a"), 1.0);
+    let b = sbmlsim_mathlib::f::math_exp(0.5) + 1.0;
+    assert_eq!(initial(&d.parameters, "b").to_bits(), b.to_bits());
+    assert!(!d.parameters[2].settable);
+    assert_eq!(
+        d.states[1].kind,
+        EntityKind::Species {
+            compartment: "C".to_string(),
+            has_only_substance_units: false
+        }
+    );
+    // the selections of the model representation, at the indices 0..k
+    let selections: Vec<&str> = d.selections.iter().map(|s| s.id.as_str()).collect();
+    assert_eq!(
+        selections,
+        ["C", "S", "P", "[S]", "[P]", "q", "a", "b", "r", "sr", "J"]
+    );
+    assert!(
+        d.selections
+            .iter()
+            .enumerate()
+            .all(|(i, s)| s.index as usize == i)
+    );
+    assert_eq!(d.units.get("q").map(String::as_str), Some("second"));
+    // the dense pattern with a color per column
+    let JacobianKind::ColoredDifference { pattern, colors } = &d.jacobian else {
+        panic!("{:?}", d.jacobian)
+    };
+    assert_eq!(pattern.col_ptr, [0, 3, 6, 9]);
+    assert_eq!(pattern.row_idx, [0, 1, 2, 0, 1, 2, 0, 1, 2]);
+    assert_eq!(colors, &[0, 1, 2]);
+    assert!(d.events.is_empty());
+}
+
+#[test]
+fn a_model_with_events_is_refused() {
+    let m = model(
+        r#"<listOfParameters><parameter id="x" value="0" constant="false"/></listOfParameters>
+<listOfEvents><event id="E" useValuesFromTriggerTime="true">
+  <trigger initialValue="false" persistent="true"><math $><apply><gt/><csymbol encoding="text" definitionURL="http://www.sbml.org/sbml/symbols/time">t</csymbol><cn>1</cn></apply></math></trigger>
+  <listOfEventAssignments><eventAssignment variable="x"><math $><cn>1</cn></math></eventAssignment></listOfEventAssignments>
+</event></listOfEvents>"#,
+    );
+    assert_eq!(
+        emit(&m).unwrap_err(),
+        CompileError::Unsupported {
+            feature: "events".to_string(),
+            element: "E".to_string()
+        }
+    );
+}
+
+#[test]
+fn a_function_above_the_limits_is_an_error() {
+    // more assignment rules than a function may have locals: rhs holds each in a local
+    let n = MAX_LOCALS + 1;
+    let parameters = (0..=n)
+        .map(|i| Entity {
+            id: format!("p{i}"),
+            kind: sbmlsim_ir::EntityKind::Parameter,
+            default: 1.0,
+            settable: i == 0,
+            unit: None,
+        })
+        .collect();
+    let assignment_rules = (1..=n)
+        .map(|i| Assignment {
+            target: Symbol::Param(i as u32),
+            expr: Expr::apply(Op::Plus, vec![Expr::Symbol(Symbol::Param(i as u32 - 1))]),
+        })
+        .collect();
+    let m = Model {
+        id: None,
+        states: vec![],
+        parameters,
+        assignment_rules,
+        initial: vec![],
+        rates: vec![],
+        events: vec![],
+        selections: vec![],
+    };
+    match emit(&m).unwrap_err() {
+        CompileError::Unsupported { feature, element } => {
+            assert!(feature.contains("limits"), "{feature}");
+            assert_eq!(element, abi::RHS);
+        }
+        other => panic!("{other:?}"),
+    }
+}

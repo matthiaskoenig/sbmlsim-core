@@ -4,5 +4,15 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
+description = "Emits model.wasm and its description from the model representation"
 
 [dependencies]
+sbmlsim-abi = { path = "../abi" }
+sbmlsim-ir = { path = "../ir" }
+# the math functions of a model, evaluated natively for the initial values of the description
+sbmlsim-mathlib = { path = "../mathlib" }
+wasm-encoder = { version = "0.263", default-features = false, features = ["std"] }
+
+[dev-dependencies]
+sbmlsim-sbml = { path = "../sbml" }
+wasmparser = "0.263"

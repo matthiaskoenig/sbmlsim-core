@@ -1,5 +1,8 @@
 //! The command line of sbmlsim-core.
 //!
+//! `sbmlsim-core compile <model.xml> -o <dir>` compiles an SBML file into the directory `dir`
+//! (created when missing): `model.wasm` and `model.json`, the description of the model.
+//!
 //! `sbmlsim-core simulate <model-dir> <request.json> [-o out.csv]` simulates a compiled model
 //! (the directory holds `model.wasm` and `model.json`) with a request of the contract
 //! `simulation/1`, in the wasmtime host with the embedded `engine.wasm` and `mathlib.wasm`, and
@@ -21,6 +24,7 @@ use anyhow::Context;
 use clap::{Parser, Subcommand};
 use sbmlsim_abi::{ModelDescription, SimulationRequest, SimulationResult};
 use sbmlsim_cli::testsuite::{self, TestsuiteArgs};
+use sbmlsim_compiler::CompileOptions;
 use sbmlsim_host::Runtime;
 
 /// The command line of sbmlsim-core.
@@ -34,6 +38,14 @@ struct Cli {
 /// The commands.
 #[derive(Subcommand)]
 enum Command {
+    /// Compiles an SBML file into `model.wasm` and `model.json`.
+    Compile {
+        /// The SBML file.
+        model: PathBuf,
+        /// The directory to write `model.wasm` and `model.json` into.
+        #[arg(short, long)]
+        output: PathBuf,
+    },
     /// Simulates a compiled model with a request and writes the result as CSV.
     Simulate {
         /// The directory of the model, with `model.wasm` and `model.json`.
@@ -50,6 +62,7 @@ enum Command {
 
 fn main() -> ExitCode {
     let result = match Cli::parse().command {
+        Command::Compile { model, output } => compile(&model, &output).map(|()| true),
         Command::Simulate {
             model_dir,
             request,
@@ -71,6 +84,23 @@ fn main() -> ExitCode {
 fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> anyhow::Result<T> {
     let bytes = fs::read(path).with_context(|| format!("cannot read {}", path.display()))?;
     serde_json::from_slice(&bytes).with_context(|| format!("cannot read {}", path.display()))
+}
+
+/// The command `compile`.
+fn compile(model: &Path, output: &Path) -> anyhow::Result<()> {
+    let sbml =
+        fs::read_to_string(model).with_context(|| format!("cannot read {}", model.display()))?;
+    let compiled = sbmlsim_compiler::compile(&sbml, &CompileOptions::default())
+        .with_context(|| format!("cannot compile {}", model.display()))?;
+    fs::create_dir_all(output).with_context(|| format!("cannot create {}", output.display()))?;
+    let write = |name: &str, bytes: &[u8]| {
+        let path = output.join(name);
+        fs::write(&path, bytes).with_context(|| format!("cannot write {}", path.display()))
+    };
+    write("model.wasm", &compiled.wasm)?;
+    let mut json = serde_json::to_vec_pretty(&compiled.description)?;
+    json.push(b'\n');
+    write("model.json", &json)
 }
 
 /// The command `simulate`.

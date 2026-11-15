@@ -24,6 +24,14 @@ cargo test
 cargo build -p sbmlsim-abi --target wasm32-unknown-unknown
 ```
 
+## Compile
+
+The command line compiles an SBML Level 3 Version 2 file into a model directory, `model.wasm` and its description `model.json` (models with events are refused until their code is generated):
+
+```bash
+cargo run -p sbmlsim-cli -- compile crates/host/tests/decay.xml -o decay-model
+```
+
 ## Simulate
 
 `sbmlsim-host` runs a compiled model with `engine.wasm` and `mathlib.wasm` in wasmtime; it embeds both, built by its build script with `WASI_SDK_PATH` (or copied from `SBMLSIM_CORE_WASM_DIR`, a directory with a prebuilt `engine.wasm` and `mathlib.wasm`). The command line simulates a model directory (`model.wasm` and `model.json`) with a request of `simulation/1` and writes the result as CSV:
