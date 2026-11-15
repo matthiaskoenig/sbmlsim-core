@@ -1,0 +1,8 @@
+[submodule "third_party/sundials"]
+	path = third_party/sundials
+	url = https://github.com/LLNL/sundials
+	shallow = true
+[submodule "third_party/SuiteSparse"]
+	path = third_party/SuiteSparse
+	url = https://github.com/DrTimothyAldenDavis/SuiteSparse
+	shallow = true
