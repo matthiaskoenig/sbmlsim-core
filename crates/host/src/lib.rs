@@ -22,8 +22,8 @@
 
 use anyhow::{Context, anyhow, bail, ensure};
 use sbmlsim_abi::{
-    MODEL_CONTRACT, ModelDescription, SimulationRequest, SimulationResult, SimulationStats,
-    check_contract,
+    ENGINE_OUTPUT_FORMAT, ENGINE_SECTION, MODEL_CONTRACT, ModelDescription, SimulationRequest,
+    SimulationResult, SimulationStats, check_contract,
 };
 use sbmlsim_engine::EngineError;
 use serde::Deserialize;
@@ -166,8 +166,10 @@ pub struct Runtime {
 }
 
 impl Runtime {
-    /// Compiles `engine.wasm` and `mathlib.wasm` and checks their imports and exports.
+    /// Compiles `engine.wasm` and `mathlib.wasm` and checks their imports and exports and the
+    /// version of the output of the engine (its custom section [`ENGINE_SECTION`]).
     pub fn new(engine_wasm: &[u8], mathlib_wasm: &[u8]) -> anyhow::Result<Runtime> {
+        check_output_format(engine_wasm)?;
         let engine = Engine::new(&Config::new())?;
         let engine_module = Module::new(&engine, engine_wasm)
             .map_err(anyhow::Error::from)
@@ -443,6 +445,47 @@ fn check_model_sections(model_wasm: &[u8]) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+/// The custom section [`ENGINE_SECTION`] of `engine.wasm`.
+#[derive(Debug, Deserialize)]
+struct EngineSection {
+    /// The version of the output of the engine.
+    output_format: Option<u32>,
+}
+
+/// Checks that `engine.wasm` has one custom section [`ENGINE_SECTION`] whose output format is
+/// [`ENGINE_OUTPUT_FORMAT`], the layout of the output this host reads.
+fn check_output_format(engine_wasm: &[u8]) -> anyhow::Result<()> {
+    let mut sections = Vec::new();
+    for payload in Parser::new(0).parse_all(engine_wasm) {
+        if let Payload::CustomSection(section) =
+            payload.context("engine.wasm is not a WebAssembly module")?
+            && section.name() == ENGINE_SECTION
+        {
+            sections.push(section.data().to_vec());
+        }
+    }
+    let [data] = sections.as_slice() else {
+        bail!(
+            "engine.wasm has {} custom sections {ENGINE_SECTION}, one with the version of its \
+             output is expected (the build script of sbmlsim-host adds it)",
+            sections.len()
+        );
+    };
+    let section: EngineSection = serde_json::from_slice(data)
+        .with_context(|| format!("the custom section {ENGINE_SECTION} of engine.wasm"))?;
+    match section.output_format {
+        Some(ENGINE_OUTPUT_FORMAT) => Ok(()),
+        Some(other) => bail!(
+            "engine.wasm writes the output format {other}, this host reads \
+             {ENGINE_OUTPUT_FORMAT}"
+        ),
+        None => bail!(
+            "engine.wasm declares no output format in its section {ENGINE_SECTION}, this host \
+             reads {ENGINE_OUTPUT_FORMAT}"
+        ),
+    }
 }
 
 /// The error of an output of the engine.

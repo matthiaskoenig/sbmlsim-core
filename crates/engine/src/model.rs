@@ -88,6 +88,7 @@ mod test_models {
     ) -> ModelDescription {
         ModelDescription {
             contract: MODEL_CONTRACT.to_string(),
+            compiler: "native test model".to_string(),
             id: id.to_string(),
             states,
             parameters,
@@ -504,6 +505,7 @@ mod test_models {
                 .collect();
             ModelDescription {
                 contract: MODEL_CONTRACT.to_string(),
+                compiler: "native test model".to_string(),
                 id: "events".to_string(),
                 states: self
                     .states

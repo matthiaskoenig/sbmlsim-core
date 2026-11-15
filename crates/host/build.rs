@@ -6,15 +6,18 @@
 //! imported (and exported) memory, which needs `WASI_SDK_PATH` for the C of `sbmlsim-csolvers`,
 //! and mathlib for `wasm32-unknown-unknown`, both with the release profile.
 //!
-//! `engine.wasm` gets a custom section `sbmlsim.engine` (when it has none) with the JSON
-//! `{"memory_minimum_pages":n}`, the minimum of the memory it imports as `env.memory`: a
-//! JavaScript host creates that memory before it instantiates the engine and has no reflection
-//! of the type of an import of a compiled `WebAssembly.Module` (`js/loader.mjs` reads the
-//! section with `WebAssembly.Module.customSections`). wasmtime ignores custom sections.
+//! `engine.wasm` gets a custom section `sbmlsim.engine` (`sbmlsim_abi::ENGINE_SECTION`, when it
+//! has none) with the JSON `{"memory_minimum_pages":n,"output_format":k}`: the minimum of the
+//! memory it imports as `env.memory`, which a JavaScript host creates before it instantiates
+//! the engine and has no reflection of the type of an import of a compiled `WebAssembly.Module`
+//! (`js/loader.mjs` reads the section with `WebAssembly.Module.customSections`), and the version
+//! of its output (`sbmlsim_abi::ENGINE_OUTPUT_FORMAT`), which both hosts check.
 
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+use sbmlsim_abi::{ENGINE_OUTPUT_FORMAT, ENGINE_SECTION};
 
 /// The variable of a directory with a prebuilt `engine.wasm` and `mathlib.wasm`.
 const WASM_DIR: &str = "SBMLSIM_CORE_WASM_DIR";
@@ -111,9 +114,6 @@ fn main() {
     add_engine_section(&out.join("engine.wasm"));
 }
 
-/// The name of the custom section of `engine.wasm` with the minimum of its memory.
-const ENGINE_SECTION: &str = "sbmlsim.engine";
-
 /// Reads an unsigned LEB128 at `*at`.
 fn leb(bytes: &[u8], at: &mut usize) -> u64 {
     let (mut value, mut shift) = (0u64, 0);
@@ -202,7 +202,8 @@ fn add_engine_section(path: &Path) {
         at = end;
     }
     let minimum = minimum.expect("engine.wasm imports env.memory");
-    let payload = format!(r#"{{"memory_minimum_pages":{minimum}}}"#);
+    let payload =
+        format!(r#"{{"memory_minimum_pages":{minimum},"output_format":{ENGINE_OUTPUT_FORMAT}}}"#);
     let mut section = Vec::new();
     push_leb(&mut section, ENGINE_SECTION.len() as u64);
     section.extend_from_slice(ENGINE_SECTION.as_bytes());

@@ -31,8 +31,18 @@ pub struct SimulationRequest {
     pub selections: Vec<String>,
     /// The settings of the integrator.
     pub settings: IntegratorSettings,
-    /// The seed of the random generator which orders simultaneous events.
+    /// The seed of the random generator which orders simultaneous events; 1 when it is absent
+    /// ([`DEFAULT_SEED`]).
+    #[serde(default = "default_seed")]
     pub seed: u64,
+}
+
+/// The seed of a request without one.
+pub const DEFAULT_SEED: u64 = 1;
+
+/// [`DEFAULT_SEED`], for serde.
+fn default_seed() -> u64 {
+    DEFAULT_SEED
 }
 
 /// The times of the output.

@@ -1,5 +1,6 @@
 {
   "contract": "model/1",
+  "compiler": "native test model",
   "id": "decay",
   "states": [
     {

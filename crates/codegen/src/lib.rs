@@ -854,6 +854,10 @@ pub fn initial_values(model: &Model) -> (Vec<f64>, Vec<f64>) {
     (p, y)
 }
 
+/// The compiler and its version which [`ModelDescription::compiler`] records (the version of the
+/// workspace, which the compiler crates share).
+pub const COMPILER: &str = concat!("sbmlsim-compiler ", env!("CARGO_PKG_VERSION"));
+
 /// The description of a model.
 fn description(model: &Model, jacobian: JacobianIr, discontinuities: &[Expr]) -> ModelDescription {
     let n_roots = sizes(model, &jacobian, discontinuities).roots;
@@ -881,6 +885,7 @@ fn description(model: &Model, jacobian: JacobianIr, discontinuities: &[Expr]) ->
     };
     ModelDescription {
         contract: MODEL_CONTRACT.to_string(),
+        compiler: COMPILER.to_string(),
         id: model.id.clone().unwrap_or_default(),
         states: model
             .states

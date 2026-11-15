@@ -18,6 +18,10 @@ serde_json.workspace = true
 wasmtime = { version = "50.0.1", features = ["call-hook", "reexport-wasmparser"] }
 wasmtime-wasi = "50.0.1"
 
+[build-dependencies]
+# the name of the custom section of `engine.wasm` and the version of its output
+sbmlsim-abi = { path = "../abi" }
+
 [dev-dependencies]
 # compiled models, whose description is compared with what their module computes
 sbmlsim-compiler = { path = "../compiler" }

@@ -11,7 +11,7 @@
 use sbmlsim_abi::{JacobianChoice, ModelDescription};
 use sbmlsim_sbml::ReadError;
 
-pub use sbmlsim_codegen::{Limits, is_above_the_limits};
+pub use sbmlsim_codegen::{COMPILER, Limits, is_above_the_limits};
 pub use sbmlsim_ir::CompileError;
 
 /// What the compiler does besides the translation.

@@ -62,7 +62,16 @@
 //! added with the events, the field `stores_concentration` of [`EntityKind::Species`] with the
 //! changes, the field [`ModelDescription::n_discontinuity_roots`] and the root functions of the
 //! discontinuities after those of the triggers with the root finding of the conditions of
-//! `piecewise` (no version change, nothing was released).
+//! `piecewise`, the field [`ModelDescription::compiler`] (the compiler and its version) before
+//! the contracts were frozen (no version change, nothing was released).
+//!
+//! Revisions of `simulation/1` before its first release: the `seed` of a request is 1 when it
+//! is absent ([`DEFAULT_SEED`]), set before the contracts were frozen (no version change).
+//!
+//! `engine.wasm` carries the custom section [`ENGINE_SECTION`] with the JSON
+//! `{"memory_minimum_pages":n,"output_format":k}`: the minimum of the memory it imports and
+//! [`ENGINE_OUTPUT_FORMAT`], the version of the layout of its output and its counters, which
+//! the hosts check before they use it.
 
 mod request;
 
@@ -76,6 +85,16 @@ pub use request::*;
 pub const MODEL_CONTRACT: &str = "model/1";
 /// The version of the request and the result of a simulation.
 pub const SIMULATION_CONTRACT: &str = "simulation/1";
+
+/// The custom section of `engine.wasm` with the minimum of the memory it imports and the
+/// version of its output.
+pub const ENGINE_SECTION: &str = "sbmlsim.engine";
+
+/// The version of the output of `engine.wasm`: the layout of `engine_output_ptr` (the length of
+/// the JSON header, the header, the values) and of `engine_stats_ptr` (the words of
+/// [`SimulationStats`]), as `crates/engine/src/exports.rs` documents them. A host refuses an
+/// `engine.wasm` of another version.
+pub const ENGINE_OUTPUT_FORMAT: u32 = 1;
 
 /// Export name of `model_defaults`.
 pub const DEFAULTS: &str = "model_defaults";
@@ -134,6 +153,8 @@ pub fn check_contract(found: &str, expected: &str) -> Result<(), ContractError> 
 pub struct ModelDescription {
     /// The contract, [`MODEL_CONTRACT`].
     pub contract: String,
+    /// The compiler which compiled the model and its version, e.g. `sbmlsim-compiler 0.1.0`.
+    pub compiler: String,
     /// The id of the model.
     pub id: String,
     /// The states, in the order of the state vector.
@@ -627,6 +648,7 @@ mod tests {
     fn description_roundtrips_as_json() {
         let d = ModelDescription {
             contract: MODEL_CONTRACT.to_string(),
+            compiler: "sbmlsim-compiler 0.1.0".to_string(),
             id: "m".to_string(),
             states: vec![Entity {
                 id: "S".to_string(),

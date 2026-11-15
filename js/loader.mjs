@@ -42,8 +42,14 @@ export const MODEL_CONTRACT = "model/1";
 /** The most pages of 64 KiB the memory of an instance grows to: 2 GiB, as the wasmtime host. */
 export const MAX_MEMORY_PAGES = 32768;
 
-/** The custom section of `engine.wasm` with the minimum of the memory it imports. */
+/**
+ * The custom section of `engine.wasm` with the minimum of the memory it imports and the version
+ * of its output (`ENGINE_SECTION` of `crates/abi`).
+ */
 export const ENGINE_SECTION = "sbmlsim.engine";
+
+/** The version of the output of `engine.wasm` this loader reads (`ENGINE_OUTPUT_FORMAT`). */
+export const ENGINE_OUTPUT_FORMAT = 1;
 
 const WASI = "wasi_snapshot_preview1";
 
@@ -114,16 +120,32 @@ async function toModule(source, what) {
   }
 }
 
-/** The minimum of the memory `engine.wasm` imports, from its section `sbmlsim.engine`. */
+/**
+ * The minimum of the memory `engine.wasm` imports, from its section `sbmlsim.engine`, whose
+ * output format must be `ENGINE_OUTPUT_FORMAT`.
+ */
 function memoryMinimum(engineModule) {
   const sections = WebAssembly.Module.customSections(engineModule, ENGINE_SECTION);
   if (sections.length !== 1) {
     throw new Error(
-      `engine.wasm has no custom section ${ENGINE_SECTION} with the minimum of its memory ` +
-        "(the build script of sbmlsim-host adds it)",
+      `engine.wasm has no custom section ${ENGINE_SECTION} with the minimum of its memory and ` +
+        "the version of its output (the build script of sbmlsim-host adds it)",
     );
   }
-  const { memory_minimum_pages: pages } = JSON.parse(new TextDecoder().decode(sections[0]));
+  const { memory_minimum_pages: pages, output_format: format } = JSON.parse(
+    new TextDecoder().decode(sections[0]),
+  );
+  if (format === undefined) {
+    throw new Error(
+      `engine.wasm declares no output format in its section ${ENGINE_SECTION}, this loader ` +
+        `reads ${ENGINE_OUTPUT_FORMAT}`,
+    );
+  }
+  if (format !== ENGINE_OUTPUT_FORMAT) {
+    throw new Error(
+      `engine.wasm writes the output format ${format}, this loader reads ${ENGINE_OUTPUT_FORMAT}`,
+    );
+  }
   if (!Number.isInteger(pages) || pages < 0 || pages > MAX_MEMORY_PAGES) {
     throw new Error(`engine.wasm declares a memory of ${pages} pages`);
   }
