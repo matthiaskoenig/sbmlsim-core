@@ -73,9 +73,11 @@
 //! `model_sizes`, their computation by `model_init` and `model_assign`) and the `mask` of
 //! `model_selections`, which make the right hand side and the output faster.
 //!
-//! Revisions of `model/1` before it was replaced by `model/2` (neither was released): the
-//! field [`ModelDescription::n_roots`], the exports `model_sizes` and `model_event_sizes` and
-//! the time of `model_event_apply` were added with the events, the field
+//! `model/1` is the contract of sbmlsim-core 0.1.0; a model compiled for it is compiled again.
+//!
+//! Revisions of `model/1` before its release in 0.1.0: the field [`ModelDescription::n_roots`],
+//! the exports `model_sizes` and `model_event_sizes` and the time of `model_event_apply` were
+//! added with the events, the field
 //! `stores_concentration` of [`EntityKind::Species`] with the changes, the field
 //! [`ModelDescription::n_discontinuity_roots`] and the root functions of the discontinuities
 //! after those of the triggers with the root finding of the conditions of `piecewise`, the
