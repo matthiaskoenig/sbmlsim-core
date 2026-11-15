@@ -190,7 +190,10 @@ pub struct ModelSizes {
     pub jacobian_entries: u32,
     /// The number of root functions.
     pub roots: u32,
-    /// The number of assignments of every event, one per event.
+    /// The number of events.
+    pub events: u32,
+    /// The number of assignments of every event, one per event (of a model whose number of
+    /// events is not the one of its description, the engine does not read them: empty).
     pub assignments: Vec<u32>,
 }
 
@@ -207,6 +210,7 @@ impl ModelSizes {
             selections: desc.selections.len() as u32,
             jacobian_entries: pattern.row_idx.len() as u32,
             roots: desc.n_roots,
+            events: desc.events.len() as u32,
             assignments: desc.events.iter().map(|e| e.n_assignments).collect(),
         }
     }
@@ -220,12 +224,12 @@ impl ModelSizes {
             self.selections,
             self.jacobian_entries,
             self.roots,
-            self.assignments.len() as u32,
+            self.events,
         ]
     }
 
     /// The sizes of the words of `model_sizes` and the numbers of assignments of
-    /// `model_event_sizes` (as many as the last word says).
+    /// `model_event_sizes` (as many as the last word says, or none when they were not read).
     pub fn from_words(words: [u32; Self::WORDS], assignments: Vec<u32>) -> ModelSizes {
         let [
             states,
@@ -233,7 +237,7 @@ impl ModelSizes {
             selections,
             jacobian_entries,
             roots,
-            _events,
+            events,
         ] = words;
         ModelSizes {
             states,
@@ -241,6 +245,7 @@ impl ModelSizes {
             selections,
             jacobian_entries,
             roots,
+            events,
             assignments,
         }
     }
@@ -257,7 +262,7 @@ impl std::fmt::Display for ModelSizes {
             self.selections,
             self.jacobian_entries,
             self.roots,
-            self.assignments.len(),
+            self.events,
             self.assignments
         )
     }

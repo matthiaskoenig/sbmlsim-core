@@ -713,6 +713,7 @@ fn sizes(model: &Model, jacobian: &JacobianIr, discontinuities: &[Expr]) -> Mode
             .map(|e| e.root_functions().len() as u32)
             .sum::<u32>()
             + discontinuities.len() as u32,
+        events: model.events.len() as u32,
         assignments: model
             .events
             .iter()

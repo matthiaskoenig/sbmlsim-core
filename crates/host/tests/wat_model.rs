@@ -284,6 +284,41 @@ fn descriptions_are_checked() {
 }
 
 #[test]
+fn a_model_of_other_events_is_refused_before_its_event_sizes_are_read() {
+    // the model claims 2^31 - 1 events and writes a count of assignments for every one: the
+    // engine compares the number with the description (no event) and reads none of them,
+    // instead of a buffer of 8 GiB which its memory does not hold
+    let sizes = "(i32.store offset=20 (local.get $out) (i32.const 0)))";
+    let event_sizes = "(func (export \"model_event_sizes\") (param $out i32))";
+    let wat = decay_wat();
+    assert!(wat.contains(sizes) && wat.contains(event_sizes));
+    let wat = wat
+        .replace(
+            sizes,
+            "(i32.store offset=20 (local.get $out) (i32.const 2147483647)))",
+        )
+        .replace(
+            event_sizes,
+            "(func (export \"model_event_sizes\") (param $out i32)\n    \
+             (memory.fill (local.get $out) (i32.const 1) (i32.const 2147483647)))",
+        );
+    let message = format!(
+        "{:#}",
+        runtime()
+            .instantiate(&wat::parse_str(wat).unwrap(), &description())
+            .err()
+            .unwrap()
+    );
+    assert!(
+        message.contains(
+            "the model has 1 states, 2 parameters, 2 selections, 1 entries of the \
+             Jacobian, 0 root functions, 2147483647 events of [] assignments"
+        ),
+        "{message}"
+    );
+}
+
+#[test]
 fn models_with_other_imports_are_refused() {
     let wat = decay_wat().replace(
         "(import \"math\" \"math_exp\"",

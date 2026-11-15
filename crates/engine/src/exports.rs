@@ -88,7 +88,10 @@ mod imports {
 /// assignments of each event (`values`, `out` of `model_event_values`) and its selections.
 /// `Engine::new` compares every one of them with the description when the model is loaded
 /// (`check_sizes`), and the engine sizes every slice it passes by the description.
-struct ImportedModel;
+struct ImportedModel {
+    /// The number of events of the description.
+    events: usize,
+}
 
 // SAFETY (every call below but `sizes`): the slices have the lengths the description gives,
 // which `Engine::new` checked to be the sizes of the model, so the imported function reads and
@@ -135,11 +138,19 @@ impl ModelFns for ImportedModel {
         // SAFETY: the model writes its six sizes into the buffer of six `u32`
         unsafe { imports::model_sizes(words.as_mut_ptr()) };
         let words = words.map(u32::from_le);
-        // the number of events the model gives sizes the buffer of its counts of assignments
-        let mut assignments = vec![0u32; words[ModelSizes::WORDS - 1] as usize];
-        // SAFETY: the model writes one `u32` per event of its own, the length of the buffer
-        unsafe { imports::model_event_sizes(assignments.as_mut_ptr()) };
-        ModelSizes::from_words(words, assignments.into_iter().map(u32::from_le).collect())
+        // the counts of assignments are read only when the model has the events of its
+        // description: a buffer sized by the model's own word would be an allocation of
+        // whatever the model writes there, and the sizes differ anyway
+        let events = words[ModelSizes::WORDS - 1] as usize;
+        let assignments = if events == self.events {
+            let mut assignments = vec![0u32; events];
+            // SAFETY: the model writes one `u32` per event of its own, the length of the buffer
+            unsafe { imports::model_event_sizes(assignments.as_mut_ptr()) };
+            assignments.into_iter().map(u32::from_le).collect()
+        } else {
+            Vec::new()
+        };
+        ModelSizes::from_words(words, assignments)
     }
 }
 
@@ -422,7 +433,9 @@ pub unsafe extern "C" fn engine_load(desc_ptr: i32, desc_len: i32) -> i32 {
     let loaded = serde_json::from_slice::<ModelDescription>(bytes)
         .map_err(|e| format!("the description is not one of model/1: {e}"))
         .and_then(|desc| {
-            let model = ImportedModel;
+            let model = ImportedModel {
+                events: desc.events.len(),
+            };
             Engine::new(Box::new(model), desc).map_err(|e| match e {
                 EngineError::Request(message) => message,
                 other => other.to_string(),
