@@ -38,7 +38,7 @@ pub trait ModelFns {
 }
 
 #[cfg(any(test, feature = "test-models"))]
-pub use test_models::{Decay, Robertson};
+pub use test_models::{Decay, Derived, NanRhs, Robertson};
 
 #[cfg(any(test, feature = "test-models"))]
 mod test_models {
@@ -229,6 +229,98 @@ mod test_models {
         }
         fn selections(&self, _t: f64, y: &[f64], _p: &[f64], out: &mut [f64]) {
             out.copy_from_slice(y);
+        }
+        fn assign(&self, _t: f64, _y: &mut [f64], _p: &mut [f64]) {}
+        no_events!();
+    }
+
+    /// `y' = -k y` for `t <= 1` and a right hand side of NaN after, so CVODE cannot go on.
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    pub struct NanRhs;
+
+    impl NanRhs {
+        /// The description of the model.
+        pub fn description(&self) -> ModelDescription {
+            description(
+                "nanrhs",
+                vec![entity("y", 1.0, true)],
+                vec![entity("k", 1.0, true)],
+                selections(&["y"]),
+                SparsityPattern {
+                    n: 1,
+                    col_ptr: vec![0, 1],
+                    row_idx: vec![0],
+                },
+            )
+        }
+    }
+
+    impl ModelFns for NanRhs {
+        fn defaults(&self, p: &mut [f64], y: &mut [f64]) {
+            p[0] = 1.0;
+            y[0] = 1.0;
+        }
+        fn init(&self, _t: f64, _p: &mut [f64], _y: &mut [f64], _fixed: &[u8]) {}
+        fn rhs(&self, t: f64, y: &[f64], p: &[f64], ydot: &mut [f64]) {
+            ydot[0] = if t > 1.0 { f64::NAN } else { -p[0] * y[0] };
+        }
+        fn jac(&self, t: f64, _y: &[f64], p: &[f64], values: &mut [f64]) {
+            values[0] = if t > 1.0 { f64::NAN } else { -p[0] };
+        }
+        fn selections(&self, _t: f64, y: &[f64], _p: &[f64], out: &mut [f64]) {
+            out[0] = y[0];
+        }
+        fn assign(&self, _t: f64, _y: &mut [f64], _p: &mut [f64]) {}
+        no_events!();
+    }
+
+    /// `y' = -a y`, `y(0) = 1`, with the initial assignment `a = 2 k` of the settable parameter
+    /// `a`, which `init` writes unless `a` is fixed (set by the pre-initialization).
+    ///
+    /// The parameters are `[k, a]`, the state is `[y]`, the selections are `[y, a]`.
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    pub struct Derived {
+        /// The parameter `k`.
+        pub k: f64,
+    }
+
+    impl Derived {
+        /// The description of the model.
+        pub fn description(&self) -> ModelDescription {
+            description(
+                "derived",
+                vec![entity("y", 1.0, true)],
+                vec![entity("k", self.k, true), entity("a", 2.0 * self.k, true)],
+                selections(&["y", "a"]),
+                SparsityPattern {
+                    n: 1,
+                    col_ptr: vec![0, 1],
+                    row_idx: vec![0],
+                },
+            )
+        }
+    }
+
+    impl ModelFns for Derived {
+        fn defaults(&self, p: &mut [f64], y: &mut [f64]) {
+            p[0] = self.k;
+            p[1] = 2.0 * self.k;
+            y[0] = 1.0;
+        }
+        fn init(&self, _t: f64, p: &mut [f64], _y: &mut [f64], fixed: &[u8]) {
+            if fixed[1] == 0 {
+                p[1] = 2.0 * p[0];
+            }
+        }
+        fn rhs(&self, _t: f64, y: &[f64], p: &[f64], ydot: &mut [f64]) {
+            ydot[0] = -p[1] * y[0];
+        }
+        fn jac(&self, _t: f64, _y: &[f64], p: &[f64], values: &mut [f64]) {
+            values[0] = -p[1];
+        }
+        fn selections(&self, _t: f64, y: &[f64], p: &[f64], out: &mut [f64]) {
+            out[0] = y[0];
+            out[1] = p[1];
         }
         fn assign(&self, _t: f64, _y: &mut [f64], _p: &mut [f64]) {}
         no_events!();

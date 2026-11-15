@@ -227,8 +227,12 @@ pub(crate) struct Cvode {
     matrix: SUNMatrix,
     solver: SUNLinearSolver,
     nonlinear: SUNNonlinearSolver,
-    /// Whether `CVodeInit` was called; later segments call `CVodeReInit`.
+    /// Whether `CVodeInit` succeeded (set right after it); later segments call `CVodeReInit`,
+    /// never `CVodeInit` again, which would leak the memory of the first call.
     initialized: bool,
+    /// Whether the linear solver (or the nonlinear solver) and the Jacobian are attached; a
+    /// failed attach is retried by the next segment.
+    attached: bool,
     /// The last error, written by [`record_error`] through the pointer of the context.
     errors: Box<ErrorLog>,
 }
@@ -284,6 +288,7 @@ impl Cvode {
             solver: ptr::null_mut(),
             nonlinear: ptr::null_mut(),
             initialized: false,
+            attached: false,
             errors: Box::default(),
         };
         let n = config.n as sunindextype;
@@ -380,6 +385,9 @@ impl Cvode {
                 self.flag(CVodeReInit(self.mem, t0, self.y), t0)?;
             } else {
                 self.flag(CVodeInit(self.mem, Some(rhs), t0, self.y), t0)?;
+                self.initialized = true;
+            }
+            if !self.attached {
                 match self.config.method {
                     Method::Adams => {
                         self.flag(CVodeSetNonlinearSolver(self.mem, self.nonlinear), t0)?;
@@ -394,7 +402,7 @@ impl Cvode {
                         self.flag(CVodeSetJacFn(self.mem, jac), t0)?;
                     }
                 }
-                self.initialized = true;
+                self.attached = true;
             }
             let rtol = settings.relative_tolerance;
             match &settings.absolute_tolerance {

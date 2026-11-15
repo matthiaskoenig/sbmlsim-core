@@ -2,8 +2,8 @@
 //! the pre-initialization, the reuse of an engine and the errors.
 
 use sbmlsim_abi::{
-    IntegratorSettings, JacobianKind, LinearSolver, MODEL_CONTRACT, ModelDescription, Output,
-    SIMULATION_CONTRACT, SimulationRequest, SimulationResult, Tolerance,
+    IntegratorSettings, JacobianKind, LinearSolver, MODEL_CONTRACT, Output, SIMULATION_CONTRACT,
+    SimulationRequest, SimulationResult, Tolerance,
 };
 use sbmlsim_engine::model::{Decay, Robertson};
 use sbmlsim_engine::{Engine, EngineError, simulate};
@@ -307,18 +307,6 @@ fn integration_error_carries_the_message() {
         }
         other => panic!("{other:?}"),
     }
-}
-
-#[test]
-fn unsupported_until_later_tasks() {
-    let mut req = request(0.0, 1.0, Output::Uniform { steps: 1 }, &[]);
-    req.changes = vec![sbmlsim_abi::Change {
-        time: 0.5,
-        values: vec![("k".to_string(), 1.0)],
-    }];
-    assert!(matches!(decay(0.5, &req), Err(EngineError::Unsupported(_))));
-    let desc: ModelDescription = Decay { k: 0.5 }.description();
-    assert!(desc.events.is_empty());
 }
 
 #[test]

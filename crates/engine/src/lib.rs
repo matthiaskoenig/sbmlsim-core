@@ -19,12 +19,23 @@ pub mod model;
 mod segments;
 
 use sbmlsim_abi::{
-    IntegratorSettings, JacobianChoice, JacobianKind, LinearSolver, MODEL_CONTRACT,
+    Change, IntegratorSettings, JacobianChoice, JacobianKind, LinearSolver, MODEL_CONTRACT,
     ModelDescription, Output, SIMULATION_CONTRACT, SimulationRequest, SimulationResult,
     SparsityPattern, Tolerance, check_contract,
 };
 
 pub use cvode::KLU_THRESHOLD;
+
+/// The most `f64` values a result may hold (rows times columns, 1 GiB).
+///
+/// An output of times or of uniform steps which exceeds it is refused before any allocation as
+/// [`EngineError::Request`]; an output of the steps of the integrator which reaches it stops
+/// with [`EngineError::Integration`] and the flag [`OUTPUT_LIMIT_FLAG`].
+pub const MAX_OUTPUT_VALUES: usize = 1 << 27;
+
+/// The flag of the [`EngineError::Integration`] of an output which exceeds
+/// [`MAX_OUTPUT_VALUES`]: an engine code, distinct from the flags of CVODE (`-1` to `-99`).
+pub const OUTPUT_LIMIT_FLAG: i32 = -1000;
 pub use model::ModelFns;
 
 use cvode::{Config, Cvode, Linear, Method, Problem};
@@ -122,6 +133,24 @@ fn check_description(desc: &ModelDescription) -> Result<(), EngineError> {
             desc.id
         )));
     }
+    // the selection indices are exactly 0..k, each once: the engine sizes the output of the
+    // model by them and a gap or a repeat would write past it or leave a column unset
+    let mut seen = vec![false; desc.selections.len()];
+    for selection in &desc.selections {
+        match seen.get_mut(selection.index as usize) {
+            Some(slot) if !*slot => *slot = true,
+            _ => {
+                return Err(request(format!(
+                    "the selection indices of model {} are not 0..{} without gaps or repeats \
+                     (selection {} has index {})",
+                    desc.id,
+                    desc.selections.len(),
+                    selection.id,
+                    selection.index
+                )));
+            }
+        }
+    }
     Ok(())
 }
 
@@ -158,24 +187,34 @@ fn linear_of(
 }
 
 /// Checks the settings of the integrator for a model of `n` states.
+///
+/// CVODE refuses negative tolerances; a tolerance of 0 is allowed (an absolute tolerance of 0
+/// is the pure relative error), but a relative tolerance of 0 needs every absolute tolerance
+/// above 0, else the error weights vanish where the state does and no step could be accepted.
 fn check_settings(settings: &IntegratorSettings, n: usize) -> Result<(), EngineError> {
     let valid = |x: f64| x.is_finite() && x >= 0.0;
-    if !valid(settings.relative_tolerance) {
-        return Err(request(format!(
-            "relative tolerance {}",
-            settings.relative_tolerance
-        )));
+    let rtol = settings.relative_tolerance;
+    if !valid(rtol) {
+        return Err(request(format!("relative tolerance {rtol}")));
     }
-    match &settings.absolute_tolerance {
-        Tolerance::Scalar(atol) if !valid(*atol) => {
-            return Err(request(format!("absolute tolerance {atol}")));
+    let atols: &[f64] = match &settings.absolute_tolerance {
+        Tolerance::Scalar(atol) => std::slice::from_ref(atol),
+        Tolerance::PerState(atol) => {
+            if atol.len() != n {
+                return Err(request(format!(
+                    "absolute tolerances {atol:?} for {n} states"
+                )));
+            }
+            atol
         }
-        Tolerance::PerState(atol) if atol.len() != n || !atol.iter().all(|a| valid(*a)) => {
-            return Err(request(format!(
-                "absolute tolerances {atol:?} for {n} states"
-            )));
-        }
-        _ => {}
+    };
+    if let Some(atol) = atols.iter().find(|a| !valid(**a)) {
+        return Err(request(format!("absolute tolerance {atol}")));
+    }
+    if rtol == 0.0 && atols.contains(&0.0) {
+        return Err(request(
+            "relative tolerance 0 needs absolute tolerances above 0".to_string(),
+        ));
     }
     for (name, value) in [
         ("maximum time step", settings.maximum_time_step),
@@ -185,13 +224,32 @@ fn check_settings(settings: &IntegratorSettings, n: usize) -> Result<(), EngineE
             return Err(request(format!("{name} {value}")));
         }
     }
+    if settings.maximum_num_steps == 0 {
+        return Err(request("maximum number of steps 0"));
+    }
     Ok(())
 }
 
-/// The times of an output of times or of uniform steps from `start` to `end`.
-fn output_times(output: &Output, start: f64, end: f64) -> Result<Vec<f64>, EngineError> {
+/// The times of an output of times or of uniform steps from `start` to `end`; the result of
+/// `n_columns` columns must not exceed [`MAX_OUTPUT_VALUES`] (checked before any allocation).
+fn output_times(
+    output: &Output,
+    start: f64,
+    end: f64,
+    n_columns: usize,
+) -> Result<Vec<f64>, EngineError> {
+    let too_large = |rows: u128| {
+        request(format!(
+            "an output of {rows} rows of {n_columns} columns exceeds the limit of \
+             {MAX_OUTPUT_VALUES} values"
+        ))
+    };
+    let exceeds = |rows: u128| rows * n_columns as u128 > MAX_OUTPUT_VALUES as u128;
     match output {
         Output::Times(times) => {
+            if exceeds(times.len() as u128) {
+                return Err(too_large(times.len() as u128));
+            }
             let inside = times.iter().all(|t| *t >= start && *t <= end);
             let ordered = times.windows(2).all(|w| w[0] <= w[1]);
             if !inside || !ordered {
@@ -203,6 +261,10 @@ fn output_times(output: &Output, start: f64, end: f64) -> Result<Vec<f64>, Engin
         }
         Output::Uniform { steps: 0 } => Err(request("uniform output of 0 steps")),
         Output::Uniform { steps } => {
+            let rows = *steps as u128 + 1;
+            if exceeds(rows) {
+                return Err(too_large(rows));
+            }
             let steps = *steps as usize;
             let h = (end - start) / steps as f64;
             let mut times: Vec<f64> = (0..steps).map(|i| start + i as f64 * h).collect();
@@ -244,19 +306,15 @@ fn columns_of(
     Ok((names, columns))
 }
 
-/// The parameters and the state at the start: `defaults`, the pre-initialization values (fixed
-/// for `init`), `init`.
-fn initial_values(
-    model: &dyn ModelFns,
+/// Resolves pre-initialization values to the entity position (the parameters, then the states)
+/// and the value; an unknown id, an entity which is not settable, a repeated id and a value
+/// which is not finite are [`EngineError::Request`] naming the id.
+fn resolve_preinit(
     desc: &ModelDescription,
-    req: &SimulationRequest,
-) -> Result<(Vec<f64>, Vec<f64>), EngineError> {
-    let (np, ns) = (desc.parameters.len(), desc.states.len());
-    let mut p = vec![0.0; np];
-    let mut y = vec![0.0; ns];
-    model.defaults(&mut p, &mut y);
-    let mut fixed = vec![0u8; np + ns];
-    for (id, value) in &req.preinit {
+    values: &[(String, f64)],
+) -> Result<Vec<(usize, f64)>, EngineError> {
+    let mut resolved: Vec<(usize, f64)> = Vec::with_capacity(values.len());
+    for (id, value) in values {
         let (index, entity) = desc
             .parameters
             .iter()
@@ -270,15 +328,83 @@ fn initial_values(
                 desc.id
             )));
         }
+        if !value.is_finite() {
+            return Err(request(format!("the value {value} of {id} is not finite")));
+        }
+        if resolved.iter().any(|(i, _)| *i == index) {
+            return Err(request(format!("{id} is set more than once")));
+        }
+        resolved.push((index, *value));
+    }
+    Ok(resolved)
+}
+
+/// Checks the changes: finite values in `(start, end]` in non-decreasing order of the time.
+fn check_changes(changes: &[Change], start: f64, end: f64) -> Result<(), EngineError> {
+    let mut previous = start;
+    for change in changes {
+        let t = change.time;
+        if !t.is_finite() || t <= start || t > end || t < previous {
+            return Err(request(format!(
+                "change at t = {t} is not after the start {start}, within the end {end} and in \
+                 order of the time"
+            )));
+        }
+        if let Some((id, value)) = change.values.iter().find(|(_, v)| !v.is_finite()) {
+            return Err(request(format!(
+                "the value {value} of {id} at t = {t} is not finite"
+            )));
+        }
+        previous = t;
+    }
+    Ok(())
+}
+
+/// Checks the steady state of a request.
+fn check_steady_state(
+    desc: &ModelDescription,
+    steady: &sbmlsim_abi::SteadyState,
+) -> Result<(), EngineError> {
+    resolve_preinit(desc, &steady.preinit)?;
+    let valid = |x: f64| x.is_finite() && x >= 0.0;
+    if !valid(steady.absolute_tolerance) || !valid(steady.relative_tolerance) {
+        return Err(request(format!(
+            "steady state tolerances {} and {}",
+            steady.absolute_tolerance, steady.relative_tolerance
+        )));
+    }
+    if !(steady.max_time.is_finite() && steady.max_time > 0.0) {
+        return Err(request(format!(
+            "steady state maximum time {}",
+            steady.max_time
+        )));
+    }
+    Ok(())
+}
+
+/// The parameters and the state at the start: `defaults`, the pre-initialization values (fixed
+/// for `init`), `init`.
+fn initial_values(
+    model: &dyn ModelFns,
+    desc: &ModelDescription,
+    preinit: &[(usize, f64)],
+    start: f64,
+) -> (Vec<f64>, Vec<f64>) {
+    let (np, ns) = (desc.parameters.len(), desc.states.len());
+    let mut p = vec![0.0; np];
+    let mut y = vec![0.0; ns];
+    model.defaults(&mut p, &mut y);
+    let mut fixed = vec![0u8; np + ns];
+    for &(index, value) in preinit {
         if index < np {
-            p[index] = *value;
+            p[index] = value;
         } else {
-            y[index - np] = *value;
+            y[index - np] = value;
         }
         fixed[index] = 1;
     }
-    model.init(req.start, &mut p, &mut y, &fixed);
-    Ok((p, y))
+    model.init(start, &mut p, &mut y, &fixed);
+    (p, y)
 }
 
 /// The simulation [`simulate`] and [`Engine::simulate`] share; `cache` is the CVODE memory of
@@ -289,7 +415,22 @@ fn run(
     cache: &mut Option<Cvode>,
     req: &SimulationRequest,
 ) -> Result<SimulationResult, EngineError> {
+    // 1. the request is validated before any feature is refused and before any integration
     check_contract(&req.contract, SIMULATION_CONTRACT).map_err(|e| request(e.to_string()))?;
+    let (start, end) = (req.start, req.end);
+    if !start.is_finite() || !end.is_finite() || end < start {
+        return Err(request(format!("simulation from {start} to {end}")));
+    }
+    let n = desc.states.len();
+    check_settings(&req.settings, n)?;
+    let (names, columns) = columns_of(desc, req)?;
+    let times = output_times(&req.output, start, end, names.len())?;
+    check_changes(&req.changes, start, end)?;
+    if let Some(steady) = &req.steady_state {
+        check_steady_state(desc, steady)?;
+    }
+    let preinit = resolve_preinit(desc, &req.preinit)?;
+    // 2. the features of later tasks
     if !req.changes.is_empty() {
         return Err(EngineError::Unsupported("changes".into()));
     }
@@ -299,15 +440,7 @@ fn run(
     if !desc.events.is_empty() || model.n_roots() > 0 {
         return Err(EngineError::Unsupported("events".into()));
     }
-    let (start, end) = (req.start, req.end);
-    if !start.is_finite() || !end.is_finite() || end < start {
-        return Err(request(format!("simulation from {start} to {end}")));
-    }
-    let n = desc.states.len();
-    check_settings(&req.settings, n)?;
-    let times = output_times(&req.output, start, end)?;
-    let (names, columns) = columns_of(desc, req)?;
-    let (p, y0) = initial_values(model, desc, req)?;
+    let (p, y0) = initial_values(model, desc, &preinit, start);
 
     let mut pattern = None;
     let cvode = if n == 0 {
@@ -342,7 +475,7 @@ fn run(
         .map(|s| s.index as usize + 1)
         .max()
         .unwrap_or(0);
-    let mut recorder = Recorder::new(model, columns, n_selections);
+    let mut recorder = Recorder::new(model, columns, n_selections, MAX_OUTPUT_VALUES);
     let output = match req.output {
         Output::IntegratorSteps => SegmentOutput::Steps,
         _ => SegmentOutput::Times(&times),
@@ -362,4 +495,63 @@ fn run(
         n_rows: recorder.n_rows,
         values: recorder.values,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use sbmlsim_abi::{Entity, EntityKind};
+
+    use super::*;
+    use crate::model::Decay;
+
+    /// A description of `n` states with a diagonal Jacobian pattern.
+    fn diagonal(n: usize) -> ModelDescription {
+        let mut desc = Decay { k: 1.0 }.description();
+        desc.states = (0..n)
+            .map(|i| Entity {
+                id: format!("y{i}"),
+                kind: EntityKind::Parameter,
+                initial: 0.0,
+                settable: true,
+            })
+            .collect();
+        desc.jacobian = JacobianKind::Analytic(SparsityPattern {
+            n: n as u32,
+            col_ptr: (0..=n as u32).collect(),
+            row_idx: (0..n as u32).collect(),
+        });
+        desc
+    }
+
+    #[test]
+    fn auto_chooses_klu_above_the_threshold() {
+        let settings = IntegratorSettings::default();
+        assert_eq!(settings.linear_solver, LinearSolver::Auto);
+        let at = diagonal(KLU_THRESHOLD);
+        let above = diagonal(KLU_THRESHOLD + 1);
+        check_description(&at).unwrap();
+        check_description(&above).unwrap();
+        assert!(matches!(
+            linear_of(&at, &settings),
+            Ok(Linear::Dense { analytic: true })
+        ));
+        assert!(matches!(
+            linear_of(&above, &settings),
+            Ok(Linear::Klu { nnz }) if nnz == KLU_THRESHOLD + 1
+        ));
+        // an explicit choice wins over the size
+        let dense = IntegratorSettings {
+            linear_solver: LinearSolver::Dense,
+            ..settings.clone()
+        };
+        assert!(matches!(
+            linear_of(&above, &dense),
+            Ok(Linear::Dense { analytic: true })
+        ));
+        let klu = IntegratorSettings {
+            linear_solver: LinearSolver::Klu,
+            ..settings
+        };
+        assert!(matches!(linear_of(&at, &klu), Ok(Linear::Klu { .. })));
+    }
 }
