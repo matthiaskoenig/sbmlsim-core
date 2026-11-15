@@ -19,7 +19,9 @@
 For every timecourse case of the suite at the commit `SUITE_COMMIT` of sbmlsim, the newest
 encoding of the model is flattened (`comp`) and converted to SBML L3V2 with libsbml, and the
 directory `<out>/<cid>/` gets `model.xml`, `case.json` and `expected.csv`. A case libsbml cannot
-convert gets a `case.json` with `"not_converted": "<message>"` and no `model.xml`.
+convert gets a `case.json` with `"not_converted": "<message>"` and no `model.xml`. So does a model
+with a fast reaction: L3V2 has no `fast` attribute, the conversion would drop it and the reaction
+would be simulated as a slow one, while fast reactions are out of scope and refused.
 
     uv run scripts/prepare_testsuite.py --out testdata/cases
 
@@ -48,6 +50,16 @@ def _first_error(doc: libsbml.SBMLDocument) -> str:
     return ""
 
 
+def fast_reaction(doc: libsbml.SBMLDocument) -> str | None:
+    """Get the id of the first reaction of the model with `fast="true"`, else `None`."""
+    model = doc.getModel()
+    for index in range(model.getNumReactions()):
+        reaction = model.getReaction(index)
+        if reaction.isSetFast() and reaction.getFast():
+            return reaction.getId()
+    return None
+
+
 def convert(path: Path) -> str:
     """Flatten and convert a model to SBML L3V2.
 
@@ -58,7 +70,8 @@ def convert(path: Path) -> str:
         The SBML of the model in L3V2.
 
     Raises:
-        ValueError: if libsbml cannot read, flatten or convert the model.
+        ValueError: if libsbml cannot read, flatten or convert the model, or if a reaction of
+            the flattened model is fast (checked before the conversion, which drops `fast`).
     """
     doc = libsbml.readSBMLFromFile(str(path))
     message = _first_error(doc)
@@ -73,6 +86,12 @@ def convert(path: Path) -> str:
                 f"cannot flatten comp: {libsbml.OperationReturnValue_toString(status)}"
                 f" {_first_error(doc)}"
             )
+    fast = fast_reaction(doc)
+    if fast is not None:
+        raise ValueError(
+            f"fast reaction {fast}: refused (fast reactions are out of scope; L3V2 has no fast "
+            "attribute)"
+        )
     if (doc.getLevel(), doc.getVersion()) != (3, 2):
         if not doc.setLevelAndVersion(3, 2, False):
             raise ValueError(

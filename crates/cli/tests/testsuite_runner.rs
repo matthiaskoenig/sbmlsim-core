@@ -289,6 +289,53 @@ fn prepared_cases_are_complete() {
 }
 
 #[test]
+fn fast_reactions_are_refused_when_the_cases_are_prepared() {
+    // L3V2 has no `fast` attribute: the preparation refuses a model with a fast reaction before
+    // the conversion would drop it, so it is never simulated as a slow reaction
+    let Some(dir) = cases_dir() else { return };
+    let runtime = sbmlsim_host::Runtime::embedded().unwrap();
+    let mut n = 0;
+    for entry in std::fs::read_dir(&dir).unwrap() {
+        let path = entry.unwrap().path();
+        if !path.is_dir() {
+            continue;
+        }
+        let case: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(path.join("case.json")).unwrap()).unwrap();
+        let tagged = case["test_tags"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|t| t == "FastReaction");
+        let refused = case["not_converted"]
+            .as_str()
+            .is_some_and(|m| m.starts_with("fast reaction "));
+        assert_eq!(
+            tagged,
+            refused,
+            "{}: {}",
+            path.display(),
+            case["not_converted"]
+        );
+        if refused {
+            n += 1;
+            assert!(
+                case["not_converted"].as_str().unwrap().ends_with(
+                    ": refused (fast reactions are out of scope; L3V2 has no fast attribute)"
+                ),
+                "{}",
+                path.display()
+            );
+            assert!(!path.join("model.xml").exists(), "{}", path.display());
+            let result = run_case(&runtime, &path);
+            assert_eq!(result.status, Status::NotCompiled, "{}", path.display());
+            assert!(result.message.starts_with("not converted: fast reaction "));
+        }
+    }
+    assert!(n > 0, "no prepared case has a fast reaction");
+}
+
+#[test]
 fn command_writes_a_result_per_case() {
     let Some(dir) = cases_dir() else { return };
     let json = std::env::temp_dir().join(format!("sbmlsim-testsuite-{}.json", std::process::id()));
