@@ -223,7 +223,7 @@ fn imports_only_memory_and_math() {
 fn exports_model_1_functions() {
     use ValType::{F64, I32};
     let p = parse(&wasm_of(&small()));
-    let expected: [(&str, &[ValType], &[ValType]); 13] = [
+    let expected: [(&str, &[ValType], &[ValType]); 14] = [
         (abi::DEFAULTS, &[I32, I32], &[]),
         (abi::INIT, &[F64, I32, I32, I32], &[]),
         (abi::RHS, &[F64, I32, I32, I32], &[]),
@@ -237,6 +237,7 @@ fn exports_model_1_functions() {
         (abi::SELECTIONS, &[F64, I32, I32, I32], &[]),
         (abi::ASSIGN, &[F64, I32, I32], &[]),
         (abi::SIZES, &[I32], &[]),
+        (abi::EVENT_SIZES, &[I32], &[]),
     ];
     assert_eq!(p.exports.len(), expected.len());
     for (name, params, results) in expected {
@@ -352,18 +353,21 @@ fn the_events_are_described() {
             }
         ]
     );
-    // model_sizes stores the sizes of the description
+    // model_sizes and model_event_sizes store the sizes of the description
     let p = parse(&wasm);
-    let stored: Vec<i32> = p
-        .body(abi::SIZES)
-        .iter()
-        .filter_map(|op| match op {
-            Operator::I32Const { value } => Some(*value),
-            _ => None,
-        })
-        .collect();
-    let words = abi::ModelSizes::of(&d).to_words().map(|x| x as i32);
-    assert_eq!(stored, words);
+    let stored = |export: &str| -> Vec<i32> {
+        p.body(export)
+            .iter()
+            .filter_map(|op| match op {
+                Operator::I32Const { value } => Some(*value),
+                _ => None,
+            })
+            .collect()
+    };
+    let sizes = abi::ModelSizes::of(&d);
+    assert_eq!(stored(abi::SIZES), sizes.words().map(|x| x as i32));
+    assert_eq!(stored(abi::EVENT_SIZES), [1, 0]);
+    assert_eq!(sizes.assignments, [1, 0]);
 }
 
 #[test]

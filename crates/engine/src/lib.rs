@@ -133,8 +133,10 @@ pub fn simulate(
     run(model, desc, &mut None, req)
 }
 
-/// Checks that the sizes of a model are the ones of its description: a description of another
-/// model would make the model read and write past its vectors.
+/// Checks that the sizes of a model (`model_sizes`, `model_event_sizes`) are the ones of its
+/// description, so every slice the engine passes, sized by the description, is as long as the
+/// model reads and writes: a description of another model would make the model read and write
+/// past its vectors.
 fn check_sizes(model: &dyn ModelFns, desc: &ModelDescription) -> Result<(), EngineError> {
     let (sizes, described) = (model.sizes(), ModelSizes::of(desc));
     if sizes != described {

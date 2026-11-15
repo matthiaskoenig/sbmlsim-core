@@ -5,7 +5,7 @@ use sbmlsim_abi::{
     IntegratorSettings, Output, SIMULATION_CONTRACT, SimulationRequest, SimulationResult,
 };
 use sbmlsim_engine::model::{EventModel, Fun, Target, TestEvent};
-use sbmlsim_engine::{EVENT_LIMIT_FLAG, Engine, EngineError, simulate};
+use sbmlsim_engine::{DELAY_FLAG, EVENT_LIMIT_FLAG, Engine, EngineError, simulate};
 
 /// A request from `start` to `end` of the output, tight tolerances.
 fn request(start: f64, end: f64, output: Output, seed: u64) -> SimulationRequest {
@@ -323,6 +323,109 @@ fn a_description_of_other_sizes_is_refused() {
                 "{message}"
             );
         }
+        Err(other) => panic!("{other:?}"),
+        Ok(_) => panic!("accepted"),
+    }
+}
+
+#[test]
+fn a_delayed_event_executes_between_outputs_and_inside_a_step() {
+    // time > 1 with the delay 0.3: x = y at the execution, 1.3
+    let mut event = after_one();
+    event.delay = Some(|_, _, _| 0.3);
+    event.use_values_from_trigger_time = false;
+    event.assignments = vec![(X, |_, y, _| y[0])];
+    let model = ramp(vec![event]);
+    // between the outputs 1 and 1.5
+    let x = column(
+        &run(&model, &request(0.0, 2.0, Output::Uniform { steps: 4 }, 1)),
+        "x",
+    );
+    assert_eq!(&x[..3], [0.0, 0.0, 0.0]);
+    assert!((x[3] - 1.3).abs() < 1e-9 && x[3] == x[4], "{x:?}");
+    // the steps: two rows at 1 + 0.3, the stop time of CVODE, inside what would be a step
+    let r = run(&model, &request(0.0, 2.0, Output::IntegratorSteps, 1));
+    let (t, x) = (column(&r, "time"), column(&r, "x"));
+    let pairs: Vec<usize> = (1..t.len()).filter(|&i| t[i] == t[i - 1]).collect();
+    assert_eq!(pairs.len(), 1, "{t:?}");
+    let i = pairs[0];
+    assert_eq!(t[i], 1.0 + 0.3);
+    assert_eq!(x[i - 1], 0.0);
+    assert!((x[i] - 1.3).abs() < 1e-9, "{}", x[i]);
+    // the steps around it are steps of their own: some step lies before 1.3 and after 1
+    assert!(t.iter().any(|s| *s > 1.0 && *s < 1.3), "{t:?}");
+}
+
+#[test]
+fn a_negative_or_nan_delay_is_an_error() {
+    for delay in [(|_, _, _| -0.5) as Fun, |_, _, _| f64::NAN] {
+        let mut event = after_one();
+        event.delay = Some(delay);
+        event.assignments = vec![(X, |_, _, _| 1.0)];
+        let model = ramp(vec![event]);
+        match simulate(
+            &model,
+            &model.description(),
+            &request(0.0, 2.0, Output::Uniform { steps: 2 }, 1),
+        ) {
+            Err(EngineError::Integration {
+                flag,
+                time,
+                message,
+            }) => {
+                assert_eq!(flag, DELAY_FLAG);
+                assert!((time - 1.0).abs() < 1e-12, "{time}");
+                assert!(
+                    message.contains("delay") && message.contains("after_one"),
+                    "{message}"
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+}
+
+#[test]
+fn the_order_of_ties_does_not_depend_on_the_output() {
+    let model = ramp(vec![
+        recorder_event("one", None, 1),
+        recorder_event("two", None, 2),
+    ]);
+    for seed in 0..16 {
+        let uniform = run(
+            &model,
+            &request(0.0, 2.0, Output::Uniform { steps: 2 }, seed),
+        );
+        let steps = run(&model, &request(0.0, 2.0, Output::IntegratorSteps, seed));
+        assert_eq!(
+            column(&uniform, "x").last(),
+            column(&steps, "x").last(),
+            "seed {seed}"
+        );
+    }
+}
+
+#[test]
+fn a_description_of_another_jacobian_is_refused() {
+    // two states: the model's pattern is dense (4 entries), the description's diagonal (2)
+    let model = EventModel {
+        states: vec![("a", 0.0), ("b", 0.0)],
+        parameters: vec![],
+        rhs: |_, _, _, ydot| ydot.fill(0.0),
+        events: vec![],
+    };
+    let mut desc = model.description();
+    desc.jacobian = sbmlsim_abi::JacobianKind::Analytic(sbmlsim_abi::SparsityPattern {
+        n: 2,
+        col_ptr: vec![0, 1, 2],
+        row_idx: vec![0, 1],
+    });
+    match Engine::new(Box::new(model), desc) {
+        Err(EngineError::Request(message)) => assert!(
+            message.contains("4 entries of the Jacobian")
+                && message.contains("2 entries of the Jacobian"),
+            "{message}"
+        ),
         Err(other) => panic!("{other:?}"),
         Ok(_) => panic!("accepted"),
     }

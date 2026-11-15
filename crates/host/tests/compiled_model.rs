@@ -287,3 +287,109 @@ fn a_description_of_another_model_is_refused() {
         "{error}"
     );
 }
+
+/// A model of the compartment `C` (of the assignment rule `rule`, or of the size 1 without),
+/// the species `S` (a concentration of the rate rule `S' = 0`) and `A` (a concentration of no
+/// rule) in it, both 1, the constant compartment `D` with the boundary species `X` (an amount,
+/// 0), the parameter `k` (1) and the event `time > 0.5` of the given assignments.
+fn compartment_model(rule: Option<&str>, assignments: &[(&str, &str)]) -> String {
+    let time = r#"<csymbol encoding="text" definitionURL="http://www.sbml.org/sbml/symbols/time">t</csymbol>"#;
+    let (size, rule) = match rule {
+        Some(math) => (
+            String::new(),
+            format!(r#"<assignmentRule variable="C"><math {MATH}>{math}</math></assignmentRule>"#),
+        ),
+        None => (r#"size="1""#.to_string(), String::new()),
+    };
+    let assignments: String = assignments
+        .iter()
+        .map(|(v, x)| {
+            format!(r#"<eventAssignment variable="{v}"><math {MATH}><cn>{x}</cn></math></eventAssignment>"#)
+        })
+        .collect();
+    format!(
+        r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2"><model id="cm">
+<listOfCompartments><compartment id="C" {size} spatialDimensions="3" constant="false"/><compartment id="D" size="1" spatialDimensions="3" constant="true"/></listOfCompartments>
+<listOfSpecies>
+<species id="S" compartment="C" initialConcentration="1" hasOnlySubstanceUnits="false" boundaryCondition="false" constant="false"/>
+<species id="A" compartment="C" initialConcentration="1" hasOnlySubstanceUnits="false" boundaryCondition="false" constant="false"/>
+<species id="X" compartment="D" initialAmount="0" hasOnlySubstanceUnits="true" boundaryCondition="true" constant="false"/>
+</listOfSpecies>
+<listOfParameters><parameter id="k" value="1" constant="false"/></listOfParameters>
+<listOfRules><rateRule variable="S"><math {MATH}><cn>0</cn></math></rateRule>{rule}</listOfRules>
+<listOfEvents><event id="e" useValuesFromTriggerTime="true"><trigger initialValue="true" persistent="true"><math {MATH}><apply><gt/>{time}<cn>0.5</cn></apply></math></trigger>
+<listOfEventAssignments>{assignments}</listOfEventAssignments></event></listOfEvents></model></sbml>"#
+    )
+}
+
+/// The rule of the compartment, the assignments of the event and the values at 1.
+type Shape<'a> = (Option<&'a str>, &'a [(&'a str, &'a str)], [f64; 5]);
+
+#[test]
+fn species_keep_their_amounts_when_an_event_changes_their_compartment() {
+    // [S, [S], A, [A], C] at 1, the values of libroadrunner 2.11.1 (Task 13 report, fix round 1)
+    let k = Some("<ci>k</ci>");
+    let x = Some("<apply><plus/><cn>1</cn><ci>X</ci></apply>");
+    let cases: [Shape; 8] = [
+        // the compartment of an assignment rule reading a parameter the event sets
+        (k, &[("k", "2")], [1.0, 0.5, 1.0, 0.5, 2.0]),
+        // ... reading a species the event sets
+        (x, &[("X", "1")], [1.0, 0.5, 1.0, 0.5, 2.0]),
+        // a concentration assigned after the parameter sees the compartment after it, one
+        // assigned before it the compartment before it
+        (k, &[("k", "2"), ("S", "3")], [6.0, 3.0, 1.0, 0.5, 2.0]),
+        (k, &[("S", "3"), ("k", "2")], [3.0, 1.5, 1.0, 0.5, 2.0]),
+        (k, &[("k", "2"), ("A", "3")], [1.0, 0.5, 6.0, 3.0, 2.0]),
+        (k, &[("A", "3"), ("k", "2")], [1.0, 0.5, 3.0, 1.5, 2.0]),
+        // a compartment the event assigns is assigned last: the amounts are the values times
+        // the compartment before the event, in either order
+        (
+            None,
+            &[("C", "2"), ("S", "3"), ("A", "3")],
+            [3.0, 1.5, 3.0, 1.5, 2.0],
+        ),
+        (
+            None,
+            &[("S", "3"), ("A", "3"), ("C", "2")],
+            [3.0, 1.5, 3.0, 1.5, 2.0],
+        ),
+    ];
+    for (rule, assignments, expected) in cases {
+        let compiled = compile(
+            &compartment_model(rule, assignments),
+            &CompileOptions::default(),
+        )
+        .unwrap();
+        let result = runtime()
+            .instantiate(&compiled.wasm, &compiled.description)
+            .unwrap()
+            .simulate(&request(1.0, 2, &["time", "S", "[S]", "A", "[A]", "C"]))
+            .unwrap();
+        let last = &result.values[result.values.len() - 6..];
+        assert_eq!(last[1..], expected, "{rule:?} {assignments:?}");
+        // before the event every value is 1
+        assert_eq!(result.values[7..12], [1.0; 5], "{rule:?} {assignments:?}");
+    }
+}
+
+#[test]
+fn a_description_of_other_assignments_is_refused() {
+    // the same total of assignments, split otherwise over the events
+    let compiled = compile(&event_model(), &CompileOptions::default()).unwrap();
+    let mut desc = compiled.description.clone();
+    assert_eq!(
+        (desc.events[0].n_assignments, desc.events[1].n_assignments),
+        (3, 1)
+    );
+    desc.events[0].n_assignments = 1;
+    desc.events[1].n_assignments = 3;
+    let error = runtime()
+        .instantiate(&compiled.wasm, &desc)
+        .err()
+        .expect("refused")
+        .to_string();
+    assert!(
+        error.contains("[3, 1]") && error.contains("[1, 3]"),
+        "{error}"
+    );
+}

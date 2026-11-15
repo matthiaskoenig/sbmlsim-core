@@ -35,7 +35,8 @@ pub trait ModelFns {
     fn selections(&self, t: f64, y: &[f64], p: &[f64], out: &mut [f64]);
     /// Writes the current values of the targets of the assignment rules into `p` and `y`.
     fn assign(&self, t: f64, y: &mut [f64], p: &mut [f64]);
-    /// The sizes of the model (`model_sizes`), which the engine compares with the description.
+    /// The sizes of the model (`model_sizes` and `model_event_sizes`), which the engine compares
+    /// with the description.
     fn sizes(&self) -> ModelSizes;
 }
 

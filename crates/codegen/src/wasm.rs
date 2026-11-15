@@ -384,6 +384,47 @@ impl Body<'_> {
         local
     }
 
+    /// `target = source * from / to` when the locals `from` and `to` differ (or are NaN), else
+    /// `target = source`: the source is `values[j]` (the vector in the local `values`) or,
+    /// without `j`, the current value of the target (which then stays as it is).
+    pub(crate) fn store_rescaled(
+        &mut self,
+        target: Symbol,
+        values: u32,
+        j: Option<u32>,
+        from: u32,
+        to: u32,
+    ) {
+        let (ptr, i) = self.address(target);
+        let source = |body: &mut Self| match j {
+            Some(j) => {
+                body.sink().local_get(values).f64_load(slot(j));
+            }
+            None => {
+                body.sink().local_get(ptr).f64_load(slot(i));
+            }
+        };
+        self.sink()
+            .local_get(from)
+            .local_get(to)
+            .f64_ne()
+            .if_(BlockType::Empty)
+            .local_get(ptr);
+        source(self);
+        self.sink()
+            .local_get(from)
+            .f64_mul()
+            .local_get(to)
+            .f64_div()
+            .f64_store(slot(i));
+        if j.is_some() {
+            self.sink().else_().local_get(ptr);
+            source(self);
+            self.sink().f64_store(slot(i));
+        }
+        self.sink().end();
+    }
+
     /// `target = source`, where the source is `values[j]` (the vector in the local `values`)
     /// or, without `j`, the current value of the target, times the local `times` and divided by
     /// the local `divide` when they are given.

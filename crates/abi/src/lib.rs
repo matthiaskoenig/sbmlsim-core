@@ -24,29 +24,34 @@
 //! - `model_event_values(i, t, y, p, out)` writes the values of the assignments of event `i`,
 //!   [`EventInfo::n_assignments`] values in document order, each in the quantity its math gives
 //!   (the concentration of a species of a concentration).
-//! - `model_event_apply(i, values, y, p)` applies values of `model_event_values` of event `i`:
-//!   every target gets its value, except that a species of a concentration keeps the amount
-//!   `value * compartment` of its compartment before the assignments of the event (as
-//!   libroadrunner 2.11 and the expected results of the SBML Test Suite, case 01506), and a
-//!   species which stores its concentration keeps its amount when the event changes its
-//!   compartment.
+//! - `model_event_apply(i, t, values, y, p)` applies values of `model_event_values` of event `i`
+//!   at the time `t`, as libroadrunner 2.11 does (and the expected results of the SBML Test
+//!   Suite, case 01506): the targets in document order, the compartments last; a species of a
+//!   concentration gets the amount `value * compartment` of its compartment at its turn (a
+//!   compartment the event assigns is still the one before the event, one of an assignment rule
+//!   follows the assignments before it), and every other species keeps its amount, also one
+//!   which stores its concentration (the target of a rate rule) when its compartment changes
+//!   (directly or through an assignment rule).
 //! - `model_selections(t, y, p, out)` writes every value of [`ModelDescription::selections`],
 //!   in its order.
 //! - `model_assign(t, y, p)` writes the current values of the targets of assignment rules into
 //!   `p` and `y` (after a change or an event).
 //! - `model_sizes(out)` writes the sizes of the model as six `i32` (little endian) at `out`: the
-//!   numbers of states, parameters, selections, root functions, events and event values (the
-//!   sum of the assignments of the events), [`ModelSizes`]. The engine compares them with the
-//!   description when it loads the model, so a `model.json` which does not belong to its
-//!   `model.wasm` is an error and not a model which reads or writes past its vectors.
+//!   numbers of states, parameters, selections, entries of the Jacobian, root functions and
+//!   events. `model_event_sizes(out)` writes the number of assignments of every event, one `i32`
+//!   per event. Together they are [`ModelSizes`], the length of every vector the engine lends to
+//!   the model (`p`, `y`, `fixed`, `ydot`, the values of the Jacobian, `g`, the values of each
+//!   event, the selections). The engine compares them with the description when it loads the
+//!   model, so a `model.json` which does not belong to its `model.wasm` is an error and not a
+//!   model which reads or writes past its vectors.
 //!
 //! Every function but `model_init`, `model_event_apply` and `model_assign` reads `p` and `y`
 //! only, and every function computes the values of the assignment rules it reads itself, so it
 //! does not depend on the values of the targets of the rules in `p` and `y`.
 //!
-//! Revisions of `model/1` before its first release: the field [`ModelDescription::n_roots`] and
-//! the export `model_sizes` were added with the events (no version change, nothing was
-//! released).
+//! Revisions of `model/1` before its first release: the field [`ModelDescription::n_roots`],
+//! the exports `model_sizes` and `model_event_sizes` and the time of `model_event_apply` were
+//! added with the events (no version change, nothing was released).
 
 mod request;
 
@@ -87,6 +92,8 @@ pub const SELECTIONS: &str = "model_selections";
 pub const ASSIGN: &str = "model_assign";
 /// Export name of `model_sizes`.
 pub const SIZES: &str = "model_sizes";
+/// Export name of `model_event_sizes`.
+pub const EVENT_SIZES: &str = "model_event_sizes";
 
 /// A contract version which is not the expected one.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -134,8 +141,9 @@ pub struct ModelDescription {
     pub units: BTreeMap<String, String>,
 }
 
-/// The sizes of a model, which `model_sizes` writes and the description gives.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// The sizes of a model, which `model_sizes` and `model_event_sizes` write and the
+/// description gives: the length of every vector the engine lends to the model.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelSizes {
     /// The number of states.
     pub states: u32,
@@ -143,12 +151,12 @@ pub struct ModelSizes {
     pub parameters: u32,
     /// The number of selections.
     pub selections: u32,
+    /// The number of entries of the pattern of the Jacobian.
+    pub jacobian_entries: u32,
     /// The number of root functions.
     pub roots: u32,
-    /// The number of events.
-    pub events: u32,
-    /// The number of event values, the sum of the assignments of the events.
-    pub event_values: u32,
+    /// The number of assignments of every event, one per event.
+    pub assignments: Vec<u32>,
 }
 
 impl ModelSizes {
@@ -157,38 +165,51 @@ impl ModelSizes {
 
     /// The sizes a description gives.
     pub fn of(desc: &ModelDescription) -> ModelSizes {
+        let pattern = match &desc.jacobian {
+            JacobianKind::Analytic(pattern) => pattern,
+            JacobianKind::ColoredDifference { pattern, .. } => pattern,
+        };
         ModelSizes {
             states: desc.states.len() as u32,
             parameters: desc.parameters.len() as u32,
             selections: desc.selections.len() as u32,
+            jacobian_entries: pattern.row_idx.len() as u32,
             roots: desc.n_roots,
-            events: desc.events.len() as u32,
-            event_values: desc.events.iter().map(|e| e.n_assignments).sum(),
+            assignments: desc.events.iter().map(|e| e.n_assignments).collect(),
         }
     }
 
-    /// The sizes in the order of `model_sizes`.
-    pub fn to_words(self) -> [u32; Self::WORDS] {
+    /// The words of `model_sizes`: the states, parameters, selections, entries of the Jacobian,
+    /// root functions and events.
+    pub fn words(&self) -> [u32; Self::WORDS] {
         [
             self.states,
             self.parameters,
             self.selections,
+            self.jacobian_entries,
             self.roots,
-            self.events,
-            self.event_values,
+            self.assignments.len() as u32,
         ]
     }
 
-    /// The sizes of the words `model_sizes` writes.
-    pub fn from_words(words: [u32; Self::WORDS]) -> ModelSizes {
-        let [states, parameters, selections, roots, events, event_values] = words;
+    /// The sizes of the words of `model_sizes` and the numbers of assignments of
+    /// `model_event_sizes` (as many as the last word says).
+    pub fn from_words(words: [u32; Self::WORDS], assignments: Vec<u32>) -> ModelSizes {
+        let [
+            states,
+            parameters,
+            selections,
+            jacobian_entries,
+            roots,
+            _events,
+        ] = words;
         ModelSizes {
             states,
             parameters,
             selections,
+            jacobian_entries,
             roots,
-            events,
-            event_values,
+            assignments,
         }
     }
 }
@@ -197,14 +218,15 @@ impl std::fmt::Display for ModelSizes {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{} states, {} parameters, {} selections, {} root functions, {} events, {} event \
-             values",
+            "{} states, {} parameters, {} selections, {} entries of the Jacobian, {} root \
+             functions, {} events of {:?} assignments",
             self.states,
             self.parameters,
             self.selections,
+            self.jacobian_entries,
             self.roots,
-            self.events,
-            self.event_values
+            self.assignments.len(),
+            self.assignments
         )
     }
 }
@@ -492,8 +514,12 @@ mod tests {
             units: BTreeMap::new(),
         };
         let sizes = ModelSizes::of(&d);
-        assert_eq!(sizes.to_words(), [1, 0, 1, 3, 1, 2]);
-        assert_eq!(ModelSizes::from_words(sizes.to_words()), sizes);
+        assert_eq!(sizes.words(), [1, 0, 1, 1, 3, 1]);
+        assert_eq!(sizes.assignments, [2]);
+        assert_eq!(
+            ModelSizes::from_words(sizes.words(), sizes.assignments.clone()),
+            sizes
+        );
         let back: ModelDescription =
             serde_json::from_str(&serde_json::to_string(&d).unwrap()).unwrap();
         assert_eq!(d, back);

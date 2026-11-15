@@ -34,6 +34,18 @@
 //! before such an event (as libroadrunner and sbmlsim show it); at the end the second round
 //! looks [`END_RTOL`] ahead ([`Probe::End`]) and the output is written after it (sbmlsim's
 //! event at the end).
+//!
+//! Both windows are relative: the absolute window is the rtol times the magnitude of the time
+//! scale of the simulation, `max(|start|, |end|, end - start)` (1 when that is 0), so a
+//! simulation from 0 to 1e6 looks 1e-6 ahead after a stop and 1e-3 at its end. An event within
+//! the window after a stop executes at the stop.
+//!
+//! Limitation: within the second round the triggers are the ones right after the time, also
+//! after an execution, so an event executed in that round which sets a trigger exactly to its
+//! threshold, where the trigger is false at the time but true right after it, does not trigger
+//! that event again (it saw no fall); likewise a trigger which touches its threshold and rises
+//! again is a fall and a rise only where the integration stops at the touch. Neither occurs in
+//! the SBML Test Suite.
 
 use rand_pcg::Pcg64;
 use rand_pcg::rand_core::{Rng, SeedableRng};

@@ -65,19 +65,24 @@ mod imports {
         pub fn model_selections(t: f64, y: *const f64, p: *const f64, out: *mut f64);
         pub fn model_assign(t: f64, y: *mut f64, p: *mut f64);
         pub fn model_sizes(out: *mut u32);
+        pub fn model_event_sizes(out: *mut u32);
     }
 }
 
 /// The model of the instance: [`ModelFns`] over the imports of the module `model`.
 ///
 /// The slices the engine passes live in the memory the model imports, so a pointer of a slice
-/// is the offset the model reads and writes; the model accesses no more than its sizes
-/// (`model_sizes`), which the engine checks against the description when it loads the model,
-/// and which are the sizes of the slices.
+/// is the offset the model reads and writes. The model accesses no more of a vector than its
+/// own sizes (`model_sizes` and `model_event_sizes`): the states (`y`, `ydot`), the parameters
+/// (`p`), both (`fixed`), the entries of its Jacobian, its root functions (`g`), the
+/// assignments of each event (`values`, `out` of `model_event_values`) and its selections.
+/// `Engine::new` compares every one of them with the description when the model is loaded
+/// (`check_sizes`), and the engine sizes every slice it passes by the description.
 struct ImportedModel;
 
-// SAFETY (every call below): the imported function reads and writes the given slices within
-// the lengths the description of the model gives, which are their lengths.
+// SAFETY (every call below but `sizes`): the slices have the lengths the description gives,
+// which `Engine::new` checked to be the sizes of the model, so the imported function reads and
+// writes within them.
 impl ModelFns for ImportedModel {
     fn defaults(&self, p: &mut [f64], y: &mut [f64]) {
         unsafe { imports::model_defaults(p.as_mut_ptr(), y.as_mut_ptr()) }
@@ -119,7 +124,12 @@ impl ModelFns for ImportedModel {
         let mut words = [0u32; ModelSizes::WORDS];
         // SAFETY: the model writes its six sizes into the buffer of six `u32`
         unsafe { imports::model_sizes(words.as_mut_ptr()) };
-        ModelSizes::from_words(words.map(u32::from_le))
+        let words = words.map(u32::from_le);
+        // the number of events the model gives sizes the buffer of its counts of assignments
+        let mut assignments = vec![0u32; words[ModelSizes::WORDS - 1] as usize];
+        // SAFETY: the model writes one `u32` per event of its own, the length of the buffer
+        unsafe { imports::model_event_sizes(assignments.as_mut_ptr()) };
+        ModelSizes::from_words(words, assignments.into_iter().map(u32::from_le).collect())
     }
 }
 

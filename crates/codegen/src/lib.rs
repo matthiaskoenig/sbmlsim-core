@@ -3,7 +3,7 @@
 //!
 //! [`emit`] translates an [`sbmlsim_ir::Model`] into a WebAssembly module of the contract
 //! `model/1` (see `sbmlsim_abi`): it imports the memory of the engine as `env.memory` and the
-//! functions of mathlib it calls as `math.*`, and exports the thirteen functions of the contract.
+//! functions of mathlib it calls as `math.*`, and exports the fourteen functions of the contract.
 //! The expressions are emitted as written, without fast math, reassociation or folding of
 //! constants (`q / 49` is one `f64.div` by `49`), with the meaning libroadrunner gives every
 //! operator (see `math.rs`).
@@ -30,7 +30,7 @@
 //!   concentration from the compartment before the assignments of the event (read into a local
 //!   first), and rescales a species which stores its concentration by its compartment before
 //!   over after the assignments.
-//! - `model_sizes` stores the six sizes of the model.
+//! - `model_sizes` and `model_event_sizes` store the sizes of the model.
 //!
 //! The crate does no file system or OS access, so it builds for `wasm32-unknown-unknown`.
 
@@ -207,129 +207,146 @@ fn module(model: &Model) -> Result<Vec<u8>, CompileError> {
     }
     f.finish()?;
 
-    // model_sizes(out)
+    // model_sizes(out) and model_event_sizes(out)
+    let sizes = sizes(model);
     let mut f = m.function(abi::SIZES, &[I32], &[], none);
-    for (k, x) in sizes(model).to_words().into_iter().enumerate() {
+    for (k, x) in sizes.words().into_iter().enumerate() {
         f.store_i32_at(0, k as u32, x);
+    }
+    f.finish()?;
+    let mut f = m.function(abi::EVENT_SIZES, &[I32], &[], none);
+    for (k, x) in sizes.assignments.iter().enumerate() {
+        f.store_i32_at(0, k as u32, *x);
     }
     f.finish()?;
 
     Ok(m.finish())
 }
 
-/// The sizes of the module of a model.
+/// The sizes of the module of a model (its Jacobian is the dense pattern of the description).
 fn sizes(model: &Model) -> ModelSizes {
+    let n = model.states.len() as u32;
     ModelSizes {
-        states: model.states.len() as u32,
+        states: n,
         parameters: model.parameters.len() as u32,
         selections: model.selections.len() as u32,
+        jacobian_entries: n.saturating_mul(n),
         roots: model
             .events
             .iter()
             .map(|e| e.root_functions().len() as u32)
             .sum(),
-        events: model.events.len() as u32,
-        event_values: model
+        assignments: model
             .events
             .iter()
             .map(|e| e.assignments.len() as u32)
-            .sum(),
+            .collect(),
     }
 }
 
 /// The body of `model_event_apply` for the event `e`; the values are in the local 2.
 ///
-/// Every target gets its value; a species of a concentration gets the amount of the value
-/// times its compartment before the assignments of the event, and a species which stores its
-/// concentration keeps its amount when the event assigns its compartment (it is rescaled by the
-/// compartment before over the compartment after).
+/// As libroadrunner 2.11 (probed, Task 13 report): the assignments are stored in document
+/// order, those of compartments last; a species of a concentration gets the amount of its value
+/// times its compartment as it is at its turn (a compartment the event assigns is still the one
+/// before the event, one of an assignment rule follows the assignments before it); every other
+/// species keeps its amount. For a species which stores its concentration (the target of a
+/// rate rule) that is its concentration times its compartment before over after the event, when
+/// the compartment changed (also through an assignment rule).
 fn event_apply(model: &Model, e: &Event, f: &mut wasm::Body<'_>) {
     const VALUES: u32 = 2;
-    let assigned: Vec<Symbol> = e.assignments.iter().map(|a| a.target).collect();
-    // a species which stores its concentration in a compartment the event assigns
-    let stores_concentration = |s: Symbol| match &model.entity(s).kind {
-        EntityKind::Species {
-            compartment,
-            value: SpeciesValue::Concentration,
-            ..
-        } => Some(*compartment),
-        _ => None,
-    };
-    let rescaled: Vec<(Symbol, Symbol)> = model
-        .states
-        .iter()
-        .enumerate()
-        .map(|(i, _)| Symbol::State(i as u32))
-        .chain((0..model.parameters.len()).map(|i| Symbol::Param(i as u32)))
-        .filter_map(|s| {
-            let c = stores_concentration(s)?;
-            (assigned.contains(&c) && !assigned.contains(&s)).then_some((s, c))
+    let is_compartment = |s: Symbol| matches!(model.entity(s).kind, EntityKind::Compartment);
+    let is_rule_target = |s: Symbol| model.assignment_rules.iter().any(|a| a.target == s);
+    // the states which store a concentration, with their compartments
+    let stored: Vec<(Symbol, Symbol)> = (0..model.states.len())
+        .map(|i| Symbol::State(i as u32))
+        .filter_map(|s| match &model.entity(s).kind {
+            EntityKind::Species {
+                compartment,
+                value: SpeciesValue::Concentration,
+                ..
+            } => Some((s, *compartment)),
+            _ => None,
         })
         .collect();
-    // the compartments before the assignments
     let mut compartments: Vec<Symbol> = Vec::new();
-    for c in e
-        .assignments
-        .iter()
-        .filter_map(|a| a.compartment)
-        .chain(rescaled.iter().map(|(_, c)| *c))
-    {
-        if !compartments.contains(&c) {
-            compartments.push(c);
+    for (_, c) in &stored {
+        if !compartments.contains(c) {
+            compartments.push(*c);
         }
     }
-    if compartments.is_empty() {
-        for (j, a) in e.assignments.iter().enumerate() {
-            f.store_scaled(a.target, VALUES, Some(j as u32), None, None);
-        }
-        return;
-    }
-    f.assign_locals(&model.assignment_rules);
-    let before: Vec<(Symbol, u32)> = compartments
-        .iter()
-        .map(|c| (*c, f.keep(&Expr::Symbol(*c))))
-        .collect();
-    let local = |list: &[(Symbol, u32)], c: Symbol| {
+    let lookup = |list: &[(Symbol, u32)], c: Symbol| {
         list.iter()
             .find(|(s, _)| *s == c)
             .map(|(_, l)| *l)
             .expect("a compartment of the list")
     };
-    f.forget_rules();
-    // the targets which store what is assigned: the value, or the amount of a concentration
-    let mut later = Vec::new();
-    for (j, a) in e.assignments.iter().enumerate() {
-        match (a.compartment, stores_concentration(a.target)) {
-            (Some(c), None) => f.store_scaled(
-                a.target,
-                VALUES,
-                Some(j as u32),
-                Some(local(&before, c)),
-                None,
-            ),
-            (Some(c), Some(_)) => later.push((a.target, Some(j as u32), c)),
-            (None, _) => f.store_scaled(a.target, VALUES, Some(j as u32), None, None),
+    // the compartments before the assignments
+    let mut rules_current = false;
+    let before: Vec<(Symbol, u32)> = if compartments.is_empty() {
+        Vec::new()
+    } else {
+        f.assign_locals(&model.assignment_rules);
+        rules_current = true;
+        compartments
+            .iter()
+            .map(|c| (*c, f.keep(&Expr::Symbol(*c))))
+            .collect()
+    };
+    // the assignments in document order, the compartments last; the amounts of the species
+    // which store their concentration are kept in locals until the compartments are known
+    let mut amounts: Vec<(Symbol, u32, u32)> = Vec::new();
+    let order = e
+        .assignments
+        .iter()
+        .enumerate()
+        .filter(|(_, a)| !is_compartment(a.target))
+        .chain(
+            e.assignments
+                .iter()
+                .enumerate()
+                .filter(|(_, a)| is_compartment(a.target)),
+        );
+    for (j, a) in order {
+        let j = j as u32;
+        let Some(c) = a.compartment else {
+            f.store_scaled(a.target, VALUES, Some(j), None, None);
+            rules_current = false;
+            continue;
+        };
+        // the compartment at the turn of this assignment
+        if is_rule_target(c) && !rules_current {
+            f.assign_locals(&model.assignment_rules);
+            rules_current = true;
+        }
+        if stored.iter().any(|(s, _)| *s == a.target) {
+            let now = f.keep(&Expr::Symbol(c));
+            amounts.push((a.target, j, now));
+        } else {
+            let now = f.keep(&Expr::Symbol(c));
+            f.store_scaled(a.target, VALUES, Some(j), Some(now), None);
+            rules_current = false;
         }
     }
-    later.extend(rescaled.iter().map(|(s, c)| (*s, None, *c)));
-    if later.is_empty() {
+    if stored.is_empty() {
+        f.forget_rules();
         return;
     }
-    // the species which store their concentration: the amount over the compartment after
+    // the compartments after the assignments
     f.assign_locals(&model.assignment_rules);
     let after: Vec<(Symbol, u32)> = compartments
         .iter()
         .map(|c| (*c, f.keep(&Expr::Symbol(*c))))
         .collect();
     f.forget_rules();
-    for (s, j, c) in later {
-        f.store_scaled(
-            s,
-            VALUES,
-            j,
-            Some(local(&before, c)),
-            Some(local(&after, c)),
-        );
+    for (s, c) in &stored {
+        let to = lookup(&after, *c);
+        match amounts.iter().find(|(t, _, _)| t == s) {
+            // value * now / after, the value itself when the compartment did not change
+            Some((_, j, now)) => f.store_rescaled(*s, VALUES, Some(*j), *now, to),
+            // the amount is kept: y * before / after, when the compartment changed
+            None => f.store_rescaled(*s, VALUES, None, lookup(&before, *c), to),
+        }
     }
 }
 
