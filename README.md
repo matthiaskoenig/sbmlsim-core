@@ -18,10 +18,17 @@ Both are defined in `crates/abi`.
 
 ## Semantics and known differences
 
-The semantics follow sbmlsim's simulation core (`changes`, `events`, root finding of the conditions of `piecewise`). The known differences to roadrunner and to sbmlsim are listed in the documentation of the engine (`crates/engine/src/lib.rs`, "Known differences to libroadrunner") and in `bench/RESULTS.md` ("Known differences to roadrunner"); they are not repeated here.
+The semantics follow sbmlsim's simulation core (`changes`, `events`, root finding of the conditions of `piecewise`). All known differences to roadrunner and to sbmlsim are documented with the engine (`crates/engine/src/lib.rs`, "Known differences to libroadrunner", and the modules `changes` and `events`) and in `bench/RESULTS.md` ("Known differences to roadrunner"). The ones a user meets first:
 
-Open item for the owner: a delayed event whose trigger a change of the request makes true is scheduled by the engine, while sbmlsim does not fire such events (ruling R34 of the ledger, not decided yet).
+- A change of the request which makes the trigger of an event with a delay true (also through the events the change executes) is refused with an error of the kind `request` naming the event and the time. sbmlsim reports such an event and does not fire it, roadrunner schedules it; the engine refuses what it would simulate otherwise than sbmlsim.
+- Events which accumulate end with an error of the integration (`CV_TOO_MUCH_WORK`, flag -1): the executions of events within the relative tolerance (as a distance in time) of the last root share the budget of `maximum_num_steps` steps towards one output time, and in the output of the steps of the integrator `maximum_num_steps` consecutive stops within the resolution of the time (1e-9 of the magnitude of the times) end the run. The bouncing ball (`x' = v`, `v' = -10`, the event `x < 0`: `v = -0.5 v`, `x = 0`) fails at its accumulation point t = 1.3416 within milliseconds; roadrunner lets the ball fall through and continues.
+- Roots which chatter share that budget too, so a model which roadrunner finishes after millions of steps (a sliding mode at a loose tolerance) may end with `CV_TOO_MUCH_WORK` here.
+- Three differences to sbmlsim's roadrunner executor: a change which sets a state exactly to the threshold of a strict comparison triggers its event right after the change (as sbmlsim's executors of COPASI and AMICI; roadrunner's CVODE ignores a root which is 0 at the start of a segment); the variable of an assignment rule without math can be changed (the rule is ignored, as roadrunner does; sbmlsim refuses to change it); an entity named `time` is set as an entity by a change (sbmlsim sets the clock of roadrunner).
+- A limitation shared with roadrunner: CVODE finds a root where a root function changes its sign across a step, so two roots of one function within one step cancel and are missed. A condition which switches faster than the steps needs `maximum_time_step`, e.g. `piecewise(1, sin(time) > 0, 0)` over many periods with a `maximum_time_step` of 0.5.
 
+## Requirements of the hosts
+
+`engine.wasm` uses fixed-width SIMD (WebAssembly SIMD, the C solvers are compiled with `-msimd128`). The results do not depend on it, they are the same bits as without, but a host without SIMD cannot instantiate `engine.wasm`. wasmtime, Node and the current browsers (Chrome 91, Firefox 89, Safari 16.4 and later) support it. The memory of an instance grows to at most 2 GiB.
 
 ## Toolchain
 
@@ -38,6 +45,8 @@ export WASI_SDK_PATH=$HOME/opt/wasi-sdk
 ```
 
 ## Checks
+
+clippy runs with `-D warnings` and the default lints; the pedantic lints (`clippy::pedantic`) are planned for later and not enabled yet.
 
 ```bash
 cargo fmt --check
@@ -114,7 +123,7 @@ uv run scripts/agreement.py                                        # the engine 
 
 The counters of the integrator of the last simulation are `Instance::stats` (wasmtime) and `instance.stats()` (`js/loader.mjs`).
 
-No model of the benchmark takes more than 2x the time of roadrunner native, dense or with KLU, in wasmtime, Node or Chrome (the largest 1.56, the event model in wasmtime), and every model agrees with roadrunner at tight tolerances. The engine locates the discontinuities of the math as roadrunner does: CVODE stops where the branch of a `piecewise` of a rule, a kinetic law or a trigger changes and starts again from the state there (the root functions after those of the triggers in `model_roots`, `n_discontinuity_roots` in `model.json`).
+No model of the benchmark takes more than 2x the time of roadrunner native, dense or with KLU, in wasmtime, Node or Chrome (the largest 1.60, the event model in wasmtime), and every model agrees with roadrunner at tight tolerances. The engine locates the discontinuities of the math as roadrunner does: CVODE stops where the branch of a `piecewise` of a rule, a kinetic law or a trigger changes and starts again from the state there (the root functions after those of the triggers in `model_roots`, `n_discontinuity_roots` in `model.json`).
 
 ## License
 
