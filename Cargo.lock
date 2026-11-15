@@ -1515,6 +1515,7 @@ dependencies = [
  "numpy",
  "pyo3",
  "pythonize",
+ "rayon",
  "sbmlsim-abi",
  "sbmlsim-compiler",
  "sbmlsim-engine",

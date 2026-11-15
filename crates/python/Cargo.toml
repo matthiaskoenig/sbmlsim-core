@@ -18,6 +18,7 @@ crate-type = ["cdylib"]
 numpy = "0.30"
 pyo3 = { version = "0.30", features = ["extension-module", "abi3-py314"] }
 pythonize = "0.30"
+rayon = "1.10"
 sbmlsim-abi = { path = "../abi" }
 sbmlsim-compiler = { path = "../compiler" }
 sbmlsim-engine = { path = "../engine" }

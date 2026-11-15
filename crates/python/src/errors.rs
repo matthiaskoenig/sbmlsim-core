@@ -72,3 +72,81 @@ pub(crate) fn simulation_error(error: EngineError) -> PyErr {
 pub(crate) fn poisoned<T>(_: PoisonError<T>) -> EngineError {
     EngineError::Internal("the instance panicked before and is not used again".into())
 }
+
+/// A point of a batch which failed: the error of its simulation as a value, in the position of
+/// its request, so that the points around it keep their results.
+///
+/// It is the counterpart of the `SimulationError`s a single simulation raises: `kind` is
+/// `"request"`, `"integration"`, `"unsupported"` or `"internal"`, and `flag` and `time` are the
+/// return flag of CVODE and the time it reached of an integration which failed, none otherwise.
+#[pyclass(frozen, module = "sbmlsim_core")]
+pub(crate) struct PointError {
+    kind: &'static str,
+    message: String,
+    flag: Option<i32>,
+    time: Option<f64>,
+}
+
+impl PointError {
+    /// The error of a simulation as the failed point of a batch.
+    pub(crate) fn of(error: EngineError) -> PointError {
+        let message = error.to_string();
+        let (kind, flag, time) = match error {
+            EngineError::Request(_) => ("request", None, None),
+            EngineError::Unsupported(_) => ("unsupported", None, None),
+            EngineError::Internal(_) => ("internal", None, None),
+            EngineError::Integration { flag, time, .. } => ("integration", Some(flag), Some(time)),
+        };
+        PointError {
+            kind,
+            message,
+            flag,
+            time,
+        }
+    }
+
+    /// A failure of the host around a point: its instance, its table, or a panic.
+    pub(crate) fn internal(message: String) -> PointError {
+        PointError {
+            kind: "internal",
+            message,
+            flag: None,
+            time: None,
+        }
+    }
+}
+
+#[pymethods]
+impl PointError {
+    /// The kind of the error: `"request"`, `"integration"`, `"unsupported"` or `"internal"`.
+    #[getter]
+    fn kind(&self) -> &'static str {
+        self.kind
+    }
+
+    /// The message of the error.
+    #[getter]
+    fn message(&self) -> String {
+        self.message.clone()
+    }
+
+    /// The return flag of CVODE of an integration which failed, none for every other error.
+    #[getter]
+    fn flag(&self) -> Option<i32> {
+        self.flag
+    }
+
+    /// The time an integration which failed reached, none for every other error.
+    #[getter]
+    fn time(&self) -> Option<f64> {
+        self.time
+    }
+
+    /// The kind and the message of the error.
+    fn __repr__(&self) -> String {
+        format!(
+            "PointError(kind={:?}, message={:?})",
+            self.kind, self.message
+        )
+    }
+}

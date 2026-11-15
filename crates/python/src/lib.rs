@@ -11,8 +11,8 @@ use sbmlsim_abi::{MODEL_CONTRACT, SIMULATION_CONTRACT};
 
 use compile::{CompiledModel, compile_sbml};
 use errors::{
-    CompileError, IntegrationError, InternalError, RequestError, SbmlsimCoreError, SimulationError,
-    UnsupportedError,
+    CompileError, IntegrationError, InternalError, PointError, RequestError, SbmlsimCoreError,
+    SimulationError, UnsupportedError,
 };
 use runtime::{LoadedModel, Runtime};
 use simulate::{Instance, SimulationOutput};
@@ -34,6 +34,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Runtime>()?;
     m.add_class::<LoadedModel>()?;
     m.add_class::<Instance>()?;
+    m.add_class::<PointError>()?;
     m.add_class::<SimulationOutput>()?;
     m.add_function(wrap_pyfunction!(compile_sbml, m)?)?;
     Ok(())

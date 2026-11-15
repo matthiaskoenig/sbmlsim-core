@@ -1,5 +1,6 @@
 """Type stubs of the extension module `sbmlsim_core._core`."""
 
+from collections.abc import Sequence
 from typing import Any
 
 import numpy
@@ -44,6 +45,25 @@ class UnsupportedError(SimulationError):
 class InternalError(SimulationError):
     """A failure of the engine itself."""
 
+class PointError:
+    """A point of a batch which failed: the error of its simulation as a value."""
+
+    @property
+    def kind(self) -> str:
+        """The kind: `request`, `integration`, `unsupported` or `internal`."""
+
+    @property
+    def message(self) -> str:
+        """The message of the error."""
+
+    @property
+    def flag(self) -> int | None:
+        """The return flag of CVODE of an integration which failed, else none."""
+
+    @property
+    def time(self) -> float | None:
+        """The time an integration which failed reached, else none."""
+
 class SimulationOutput:
     """The table of a simulation."""
 
@@ -76,6 +96,14 @@ class LoadedModel:
 
     def instance(self) -> Instance:
         """A new instance of the model."""
+
+    def simulate_many(
+        self,
+        requests: Sequence[dict[str, Any]],
+        *,
+        threads: int | None = None,
+    ) -> list[SimulationOutput | PointError]:
+        """Simulates every request on `threads` threads, in the order of the requests."""
 
 class Runtime:
     """`engine.wasm` and `mathlib.wasm`, compiled once, which load models."""

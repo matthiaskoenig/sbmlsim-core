@@ -125,7 +125,9 @@ instance = model.instance()                                 # one per thread
 out = instance.simulate(request)                            # a dict of simulation/1
 out.columns, out.values                                     # names, float64 array (rows, columns)
 instance.stats()                                            # the counters of the integrator
+results = model.simulate_many(requests, threads=None)       # a batch on rayon threads, in order
 # errors: SimulationError with RequestError, IntegrationError (flag, time), UnsupportedError, InternalError
+# a point of a batch which failed is a PointError (kind, message, flag, time) in its position
 ```
 
 ## Test suite

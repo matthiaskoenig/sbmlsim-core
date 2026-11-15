@@ -8,7 +8,7 @@ use pyo3::prelude::*;
 use sbmlsim_abi::ModelDescription;
 
 use crate::errors::SbmlsimCoreError;
-use crate::simulate::Instance;
+use crate::simulate::{Instance, batch};
 
 /// `engine.wasm` and `mathlib.wasm`, compiled once, which load models.
 #[pyclass(frozen, module = "sbmlsim_core")]
@@ -88,5 +88,26 @@ impl LoadedModel {
             .detach(|| self.model.instantiate())
             .map_err(|error| SbmlsimCoreError::new_err(format!("{error:#}")))?;
         Ok(Instance::new(instance))
+    }
+
+    /// Simulates every request of `simulation/1` (dicts) on `threads` threads and gives one
+    /// result per request, in the order of the requests: a `SimulationOutput` for a point
+    /// which ran and a `PointError` for one which failed, so that a point which fails leaves
+    /// the points around it their results.
+    ///
+    /// Every thread simulates on an instance of its own, so the results are those of a serial
+    /// run bitwise, whatever `threads` is. `threads` is every CPU of the process when it is
+    /// none; raises `ValueError` for fewer than 1 and for more than 1024 threads and for a
+    /// request which is none (an unknown field, a wrong type), before anything is simulated,
+    /// and `KeyboardInterrupt` for a batch which is interrupted, which drops the results of
+    /// the points which ran.
+    #[pyo3(signature = (requests, *, threads=None))]
+    fn simulate_many(
+        &self,
+        py: Python<'_>,
+        requests: &Bound<'_, PyAny>,
+        threads: Option<i64>,
+    ) -> PyResult<Vec<Py<PyAny>>> {
+        batch(py, &self.model, requests, threads)
     }
 }
