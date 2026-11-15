@@ -154,7 +154,7 @@ def worker(build: str, model: dict, warmups: int, reps: int) -> None:
             atol_matches = None
             if atol_expected is not None:
                 atol_matches = bool(
-                    len(vector) == len(atol_expected)
+                    len(states) == len(vector) == len(atol_expected)
                     and all(
                         atol_expected[sid] == float(v)
                         for sid, v in zip(states, vector, strict=True)

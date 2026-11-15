@@ -20,6 +20,10 @@ use simulate::{Instance, SimulationOutput};
 /// The extension module of the package `sbmlsim_core`.
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // rust-numpy imports the array API of numpy at the first array it builds, and an interrupt
+    // pending then would abort that import as a panic; build one here, where none of ours can
+    // be pending, so a Ctrl-C during the first batch is a KeyboardInterrupt
+    drop(numpy::PyArray1::<f64>::zeros(m.py(), 0, false));
     m.add("MODEL_CONTRACT", MODEL_CONTRACT)?;
     m.add("SIMULATION_CONTRACT", SIMULATION_CONTRACT)?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;

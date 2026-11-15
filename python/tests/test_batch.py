@@ -212,10 +212,6 @@ def test_a_long_batch_is_interrupted(decay):
     # is the whole claim of the test and `pytest.raises` would not reach it: a batch which
     # never checks the signals returns, and the interrupt which is pending then is raised
     # inside `__exit__`, where it ends the session instead of failing the test.
-    # the first table of the process imports the array API of numpy, which an interrupt
-    # pending at that moment would abort inside the import (a panic of rust-numpy), so the
-    # test runs alone as well as after the tests before it only when that import is done
-    decay.simulate_many([request(end=1.0, steps=1)], threads=1)
     requests = [slow_request() for _ in range(160)]
     interrupt = threading.Timer(0.02, _thread.interrupt_main)
     switch = sys.getswitchinterval()
