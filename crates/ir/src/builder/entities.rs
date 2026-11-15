@@ -110,12 +110,19 @@ impl<'m> Builder<'m> {
     pub(super) fn classify(&mut self) -> Result<(), CompileError> {
         let m = self.m;
         for (position, rule) in rules_with_math(m) {
-            let (variable, map) = match rule {
-                Rule::Assignment { variable, .. } => (variable, &mut self.assignment_rule),
-                Rule::Rate { variable, .. } => (variable, &mut self.rate_rule),
+            // the rules of the same kind, and of the other kind, before it in document order
+            let (variable, map, other) = match rule {
+                Rule::Assignment { variable, .. } => {
+                    (variable, &mut self.assignment_rule, &self.rate_rule)
+                }
+                Rule::Rate { variable, .. } => {
+                    (variable, &mut self.rate_rule, &self.assignment_rule)
+                }
                 Rule::Algebraic { .. } => unreachable!("refused before"),
             };
-            if map.insert(variable.as_str(), position).is_some() {
+            if other.contains_key(variable.as_str())
+                || map.insert(variable.as_str(), position).is_some()
+            {
                 return Err(invalid(format!("{variable} is the variable of two rules")));
             }
             let element = rule_name(position, rule);
@@ -130,13 +137,6 @@ impl<'m> Builder<'m> {
                     "the variable {variable} of {element} is constant"
                 )));
             }
-        }
-        if let Some(v) = self
-            .assignment_rule
-            .keys()
-            .find(|v| self.rate_rule.contains_key(*v))
-        {
-            return Err(invalid(format!("{v} is the variable of two rules")));
         }
         let mut assigned_initially = HashMap::new();
         for (position, ia) in initial_assignments_with_math(m) {

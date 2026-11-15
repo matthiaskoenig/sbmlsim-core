@@ -1131,3 +1131,127 @@ fn case_01271_a_function_definition_without_math_is_refused_where_it_is_called()
         );
     }
 }
+
+#[test]
+fn two_rules_of_one_variable_are_named_in_document_order() {
+    // the first rule in document order whose variable has a rule before it: the rule of b
+    let rr = |v: &str| format!(r#"<rateRule variable="{v}"><math $><cn>1</cn></math></rateRule>"#);
+    let e = error(&format!(
+        r#"<listOfParameters>{}{}</listOfParameters><listOfRules>{}{}{}{}</listOfRules>"#,
+        variable("a").replace("/>", r#" value="1"/>"#),
+        variable("b").replace("/>", r#" value="1"/>"#),
+        rr("a"),
+        rr("b"),
+        assignment_rule("b", "<cn>2</cn>"),
+        assignment_rule("a", "<cn>2</cn>"),
+    ));
+    assert_eq!(
+        e,
+        CompileError::Invalid("b is the variable of two rules".into())
+    );
+}
+
+/// The function definitions `defs` (`id`, bound variables, body) as SBML.
+fn functions(defs: &[(&str, &[&str], &str)]) -> String {
+    let defs: String = defs
+        .iter()
+        .map(|(id, params, body)| {
+            let bvars: String = params
+                .iter()
+                .map(|p| format!("<bvar><ci>{p}</ci></bvar>"))
+                .collect();
+            format!(
+                r#"<functionDefinition id="{id}"><math $><lambda>{bvars}{body}</lambda></math></functionDefinition>"#
+            )
+        })
+        .collect();
+    format!("<listOfFunctionDefinitions>{defs}</listOfFunctionDefinitions>")
+}
+
+fn call(f: &str, args: &[&str]) -> String {
+    format!("<apply><ci>{f}</ci>{}</apply>", args.concat())
+}
+
+#[test]
+fn a_bound_variable_named_like_a_model_id_is_the_argument() {
+    // f(k) = k * 2, called with k + 1 where k is the parameter of the model
+    let m = model(&format!(
+        r#"{}<listOfParameters>{}{}</listOfParameters><listOfRules>{}</listOfRules>"#,
+        functions(&[("f", &["k"], &apply("times", &[&ci("k"), "<cn>2</cn>"]))]),
+        parameter("k", "5"),
+        variable("z"),
+        assignment_rule(
+            "z",
+            &call("f", &[&apply("plus", &[&ci("k"), "<cn>1</cn>"])])
+        )
+    ));
+    assert_eq!(
+        rule(&m, "z"),
+        &ap(
+            Op::Times,
+            vec![ap(Op::Plus, vec![sym(&m, "k"), num(1.0)]), num(2.0)]
+        )
+    );
+}
+
+#[test]
+fn a_function_calling_another_function_is_inlined() {
+    // g(x) = f(x * x) + f(1), f(y) = x + y: the body of f sees the parameter x of the model,
+    // not the bound variable x of g
+    let m = model(&format!(
+        r#"{}<listOfParameters>{}{}</listOfParameters><listOfRules>{}</listOfRules>"#,
+        functions(&[
+            ("f", &["y"], &apply("plus", &[&ci("x"), &ci("y")])),
+            (
+                "g",
+                &["x"],
+                &apply(
+                    "plus",
+                    &[
+                        &call("f", &[&apply("times", &[&ci("x"), &ci("x")])]),
+                        &call("f", &["<cn>1</cn>"])
+                    ]
+                )
+            ),
+        ]),
+        parameter("x", "7"),
+        variable("z"),
+        assignment_rule("z", &call("g", &["<cn>3</cn>"]))
+    ));
+    let x = sym(&m, "x");
+    assert_eq!(
+        rule(&m, "z"),
+        &ap(
+            Op::Plus,
+            vec![
+                ap(
+                    Op::Plus,
+                    vec![x.clone(), ap(Op::Times, vec![num(3.0), num(3.0)])]
+                ),
+                ap(Op::Plus, vec![x, num(1.0)])
+            ]
+        )
+    );
+}
+
+#[test]
+fn a_local_parameter_as_an_argument_and_the_global_in_the_body() {
+    // the kinetic law f(k) with the local parameter k = 0.5, f(a) = a * k reads the global k
+    let body = format!(
+        "{}{}",
+        functions(&[("f", &["a"], &apply("times", &[&ci("a"), &ci("k")]))]),
+        decay("", "")
+    )
+    .replace(
+        &law(&apply("times", &[&ci("k"), &ci("S1")])),
+        &format!(
+            r#"<kineticLaw><math $>{}</math><listOfLocalParameters><localParameter id="k" value="0.5"/></listOfLocalParameters></kineticLaw>"#,
+            call("f", &[&ci("k")])
+        ),
+    );
+    let m = model(&body);
+    assert_eq!(
+        m.selection("J").unwrap().expr,
+        ap(Op::Times, vec![num(0.5), sym(&m, "k")])
+    );
+}
