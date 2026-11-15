@@ -118,6 +118,7 @@ fn outcome(cid: &str, status: Status) -> CaseResult {
         status,
         message: "message".to_string(),
         max_difference: None,
+        jacobian: None,
     }
 }
 

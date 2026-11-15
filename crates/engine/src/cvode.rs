@@ -5,6 +5,16 @@
 //! The methods are the ones of libroadrunner: `stiff` is BDF with the Newton iteration and a
 //! linear solver, non-stiff is Adams-Moulton with the fixed point iteration.
 //!
+//! The Jacobian of the Newton iteration is the analytic one of the model (`model_jac`) or the
+//! sparse difference quotient over the colors of the columns of the pattern of the model
+//! ([`Difference`]), each with the dense solver (the dense matrix filled from the entries of the
+//! pattern) or with KLU (the CSC matrix of the pattern). The sparse difference quotient takes
+//! the increments of CVODE's dense difference quotient (`cvLsDenseDQJac`,
+//! `max(sqrt(eps) |y_j|, minInc / ewt_j)`) and computes every entry as it does, so with the dense
+//! solver it gives the Jacobian of CVODE's own difference quotient bitwise, with one evaluation
+//! of the right hand side per color instead of per state. CVODE's own difference quotient is
+//! only used for the one state of the rate 0 of a model without states, which has no pattern.
+//!
 //! SUNDIALS writes nothing: the library is built without logging (`SUNDIALS_LOGGING_LEVEL 0`),
 //! the default error handlers of the context, which print, are removed and an error handler of
 //! the wrapper records the message of the last error instead, which
@@ -20,22 +30,83 @@ use crate::EngineError;
 use crate::model::ModelFns;
 
 /// The number of states above which [`LinearSolver::Auto`](sbmlsim_abi::LinearSolver::Auto)
-/// takes KLU for a model with an analytic Jacobian, else the dense solver.
+/// takes KLU, else the dense solver.
 pub const KLU_THRESHOLD: usize = 64;
+
+/// The source of the Jacobian of a stiff configuration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Jacobian {
+    /// `model_jac` of the model.
+    Analytic,
+    /// The sparse difference quotient over the colors of the columns of the pattern.
+    Difference,
+    /// CVODE's own dense difference quotient, only for the one state of the rate 0 of a model
+    /// without states (which has no pattern).
+    Internal,
+}
 
 /// The linear solver of a configuration and the source of its Jacobian.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Linear {
-    /// The dense solver, with the analytic Jacobian of the model or CVODE's difference quotient.
+    /// The dense solver.
     Dense {
-        /// Whether the model computes the Jacobian.
-        analytic: bool,
+        /// The source of the Jacobian.
+        jacobian: Jacobian,
     },
-    /// KLU with the analytic Jacobian of the model, of `nnz` entries.
+    /// KLU on the pattern of `nnz` entries (never with [`Jacobian::Internal`]).
     Klu {
         /// The number of entries of the pattern.
         nnz: usize,
+        /// The source of the Jacobian.
+        jacobian: Jacobian,
     },
+}
+
+/// What the sparse difference quotient needs besides the pattern: the columns of every color
+/// and its vectors.
+pub(crate) struct Difference {
+    /// The columns of the color `c` are `columns[starts[c]..starts[c + 1]]`, ascending.
+    starts: Vec<usize>,
+    columns: Vec<usize>,
+    /// The increment of every state.
+    increments: Vec<f64>,
+    /// The state with the increments of the columns of one color.
+    perturbed: Vec<f64>,
+    /// The right hand side at `perturbed`.
+    rates: Vec<f64>,
+}
+
+impl Difference {
+    /// The difference quotient over a coloring of the `n` columns of a pattern (checked to share
+    /// no row within a color, every color below `max(n, 1)`).
+    pub fn new(n: usize, colors: &[u32]) -> Difference {
+        let n_colors = colors.iter().map(|c| *c as usize + 1).max().unwrap_or(0);
+        let mut starts = vec![0usize; n_colors + 1];
+        for &c in colors {
+            starts[c as usize + 1] += 1;
+        }
+        for c in 0..n_colors {
+            starts[c + 1] += starts[c];
+        }
+        let mut next = starts.clone();
+        let mut columns = vec![0usize; n];
+        for (j, &c) in colors.iter().enumerate() {
+            columns[next[c as usize]] = j;
+            next[c as usize] += 1;
+        }
+        Difference {
+            starts,
+            columns,
+            increments: vec![0.0; n],
+            perturbed: vec![0.0; n],
+            rates: vec![0.0; n],
+        }
+    }
+
+    /// The number of colors, the evaluations of the right hand side of one Jacobian.
+    pub fn n_colors(&self) -> usize {
+        self.starts.len() - 1
+    }
 }
 
 /// The method of a configuration, as libroadrunner chooses it from `stiff`.
@@ -69,10 +140,16 @@ pub(crate) struct Problem<'a> {
     pub model: &'a dyn ModelFns,
     /// The parameters, constant during an integration (events change them between two).
     pub p: Vec<f64>,
-    /// The pattern of the analytic Jacobian, `None` without.
+    /// The pattern of the Jacobian, `None` for CVODE's own difference quotient and a
+    /// non-stiff method.
     pub pattern: Option<&'a SparsityPattern>,
     /// The values of the Jacobian in the CSC order of the pattern.
     pub jac_values: Vec<f64>,
+    /// The sparse difference quotient, `None` for the analytic Jacobian.
+    pub difference: Option<Difference>,
+    /// The CVODE memory of the running integration, set by [`Cvode::integrate`] (the sparse
+    /// difference quotient reads its error weights and step size).
+    pub mem: *mut c_void,
 }
 
 /// The message of the last error SUNDIALS reported, written by [`record_error`].
@@ -154,26 +231,99 @@ unsafe extern "C" fn roots(
     0
 }
 
+/// The values of the Jacobian at `(t, y)` into `problem.jac_values`: the analytic one of the
+/// model, or the sparse difference quotient; `fy` is the right hand side at `y` and `ewt` a
+/// vector of `n` values CVODE lends. Returns the return code of the callback.
+///
+/// # Safety
+/// `y`, `fy` and `ewt` are serial vectors of `problem.n` values, `problem.mem` is the CVODE
+/// memory of the running integration.
+unsafe fn jacobian_values(
+    problem: &mut Problem<'_>,
+    pattern: &SparsityPattern,
+    t: sunrealtype,
+    y: N_Vector,
+    fy: N_Vector,
+    ewt: N_Vector,
+) -> c_int {
+    let n = pattern.n as usize;
+    // SAFETY: as documented; the vectors are not aliased by the slices of the problem.
+    unsafe {
+        let y_values = values(y, n);
+        let Some(dq) = problem.difference.as_mut() else {
+            problem
+                .model
+                .jac(t, y_values, &problem.p, &mut problem.jac_values);
+            return 0;
+        };
+        // the increments of `cvLsDenseDQJac` (SUNDIALS 7.9.0), in its order of operations
+        if CVodeGetErrWeights(problem.mem, ewt) != 0 {
+            return -1;
+        }
+        let mut h = 0.0;
+        if CVodeGetCurrentStep(problem.mem, &mut h) != 0 {
+            return -1;
+        }
+        let uround = f64::EPSILON;
+        let srur = uround.sqrt();
+        let fnorm = N_VWrmsNorm(fy, ewt);
+        let min_inc = if fnorm != 0.0 {
+            1000.0 * h.abs() * uround * n as f64 * fnorm
+        } else {
+            1.0
+        };
+        let ewt = values(ewt, n);
+        for j in 0..n {
+            let (a, b) = (srur * y_values[j].abs(), min_inc / ewt[j]);
+            dq.increments[j] = if a > b { a } else { b };
+        }
+        let fy = values(fy, n);
+        dq.perturbed.copy_from_slice(y_values);
+        for c in 0..dq.n_colors() {
+            let columns = &dq.columns[dq.starts[c]..dq.starts[c + 1]];
+            for &j in columns {
+                dq.perturbed[j] += dq.increments[j];
+            }
+            problem
+                .model
+                .rhs(t, &dq.perturbed, &problem.p, &mut dq.rates);
+            for &j in columns {
+                dq.perturbed[j] = y_values[j];
+                // `N_VLinearSum(inc_inv, ftemp, -inc_inv, fy)` is `inc_inv * (ftemp - fy)`
+                let inc_inv = 1.0 / dq.increments[j];
+                let (start, end) = (pattern.col_ptr[j] as usize, pattern.col_ptr[j + 1] as usize);
+                for k in start..end {
+                    let i = pattern.row_idx[k] as usize;
+                    problem.jac_values[k] = inc_inv * (dq.rates[i] - fy[i]);
+                }
+            }
+        }
+    }
+    0
+}
+
 unsafe extern "C" fn jac_dense(
     t: sunrealtype,
     y: N_Vector,
-    _fy: N_Vector,
+    fy: N_Vector,
     jac: SUNMatrix,
     data: *mut c_void,
-    _tmp1: N_Vector,
+    tmp1: N_Vector,
     _tmp2: N_Vector,
     _tmp3: N_Vector,
 ) -> c_int {
-    // SAFETY: as in `rhs`; the dense matrix has `n * n` values, column-major.
+    // SAFETY: as in `rhs`; the dense matrix has `n * n` values, column-major; `tmp1` is a
+    // vector of `n` values CVODE lends to the callback.
     unsafe {
         let problem = problem(data);
         let Some(pattern) = problem.pattern else {
             return -1;
         };
+        let code = jacobian_values(problem, pattern, t, y, fy, tmp1);
+        if code != 0 {
+            return code;
+        }
         let n = pattern.n as usize;
-        problem
-            .model
-            .jac(t, values(y, n), &problem.p, &mut problem.jac_values);
         let matrix = std::slice::from_raw_parts_mut(SUNDenseMatrix_Data(jac), n * n);
         matrix.fill(0.0);
         for j in 0..n {
@@ -189,10 +339,10 @@ unsafe extern "C" fn jac_dense(
 unsafe extern "C" fn jac_sparse(
     t: sunrealtype,
     y: N_Vector,
-    _fy: N_Vector,
+    fy: N_Vector,
     jac: SUNMatrix,
     data: *mut c_void,
-    _tmp1: N_Vector,
+    tmp1: N_Vector,
     _tmp2: N_Vector,
     _tmp3: N_Vector,
 ) -> c_int {
@@ -210,9 +360,10 @@ unsafe extern "C" fn jac_sparse(
         if capacity < 0 || (capacity as usize) < nnz {
             return -1;
         }
-        problem
-            .model
-            .jac(t, values(y, n), &problem.p, &mut problem.jac_values);
+        let code = jacobian_values(problem, pattern, t, y, fy, tmp1);
+        if code != 0 {
+            return code;
+        }
         let capacity = capacity as usize;
         let data = std::slice::from_raw_parts_mut(SUNSparseMatrix_Data(jac), capacity);
         let rows = std::slice::from_raw_parts_mut(SUNSparseMatrix_IndexValues(jac), capacity);
@@ -363,7 +514,7 @@ impl Cvode {
                         cvode.solver = SUNLinSol_Dense(cvode.y, cvode.matrix, cvode.ctx);
                     }
                 }
-                Linear::Klu { nnz } => {
+                Linear::Klu { nnz, .. } => {
                     // a capacity of at least 1, CVODE grows it when it adds the diagonal
                     let capacity = nnz.max(1) as sunindextype;
                     cvode.matrix = SUNSparseMatrix(n, n, capacity, CSC_MAT, cvode.ctx);
@@ -421,8 +572,10 @@ impl Cvode {
                     Method::Bdf(linear) => {
                         self.flag(CVodeSetLinearSolver(self.mem, self.solver, self.matrix), t0)?;
                         let jac: CVLsJacFn = match linear {
-                            Linear::Dense { analytic: true } => Some(jac_dense),
-                            Linear::Dense { analytic: false } => None,
+                            Linear::Dense {
+                                jacobian: Jacobian::Internal,
+                            } => None,
+                            Linear::Dense { .. } => Some(jac_dense),
                             Linear::Klu { .. } => Some(jac_sparse),
                         };
                         self.flag(CVodeSetJacFn(self.mem, jac), t0)?;
@@ -481,6 +634,7 @@ impl Cvode {
         let mut tret = f64::NAN;
         // SAFETY: the user data points to `problem`, which outlives the call of `CVode`.
         unsafe {
+            problem.mem = self.mem;
             let data = problem as *mut Problem<'_> as *mut c_void;
             self.flag(CVodeSetUserData(self.mem, data), tout)?;
             let flag = CVode(self.mem, tout, self.y, &mut tret, itask);
@@ -500,5 +654,101 @@ impl Cvode {
                 message: std::mem::take(&mut self.errors.message),
             })
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use sbmlsim_abi::{IntegratorSettings, Tolerance};
+
+    use super::*;
+    use crate::model::{ModelFns, Robertson};
+
+    /// Integrates Robertson with a configuration to `4e10`, returns the state at the outputs
+    /// `0.4 * 10^i` and the number of steps.
+    fn robertson(linear: Linear, difference: Option<Difference>) -> (Vec<f64>, c_long) {
+        let model = Robertson;
+        let desc = model.description();
+        let (mut p, mut y) = (vec![0.0; 3], vec![0.0; 3]);
+        model.defaults(&mut p, &mut y);
+        let mut cvode = Cvode::new(Config {
+            n: 3,
+            method: Method::Bdf(linear),
+        })
+        .unwrap();
+        let settings = IntegratorSettings {
+            relative_tolerance: 1e-8,
+            absolute_tolerance: Tolerance::PerState(vec![1e-12, 1e-14, 1e-10]),
+            ..IntegratorSettings::default()
+        };
+        cvode.start(0.0, &y, 4e10, &settings, 0).unwrap();
+        let mut problem = Problem {
+            n: 3,
+            n_model: 3,
+            n_roots: 0,
+            model: &model,
+            p,
+            pattern: Some(desc.jacobian.pattern()),
+            jac_values: vec![0.0; desc.jacobian.pattern().nnz()],
+            difference,
+            mem: ptr::null_mut(),
+        };
+        let mut out = Vec::new();
+        for i in 0..11 {
+            cvode
+                .integrate(&mut problem, 0.4 * 10f64.powi(i), CV_NORMAL)
+                .unwrap();
+            out.extend_from_slice(cvode.state());
+        }
+        let mut steps: c_long = 0;
+        // SAFETY: the memory is initialized.
+        unsafe { CVodeGetNumSteps(cvode.mem, &mut steps) };
+        (out, steps)
+    }
+
+    #[test]
+    fn the_sparse_difference_quotient_is_the_one_of_cvode_bitwise() {
+        // CVODE's own dense difference quotient against the sparse one over the coloring of the
+        // pattern of Robertson (every two columns share a row: the densest column y2 first): the
+        // same increments and operations give the same Jacobians, so the same steps and bits
+        let desc = Robertson.description();
+        let colors = desc.jacobian.pattern().greedy_colors();
+        assert_eq!(colors, [1, 0, 2]);
+        let internal = robertson(
+            Linear::Dense {
+                jacobian: Jacobian::Internal,
+            },
+            None,
+        );
+        let sparse = robertson(
+            Linear::Dense {
+                jacobian: Jacobian::Difference,
+            },
+            Some(Difference::new(3, &colors)),
+        );
+        assert!(internal.1 > 1000, "{} steps", internal.1);
+        assert_eq!(internal.1, sparse.1);
+        let bits = |v: &[f64]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+        assert_eq!(bits(&internal.0), bits(&sparse.0));
+        // and with KLU it integrates to the same result within the tolerances of the integration
+        // (the criterion of `dense_and_klu_same_result`: the step sequences part after t = 4)
+        let klu = robertson(
+            Linear::Klu {
+                nnz: 7,
+                jacobian: Jacobian::Difference,
+            },
+            Some(Difference::new(3, &colors)),
+        );
+        let last = |v: &[f64]| v[v.len() - 3..].to_vec();
+        let (yd, yk) = (last(&internal.0), last(&klu.0));
+        let norm = (yd
+            .iter()
+            .zip(&yk)
+            .zip([1e-12, 1e-14, 1e-10])
+            .map(|((d, k), a)| ((d - k) / (1e-8 * d.abs() + 10.0 * a)).powi(2))
+            .sum::<f64>()
+            / 3.0)
+            .sqrt();
+        assert!(norm < 1.0, "{yd:?} {yk:?} ({norm:e})");
     }
 }

@@ -136,6 +136,8 @@ unsafe extern "C" {
     pub fn N_VNew_Serial(vec_length: sunindextype, sunctx: SUNContext) -> N_Vector;
     pub fn N_VDestroy(v: N_Vector);
     pub fn N_VGetArrayPointer(v: N_Vector) -> *mut sunrealtype;
+    /// The weighted root mean square norm `sqrt(sum((x_i * w_i)^2) / n)`.
+    pub fn N_VWrmsNorm(x: N_Vector, w: N_Vector) -> sunrealtype;
 
     // matrices
     pub fn SUNDenseMatrix(m: sunindextype, n: sunindextype, sunctx: SUNContext) -> SUNMatrix;
@@ -205,6 +207,11 @@ unsafe extern "C" {
     pub fn CVodeGetRootInfo(cvode_mem: *mut c_void, rootsfound: *mut c_int) -> c_int;
     pub fn CVodeGetDky(cvode_mem: *mut c_void, t: sunrealtype, k: c_int, dky: N_Vector) -> c_int;
     pub fn CVodeGetNumSteps(cvode_mem: *mut c_void, nsteps: *mut c_long) -> c_int;
+    /// The step size of the step being attempted (`cv_next_h`, which is `cv_h` while CVODE
+    /// sets up the linear solver).
+    pub fn CVodeGetCurrentStep(cvode_mem: *mut c_void, hcur: *mut sunrealtype) -> c_int;
+    /// Copies the error weights `1 / (rtol |y_i| + atol_i)` into `eweight`.
+    pub fn CVodeGetErrWeights(cvode_mem: *mut c_void, eweight: N_Vector) -> c_int;
     pub fn CVodeGetIntegratorStats(
         cvode_mem: *mut c_void,
         nsteps: *mut c_long,

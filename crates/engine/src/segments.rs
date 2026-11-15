@@ -563,7 +563,7 @@ mod tests {
     use sbmlsim_abi::{IntegratorSettings, Tolerance};
 
     use super::*;
-    use crate::cvode::{Config, Linear, Method};
+    use crate::cvode::{Config, Jacobian, Linear, Method};
     use crate::model::Decay;
 
     #[test]
@@ -578,7 +578,9 @@ mod tests {
         };
         let config = Config {
             n: 1,
-            method: Method::Bdf(Linear::Dense { analytic: true }),
+            method: Method::Bdf(Linear::Dense {
+                jacobian: Jacobian::Analytic,
+            }),
         };
         let mut cvode = Cvode::new(config).unwrap();
         let mut problem = Problem {
@@ -589,6 +591,8 @@ mod tests {
             p: p.clone(),
             pattern: Some(crate::pattern_of(&desc)),
             jac_values: vec![0.0],
+            difference: None,
+            mem: std::ptr::null_mut(),
         };
         let no_changes = Changes::new(&desc, &[], 0.0, 50.0).unwrap();
         let mut run = |cap: usize| {

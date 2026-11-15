@@ -28,6 +28,9 @@ pub enum Symbol {
     Param(u32),
     /// The csymbol `time`.
     Time,
+    /// The derivative of this index of a Jacobian (`JacobianIr::Analytic::derivatives` of
+    /// [`crate::derive`]), only in the expressions of a Jacobian.
+    Derivative(u32),
 }
 
 /// An operator, those of the MathML of SBML Level 3 Version 2 without the csymbols `delay` and

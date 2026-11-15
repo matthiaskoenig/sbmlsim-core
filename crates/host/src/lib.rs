@@ -239,6 +239,112 @@ impl Runtime {
     }
 }
 
+impl Runtime {
+    /// Instantiates a model with mathlib alone, without the engine, to call its right hand side
+    /// and its Jacobian directly (tests and diagnostics); `desc` gives the sizes.
+    pub fn model_functions(
+        &self,
+        model_wasm: &[u8],
+        desc: &ModelDescription,
+    ) -> anyhow::Result<ModelFunctions> {
+        check_model_sections(model_wasm)?;
+        let module = Module::new(&self.engine, model_wasm)
+            .map_err(anyhow::Error::from)
+            .context("model.wasm does not compile")?;
+        let mut store = store(&self.engine);
+        let memory = Memory::new(&mut store, self.memory_type.clone())?;
+        let mut linker = linker(&self.engine)?;
+        linker.define(&store, "env", "memory", memory)?;
+        let math = linker.instantiate(&mut store, &self.mathlib_module)?;
+        linker.instance(&mut store, "math", math)?;
+        let model = linker
+            .instantiate(&mut store, &module)
+            .map_err(anyhow::Error::from)
+            .context("model.wasm does not instantiate")?;
+        let rhs = model.get_typed_func(&mut store, sbmlsim_abi::RHS)?;
+        let jac = model.get_typed_func(&mut store, sbmlsim_abi::JAC)?;
+        Ok(ModelFunctions {
+            store,
+            memory,
+            rhs,
+            jac,
+            n: desc.states.len(),
+            n_params: desc.parameters.len(),
+            nnz: desc.jacobian.pattern().nnz(),
+        })
+    }
+}
+
+/// The right hand side and the Jacobian of a model instantiated without the engine
+/// ([`Runtime::model_functions`]).
+pub struct ModelFunctions {
+    store: Store<HostState>,
+    memory: Memory,
+    rhs: TypedFunc<(f64, i32, i32, i32), ()>,
+    jac: TypedFunc<(f64, i32, i32, i32), ()>,
+    n: usize,
+    n_params: usize,
+    nnz: usize,
+}
+
+impl ModelFunctions {
+    /// The right hand side at `(t, y)` with the parameters `p`.
+    pub fn rhs(&mut self, t: f64, y: &[f64], p: &[f64]) -> anyhow::Result<Vec<f64>> {
+        let function = self.rhs.clone();
+        self.call(function, t, y, p, self.n)
+    }
+
+    /// The entries of the Jacobian at `(t, y)` with the parameters `p`, in the CSC order of the
+    /// pattern of the description (`model_jac` traps for a model without an analytic one).
+    pub fn jac(&mut self, t: f64, y: &[f64], p: &[f64]) -> anyhow::Result<Vec<f64>> {
+        let function = self.jac.clone();
+        self.call(function, t, y, p, self.nnz)
+    }
+
+    /// Calls `function(t, y, p, out)` with the vectors in the memory, `y` first.
+    fn call(
+        &mut self,
+        function: TypedFunc<(f64, i32, i32, i32), ()>,
+        t: f64,
+        y: &[f64],
+        p: &[f64],
+        n_out: usize,
+    ) -> anyhow::Result<Vec<f64>> {
+        ensure!(
+            y.len() == self.n && p.len() == self.n_params,
+            "{} states and {} parameters for a model of {} and {}",
+            y.len(),
+            p.len(),
+            self.n,
+            self.n_params
+        );
+        let bytes = |v: &[f64]| v.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>();
+        let (y_at, p_at) = (0usize, 8 * y.len());
+        let out_at = p_at + 8 * p.len();
+        let end = out_at + 8 * n_out;
+        let size = self.memory.data_size(&self.store);
+        if end > size {
+            self.memory
+                .grow(&mut self.store, (end - size).div_ceil(65536) as u64)?;
+        }
+        self.memory.write(&mut self.store, y_at, &bytes(y))?;
+        self.memory.write(&mut self.store, p_at, &bytes(p))?;
+        let address = |a: usize| i32::try_from(a).context("the vectors do not fit the memory");
+        function.call(
+            &mut self.store,
+            (t, address(y_at)?, address(p_at)?, address(out_at)?),
+        )?;
+        let mut out = vec![0u8; 8 * n_out];
+        self.memory.read(&self.store, out_at, &mut out)?;
+        Ok(out
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .map(|b| f64::from_le_bytes(*b))
+            .collect())
+    }
+}
+
 /// Checks that a model defines no memory, no mutable global, no data segment and no start
 /// function.
 fn check_model_sections(model_wasm: &[u8]) -> anyhow::Result<()> {

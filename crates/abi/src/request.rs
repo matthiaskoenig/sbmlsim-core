@@ -132,9 +132,10 @@ pub enum LinearSolver {
 pub enum JacobianChoice {
     /// Chosen from the model.
     Auto,
-    /// The analytic one of the model.
+    /// The analytic one of the model (refused for a model without one).
     Analytic,
-    /// Difference quotients.
+    /// The sparse difference quotient over the colors of the columns of the pattern, also for a
+    /// model with an analytic Jacobian.
     DifferenceQuotient,
 }
 

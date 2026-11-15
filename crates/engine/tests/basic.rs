@@ -249,8 +249,8 @@ fn engine_reuse_is_bitwise_identical() {
 
 #[test]
 fn difference_quotient_without_analytic_jacobian() {
-    // a model whose Jacobian is not analytic integrates with the dense solver and the difference
-    // quotient of CVODE, whatever the linear solver says
+    // a model whose Jacobian is not analytic integrates with the sparse difference quotient,
+    // with every linear solver
     let model = Decay { k: 0.5 };
     let mut desc = model.description();
     let JacobianKind::Analytic(pattern) = desc.jacobian.clone() else {
@@ -259,6 +259,7 @@ fn difference_quotient_without_analytic_jacobian() {
     desc.jacobian = JacobianKind::ColoredDifference {
         pattern,
         colors: vec![0],
+        reason: "a test".to_string(),
     };
     for solver in [LinearSolver::Auto, LinearSolver::Dense, LinearSolver::Klu] {
         let mut req = request(0.0, 10.0, Output::Uniform { steps: 10 }, &["time", "y"]);

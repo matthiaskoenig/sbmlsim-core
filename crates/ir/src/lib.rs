@@ -60,6 +60,7 @@
 //! libroadrunner: "Unknown ASTNode type of 9999").
 
 mod builder;
+pub mod derive;
 mod expr;
 mod order;
 mod units;
@@ -348,12 +349,12 @@ impl Model {
     ///
     /// # Panics
     ///
-    /// For [`Symbol::Time`] or an index out of range.
+    /// For [`Symbol::Time`], a [`Symbol::Derivative`] or an index out of range.
     pub fn entity(&self, symbol: Symbol) -> &Entity {
         match symbol {
             Symbol::State(i) => &self.states[i as usize],
             Symbol::Param(i) => &self.parameters[i as usize],
-            Symbol::Time => panic!("time is no entity"),
+            Symbol::Time | Symbol::Derivative(_) => panic!("{symbol:?} is no entity"),
         }
     }
 

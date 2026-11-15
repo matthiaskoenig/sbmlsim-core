@@ -9,12 +9,19 @@
 //! same infinity. The columns are matched by position, `time` is the first one and is not
 //! compared (as in sbmlsim). Every failure is a [`Status`], none is raised.
 //!
+//! `--jacobian` is the Jacobian the models are compiled with (`sbmlsim_compiler::CompileOptions`):
+//! `auto` (the default) the analytic one where the model has one, else the colored difference
+//! quotient; `analytic` the analytic one, a model without one is not compiled; `difference` the
+//! colored difference quotient for every model. The summary counts the Jacobians of the compiled
+//! models.
+//!
 //! The statuses are compared with the baseline (`testdata/testsuite_baseline.json`, the format of
 //! `sbmlsim.testsuite.baseline`) in both directions: a case which fails and is not listed is a
 //! regression, a case which is listed and passes is a baseline which is out of date; a listed
 //! case with another status and, in a run of all cases, a listed case which was not run are
 //! differences as well. The command exits with 0 only without differences.
 
+use std::cell::OnceCell;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::fs;
@@ -25,8 +32,8 @@ use anyhow::Context;
 use clap::Args;
 use rayon::prelude::*;
 use sbmlsim_abi::{
-    IntegratorSettings, Output, SIMULATION_CONTRACT, SimulationRequest, SimulationResult,
-    SteadyState, Tolerance,
+    IntegratorSettings, JacobianChoice, JacobianKind, Output, SIMULATION_CONTRACT,
+    SimulationRequest, SimulationResult, SteadyState, Tolerance,
 };
 use sbmlsim_compiler::{CompileOptions, CompiledModel, compile};
 use sbmlsim_host::{Instance, Runtime};
@@ -100,6 +107,10 @@ pub struct CaseResult {
     pub message: String,
     /// The largest absolute difference to the expected values, where something was compared.
     pub max_difference: Option<f64>,
+    /// The Jacobian of the compiled model, `analytic` or `colored_difference`, absent for a
+    /// model which was not compiled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jacobian: Option<String>,
 }
 
 impl CaseResult {
@@ -113,6 +124,7 @@ impl CaseResult {
             status,
             message,
             max_difference: None,
+            jacobian: None,
         }
     }
 }
@@ -213,6 +225,7 @@ pub fn compare(
         status,
         message,
         max_difference: max,
+        jacobian: None,
     };
     let k = observed.columns.len();
     if k < expected.n_cols {
@@ -509,11 +522,18 @@ pub fn case_request(settings: &CaseSettings) -> SimulationRequest {
 
 /// Runs the case in a directory; every failure is the status of the result.
 pub fn run_case(runtime: &Runtime, dir: &Path) -> CaseResult {
+    run_case_with(runtime, dir, &CompileOptions::default())
+}
+
+/// Runs the case in a directory with a model compiled with `options`.
+pub fn run_case_with(runtime: &Runtime, dir: &Path, options: &CompileOptions) -> CaseResult {
     let cid = dir
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    match catch_unwind(AssertUnwindSafe(|| run_case_inner(runtime, dir, &cid))) {
+    match catch_unwind(AssertUnwindSafe(|| {
+        run_case_inner(runtime, dir, &cid, options)
+    })) {
         Ok(result) => result,
         Err(panic) => {
             let message = panic
@@ -526,7 +546,33 @@ pub fn run_case(runtime: &Runtime, dir: &Path) -> CaseResult {
     }
 }
 
-fn run_case_inner(runtime: &Runtime, dir: &Path, cid: &str) -> CaseResult {
+fn run_case_inner(
+    runtime: &Runtime,
+    dir: &Path,
+    cid: &str,
+    options: &CompileOptions,
+) -> CaseResult {
+    let compiled = OnceCell::new();
+    let result = run_compiled(runtime, dir, cid, options, &compiled);
+    CaseResult {
+        jacobian: compiled.get().map(|c: &CompiledModel| {
+            match c.description.jacobian {
+                JacobianKind::Analytic(_) => "analytic",
+                JacobianKind::ColoredDifference { .. } => "colored_difference",
+            }
+            .to_string()
+        }),
+        ..result
+    }
+}
+
+fn run_compiled(
+    runtime: &Runtime,
+    dir: &Path,
+    cid: &str,
+    options: &CompileOptions,
+    cell: &OnceCell<CompiledModel>,
+) -> CaseResult {
     let settings: CaseSettings = match fs::read(dir.join("case.json"))
         .map_err(anyhow::Error::from)
         .and_then(|b| serde_json::from_slice(&b).map_err(anyhow::Error::from))
@@ -549,8 +595,8 @@ fn run_case_inner(runtime: &Runtime, dir: &Path, cid: &str) -> CaseResult {
             return CaseResult::new(cid, Status::SimulationError, format!("model.xml: {error}"));
         }
     };
-    let compiled = match compile(&sbml, &CompileOptions::default()) {
-        Ok(compiled) => compiled,
+    let compiled = match compile(&sbml, options) {
+        Ok(compiled) => cell.get_or_init(|| compiled),
         Err(error) => return CaseResult::new(cid, Status::NotCompiled, error.to_string()),
     };
     let mut instance = match runtime.instantiate(&compiled.wasm, &compiled.description) {
@@ -592,7 +638,7 @@ fn run_case_inner(runtime: &Runtime, dir: &Path, cid: &str) -> CaseResult {
         }
         Ok(max_difference) => match repeat_check(
             runtime,
-            &compiled,
+            compiled,
             &mut instance,
             &settings,
             &expected,
@@ -748,6 +794,31 @@ pub struct TestsuiteArgs {
     /// Write the results of every case as JSON.
     #[arg(long)]
     pub json: Option<PathBuf>,
+    /// The Jacobian the models are compiled with.
+    #[arg(long, value_enum, default_value_t = JacobianArg::Auto)]
+    pub jacobian: JacobianArg,
+}
+
+/// The values of `--jacobian`.
+#[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JacobianArg {
+    /// The analytic Jacobian where the model has one, else the colored difference quotient.
+    Auto,
+    /// The analytic Jacobian; a model without one is not compiled.
+    Analytic,
+    /// The colored difference quotient.
+    Difference,
+}
+
+impl JacobianArg {
+    /// The choice of the compiler.
+    pub fn choice(self) -> JacobianChoice {
+        match self {
+            JacobianArg::Auto => JacobianChoice::Auto,
+            JacobianArg::Analytic => JacobianChoice::Analytic,
+            JacobianArg::Difference => JacobianChoice::DifferenceQuotient,
+        }
+    }
 }
 
 /// The case directories of a directory, in the order of their names, filtered by `selection`.
@@ -804,8 +875,15 @@ pub fn run(args: &TestsuiteArgs) -> anyhow::Result<bool> {
     }
     let pool = builder.build()?;
     // rayon keeps the order of the directories
-    let results: Vec<CaseResult> =
-        pool.install(|| dirs.par_iter().map(|dir| run_case(&runtime, dir)).collect());
+    let options = CompileOptions {
+        jacobian: args.jacobian.choice(),
+        ..CompileOptions::default()
+    };
+    let results: Vec<CaseResult> = pool.install(|| {
+        dirs.par_iter()
+            .map(|dir| run_case_with(&runtime, dir, &options))
+            .collect()
+    });
 
     let mut summary = String::new();
     writeln!(summary, "{} cases", results.len())?;
@@ -815,6 +893,18 @@ pub fn run(args: &TestsuiteArgs) -> anyhow::Result<bool> {
             writeln!(summary, "  {:<17}{n}", status.as_str())?;
         }
     }
+    let jacobians = |kind: &str| {
+        results
+            .iter()
+            .filter(|r| r.jacobian.as_deref() == Some(kind))
+            .count()
+    };
+    writeln!(
+        summary,
+        "jacobians of the compiled models: {} analytic, {} colored difference",
+        jacobians("analytic"),
+        jacobians("colored_difference")
+    )?;
     print!("{summary}");
 
     if args.write_baseline {

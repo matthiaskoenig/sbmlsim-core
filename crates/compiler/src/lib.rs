@@ -17,7 +17,10 @@ pub use sbmlsim_ir::CompileError;
 pub struct CompileOptions {
     /// Optimize the generated module.
     pub optimize: bool,
-    /// The source of the Jacobian of the model.
+    /// The source of the Jacobian of the model: `Auto` the analytic Jacobian where the model
+    /// has one, else the colored difference quotient; `DifferenceQuotient` always the colored
+    /// difference quotient; `Analytic` the analytic one, refused for a model which has none
+    /// (see `sbmlsim_codegen::emit_with`).
     pub jacobian: JacobianChoice,
 }
 
@@ -41,10 +44,9 @@ pub struct CompiledModel {
 
 /// Compiles the text of an SBML Level 3 Version 2 document.
 pub fn compile(sbml: &str, options: &CompileOptions) -> Result<CompiledModel, CompileError> {
-    let _ = options;
     let doc = sbmlsim_sbml::read(sbml).map_err(from_read_error)?;
     let model = sbmlsim_ir::build(&doc)?;
-    let (wasm, description) = sbmlsim_codegen::emit(&model)?;
+    let (wasm, description) = sbmlsim_codegen::emit_with(&model, options.jacobian)?;
     Ok(CompiledModel { wasm, description })
 }
 

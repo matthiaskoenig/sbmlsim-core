@@ -475,7 +475,7 @@ mod test_models {
     /// A model of states, parameters, a right hand side and events, all given as functions.
     ///
     /// The selections are the states, then the parameters, by their ids; the Jacobian is the
-    /// colored difference quotient over the dense pattern (the engine uses CVODE's).
+    /// colored difference quotient over the dense pattern, a color per column.
     #[derive(Debug, Clone)]
     pub struct EventModel {
         /// The states, `(id, initial value)`.
@@ -519,6 +519,7 @@ mod test_models {
                         row_idx: (0..n).flat_map(|_| 0..n).collect(),
                     },
                     colors: (0..n).collect(),
+                    reason: "a test model".to_string(),
                 },
                 events: self
                     .events

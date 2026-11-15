@@ -18,9 +18,10 @@
 //!   assignment rules from these locals, so they depend on nothing but `t`, `y` and the other
 //!   parameters.
 //! - `model_assign` evaluates the assignment rules in their order into the memory.
-//! - `model_jac` traps: the description gives a colored difference quotient over the dense
-//!   pattern, and the engine uses the difference quotient of CVODE (an analytic Jacobian comes
-//!   later).
+//! - `model_jac` evaluates the assignment rules into locals, then the derivatives of the rules
+//!   ([`JacobianIr::Analytic`]) into locals in their order, then the entries of the Jacobian in
+//!   the CSC order of its pattern. For a model without an analytic Jacobian (the description
+//!   gives a colored difference quotient, which the engine computes) it traps.
 //! - `model_roots` evaluates the assignment rules into locals, then the root functions of the
 //!   triggers ([`sbmlsim_ir::Event::root_functions`]) in the order of the events.
 //! - the functions of an event index (`model_trigger`, `model_priority`, `model_delay`,
@@ -40,26 +41,54 @@ mod wasm;
 use std::collections::BTreeMap;
 
 use sbmlsim_abi::{
-    self as abi, Entity, EventInfo, JacobianKind, MODEL_CONTRACT, ModelDescription, ModelSizes,
-    Selection, SparsityPattern,
+    self as abi, Entity, EventInfo, JacobianChoice, JacobianKind, MODEL_CONTRACT, ModelDescription,
+    ModelSizes, Selection,
 };
+use sbmlsim_ir::derive::{self, JacobianIr};
 use sbmlsim_ir::{CompileError, EntityKind, Event, Expr, Model, SpeciesValue, Symbol};
 use wasm_encoder::ValType::{F64, I32};
 
 use wasm::{Ctx, ModuleBuilder};
 pub use wasm::{MAX_FUNCTION_BYTES, MAX_LOCALS};
 
-/// Emits `model.wasm` and its description.
+/// The reason of a difference quotient which was asked for.
+pub const DIFFERENCE_REQUESTED: &str = "the difference quotient was requested";
+
+/// Emits `model.wasm` and its description, with the analytic Jacobian where the model has one
+/// ([`sbmlsim_ir::derive::jacobian`]), else the colored difference quotient.
 ///
 /// Refuses a model of which a function exceeds the limits of WebAssembly engines
 /// ([`MAX_FUNCTION_BYTES`], [`MAX_LOCALS`]).
 pub fn emit(model: &Model) -> Result<(Vec<u8>, ModelDescription), CompileError> {
-    let wasm = module(model)?;
-    Ok((wasm, description(model)))
+    emit_with(model, JacobianChoice::Auto)
+}
+
+/// Emits `model.wasm` and its description with the Jacobian of `choice`: `Auto` as [`emit`],
+/// `DifferenceQuotient` the colored difference quotient (with the reason
+/// [`DIFFERENCE_REQUESTED`]), `Analytic` the analytic Jacobian, refused (`Unsupported`, with the
+/// reason) for a model which has none.
+pub fn emit_with(
+    model: &Model,
+    choice: JacobianChoice,
+) -> Result<(Vec<u8>, ModelDescription), CompileError> {
+    let jacobian = match (derive::jacobian(model), choice) {
+        (jacobian, JacobianChoice::DifferenceQuotient) => {
+            jacobian.into_difference(DIFFERENCE_REQUESTED)
+        }
+        (JacobianIr::ColoredDifference { reason, .. }, JacobianChoice::Analytic) => {
+            return Err(CompileError::Unsupported {
+                feature: format!("an analytic Jacobian: {reason}"),
+                element: model.id.clone().unwrap_or_default(),
+            });
+        }
+        (jacobian, _) => jacobian,
+    };
+    let wasm = module(model, &jacobian)?;
+    Ok((wasm, description(model, jacobian)))
 }
 
 /// The module of a model.
-fn module(model: &Model) -> Result<Vec<u8>, CompileError> {
+fn module(model: &Model, jacobian: &JacobianIr) -> Result<Vec<u8>, CompileError> {
     let mut m = ModuleBuilder::default();
     // a function which reads no symbol
     let none = Ctx { t: 0, y: 0, p: 0 };
@@ -83,7 +112,7 @@ fn module(model: &Model) -> Result<Vec<u8>, CompileError> {
         let k = match a.target {
             Symbol::Param(i) => i,
             Symbol::State(i) => n_params + i,
-            Symbol::Time => unreachable!("time is no target"),
+            Symbol::Time | Symbol::Derivative(_) => unreachable!("{:?} is no target", a.target),
         };
         f.store_unless_fixed(3, k, a.target, &a.expr);
     }
@@ -100,9 +129,27 @@ fn module(model: &Model) -> Result<Vec<u8>, CompileError> {
     }
     f.finish()?;
 
-    // model_jac(t, y, p, values)
-    let mut f = m.function(abi::JAC, &[F64, I32, I32, I32], &[], none);
-    f.unreachable();
+    // model_jac(t, y, p, values): the rules, their derivatives, the entries
+    let ctx = Ctx { t: 0, y: 1, p: 2 };
+    let mut f = m.function(abi::JAC, &[F64, I32, I32, I32], &[], ctx);
+    match jacobian {
+        JacobianIr::Analytic {
+            derivatives,
+            entries,
+            ..
+        } => {
+            if !entries.is_empty() {
+                f.assign_locals(&model.assignment_rules);
+            }
+            for (k, d) in derivatives.iter().enumerate() {
+                f.assign_local(Symbol::Derivative(k as u32), d);
+            }
+            for (k, e) in entries.iter().enumerate() {
+                f.store_at(3, k as u32, e);
+            }
+        }
+        JacobianIr::ColoredDifference { .. } => f.unreachable(),
+    }
     f.finish()?;
 
     // model_roots(t, y, p, g): the root functions of the triggers, in the order of the events
@@ -208,7 +255,7 @@ fn module(model: &Model) -> Result<Vec<u8>, CompileError> {
     f.finish()?;
 
     // model_sizes(out) and model_event_sizes(out)
-    let sizes = sizes(model);
+    let sizes = sizes(model, jacobian);
     let mut f = m.function(abi::SIZES, &[I32], &[], none);
     for (k, x) in sizes.words().into_iter().enumerate() {
         f.store_i32_at(0, k as u32, x);
@@ -223,14 +270,13 @@ fn module(model: &Model) -> Result<Vec<u8>, CompileError> {
     Ok(m.finish())
 }
 
-/// The sizes of the module of a model (its Jacobian is the dense pattern of the description).
-fn sizes(model: &Model) -> ModelSizes {
-    let n = model.states.len() as u32;
+/// The sizes of the module of a model; the entries of the Jacobian are those of its pattern.
+fn sizes(model: &Model, jacobian: &JacobianIr) -> ModelSizes {
     ModelSizes {
-        states: n,
+        states: model.states.len() as u32,
         parameters: model.parameters.len() as u32,
         selections: model.selections.len() as u32,
-        jacobian_entries: n.saturating_mul(n),
+        jacobian_entries: jacobian.pattern().nnz() as u32,
         roots: model
             .events
             .iter()
@@ -361,18 +407,20 @@ pub fn initial_values(model: &Model) -> (Vec<f64>, Vec<f64>) {
             Symbol::State(i) => y[i as usize],
             Symbol::Param(i) => p[i as usize],
             Symbol::Time => 0.0,
+            Symbol::Derivative(_) => unreachable!("an initial value reads no derivative"),
         });
         match a.target {
             Symbol::State(i) => y[i as usize] = value,
             Symbol::Param(i) => p[i as usize] = value,
-            Symbol::Time => unreachable!("time is no target"),
+            Symbol::Time | Symbol::Derivative(_) => unreachable!("{:?} is no target", a.target),
         }
     }
     (p, y)
 }
 
 /// The description of a model.
-fn description(model: &Model) -> ModelDescription {
+fn description(model: &Model, jacobian: JacobianIr) -> ModelDescription {
+    let n_roots = sizes(model, &jacobian).roots;
     let (p, y) = initial_values(model);
     let entity = |e: &sbmlsim_ir::Entity, initial: f64| Entity {
         id: e.id.clone(),
@@ -393,12 +441,6 @@ fn description(model: &Model) -> ModelDescription {
         },
         initial,
         settable: e.settable,
-    };
-    let n = model.states.len() as u32;
-    let pattern = SparsityPattern {
-        n,
-        col_ptr: (0..=n).map(|j| j * n).collect(),
-        row_idx: (0..n).flat_map(|_| 0..n).collect(),
     };
     ModelDescription {
         contract: MODEL_CONTRACT.to_string(),
@@ -424,9 +466,17 @@ fn description(model: &Model) -> ModelDescription {
                 index: index as u32,
             })
             .collect(),
-        jacobian: JacobianKind::ColoredDifference {
-            pattern,
-            colors: (0..n).collect(),
+        jacobian: match jacobian {
+            JacobianIr::Analytic { pattern, .. } => JacobianKind::Analytic(pattern),
+            JacobianIr::ColoredDifference {
+                pattern,
+                colors,
+                reason,
+            } => JacobianKind::ColoredDifference {
+                pattern,
+                colors,
+                reason,
+            },
         },
         events: model
             .events
@@ -441,7 +491,7 @@ fn description(model: &Model) -> ModelDescription {
                 n_assignments: e.assignments.len() as u32,
             })
             .collect(),
-        n_roots: sizes(model).roots,
+        n_roots,
         units: model
             .selections
             .iter()

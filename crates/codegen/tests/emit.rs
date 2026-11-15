@@ -1,7 +1,7 @@
 //! The module and the description of `sbmlsim_codegen::emit`.
 
-use sbmlsim_abi::{self as abi, EntityKind, JacobianKind, MODEL_CONTRACT};
-use sbmlsim_codegen::{MAX_LOCALS, emit};
+use sbmlsim_abi::{self as abi, EntityKind, JacobianChoice, JacobianKind, MODEL_CONTRACT};
+use sbmlsim_codegen::{DIFFERENCE_REQUESTED, MAX_LOCALS, emit, emit_with};
 use sbmlsim_ir::{Assignment, CompileError, Entity, Expr, Model, Op, Symbol, build};
 use wasmparser::{
     CompositeInnerType, ExternalKind, FuncType, Operator, Parser, Payload, TypeRef, ValType,
@@ -303,14 +303,55 @@ fn the_description_is_of_model_1() {
             .all(|(i, s)| s.index as usize == i)
     );
     assert_eq!(d.units.get("q").map(String::as_str), Some("second"));
-    // the dense pattern with a color per column
-    let JacobianKind::ColoredDifference { pattern, colors } = &d.jacobian else {
+    // the analytic Jacobian on the sparse pattern: only the rates of S and P read S
+    let JacobianKind::Analytic(pattern) = &d.jacobian else {
         panic!("{:?}", d.jacobian)
     };
-    assert_eq!(pattern.col_ptr, [0, 3, 6, 9]);
-    assert_eq!(pattern.row_idx, [0, 1, 2, 0, 1, 2, 0, 1, 2]);
-    assert_eq!(colors, &[0, 1, 2]);
+    assert_eq!(pattern.col_ptr, [0, 0, 2, 2]);
+    assert_eq!(pattern.row_idx, [1, 2]);
+    assert_eq!(abi::ModelSizes::of(&d).jacobian_entries, 2);
     assert!(d.events.is_empty());
+}
+
+#[test]
+fn the_jacobian_follows_the_choice() {
+    let m = small();
+    // the difference quotient over the same pattern, with its coloring and the reason
+    let (wasm, d) = emit_with(&m, JacobianChoice::DifferenceQuotient).unwrap();
+    let JacobianKind::ColoredDifference {
+        pattern,
+        colors,
+        reason,
+    } = &d.jacobian
+    else {
+        panic!("{:?}", d.jacobian)
+    };
+    assert_eq!(pattern.row_idx, [1, 2]);
+    assert_eq!(colors, &[0, 0, 0]);
+    assert_eq!(reason, DIFFERENCE_REQUESTED);
+    // its model_jac traps
+    assert!(matches!(
+        parse(&wasm).body("model_jac"),
+        [Operator::Unreachable, Operator::End]
+    ));
+    assert!(matches!(
+        emit_with(&m, JacobianChoice::Analytic).unwrap().1.jacobian,
+        JacobianKind::Analytic(_)
+    ));
+    // a model without an analytic Jacobian: the difference quotient with the reason, refused
+    // where the analytic one is asked for
+    let mut f = small();
+    f.rates[1] = Expr::apply(Op::Factorial, vec![Expr::Symbol(Symbol::State(1))]);
+    let (_, d) = emit(&f).unwrap();
+    let JacobianKind::ColoredDifference { reason, .. } = &d.jacobian else {
+        panic!("{:?}", d.jacobian)
+    };
+    assert_eq!(reason, "factorial has no derivative (the rate of S)");
+    let error = emit_with(&f, JacobianChoice::Analytic).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "an analytic Jacobian: factorial has no derivative (the rate of S) is not supported (m)"
+    );
 }
 
 #[test]

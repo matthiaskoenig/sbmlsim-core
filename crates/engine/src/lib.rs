@@ -78,7 +78,7 @@ pub use events::MAX_EXECUTIONS_PER_EVENT;
 pub use model::ModelFns;
 
 use changes::{Changes, Target};
-use cvode::{Config, Cvode, Linear, Method, Problem};
+use cvode::{Config, Cvode, Difference, Jacobian, Linear, Method, Problem};
 use events::Events;
 use segments::{Column, Recorder, SegmentOutput};
 
@@ -173,29 +173,29 @@ fn request(message: impl Into<String>) -> EngineError {
 
 /// The pattern of the Jacobian of a description.
 fn pattern_of(desc: &ModelDescription) -> &SparsityPattern {
-    match &desc.jacobian {
-        JacobianKind::Analytic(pattern) => pattern,
-        JacobianKind::ColoredDifference { pattern, .. } => pattern,
-    }
+    desc.jacobian.pattern()
 }
 
-/// Checks the contract of a description and the shape of the pattern of its Jacobian.
+/// Checks the contract of a description, the shape of the pattern of its Jacobian and, for a
+/// difference quotient, that the columns of a color share no row (else the difference quotient
+/// would mix the entries of two columns).
 fn check_description(desc: &ModelDescription) -> Result<(), EngineError> {
     check_contract(&desc.contract, MODEL_CONTRACT).map_err(|e| request(e.to_string()))?;
     let n = desc.states.len();
     let pattern = pattern_of(desc);
-    let nnz = pattern.row_idx.len();
-    let shaped = pattern.n as usize == n
-        && pattern.col_ptr.len() == n + 1
-        && pattern.col_ptr[0] == 0
-        && pattern.col_ptr.windows(2).all(|w| w[0] <= w[1])
-        && pattern.col_ptr[n] as usize == nnz
-        && pattern.row_idx.iter().all(|i| (*i as usize) < n);
-    if !shaped {
+    if !pattern.is_csc_of(n) {
         return Err(request(format!(
             "the Jacobian pattern of model {} is not a CSC pattern of {n} states",
             desc.id
         )));
+    }
+    if let JacobianKind::ColoredDifference { colors, .. } = &desc.jacobian {
+        pattern.check_colors(colors).map_err(|e| {
+            request(format!(
+                "the colors of the Jacobian of model {} are no coloring of its pattern: {e}",
+                desc.id
+            ))
+        })?;
     }
     // the selection indices are exactly 0..k, each once: the engine sizes the output of the
     // model by them and a gap or a repeat would write past it or leave a column unset
@@ -220,34 +220,56 @@ fn check_description(desc: &ModelDescription) -> Result<(), EngineError> {
 
 /// The linear solver of a stiff simulation (a non-stiff one has none).
 ///
-/// A model whose Jacobian is not analytic, or a request for the difference quotient, integrates
-/// with the dense solver and the difference quotient of CVODE (the colored sparse difference
-/// quotient comes later); an analytic Jacobian is used with the solver of the settings, `Auto`
-/// being KLU above [`KLU_THRESHOLD`] states.
+/// The Jacobian is the analytic one of a model which has one, else (and for a request of the
+/// difference quotient) the sparse difference quotient over the colors of the pattern; the
+/// request of the analytic Jacobian of a model without one is refused. Either is used with the
+/// solver of the settings, `Auto` being KLU above [`KLU_THRESHOLD`] states.
 fn linear_of(
     desc: &ModelDescription,
     settings: &IntegratorSettings,
 ) -> Result<Linear, EngineError> {
-    match (&desc.jacobian, settings.jacobian) {
-        (_, JacobianChoice::DifferenceQuotient) => Ok(Linear::Dense { analytic: false }),
-        (JacobianKind::ColoredDifference { .. }, JacobianChoice::Analytic) => Err(request(
-            format!("model {} has no analytic Jacobian", desc.id),
-        )),
-        (JacobianKind::ColoredDifference { .. }, JacobianChoice::Auto) => {
-            Ok(Linear::Dense { analytic: false })
+    let jacobian = match (&desc.jacobian, settings.jacobian) {
+        (_, JacobianChoice::DifferenceQuotient) => Jacobian::Difference,
+        (JacobianKind::ColoredDifference { reason, .. }, JacobianChoice::Analytic) => {
+            return Err(request(format!(
+                "model {} has no analytic Jacobian: {reason}",
+                desc.id
+            )));
         }
-        (JacobianKind::Analytic(pattern), _) => {
-            let klu = Linear::Klu {
-                nnz: pattern.row_idx.len(),
-            };
-            Ok(match settings.linear_solver {
-                LinearSolver::Dense => Linear::Dense { analytic: true },
-                LinearSolver::Klu => klu,
-                LinearSolver::Auto if desc.states.len() > KLU_THRESHOLD => klu,
-                LinearSolver::Auto => Linear::Dense { analytic: true },
-            })
-        }
+        (JacobianKind::ColoredDifference { .. }, JacobianChoice::Auto) => Jacobian::Difference,
+        (JacobianKind::Analytic(_), _) => Jacobian::Analytic,
+    };
+    let klu = Linear::Klu {
+        nnz: pattern_of(desc).nnz(),
+        jacobian,
+    };
+    Ok(match settings.linear_solver {
+        LinearSolver::Dense => Linear::Dense { jacobian },
+        LinearSolver::Klu => klu,
+        LinearSolver::Auto if desc.states.len() > KLU_THRESHOLD => klu,
+        LinearSolver::Auto => Linear::Dense { jacobian },
+    })
+}
+
+/// The sparse difference quotient of a configuration of `linear`, `None` for another source
+/// of the Jacobian: over the colors of the description, or the greedy coloring of the pattern
+/// of an analytic Jacobian.
+fn difference_of(desc: &ModelDescription, linear: Linear) -> Option<Difference> {
+    let (Linear::Dense {
+        jacobian: Jacobian::Difference,
     }
+    | Linear::Klu {
+        jacobian: Jacobian::Difference,
+        ..
+    }) = linear
+    else {
+        return None;
+    };
+    let n = desc.states.len();
+    Some(match &desc.jacobian {
+        JacobianKind::ColoredDifference { colors, .. } => Difference::new(n, colors),
+        JacobianKind::Analytic(pattern) => Difference::new(n, &pattern.greedy_colors()),
+    })
 }
 
 /// Checks the settings of the integrator for a model of `n` states.
@@ -486,17 +508,22 @@ fn run(
     // locates the zeros of its root functions
     let n_cvode = if with_events { n.max(1) } else { n };
     let mut pattern = None;
+    let mut difference = None;
     let cvode = if n_cvode == 0 {
         None
     } else {
         let method = if req.settings.stiff {
+            // the one state of the rate 0 of a model without states has no pattern
             let linear = if n == 0 {
-                Linear::Dense { analytic: false }
+                Linear::Dense {
+                    jacobian: Jacobian::Internal,
+                }
             } else {
                 linear_of(desc, &req.settings)?
             };
-            if !matches!(linear, Linear::Dense { analytic: false }) {
+            if n > 0 {
                 pattern = Some(pattern_of(desc));
+                difference = difference_of(desc, linear);
             }
             Method::Bdf(linear)
         } else {
@@ -525,6 +552,8 @@ fn run(
         p,
         pattern,
         jac_values: vec![0.0; pattern.map_or(0, |p| p.row_idx.len())],
+        difference,
+        mem: std::ptr::null_mut(),
     };
     let n_selections = desc
         .selections
@@ -679,11 +708,13 @@ mod tests {
         check_description(&above).unwrap();
         assert!(matches!(
             linear_of(&at, &settings),
-            Ok(Linear::Dense { analytic: true })
+            Ok(Linear::Dense {
+                jacobian: Jacobian::Analytic
+            })
         ));
         assert!(matches!(
             linear_of(&above, &settings),
-            Ok(Linear::Klu { nnz }) if nnz == KLU_THRESHOLD + 1
+            Ok(Linear::Klu { nnz, jacobian: Jacobian::Analytic }) if nnz == KLU_THRESHOLD + 1
         ));
         // an explicit choice wins over the size
         let dense = IntegratorSettings {
@@ -692,12 +723,97 @@ mod tests {
         };
         assert!(matches!(
             linear_of(&above, &dense),
-            Ok(Linear::Dense { analytic: true })
+            Ok(Linear::Dense {
+                jacobian: Jacobian::Analytic
+            })
         ));
         let klu = IntegratorSettings {
             linear_solver: LinearSolver::Klu,
             ..settings
         };
         assert!(matches!(linear_of(&at, &klu), Ok(Linear::Klu { .. })));
+    }
+
+    #[test]
+    fn every_jacobian_works_with_every_linear_solver() {
+        // R4 ends: a model without an analytic Jacobian takes KLU as well, with the sparse
+        // difference quotient
+        let settings = IntegratorSettings::default();
+        let colored = |n: usize| {
+            let mut desc = diagonal(n);
+            desc.jacobian = JacobianKind::ColoredDifference {
+                pattern: pattern_of(&desc).clone(),
+                colors: vec![0; n],
+                reason: "factorial has no derivative (the rate of y0)".to_string(),
+            };
+            check_description(&desc).unwrap();
+            desc
+        };
+        let difference = Jacobian::Difference;
+        assert_eq!(
+            linear_of(&colored(KLU_THRESHOLD), &settings).unwrap(),
+            Linear::Dense {
+                jacobian: difference
+            }
+        );
+        assert_eq!(
+            linear_of(&colored(KLU_THRESHOLD + 1), &settings).unwrap(),
+            Linear::Klu {
+                nnz: KLU_THRESHOLD + 1,
+                jacobian: difference
+            }
+        );
+        // R16: the difference quotient of an analytic model is the sparse difference quotient,
+        // the analytic Jacobian of a model without one is refused with the reason
+        let dq = IntegratorSettings {
+            jacobian: JacobianChoice::DifferenceQuotient,
+            ..settings.clone()
+        };
+        assert_eq!(
+            linear_of(&diagonal(KLU_THRESHOLD + 1), &dq).unwrap(),
+            Linear::Klu {
+                nnz: KLU_THRESHOLD + 1,
+                jacobian: difference
+            }
+        );
+        let analytic = IntegratorSettings {
+            jacobian: JacobianChoice::Analytic,
+            ..settings
+        };
+        match linear_of(&colored(2), &analytic) {
+            Err(EngineError::Request(m)) => {
+                assert!(
+                    m.contains("no analytic Jacobian") && m.contains("factorial"),
+                    "{m}"
+                )
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn colors_which_share_a_row_are_refused() {
+        // two columns of one color which share a row would mix their differences
+        let mut desc = diagonal(2);
+        desc.jacobian = JacobianKind::ColoredDifference {
+            pattern: SparsityPattern {
+                n: 2,
+                col_ptr: vec![0, 1, 2],
+                row_idx: vec![0, 0],
+            },
+            colors: vec![0, 0],
+            reason: String::new(),
+        };
+        match check_description(&desc) {
+            Err(EngineError::Request(m)) => {
+                assert!(m.contains("share the row 0"), "{m}")
+            }
+            other => panic!("{other:?}"),
+        }
+        let JacobianKind::ColoredDifference { colors, .. } = &mut desc.jacobian else {
+            unreachable!()
+        };
+        *colors = vec![0, 1];
+        check_description(&desc).unwrap();
     }
 }

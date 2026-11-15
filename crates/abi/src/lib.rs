@@ -10,7 +10,8 @@
 //!   assignment rules in dependency order; `fixed` is a byte per entity (parameters, then
 //!   states), a fixed entity keeps its value.
 //! - `model_rhs(t, y, p, ydot)` is the right hand side of the ODEs.
-//! - `model_jac(t, y, p, values)` writes the values of the Jacobian in CSC order of the pattern.
+//! - `model_jac(t, y, p, values)` writes the values of the Jacobian in CSC order of the pattern
+//!   (an analytic Jacobian); it traps for a model of a colored difference quotient.
 //! - `model_roots(t, y, p, g)` writes the [`ModelDescription::n_roots`] root functions of the
 //!   triggers: one per comparison of each trigger (`a - b` of `a > b` and `a >= b`, `b - a` of
 //!   `a < b` and `a <= b`, `a - b` of `a == b` and `a != b`, every adjacent pair of a chain) and
@@ -166,10 +167,7 @@ impl ModelSizes {
 
     /// The sizes a description gives.
     pub fn of(desc: &ModelDescription) -> ModelSizes {
-        let pattern = match &desc.jacobian {
-            JacobianKind::Analytic(pattern) => pattern,
-            JacobianKind::ColoredDifference { pattern, .. } => pattern,
-        };
+        let pattern = desc.jacobian.pattern();
         ModelSizes {
             states: desc.states.len() as u32,
             parameters: desc.parameters.len() as u32,
@@ -331,19 +329,148 @@ pub struct SparsityPattern {
     pub row_idx: Vec<u32>,
 }
 
+impl SparsityPattern {
+    /// The number of entries.
+    pub fn nnz(&self) -> usize {
+        self.row_idx.len()
+    }
+
+    /// The rows of the entries of column `j`.
+    ///
+    /// # Panics
+    ///
+    /// For a column out of range or a pattern which is not a CSC pattern.
+    pub fn rows(&self, j: usize) -> &[u32] {
+        &self.row_idx[self.col_ptr[j] as usize..self.col_ptr[j + 1] as usize]
+    }
+
+    /// Whether the pattern is a CSC pattern of `n` states: `n + 1` column pointers from 0, not
+    /// decreasing, to the number of entries, and every row below `n`.
+    pub fn is_csc_of(&self, n: usize) -> bool {
+        self.n as usize == n
+            && self.col_ptr.len() == n + 1
+            && self.col_ptr[0] == 0
+            && self.col_ptr.windows(2).all(|w| w[0] <= w[1])
+            && self.col_ptr[n] as usize == self.row_idx.len()
+            && self.row_idx.iter().all(|i| (*i as usize) < n)
+    }
+
+    /// The greedy coloring of the columns of a CSC pattern, as `JacobianSparsity` of the
+    /// sparse difference quotient prototype of libroadrunner (`roadrunner-sparsedq`): a
+    /// distance-1 coloring of the column intersection graph, the columns with the most entries
+    /// first (ties by column), each the smallest color no column with which it shares a row
+    /// has. Two columns of a color share no row, so one evaluation of the right hand side with
+    /// the increments of every column of a color gives the differences of all of them.
+    ///
+    /// # Panics
+    ///
+    /// For a pattern which is not a CSC pattern ([`SparsityPattern::is_csc_of`]).
+    pub fn greedy_colors(&self) -> Vec<u32> {
+        let n = self.n as usize;
+        // the columns of every row (the transposed pattern)
+        let mut row_ptr = vec![0usize; n + 1];
+        for &i in &self.row_idx {
+            row_ptr[i as usize + 1] += 1;
+        }
+        for i in 0..n {
+            row_ptr[i + 1] += row_ptr[i];
+        }
+        let mut next = row_ptr.clone();
+        let mut columns = vec![0usize; self.row_idx.len()];
+        for j in 0..n {
+            for &i in self.rows(j) {
+                columns[next[i as usize]] = j;
+                next[i as usize] += 1;
+            }
+        }
+        let mut order: Vec<usize> = (0..n).collect();
+        // a stable sort: columns of as many entries keep their order
+        order.sort_by_key(|&j| std::cmp::Reverse(self.rows(j).len()));
+        const NONE: u32 = u32::MAX;
+        let mut colors = vec![NONE; n];
+        // `forbidden[c] == j`: a column which shares a row with `j` has the color `c`
+        let mut forbidden = vec![usize::MAX; n + 1];
+        for &j in &order {
+            for &i in self.rows(j) {
+                let i = i as usize;
+                for &other in &columns[row_ptr[i]..row_ptr[i + 1]] {
+                    if colors[other] != NONE {
+                        forbidden[colors[other] as usize] = j;
+                    }
+                }
+            }
+            let mut c = 0;
+            while forbidden[c] == j {
+                c += 1;
+            }
+            colors[j] = c as u32;
+        }
+        colors
+    }
+
+    /// Checks a coloring of the columns of a CSC pattern: a color below `n` for every column,
+    /// and no two columns of a color share a row. The error names the first conflict.
+    ///
+    /// # Panics
+    ///
+    /// For a pattern which is not a CSC pattern ([`SparsityPattern::is_csc_of`]).
+    pub fn check_colors(&self, colors: &[u32]) -> Result<(), String> {
+        let n = self.n as usize;
+        if colors.len() != n {
+            return Err(format!("{} colors for {n} columns", colors.len()));
+        }
+        if let Some(j) = colors.iter().position(|c| *c as usize >= n.max(1)) {
+            return Err(format!(
+                "column {j} has the color {}, at least the number of columns {n}",
+                colors[j]
+            ));
+        }
+        let mut order: Vec<usize> = (0..n).collect();
+        order.sort_by_key(|&j| colors[j]);
+        // the color of the last column which has an entry in the row, by row
+        let mut owner: Vec<Option<(u32, usize)>> = vec![None; n];
+        for j in order {
+            let c = colors[j];
+            for &i in self.rows(j) {
+                if let Some((owner_color, other)) = owner[i as usize]
+                    && owner_color == c
+                {
+                    return Err(format!(
+                        "the columns {other} and {j} of the color {c} share the row {i}"
+                    ));
+                }
+                owner[i as usize] = Some((c, j));
+            }
+        }
+        Ok(())
+    }
+}
+
 /// How the Jacobian is provided.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum JacobianKind {
-    /// `model_jac` computes it on the pattern.
+    /// `model_jac` computes it on the pattern, in its CSC order.
     Analytic(SparsityPattern),
-    /// Difference quotients over the colors of the columns of the pattern.
+    /// Difference quotients over the colors of the columns of the pattern; `model_jac` traps.
     ColoredDifference {
         /// The pattern.
         pattern: SparsityPattern,
-        /// The color of every column.
+        /// The color of every column ([`SparsityPattern::greedy_colors`]).
         colors: Vec<u32>,
+        /// Why the model has no analytic Jacobian, naming the operator and the element.
+        reason: String,
     },
+}
+
+impl JacobianKind {
+    /// The pattern.
+    pub fn pattern(&self) -> &SparsityPattern {
+        match self {
+            JacobianKind::Analytic(pattern) => pattern,
+            JacobianKind::ColoredDifference { pattern, .. } => pattern,
+        }
+    }
 }
 
 /// What the engine needs to know of an event.

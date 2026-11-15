@@ -460,7 +460,9 @@ impl Body<'_> {
         match target {
             Symbol::State(i) => (self.ctx.y, i),
             Symbol::Param(i) => (self.ctx.p, i),
-            Symbol::Time => unreachable!("time is no entity"),
+            Symbol::Time | Symbol::Derivative(_) => {
+                unreachable!("{target:?} is no entity of the memory")
+            }
         }
     }
 
