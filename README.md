@@ -104,11 +104,13 @@ The tests (`node --test js/test`) build the command line (`SBMLSIM_CORE_CLI` nam
 
 ## Python
 
-`sbmlsim-core` is also a python package (python 3.14 or newer, built with maturin; the extension embeds `engine.wasm` through `sbmlsim-host`, so the build needs `WASI_SDK_PATH` or `SBMLSIM_CORE_WASM_DIR` as above):
+`sbmlsim-core` is also a python package (python 3.14 or newer, one abi3 wheel per platform, built with maturin; the extension embeds `engine.wasm` through `sbmlsim-host`, so the build needs `WASI_SDK_PATH` or `SBMLSIM_CORE_WASM_DIR` as above). It ships `py.typed` and a stub of the extension, `python/sbmlsim_core/_core.pyi`, which `ty check python/typecheck` holds against a file that uses the API as a caller does:
 
 ```bash
-uv venv --python 3.14 && uv pip install -e . --group dev
+uv venv --python 3.14 && uv pip install -e . --group dev   # editable, with pytest and ty
 .venv/bin/pytest python/tests -q
+.venv/bin/ty check python/typecheck
+uv build --wheel --python 3.14 --out-dir dist              # the wheel, as the job `python-bindings` builds it
 ```
 
 ```python
@@ -118,17 +120,17 @@ compiled = sbmlsim_core.compile_sbml(sbml_text)  # optimize=True, jacobian="auto
 compiled.wasm         # the bytes of model.wasm
 compiled.description  # the dict of model.json (model/2)
 
-runtime = sbmlsim_core.Runtime()
+runtime = sbmlsim_core.Runtime(max_memory_bytes=None)       # engine.wasm and mathlib.wasm, compiled once
 model = runtime.load(compiled.wasm, compiled.description)  # compiled once, shared
 model.initial_values()                                      # selection id -> value as loaded
 instance = model.instance()                                 # one per thread
-out = instance.simulate(request)                            # a dict of simulation/1
+out = instance.simulate(request)                            # request: a dict of simulation/1
 out.columns, out.values                                     # names, float64 array (rows, columns)
 instance.stats()                                            # the counters of the integrator
 results = model.simulate_many(requests, threads=None)       # a batch on rayon threads, in order
-# errors: SimulationError with RequestError, IntegrationError (flag, time), UnsupportedError, InternalError
-# a point of a batch which failed is a PointError (kind, message, flag, time) in its position
 ```
+
+Errors derive from `SbmlsimCoreError`: `CompileError`, and `SimulationError` with `RequestError`, `IntegrationError` (`flag`, `time`), `UnsupportedError` and `InternalError`. A point of a batch which failed is a `PointError` (`kind`, `message`, `flag`, `time`) in its position of the result, so one failing request does not fail the batch.
 
 ## Test suite
 

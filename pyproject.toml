@@ -13,9 +13,12 @@ requires-python = ">=3.14"
 dependencies = ["numpy"]
 
 [dependency-groups]
-dev = ["pytest"]
+dev = ["pytest>=9.2,<10", "ty==0.0.104"]
 
 [tool.maturin]
 manifest-path = "crates/python/Cargo.toml"
 python-source = "python"
 module-name = "sbmlsim_core._core"
+
+[tool.ty.terminal]
+error-on-warning = true
