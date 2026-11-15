@@ -84,6 +84,17 @@ pub const PROBE_RTOL: f64 = 1e-12;
 /// late each, case 00967, end there).
 pub const END_RTOL: f64 = 1e-9;
 
+/// The magnitude of the times of an integration from `start` to `end` (1 when it is 0 or not
+/// finite), the scale of the resolutions [`PROBE_RTOL`] and [`END_RTOL`].
+pub(crate) fn time_scale(start: f64, end: f64) -> f64 {
+    let scale = start.abs().max(end.abs()).max(end - start);
+    if scale > 0.0 && scale.is_finite() {
+        scale
+    } else {
+        1.0
+    }
+}
+
 /// A pending execution of an event.
 #[derive(Debug, Clone)]
 struct Pending {
@@ -178,12 +189,7 @@ impl<'a> Events<'a> {
     /// Sets the windows of the probes for an integration from `start` to `end`: [`PROBE_RTOL`]
     /// and [`END_RTOL`] times the magnitude of its times (1 when that is 0).
     pub fn set_window(&mut self, start: f64, end: f64) {
-        let scale = start.abs().max(end.abs()).max(end - start);
-        let scale = if scale > 0.0 && scale.is_finite() {
-            scale
-        } else {
-            1.0
-        };
+        let scale = time_scale(start, end);
         self.probe = PROBE_RTOL * scale;
         self.end_probe = END_RTOL * scale;
     }

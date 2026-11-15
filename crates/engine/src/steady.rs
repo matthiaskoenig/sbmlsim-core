@@ -125,7 +125,7 @@ fn with_events(
     let mut started = false;
     let mut current = stop;
     // a horizon is an interval of libroadrunner's count of roots and of the budget of steps
-    let mut guard = RootGuard::new(t, settings, true, cvode.steps());
+    let mut guard = RootGuard::new(t, settings, true, cvode.steps(), 0.0);
     while !(t >= stop || too_close(t, stop)) {
         let tstop = events.next_time().map_or(stop, |x| x.min(stop));
         if too_close(t, tstop) {
@@ -162,7 +162,7 @@ fn with_events(
         }
         if events.execute(t, &mut y[..m], &mut problem.p, false)? {
             started = false;
-            guard.executed(cvode.steps());
+            guard.executed(t, cvode.steps());
         }
     }
     Ok(())

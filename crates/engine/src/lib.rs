@@ -40,6 +40,20 @@
 //!   so a model whose roots chatter may run far longer there (the sliding mode
 //!   `x' = piecewise(-1, x > 0, 1)` at rtol 1e-3, atol 1e-6: 28.6 million steps in
 //!   libroadrunner, `CV_TOO_MUCH_WORK` within 20000 steps of one output interval here).
+//! - The executions of events within the relative tolerance (as a distance in time) of the last
+//!   applied root share the budget of steps towards one output time (`roots`, ruling R53), so
+//!   events which accumulate end in `CV_TOO_MUCH_WORK`: the bouncing ball (`x' = v`,
+//!   `v' = -10`, the event `x < 0`: `v = -0.5 v`, `x = 0`), whose bounces accumulate at
+//!   t = 1.3416, fails there within `maximum_num_steps` steps; libroadrunner lets the ball fall
+//!   through (a bounce it does not locate any more) and continues.
+//! - The output of the steps of the integrator ends with `CV_TOO_MUCH_WORK` after
+//!   `maximum_num_steps` consecutive stops (steps, roots, stop times) within the resolution of
+//!   the time, 1e-9 times the magnitude of the times of the simulation (`roots`, ruling R53): the
+//!   bouncing ball at its accumulation point, a sliding mode which creeps up to its switch
+//!   (`x' = piecewise(-1, x > 0, 1)` at rtol 1e-6, atol 1e-12, at t = 1.0000000016).
+//!   libroadrunner has no such bound (the ball falls through; the sliding mode runs to its
+//!   `max_output_rows`). A chatter whose stops are further apart than the resolution is bounded
+//!   by the limit of the output only.
 //! - libroadrunner's count of roots close together (`strikes`) ignores the events of an ignored
 //!   root as well; here it decides the restarts at the roots of discontinuities only, and the
 //!   events execute whatever it counts.

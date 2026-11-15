@@ -6,7 +6,7 @@ use sbmlsim_csolvers::ffi::{CV_NORMAL, CV_ONE_STEP, CV_ROOT_RETURN, CV_TSTOP_RET
 
 use crate::changes::Changes;
 use crate::cvode::{Cvode, Problem};
-use crate::events::{Events, Probe};
+use crate::events::{END_RTOL, Events, Probe, time_scale};
 use crate::model::ModelFns;
 use crate::roots::RootGuard;
 use crate::{EngineError, OUTPUT_LIMIT_FLAG, STALL_FLAG};
@@ -554,7 +554,8 @@ pub(crate) fn integrate_events(
     let mut started = false;
     let mut stop = end;
     let mut previous = t;
-    let mut guard = RootGuard::new(t, settings, !steps, cvode.steps());
+    let resolution = END_RTOL * time_scale(start, end);
+    let mut guard = RootGuard::new(t, settings, !steps, cvode.steps(), resolution);
     loop {
         // an output of times ends at its last time, as without events
         if !steps && out.next >= out.times.len() {
@@ -566,6 +567,7 @@ pub(crate) fn integrate_events(
         if too_close(t, tstop) {
             // a stop too close to integrate to: the state at `t` is the state there
             t = tstop;
+            guard.stop(t)?;
             if change == Some(t) {
                 out.change(t, k, changes, &mut y, &mut problem.p, events, recorder)?;
                 k += 1;
@@ -579,7 +581,7 @@ pub(crate) fn integrate_events(
             let next = out.next;
             if out.stop(t, &mut y, &mut problem.p, StopKind::Stop, events, recorder)? {
                 started = false;
-                guard.executed(cvode.steps());
+                guard.executed(t, cvode.steps());
             }
             if out.next != next {
                 guard.interval(cvode.steps());
@@ -627,6 +629,7 @@ pub(crate) fn integrate_events(
         }
         // CVODE returns the stop time exactly when it reaches it
         t = if flag == CV_TSTOP_RETURN { tstop } else { tret };
+        guard.stop(t)?;
         y.copy_from_slice(cvode.state());
         // the time of a change: its events execute after it (also a zero of a root function
         // which CVODE locates at it, or a step too close to it to integrate to); an output time
@@ -656,7 +659,7 @@ pub(crate) fn integrate_events(
             started = false;
         }
         if executed {
-            guard.executed(cvode.steps());
+            guard.executed(t, cvode.steps());
         }
         if out.next != next {
             guard.interval(cvode.steps());
