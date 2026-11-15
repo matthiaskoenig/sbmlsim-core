@@ -5,835 +5,835 @@
   "expected_failures": {
     "00039": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00040": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #1)"
     },
     "00182": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00184": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00531": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00532": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00533": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00534": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00535": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00536": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00537": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00538": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00539": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00540": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00541": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00542": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00543": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00544": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00545": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00546": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00547": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00548": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00549": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00550": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00551": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00552": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00553": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00554": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00555": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00556": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00557": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00558": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00559": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00560": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00561": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00562": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00563": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00564": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00565": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00566": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00567": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00568": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00569": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00570": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00571": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00572": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00573": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00574": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00575": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00576": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00613": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #1)"
     },
     "00614": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #1)"
     },
     "00615": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #1)"
     },
     "00628": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #1)"
     },
     "00629": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #1)"
     },
     "00630": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #1)"
     },
     "00658": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00659": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00660": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00661": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00662": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00663": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00664": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00665": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00666": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00673": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #1)"
     },
     "00674": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #1)"
     },
     "00675": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #1)"
     },
     "00687": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #1)"
     },
     "00695": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #1)"
     },
     "00696": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #1)"
     },
     "00705": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #1)"
     },
     "00760": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00761": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00762": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00777": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #1)"
     },
     "00778": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00779": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00780": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00844": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00870": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "not converted: fast reaction fasterReaction: refused (fast reactions are out of scope; L3V2 has no fast attribute)"
     },
     "00871": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "not converted: fast reaction reaction1: refused (fast reactions are out of scope; L3V2 has no fast attribute)"
     },
     "00872": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "not converted: fast reaction reaction1: refused (fast reactions are out of scope; L3V2 has no fast attribute)"
     },
     "00873": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "not converted: fast reaction reaction1: refused (fast reactions are out of scope; L3V2 has no fast attribute)"
     },
     "00874": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "not converted: fast reaction reaction1: refused (fast reactions are out of scope; L3V2 has no fast attribute)"
     },
     "00875": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "not converted: fast reaction reaction1: refused (fast reactions are out of scope; L3V2 has no fast attribute)"
     },
     "00876": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "00937": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "delay csymbol is not supported (assignmentRule #1 (y))"
     },
     "00938": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "delay csymbol is not supported (assignmentRule #0 (y))"
     },
     "00939": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "delay csymbol is not supported (assignmentRule #0 (y))"
     },
     "00940": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "delay csymbol is not supported (assignmentRule #0 (y))"
     },
     "00941": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "delay csymbol is not supported (assignmentRule #0 (y))"
     },
     "00942": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "delay csymbol is not supported (assignmentRule #0 (y))"
     },
     "00943": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "delay csymbol is not supported (assignmentRule #0 (y))"
     },
     "00981": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "delay csymbol is not supported (assignmentRule #1 (y))"
     },
     "00982": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "delay csymbol is not supported (assignmentRule #2 (y))"
     },
     "00983": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #1)"
     },
     "00984": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "delay csymbol is not supported (assignmentRule #0 (y))"
     },
     "00985": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "delay csymbol is not supported (assignmentRule #0 (z))"
     },
     "00986": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "not converted: fast reaction fast: refused (fast reactions are out of scope; L3V2 has no fast attribute)"
     },
     "00987": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "not converted: fast reaction fast: refused (fast reactions are out of scope; L3V2 has no fast attribute)"
     },
     "00988": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "not converted: fast reaction fast: refused (fast reactions are out of scope; L3V2 has no fast attribute)"
     },
     "00993": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "01044": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "01051": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "not converted: fast reaction fasterReaction: refused (fast reactions are out of scope; L3V2 has no fast attribute)"
     },
     "01052": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "not converted: fast reaction reaction1: refused (fast reactions are out of scope; L3V2 has no fast attribute)"
     },
     "01053": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "not converted: fast reaction reaction1: refused (fast reactions are out of scope; L3V2 has no fast attribute)"
     },
     "01054": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "01083": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "01084": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "01085": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "01086": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "01108": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "01142": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #2)"
     },
     "01173": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "delay csymbol is not supported (assignmentRule #1 (t3))"
     },
     "01174": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "01176": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "delay csymbol is not supported (kineticLaw of sub1__J0)"
     },
     "01292": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "01318": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "delay csymbol is not supported (assignmentRule #1 (p3))"
     },
     "01319": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "delay csymbol is not supported (assignmentRule #1 (p3))"
     },
     "01320": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "delay csymbol is not supported (assignmentRule #0 (p2))"
     },
     "01350": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "01359": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "01368": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "01377": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "01386": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "01396": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "not converted: fast reaction J0: refused (fast reactions are out of scope; L3V2 has no fast attribute)"
     },
     "01397": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "not converted: fast reaction J0: refused (fast reactions are out of scope; L3V2 has no fast attribute)"
     },
     "01398": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "not converted: fast reaction J0: refused (fast reactions are out of scope; L3V2 has no fast attribute)"
     },
     "01399": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "not converted: fast reaction J0: refused (fast reactions are out of scope; L3V2 has no fast attribute)"
     },
     "01400": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "delay csymbol is not supported (assignmentRule #1 (P1))"
     },
     "01401": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "delay csymbol is not supported (assignmentRule #2 (P1))"
     },
     "01403": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "delay csymbol is not supported (assignmentRule #1 (P1))"
     },
     "01404": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "delay csymbol is not supported (assignmentRule #0 (P0))"
     },
     "01406": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "delay csymbol is not supported (assignmentRule #1 (P1))"
     },
     "01407": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "delay csymbol is not supported (assignmentRule #0 (P0))"
     },
     "01409": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "delay csymbol is not supported (assignmentRule #1 (P1))"
     },
     "01410": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "delay csymbol is not supported (assignmentRule #0 (P0))"
     },
     "01411": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "delay csymbol is not supported (assignmentRule #0 (P1))"
     },
     "01412": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "delay csymbol is not supported (assignmentRule #0 (P1))"
     },
     "01413": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "delay csymbol is not supported (assignmentRule #0 (P1))"
     },
     "01414": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "delay csymbol is not supported (kineticLaw of J0)"
     },
     "01415": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "delay csymbol is not supported (kineticLaw of J0)"
     },
     "01416": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "delay csymbol is not supported (assignmentRule #1 (P1))"
     },
     "01417": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "delay csymbol is not supported (assignmentRule #0 (P1))"
     },
     "01418": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "delay csymbol is not supported (assignmentRule #0 (P1))"
     },
     "01419": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "delay csymbol is not supported (assignmentRule #0 (P1))"
     },
     "01454": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "delay csymbol is not supported (assignmentRule #2 (x))"
     },
     "01479": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "01480": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "delay csymbol is not supported (assignmentRule #0 (S1_sr))"
     },
     "01481": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "delay csymbol is not supported (assignmentRule #0 (S1_sr))"
     },
     "01482": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #1)"
     },
     "01483": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "01484": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "01499": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "01500": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "01501": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "01502": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "01503": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "01518": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "delay csymbol is not supported (trigger of E0)"
     },
     "01519": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "delay csymbol is not supported (trigger of E0)"
     },
     "01520": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "delay csymbol is not supported (trigger of E0)"
     },
     "01521": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "delay csymbol is not supported (priority of E0)"
     },
     "01522": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "delay csymbol is not supported (trigger of E0)"
     },
     "01523": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "delay csymbol is not supported (eventAssignment #0 (P2) of E0)"
     },
     "01524": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "delay csymbol is not supported (eventAssignment #0 (P2) of E0)"
     },
     "01534": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "delay csymbol is not supported (assignmentRule #0 (P0))"
     },
     "01535": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "delay csymbol is not supported (assignmentRule #0 (P0))"
     },
     "01536": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "delay csymbol is not supported (eventAssignment #0 (S1_stoich) of _E0)"
     },
     "01537": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "delay csymbol is not supported (assignmentRule #0 (P1))"
     },
     "01538": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "delay csymbol is not supported (assignmentRule #1 (P1))"
     },
     "01539": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "not converted: fast reaction J0: refused (fast reactions are out of scope; L3V2 has no fast attribute)"
     },
     "01544": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "not converted: fast reaction J0: refused (fast reactions are out of scope; L3V2 has no fast attribute)"
     },
     "01545": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "not converted: fast reaction J0: refused (fast reactions are out of scope; L3V2 has no fast attribute)"
     },
     "01546": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "not converted: fast reaction J0: refused (fast reactions are out of scope; L3V2 has no fast attribute)"
     },
     "01547": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "not converted: fast reaction J0: refused (fast reactions are out of scope; L3V2 has no fast attribute)"
     },
     "01548": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "not converted: fast reaction J0: refused (fast reactions are out of scope; L3V2 has no fast attribute)"
     },
     "01549": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "not converted: fast reaction J0: refused (fast reactions are out of scope; L3V2 has no fast attribute)"
     },
     "01550": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "not converted: fast reaction J0: refused (fast reactions are out of scope; L3V2 has no fast attribute)"
     },
     "01551": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "not converted: fast reaction J0: refused (fast reactions are out of scope; L3V2 has no fast attribute)"
     },
     "01558": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "not converted: fast reaction J0: refused (fast reactions are out of scope; L3V2 has no fast attribute)"
     },
     "01559": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "not converted: fast reaction J0: refused (fast reactions are out of scope; L3V2 has no fast attribute)"
     },
     "01560": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "not converted: fast reaction J0: refused (fast reactions are out of scope; L3V2 has no fast attribute)"
     },
     "01565": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "not converted: fast reaction J0: refused (fast reactions are out of scope; L3V2 has no fast attribute)"
     },
     "01567": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "not converted: fast reaction J0: refused (fast reactions are out of scope; L3V2 has no fast attribute)"
     },
     "01568": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "not converted: fast reaction J0: refused (fast reactions are out of scope; L3V2 has no fast attribute)"
     },
     "01569": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "not converted: fast reaction J0: refused (fast reactions are out of scope; L3V2 has no fast attribute)"
     },
     "01570": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "not converted: fast reaction J0: refused (fast reactions are out of scope; L3V2 has no fast attribute)"
     },
     "01571": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "not converted: fast reaction J0: refused (fast reactions are out of scope; L3V2 has no fast attribute)"
     },
     "01572": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "not converted: fast reaction J0: refused (fast reactions are out of scope; L3V2 has no fast attribute)"
     },
     "01575": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "01576": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "01577": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "01578": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "01579": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #1)"
     },
     "01589": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "01592": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "delay csymbol is not supported (eventAssignment #1 (Q) of Qinc)"
     },
     "01593": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "delay csymbol is not supported (assignmentRule #1 (S2))"
     },
     "01785": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "01786": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "01787": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "01788": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "01789": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "01790": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "01791": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "01792": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "01793": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     },
     "01794": {
       "status": "not_compiled",
-      "reason": "not read by sbmlsim (status not_read)"
+      "reason": "algebraic rule is not supported (algebraicRule #0)"
     }
   }
 }

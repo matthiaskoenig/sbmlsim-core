@@ -2,6 +2,27 @@
 
 An SBML to WebAssembly compiler and a CVODE/KLU simulation engine, written in Rust. The two contracts `model/1` (the description and the exports of a compiled model) and `simulation/1` (the request and the result of a simulation) are defined in `crates/abi`.
 
+## What the core is
+
+- The compiler (`crates/compiler`, built on `sbml`, `ir` and `codegen`) turns an SBML Level 3 Version 2 core model (flat, no packages) into `model.wasm`, with analytic sparse Jacobians, and `model.json`, its description.
+- The engine (`crates/engine`, `engine.wasm`, wasm32-wasip1) is Rust with CVODE 7.9 and KLU. It runs a request on a compiled model: changes, events, steady states, dense or KLU linear solver (`KLU_THRESHOLD` 16 states).
+- The hosts run the same `engine.wasm`, `mathlib.wasm` and `model.wasm` with bitwise identical results: wasmtime (`crates/host`, the command line `sbmlsim-core`) and Node and browsers (`js/loader.mjs`).
+- It is the simulation core of sbmlsim's web apps; the semantics are those of sbmlsim (PEtab v2), the integrator and the solvers those of roadrunner.
+
+## Contracts
+
+- `model/1`: the description and the exports of a compiled model (`model.json`, `model.wasm`).
+- `simulation/1`: the request and the result of a simulation.
+
+Both are defined in `crates/abi`.
+
+## Semantics and known differences
+
+The semantics follow sbmlsim's simulation core (`changes`, `events`, root finding of the conditions of `piecewise`). The known differences to roadrunner and to sbmlsim are listed in the documentation of the engine (`crates/engine/src/lib.rs`, "Known differences to libroadrunner") and in `bench/RESULTS.md` ("Known differences to roadrunner"); they are not repeated here.
+
+Open item for the owner: a delayed event whose trigger a change of the request makes true is scheduled by the engine, while sbmlsim does not fire such events (ruling R34 of the ledger, not decided yet).
+
+
 ## Toolchain
 
 User-level installs only, no system packages.
@@ -20,10 +41,17 @@ export WASI_SDK_PATH=$HOME/opt/wasi-sdk
 ```bash
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
+cargo clippy -p sbmlsim-csolvers --all-targets --target wasm32-wasip1 -- -D warnings
+cargo clippy -p sbmlsim-engine --all-targets --target wasm32-wasip1 -- -D warnings
+cargo clippy -p sbmlsim-engine --lib --features exports --target wasm32-wasip1 -- -D warnings
 cargo test
 cargo build -p sbmlsim-compiler --target wasm32-unknown-unknown
 node --test js/test
 ```
+
+## Build of the wasm modules
+
+`cargo build` builds `engine.wasm` (wasm32-wasip1, C solvers compiled with wasi-sdk, `WASI_SDK_PATH`) and `mathlib.wasm` (wasm32-unknown-unknown) in the build script of `sbmlsim-host`, which embeds them; `SBMLSIM_CORE_WASM_DIR` names a directory with prebuilt ones. `sbmlsim-core runtime -o DIR` writes them out for the JavaScript host, and `sbmlsim-core compile` writes `model.wasm` and `model.json` of a model.
 
 ## Compile
 
@@ -58,6 +86,18 @@ const { columns, nRows, values } = instance.simulate(request); // values: a Floa
 ```
 
 The tests (`node --test js/test`) build the command line (`SBMLSIM_CORE_CLI` names a built one) and compare every passing case of the prepared SBML Test Suite with the wasmtime host (`SBMLSIM_CORE_EXPORT` names the output of `sbmlsim-core testsuite <cases> --export <dir>`).
+
+## Test suite
+
+`sbmlsim-core testsuite testdata/cases` compiles and simulates the cases of the SBML Test Suite (prepared with `uv run scripts/prepare_testsuite.py --out testdata/cases`) and compares them with the baseline `testdata/testsuite_baseline.json`; `--write-baseline` writes the baseline from a run. In every mode (analytic and difference Jacobian, optimizer on and off) each passing case is simulated again to check that it repeats bitwise.
+
+Measured in this repository: 1581 of 1789 cases pass, every case which sbmlsim passes among them (the 208 failures are the cases sbmlsim does not pass either). The 208 expected failures are all refused at compilation (`not_compiled`) with a reason in the baseline:
+
+| reason | cases |
+|---|---:|
+| algebraic rule is not supported | 123 |
+| delay csymbol is not supported | 50 |
+| not converted: fast reaction (libsbml conversion refuses a fast reaction) | 35 |
 
 ## Benchmark
 
