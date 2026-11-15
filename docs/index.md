@@ -4,6 +4,8 @@ sbmlsim-core is an SBML to WebAssembly compiler and a CVODE/KLU simulation engin
 
 It is the simulation core of the web apps of [sbmlsim](https://matthiaskoenig.github.io/sbmlsim/): the semantics of a simulation are those of sbmlsim (PEtab v2), the integrator and the linear solvers those of libroadrunner (CVODE of SUNDIALS, KLU of SuiteSparse).
 
+See it run in the [glimepiride app](https://matthiaskoenig.github.io/sbmlsim-web/examples/glimepiride/) of the sbmlsim-web documentation: the whole-body PBPK model of glimepiride, its panels drawn by sbmlsim-web and every simulation run in the browser of the reader on a pool of workers ([the panel endpoint](javascript.md#the-panel-endpoint)).
+
 ## The program
 
 A model passes through three parts, joined by two contracts which are defined in the crate `sbmlsim-abi` (`crates/abi`):
