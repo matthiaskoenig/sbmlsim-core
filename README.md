@@ -117,17 +117,19 @@ uv build --wheel --python 3.14 --out-dir dist              # the wheel, as the j
 import sbmlsim_core
 
 compiled = sbmlsim_core.compile_sbml(sbml_text)  # optimize=True, jacobian="auto"
-compiled.wasm         # the bytes of model.wasm
+compiled.wasm  # the bytes of model.wasm
 compiled.description  # the dict of model.json (model/2)
 
-runtime = sbmlsim_core.Runtime(max_memory_bytes=None)       # engine.wasm and mathlib.wasm, compiled once per runtime: share it
+# engine.wasm and mathlib.wasm, compiled once per runtime: share it
+runtime = sbmlsim_core.Runtime(max_memory_bytes=None)
 model = runtime.load(compiled.wasm, compiled.description)  # compiled once, shared
-model.initial_values()                                      # selection id -> value as loaded
-instance = model.instance()                                 # one per thread
-out = instance.simulate(request)                            # request: a dict of simulation/1
-out.columns, out.values                                     # names, float64 array (rows, columns)
-instance.stats()                                            # the counters of the integrator
-results = model.simulate_many(requests, threads=None)       # a batch on rayon threads, in order
+model.initial_values()  # selection id -> value as loaded
+instance = model.instance()  # one per thread
+out = instance.simulate(request)  # request: a dict of simulation/1
+out.columns, out.values  # names, float64 array (rows, columns)
+instance.stats()  # the counters of the integrator
+# a batch on rayon threads, the results in the order of the requests
+results = model.simulate_many(requests, threads=None)
 ```
 
 The nested enums of `simulation/1` are serde's externally tagged ones: an output is `{"uniform": {"steps": 100}}`, `{"times": [0.0, 1.0]}` or, a unit variant and so a bare string, `"integrator_steps"` (the steps of the integrator, whose number of rows differs by point, which is why `simulate_many` gives one table per point), and the absolute tolerance of the settings is `{"scalar": 1e-12}` or `{"per_state": [1e-12, 1e-10]}` with one value per state in the order of the state vector (a vector of another length is a `PointError` of that point in a batch):

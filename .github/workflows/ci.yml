@@ -202,10 +202,10 @@ jobs:
         run: |
           uv venv --python 3.14 .venv
           uv pip install --python .venv/bin/python -e . --group dev
-      - name: Lint and format of the python (python and scripts)
+      - name: Lint and format of the python of the repository, markdown blocks included
         run: |
-          .venv/bin/ruff check python scripts
-          .venv/bin/ruff format --check python scripts
+          .venv/bin/ruff check
+          .venv/bin/ruff format --check
       - name: The tests
         run: .venv/bin/pytest python/tests -q
       - name: The type check of the stub and of a caller (python/typecheck)
