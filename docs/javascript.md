@@ -9,7 +9,13 @@
 | `panels.mjs` | `./panels` | the routes of the panel service of sbmlsim, answered inside a page from a bundle |
 | `simulate.mjs` | the command `sbmlsim-core-simulate` | the CSV of `sbmlsim-core simulate` in Node |
 
-The package is private (not published to npm); a page serves the files of `js/` and the `engine.wasm` and `mathlib.wasm` of a build (`sbmlsim-core runtime -o js/runtime`, see [Installation](installation.md#building)).
+The package is published to npm as [`sbmlsim-core`](https://www.npmjs.com/package/sbmlsim-core), with the `engine.wasm` and `mathlib.wasm` of its release in `runtime/`:
+
+```bash
+npm install sbmlsim-core
+```
+
+A page imports the modules from its own files or from a CDN (`https://cdn.jsdelivr.net/npm/sbmlsim-core@0.1.0/panels.mjs`); a pool of a module of another origin starts its workers through a module of the page's own origin, which browsers require of a worker. A checkout serves the files of `js/` with the runtime of a build (`sbmlsim-core runtime -o js/runtime`, see [Installation](installation.md#building)). A release publishes the package from the tag `vX.Y.Z` (`.github/workflows/publish.yml`, trusted publishing with provenance); the version of `js/package.json` is the one of the crates and of `CORE_VERSION`, which `npm pack` checks.
 
 ## The loader
 

@@ -101,6 +101,10 @@ jobs:
         env:
           SBMLSIM_CORE_CLI: ${{ github.workspace }}/target/release/sbmlsim-core
           SBMLSIM_CORE_EXPORT: ${{ runner.temp }}/export
+      - name: The npm package packs (its runtime, its license and one version everywhere)
+        run: |
+          target/release/sbmlsim-core runtime -o js/runtime
+          cd js && npm pack --dry-run
   testsuite-parity:
     # the whole SBML Test Suite against the baseline (testdata/testsuite_baseline.json), with the
     # repeat checks, in the three modes of the Jacobian and the optimizer: a case which passes or
