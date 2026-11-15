@@ -234,9 +234,28 @@ fn median(times: &[f64]) -> f64 {
 /// Splits a comma separated list.
 fn list(text: &str) -> Vec<String> {
     text.split(',')
-        .map(|s| s.trim().to_lowercase())
+        .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .collect()
+}
+
+/// A comma separated list of `flag` whose every value is one of `known` (and which is not
+/// empty), else an error naming the values.
+fn checked_list(flag: &str, text: &str, known: &[&str]) -> anyhow::Result<Vec<String>> {
+    let values = list(text);
+    if values.is_empty() {
+        bail!(
+            "{flag} names nothing (one or more of: {})",
+            known.join(", ")
+        );
+    }
+    if let Some(unknown) = values.iter().find(|v| !known.contains(&v.as_str())) {
+        bail!(
+            "{flag}: unknown value {unknown} (one or more of: {})",
+            known.join(", ")
+        );
+    }
+    Ok(values)
 }
 
 /// The absolute tolerance of a model: the vector of roadrunner in the order of the states of
@@ -369,9 +388,14 @@ fn measure(
 /// Runs the benchmark; `Ok(true)` when every simulation repeated bitwise.
 pub fn run(args: &BenchArgs) -> anyhow::Result<bool> {
     let models = read_models(&args.models)?;
-    let only = args.only.as_deref().map(list);
-    let solvers = list(&args.solvers);
-    let jacobians = list(&args.jacobians);
+    let names: Vec<&str> = models.iter().map(|(n, _)| n.as_str()).collect();
+    let only = args
+        .only
+        .as_deref()
+        .map(|o| checked_list("--only", o, &names))
+        .transpose()?;
+    let solvers = checked_list("--solvers", &args.solvers, &["dense", "klu"])?;
+    let jacobians = checked_list("--jacobians", &args.jacobians, &["analytic", "difference"])?;
     let runtime = Runtime::embedded()?;
     let mut results = Vec::new();
     let mut manifest = Manifest {
@@ -613,6 +637,20 @@ mod tests {
             assert_eq!(model.absolute_tolerance, 1e-12);
             assert!(model.sbml.starts_with(path.parent().unwrap()));
         }
+    }
+
+    #[test]
+    fn unknown_values_of_a_list_are_refused() {
+        let known = ["dense", "klu"];
+        assert_eq!(
+            checked_list("--solvers", "klu, dense", &known).unwrap(),
+            ["klu", "dense"]
+        );
+        let error = checked_list("--solvers", "dense,KLU", &known).unwrap_err();
+        assert!(error.to_string().contains("unknown value KLU"), "{error}");
+        let error = checked_list("--solvers", "dense,kluu", &known).unwrap_err();
+        assert!(error.to_string().contains("unknown value kluu"), "{error}");
+        assert!(checked_list("--solvers", " , ", &known).is_err());
     }
 
     #[test]

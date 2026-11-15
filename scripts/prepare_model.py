@@ -208,11 +208,15 @@ def atol_path(sbml: Path) -> Path:
     return sbml.with_suffix(".atol.json")
 
 
-def roadrunner_atol(sbml: Path, absolute_tolerance: float, end: float) -> dict[str, float]:
+def roadrunner_atol(
+    sbml: Path, absolute_tolerance: float, end: float, preinit: list[tuple[str, float]]
+) -> dict[str, float]:
     """Get the absolute tolerance of every state as roadrunner applies a scalar one.
 
     roadrunner scales the absolute tolerance per state (by the size of the compartment of a
-    species of a concentration); the vector of the integrator after a simulation, by the ids of
+    species of a concentration, by the initial value of the variable of a rate rule), so the
+    vector depends on the pre-initialization, which is applied as the benchmark applies it
+    (`init(x)`, then `resetAll`); the vector of the integrator after a simulation, by the ids of
     the state vector.
     """
     import roadrunner
@@ -224,6 +228,9 @@ def roadrunner_atol(sbml: Path, absolute_tolerance: float, end: float) -> dict[s
     options.setLLJitOptimizationLevel(roadrunner.LoadSBMLOptions.DEFAULT)
     r = roadrunner.RoadRunner(str(sbml), options)
     r.integrator.setValue("absolute_tolerance", absolute_tolerance)
+    for key, value in preinit:
+        r.setValue(f"init({key})", value)
+    r.resetAll()
     r.simulate(0, end, 3)
     vector = r.integrator.getAbsoluteToleranceVector()
     return {r.model.getStateVectorId(i): float(vector[i]) for i in range(len(vector))}
@@ -252,7 +259,7 @@ def prepare_bench(toml: Path) -> int:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(sbml, encoding="utf-8")
         record["prepared_sha256"] = sha256(target)
-        atol = roadrunner_atol(target, model["absolute_tolerance"], model["end"])
+        atol = roadrunner_atol(target, model["absolute_tolerance"], model["end"], model.get("preinit", []))
         atol_path(target).write_text(json.dumps(atol, indent=1) + "\n", encoding="utf-8")
         records[name] = record
         print(f"{name}: {target}")

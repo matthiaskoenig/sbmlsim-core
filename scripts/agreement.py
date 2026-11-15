@@ -18,22 +18,34 @@
 # ///
 """The agreement of sbmlsim-core with roadrunner (sbmlsim) at tight tolerances.
 
-    uv run scripts/agreement.py [--cli target/release/sbmlsim-core] [--json FILE]
+    uv run scripts/agreement.py [--cli target/release/sbmlsim-core] [--json FILE] [--details]
 
 The packaged models of sbmlsim (`HCTZ_SBML`, `MIDAZOLAM_SBML`, `REPRESSILATOR_SBML`,
-`DEMO_SBML`) and the machine perfusion models of the benchmark (`mp_core`, `mp_flat`, sources
-of `bench/models.toml`) are prepared with `scripts/prepare_model.py` (comp flattened, distrib
-stripped, L3V2) and simulated with both: sbmlsim's `Simulator` (roadrunner, its semantics of the
-pre-initialization, which the engine follows) and `sbmlsim-core simulate` (wasmtime), at the
-relative tolerance 1e-10 and the absolute tolerance 1e-12, which sbmlsim scales per state; the
-engine gets the very vector roadrunner integrates with (by the ids of the state vector). The
-output is 201 uniform times. Every column both have (the selections roadrunner makes by default)
-is compared with `sbmlsim.comparison.diff.DataSetsComparison` (roadrunner the reference) and a
-model fails when a value differs by more than 1e-7 relative, `|c - u| <= 1e-7 |c| + abs_tol`,
-`abs_tol` the absolute tolerance of the integrator scaled by the largest magnitude of the column
-(a value at the level of the absolute tolerance is not resolved by either integrator). The
-largest relative difference `2 |c - u| / (|c| + |u|)` is reported over all values and over the
-values above 1e-6 of the largest magnitude of their column.
+`DEMO_SBML`), the machine perfusion models of the benchmark (`mp_core`, `mp_flat`, sources of
+`bench/models.toml`) and the event model of the benchmark are prepared with
+`scripts/prepare_model.py` (comp flattened, distrib stripped, L3V2) and simulated with sbmlsim's
+`Simulator` (roadrunner, its semantics of the pre-initialization, which the engine follows) and
+with `sbmlsim-core simulate` (wasmtime), 201 uniform output times. The absolute tolerance is the
+scalar of the run, which sbmlsim scales per state; the engine gets the very vector roadrunner
+integrates with (by the ids of the state vector).
+
+The criterion (ruling R47a): the reference is roadrunner at rtol 1e-12 and atol 1e-14, the
+converged solution. The engine at rtol 1e-10 and atol 1e-12, with the dense solver and with KLU
+(both forced, whatever `KLU_THRESHOLD`), is compared with it with
+`sbmlsim.comparison.diff.DataSetsComparison` (`tol_rel = 1e-7`, `tol_abs = 1e-12`) on every
+column both have: a value passes when `|c - u| <= 1e-12 + 1e-7 |c|`, its excess is
+`|c - u| / (1e-12 + 1e-7 |c|)`. A solver passes when every value passes, or when its largest
+excess is no larger than the one of roadrunner at rtol 1e-10 and atol 1e-12 with the same linear
+solver (dense with CVODE's difference quotient, KLU with the sparse difference quotient) against
+the same reference: the engine is as close to the converged solution as roadrunner at the same
+tolerances. The reference itself is roadrunner with the defaults of its libroadrunner (2.12: KLU
+with the sparse difference quotient). A model passes when both solvers pass; the exit code is 1 when a model fails.
+
+Reported besides: the largest relative difference `2 |c - u| / (|c| + |u|)` over all values and
+over the values above `RESOLVED` (1e-9, 1000 times the absolute tolerance), and the number of
+failing values, and (informative, no part of the criterion) the largest excess of the engine
+against roadrunner at the same tolerances; `--details` prints the largest excesses of the
+engine against the reference.
 """
 
 from __future__ import annotations
@@ -83,18 +95,38 @@ def source_file(source: str, work: Path) -> Path:
     return resolve_source(source, ROOT, {}, work / "downloads")[0]
 
 
+# the linear solver of roadrunner and its Jacobian, as the engine's (dense, KLU)
+ROADRUNNER_SOLVERS = {"dense": "difference_quotient", "klu": "sparse_difference_quotient"}
+
+
 def reference(
-    sbml: Path, end: float, preinit: dict[str, float], rtol: float = RTOL, atol: float = ATOL
+    sbml: Path,
+    end: float,
+    preinit: dict[str, float],
+    rtol: float = RTOL,
+    atol: float = ATOL,
+    linear_solver: str | None = None,
 ) -> tuple[pd.DataFrame, dict[str, float]]:
-    """Simulate with sbmlsim (roadrunner): the result and the absolute tolerance of every state."""
+    """Simulate with sbmlsim (roadrunner): the result and the absolute tolerance of every state.
+
+    `linear_solver` is `dense` (CVODE's dense difference quotient) or `klu` (KLU with the sparse
+    difference quotient), `None` the default of the libroadrunner.
+    """
     from sbmlsim.simulation import Simulation
     from sbmlsim.simulator import Simulator
 
     simulator = Simulator(absolute_tolerance=atol, relative_tolerance=rtol, n_workers=1)
     model = simulator.load(sbml)
+    r = model.r_loaded
+    if linear_solver is not None:
+        r.integrator.setValue("linear_solver", "dense")
+        r.integrator.setValue("jacobian", ROADRUNNER_SOLVERS[linear_solver])
+        r.integrator.setValue("linear_solver", linear_solver)
     times = np.linspace(0.0, end, POINTS)
     result = simulator.simulate(model, Simulation(end=end, preinit_changes=preinit, times=list(times)))
-    r = model.r_loaded
+    if linear_solver is not None:
+        settings = (r.integrator.getValue("linear_solver"), r.integrator.getValue("jacobian"))
+        assert settings == (linear_solver, ROADRUNNER_SOLVERS[linear_solver]), settings
     vector = r.integrator.getAbsoluteToleranceVector()
     atol = {r.model.getStateVectorId(i): float(vector[i]) for i in range(len(vector))}
     df = pd.DataFrame(result.values, columns=list(result.columns))
@@ -108,11 +140,13 @@ def engine(
     preinit: dict[str, float],
     atol: dict[str, float],
     work: Path,
+    linear_solver: str,
     rtol: float = RTOL,
 ) -> pd.DataFrame:
     """Simulate with sbmlsim-core: compile, then `simulate` with the request of the reference."""
     model_dir = work / "model"
-    subprocess.run([str(cli), "compile", str(sbml), "-o", str(model_dir)], check=True)
+    if not (model_dir / "model.json").exists():
+        subprocess.run([str(cli), "compile", str(sbml), "-o", str(model_dir)], check=True)
     desc = json.loads((model_dir / "model.json").read_text())
     vector = [atol[state["id"]] for state in desc["states"]]
     times = np.linspace(0.0, end, POINTS)
@@ -132,14 +166,15 @@ def engine(
             "maximum_time_step": 0.0,
             "initial_time_step": 0.0,
             "stiff": True,
-            "linear_solver": "auto",
+            "linear_solver": linear_solver,
             "jacobian": "auto",
         },
         "seed": 0,
     }
-    (work / "request.json").write_text(json.dumps(request))
-    out = work / f"out_{rtol:g}.csv"
-    subprocess.run([str(cli), "simulate", str(model_dir), str(work / "request.json"), "-o", str(out)], check=True)
+    request_file = work / f"request_{linear_solver}_{rtol:g}.json"
+    request_file.write_text(json.dumps(request))
+    out = work / f"out_{linear_solver}_{rtol:g}.csv"
+    subprocess.run([str(cli), "simulate", str(model_dir), str(request_file), "-o", str(out)], check=True)
     return pd.read_csv(out)
 
 
@@ -160,7 +195,7 @@ def compare(name: str, ref: pd.DataFrame, eng: pd.DataFrame) -> dict:
     resolved = comparison.dfs[0].abs() > RESOLVED
     rel = comparison.diff_rel
     result = {
-        "model": name,
+        "label": name,
         "rows": len(ref),
         "columns": len(comparison.columns),
         "max_relative": float(rel.max().max()),
@@ -190,26 +225,6 @@ def compare(name: str, ref: pd.DataFrame, eng: pd.DataFrame) -> dict:
     return result
 
 
-def convergence(
-    cli: Path, sbml: Path, end: float, preinit: dict[str, float], ref: pd.DataFrame, eng: pd.DataFrame, work: Path
-) -> dict[str, dict]:
-    """Compare both at the tolerances of the agreement with both at rtol 1e-12 and atol 1e-14."""
-    tight, atol = reference(sbml, end, preinit, rtol=1e-12, atol=1e-14)
-    eng_tight = engine(cli, sbml, end, preinit, atol, work, rtol=1e-12)
-    pairs = {
-        "roadrunner 1e-10 / roadrunner 1e-12": (tight, ref),
-        "sbmlsim-core 1e-10 / roadrunner 1e-12": (tight, eng),
-        "sbmlsim-core 1e-12 / roadrunner 1e-12": (tight, eng_tight),
-        "sbmlsim-core 1e-10 / sbmlsim-core 1e-12": (eng_tight, eng),
-    }
-    out = {}
-    for label, (a, b) in pairs.items():
-        c = compare(label, a, b)
-        c.pop("worst_values")
-        out[label] = c
-    return out
-
-
 def main() -> int:
     """Run the command line."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -217,11 +232,6 @@ def main() -> int:
     parser.add_argument("--json", type=Path)
     parser.add_argument("--only", help="only these models (comma separated)")
     parser.add_argument("--details", action="store_true", help="print the largest failing values")
-    parser.add_argument(
-        "--convergence",
-        action="store_true",
-        help="also compare both at 1e-10 with both at rtol 1e-12, atol 1e-14 (the integration error)",
-    )
     args = parser.parse_args()
     only = set(args.only.split(",")) if args.only else None
     results = []
@@ -237,32 +247,36 @@ def main() -> int:
             except PreparationError as error:
                 print(f"error: {name}: {error}", file=sys.stderr)
                 return 1
-            ref, atol = reference(sbml, end, preinit)
-            eng = engine(args.cli, sbml, end, preinit, atol, work)
-            result = compare(name, ref, eng)
+            converged, _ = reference(sbml, end, preinit, rtol=1e-12, atol=1e-14)
+            result = {"model": name, "pass": True}
+            for solver in ("dense", "klu"):
+                loose, atol = reference(sbml, end, preinit, linear_solver=solver)
+                rr = compare("roadrunner", converged, loose)
+                eng = engine(args.cli, sbml, end, preinit, atol, work, solver)
+                c = compare(solver, converged, eng)
+                c["pass"] = c["pass"] or c["max_excess"] <= rr["max_excess"]
+                # informative: the engine against roadrunner at the same tolerances
+                direct = compare("direct", loose, eng)
+                c["against_roadrunner_1e-10"] = {k: direct[k] for k in ("max_excess", "failing_values", "max_relative_resolved")}
+                rr.pop("worst_values")
+                result[solver] = {"roadrunner": rr, "engine": c, "pass": c["pass"]}
+                result["pass"] = result["pass"] and c["pass"]
+                print(
+                    f"{name:<14} {solver:<5} {'pass' if c['pass'] else 'FAIL'}"
+                    f"  engine: max excess {c['max_excess']:.4g}, failing values {c['failing_values']}"
+                    f", max relative above 1e-9 {c['max_relative_resolved']:.3g} ({c['max_relative_resolved_column']})"
+                    f"  roadrunner: max excess {rr['max_excess']:.4g}, failing values {rr['failing_values']}"
+                    f"  engine against roadrunner 1e-10: max excess {direct['max_excess']:.3g}",
+                    flush=True,
+                )
+                if args.details:
+                    for w in c["worst_values"]:
+                        print(
+                            f"{'':<16}{w['column']:<28} t={w['time']:<10g} roadrunner {w['roadrunner']:<24.17g}"
+                            f" engine {w['engine']:<24.17g} relative {w['relative']:.3g} excess {w['excess']:.3g}"
+                        )
+            print(f"{name:<14} {'PASS' if result['pass'] else 'FAIL'}", flush=True)
             results.append(result)
-            print(
-                f"{name:<14} {'PASS' if result['pass'] else 'FAIL'}  columns {result['columns']:4d}"
-                f"  max relative {result['max_relative']:.3g} ({result['max_relative_column']})"
-                f"  above 1e-9 {result['max_relative_resolved']:.3g} ({result['max_relative_resolved_column']})"
-                f"  max |c-u| / (atol + 1e-7 |c|) {result['max_excess']:.3g}"
-                f"  failing values {result['failing_values']}",
-                flush=True,
-            )
-            if args.convergence:
-                result["convergence"] = convergence(args.cli, sbml, end, preinit, ref, eng, work)
-                for label, c in result["convergence"].items():
-                    print(
-                        f"    {label:<34} max relative above 1e-9 {c['max_relative_resolved']:.3g}"
-                        f" ({c['max_relative_resolved_column']})  max excess {c['max_excess']:.3g}"
-                        f"  failing values {c['failing_values']}"
-                    )
-            if args.details:
-                for w in result["worst_values"]:
-                    print(
-                        f"    {w['column']:<28} t={w['time']:<10g} roadrunner {w['roadrunner']:<24.17g}"
-                        f" engine {w['engine']:<24.17g} relative {w['relative']:.3g} excess {w['excess']:.3g}"
-                    )
     if args.json:
         args.json.parent.mkdir(parents=True, exist_ok=True)
         args.json.write_text(json.dumps(results, indent=1))

@@ -68,7 +68,7 @@ uv run scripts/prepare_model.py --bench bench/models.toml        # into target/b
 taskset -c 2 sbmlsim-core bench bench/models.toml --json target/bench/engine.json --export target/bench/export
 taskset -c 2 node js/bench.mjs target/bench/export --json target/bench/node.json
 uv run scripts/roadrunner_reference.py bench/models.toml --json target/bench/roadrunner.json
-uv run scripts/agreement.py                                        # sbmlsim-core against roadrunner at rtol 1e-10
+uv run scripts/agreement.py                                        # the engine at rtol 1e-10 against roadrunner at 1e-12 (dense, KLU)
 ```
 
 The counters of the integrator of the last simulation are `Instance::stats` (wasmtime) and `instance.stats()` (`js/loader.mjs`).

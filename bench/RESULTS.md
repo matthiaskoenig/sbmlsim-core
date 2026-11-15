@@ -4,19 +4,19 @@ The owner's threshold: at most 2x the simulation time of roadrunner native (LLJI
 
 ## Summary
 
-- No ratio is above 2x. The largest is 1.56 (the event model `repeated_dose`, dense, output of 201 times, wasmtime; Node and Chrome 1.05). On the large models the ratio is 1.11 to 1.46 (Chen dense 1.15 to 1.32, KLU 1.11 to 1.20; mp_flat dense 1.27 to 1.46, KLU 1.30 to 1.34), on the PBPK models 0.81 to 0.97, on mp_core 0.02 (dense) and 0.29 to 0.33 (KLU), because roadrunner restarts CVODE at the roots of its piecewise conditions and the engine does not.
+- No ratio is above 2x. The largest is 1.56 (the event model `repeated_dose`, dense, output of 201 times, wasmtime; Node and Chrome 1.05). On the large models the ratio is 1.11 to 1.46 (Chen dense 1.15 to 1.32, KLU 1.11 to 1.20; mp_flat dense 1.27 to 1.46, KLU 1.30 to 1.34), on the PBPK models 0.79 to 0.95, on mp_core 0.02 (dense) and 0.29 to 0.33 (KLU), because roadrunner restarts CVODE at the roots of its piecewise conditions and the engine does not.
 - Chrome (headless Chrome 157 in a module worker, pinned to the performance cores) measured directly; Node and Chrome agree within a few percent and are 2 % to 13 % faster than wasmtime on the large models.
 - The counters of the integrator are the same in wasmtime, Node and Chrome for every configuration (one `engine.wasm`, the same bits), and every timed simulation repeated the bits of the first.
 - `KLU_THRESHOLD` is now 16 (was 64): KLU with the analytic Jacobian is as fast as the dense solver at 11 to 20 states and faster above (0.65 of the dense time at 64 states).
-- Agreement at rtol 1e-10, atol 1e-12: midazolam, repressilator, demo and the event model pass the criterion of 1e-7 relative; hctz, mp_flat and mp_core do not. For hctz and mp_flat the difference is the integration error at rtol 1e-10: roadrunner at 1e-10 fails the same criterion against roadrunner at 1e-12, and the engine at 1e-12 passes it against roadrunner at 1e-12 (hctz 3.8e-9, mp_flat 3.8e-6 largest relative difference of a value above 1e-9). mp_core is ill-conditioned at the threshold of a piecewise (the oxygen of the cell sits at 0 within 1e-29 for the whole perfusion, `piecewise(1, o2_cell <= 0, ...)`), where roadrunner restarts at 161 roots; even at rtol 1e-12 its states differ by 1.8e-7 relative. No engine or compiler defect was found.
+- Agreement (ruling R47a: the engine at rtol 1e-10 against roadrunner at rtol 1e-12, within 1e-12 + 1e-7 |c| or no farther than roadrunner at rtol 1e-10 with the same linear solver): hctz, midazolam, repressilator, demo and mp_flat pass with the dense solver and with KLU. mp_core fails with the dense solver (the engine does not find the roots of its piecewise conditions, roadrunner does; R48), and the event model fails with the dense solver by a tie (1.73855 against 1.73789, the same value of the same error in both). No engine or compiler defect was found.
 
 ## Setup
 
 - Machine: Intel Core i7-12700 (8 performance cores with 2 threads, 4 efficiency cores; 20 logical CPUs), Linux 7.0, governor `powersave`, the same machine as the spike. The command line hosts are pinned with `taskset -c 2` (a performance core), Chrome with `taskset -c 4-15`.
 - sbmlsim-core: rustc 1.100.0, wasi-sdk 34 (clang 23.1.0), SUNDIALS 7.9.0, SuiteSparse 7.14.1 (KLU 2.3.6), the C solvers with `-O3 -msimd128 -ffp-contract=off`; wasmtime 50.0.1 (the crate of `sbmlsim-host`, Cranelift, defaults); Node 24.21.0; Chrome 157.0.8103.78 headless (`--headless=new`), the page served cross-origin isolated (`bench/web/serve.mjs`) so `performance.now()` in the worker is fine grained, driven with `chrome-devtools-axi`.
 - roadrunner: dense is libroadrunner 2.12.0.dev683 (the newest build of the index of the sbmlsim scripts, python 3.14), set explicitly to `linear_solver = dense`, `jacobian = difference_quotient` (CVODE's dense difference quotient); KLU is the `roadrunner-sparsedq` build of the spike (`~/rr-enzyme/build-sparsedq`, libroadrunner 2.11.1, KLU with its colored sparse difference quotient); both LLJIT at `O2` (`DEFAULT`, as sbmlsim loads models). libroadrunner 2.12.0.dev683 has KLU with the sparse difference quotient as its default (`linear_solver = klu`, `jacobian = sparse_difference_quotient`); it is measured as a third roadrunner (`roadrunner 2.12.0 KLU` in the tables), within 0 to 8 % of the sparsedq build.
-- Settings everywhere: BDF, relative tolerance 1e-6, absolute tolerance 1e-12 scaled per state as roadrunner applies it (the engine gets the very vector of roadrunner, `<model>.atol.json` of the preparation, checked equal in every roadrunner run), at most 20000 steps, 201 uniform output points (roadrunner `simulate(0, end, 201)`, the engine `Output::Uniform { steps: 200 }`), the states as the selections, and for `repeated_dose` also the output of the steps of the integrator (roadrunner `variable_step_size`).
-- A measurement is the median of 20 runs after 3 warm ups; the configurations take turns within a round, 3 rounds, the tables have the median of the round medians. The time of the engine is the wall time of `Instance::simulate` (wasmtime) or `instance.simulate` (Node, Chrome): the request to JSON, its parse in the engine, the simulation and the copy of the result. An instance is reused, so its CVODE memory is re-initialized and not created per run (the spike created it per run). roadrunner's time is `np.array(r.simulate(...))` after `resetAll` and the pre-initialization.
+- Settings everywhere: BDF, relative tolerance 1e-6, absolute tolerance 1e-12 scaled per state as roadrunner applies it (the engine gets the very vector of roadrunner for the pre-initialized model, `<model>.atol.json` of the preparation, checked equal in every roadrunner run), at most 20000 steps, 201 uniform output points (roadrunner `simulate(0, end, 201)`, the engine `Output::Uniform { steps: 200 }`), the states as the selections, and for `repeated_dose` also the output of the steps of the integrator (roadrunner `variable_step_size`).
+- A measurement is the median of 20 runs after 3 warm ups; the configurations take turns within a round, 3 rounds, the tables have the median of the round medians. The time of the engine is the wall time of `Instance::simulate` (wasmtime) or `instance.simulate` (Node, Chrome): the request to JSON, its parse in the engine, the simulation and the copy of the result. An instance is reused, so its CVODE memory is re-initialized and not created per run (the spike created it per run). roadrunner's time is `np.array(r.simulate(...))` after `resetAll`; the pre-initialization is set as initial values (`init(x)`) once, which `resetAll` keeps and evaluates the initial assignments with (the engine's and sbmlsim's semantics), and the state at the start is checked to be the engine's (see the agreement).
 - The engine uses the analytic Jacobian and, as a second configuration, the colored sparse difference quotient (`jacobian = difference`); the ratios are of the analytic Jacobian, dense against roadrunner dense, KLU against roadrunner KLU.
 
 ### Workflow
@@ -32,7 +32,7 @@ uv run scripts/roadrunner_reference.py bench/models.toml --compare target/bench/
     target/bench/engine.json target/bench/node.json target/bench/chrome.json
 uv run scripts/scaling_models.py && taskset -c 2 target/release/sbmlsim-core bench \
     target/bench-models/scaling/scaling.toml --jacobians analytic --json target/bench/scaling-wasmtime.json
-uv run scripts/agreement.py --convergence
+uv run scripts/agreement.py
 ```
 
 `scripts/prepare_model.py` (ruling R39) converts a model to L3V2, flattens `comp`, strips the elements and annotations of `distrib` (the uncertainties of the fitted parameters of the machine perfusion models, metadata) and refuses, with a non-zero exit naming the element, a model whose math uses a distribution function of `distrib` (checked: an initial assignment `normal(0, 1)` is refused as `initialAssignment of x (normal)`); the compiler keeps refusing required packages. `bench/models.toml` references the prepared files in the gitignored `target/bench-models/`, and `prepared.json` there records every source with its sha256 (and the commit of a checkout).
@@ -52,14 +52,14 @@ The brief's list has no model with events; `repeated_dose` was added to measure 
 
 ## Ratios against roadrunner
 
-The analytic Jacobian of the engine; ms the median time of a simulation; ratio the time over roadrunner's (dense against roadrunner dense, KLU against roadrunner KLU).
+The analytic Jacobian of the engine; ms the median time of a simulation; ratio the time over roadrunner's (dense against roadrunner dense, KLU against roadrunner KLU). The rows of hctz and midazolam (every host and roadrunner) were measured again in the first fix round, after the pre-initialization of the reference was made the engine's (`init(x)`, below) and the tolerance vector of `PODOSE_*` with it; the other rows are of the first run.
 
 | model | states | solver | output | roadrunner ms | wasmtime ms | ratio | Node ms | ratio | Chrome ms | ratio |
 |---|---:|---|---|---:|---:|---:|---:|---:|---:|---:|
-| hctz | 28 | dense | times | 1.12 | 0.999 | 0.89 | 0.956 | 0.85 | 0.935 | 0.84 |
-| hctz | 28 | klu | times | 0.922 | 0.896 | 0.97 | 0.864 | 0.94 | 0.827 | 0.90 |
-| midazolam | 38 | dense | times | 0.766 | 0.714 | 0.93 | 0.638 | 0.83 | 0.642 | 0.84 |
-| midazolam | 38 | klu | times | 0.61 | 0.557 | 0.91 | 0.493 | 0.81 | 0.5 | 0.82 |
+| hctz | 28 | dense | times | 1.07 | 0.964 | 0.90 | 0.943 | 0.88 | 0.93 | 0.87 |
+| hctz | 28 | klu | times | 0.896 | 0.852 | 0.95 | 0.802 | 0.89 | 0.835 | 0.93 |
+| midazolam | 38 | dense | times | 0.775 | 0.702 | 0.91 | 0.631 | 0.82 | 0.645 | 0.83 |
+| midazolam | 38 | klu | times | 0.615 | 0.546 | 0.89 | 0.484 | 0.79 | 0.505 | 0.82 |
 | repeated_dose | 4 | dense | times | 1.43 | 2.22 | 1.56 | 1.5 | 1.05 | 1.49 | 1.04 |
 | repeated_dose | 4 | klu | times | 1.68 | 2.49 | 1.49 | 1.66 | 0.99 | 1.59 | 0.95 |
 | repeated_dose | 4 | dense | steps | 5.01 | 2.89 | 0.58 | 2.16 | 0.43 | 2.12 | 0.42 |
@@ -82,12 +82,12 @@ compile: SBML to `model.wasm` and `model.json` (`sbmlsim_compiler::compile`, the
 
 | model | states | Jacobian entries | model.wasm kB | model.json kB | compile ms | instantiate wasmtime ms | instantiate Node ms | instantiate Chrome ms | roadrunner load s |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| hctz | 28 | 82 | 16.4 | 39 | 2.25 | 8.5 | 2.11 | 0.91 | 0.097 |
-| midazolam | 38 | 93 | 21.1 | 54 | 2.24 | 10.1 | 1.54 | 0.6 | 0.135 |
+| hctz | 28 | 82 | 16.4 | 39 | 2.33 | 8.47 | 2.14 | 0.895 | 0.097 |
+| midazolam | 38 | 93 | 21.1 | 54 | 2.18 | 10.2 | 1.59 | 0.6 | 0.14 |
 | repeated_dose | 4 | 8 | 1.7 | 4 | 0.148 | 2.5 | 0.21 | 0.175 | 0.018 |
-| mp_core | 43 | 184 | 20.9 | 50 | 4.16 | 10.9 | 0.604 | 0.54 | 0.073 |
-| chen | 500 | 4400 | 216.5 | 375 | 46.5 | 122 | 3.68 | 2.9 | 0.907 |
-| mp_flat | 919 | 4242 | 495.8 | 704 | 95.6 | 307 | 4.85 | 5.59 | 1.73 |
+| mp_core | 43 | 184 | 20.9 | 50 | 4.16 | 10.9 | 0.604 | 0.54 | 0.072 |
+| chen | 500 | 4400 | 216.5 | 375 | 46.5 | 122 | 3.68 | 2.9 | 0.91 |
+| mp_flat | 919 | 4242 | 495.8 | 704 | 95.6 | 307 | 4.85 | 5.59 | 1.7 |
 
 Compile and instantiate in wasmtime together are 4 to 11 times faster than roadrunner's load (mp_flat 0.40 s against 1.73 s); in V8 the instantiation is milliseconds, and the code is compiled lazily during the warm ups.
 
@@ -99,40 +99,40 @@ rhs: the calls of the right hand side by CVODE (roadrunner: `num_rhs_evals`); DQ
 
 | host | solver | Jacobian | output | median ms | µs per step | steps | rhs | Jacobians | DQ rhs | lin setups | err test fails | nonlin iters | conv fails | roots | integrations | probe rhs |
 |---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| roadrunner dense | dense | difference_quotient | times | 1.118 | 2.33 | 479 | 538 | 9 | 252 | 63 | 7 | 537 | 0 | - | 1 | - |
-| roadrunner 2.12.0 KLU | klu | sparse_difference_quotient | times | 0.9046 | 1.89 | 479 | 538 | 9 | - | 63 | 7 | 537 | 0 | - | 1 | - |
-| roadrunner KLU | klu | sparse_difference_quotient | times | 0.9215 | 1.92 | 479 | 538 | 9 | - | 63 | 7 | 537 | 0 | - | 1 | - |
-| wasmtime | dense | analytic | times | 0.9991 | 2.09 | 479 | 536 | 9 | 0 | 63 | 7 | 535 | 0 | 0 | 1 | 0 |
-| wasmtime | dense | difference | times | 1.019 | 2.13 | 479 | 538 | 9 | 54 | 64 | 7 | 537 | 0 | 0 | 1 | 0 |
-| wasmtime | klu | analytic | times | 0.896 | 1.87 | 479 | 536 | 9 | 0 | 63 | 7 | 535 | 0 | 0 | 1 | 0 |
-| wasmtime | klu | difference | times | 0.9116 | 1.9 | 479 | 538 | 9 | 54 | 64 | 7 | 537 | 0 | 0 | 1 | 0 |
-| Node | dense | analytic | times | 0.956 | 2 | 479 | 536 | 9 | 0 | 63 | 7 | 535 | 0 | 0 | 1 | 0 |
-| Node | dense | difference | times | 0.9732 | 2.03 | 479 | 538 | 9 | 54 | 64 | 7 | 537 | 0 | 0 | 1 | 0 |
-| Node | klu | analytic | times | 0.8637 | 1.8 | 479 | 536 | 9 | 0 | 63 | 7 | 535 | 0 | 0 | 1 | 0 |
-| Node | klu | difference | times | 0.8679 | 1.81 | 479 | 538 | 9 | 54 | 64 | 7 | 537 | 0 | 0 | 1 | 0 |
-| Chrome | dense | analytic | times | 0.935 | 1.95 | 479 | 536 | 9 | 0 | 63 | 7 | 535 | 0 | 0 | 1 | 0 |
-| Chrome | dense | difference | times | 0.945 | 1.97 | 479 | 538 | 9 | 54 | 64 | 7 | 537 | 0 | 0 | 1 | 0 |
-| Chrome | klu | analytic | times | 0.8275 | 1.73 | 479 | 536 | 9 | 0 | 63 | 7 | 535 | 0 | 0 | 1 | 0 |
-| Chrome | klu | difference | times | 0.8175 | 1.71 | 479 | 538 | 9 | 54 | 64 | 7 | 537 | 0 | 0 | 1 | 0 |
+| roadrunner dense | dense | difference_quotient | times | 1.066 | 2.39 | 446 | 511 | 9 | 252 | 65 | 9 | 510 | 0 | - | 1 | - |
+| roadrunner 2.12.0 KLU | klu | sparse_difference_quotient | times | 0.8658 | 1.94 | 446 | 511 | 9 | - | 65 | 9 | 510 | 0 | - | 1 | - |
+| roadrunner KLU | klu | sparse_difference_quotient | times | 0.896 | 2.01 | 446 | 511 | 9 | - | 65 | 9 | 510 | 0 | - | 1 | - |
+| wasmtime | dense | analytic | times | 0.9644 | 2.11 | 458 | 518 | 8 | 0 | 62 | 8 | 517 | 0 | 0 | 1 | 0 |
+| wasmtime | dense | difference | times | 0.9634 | 2.16 | 446 | 511 | 9 | 54 | 66 | 9 | 510 | 0 | 0 | 1 | 0 |
+| wasmtime | klu | analytic | times | 0.8518 | 1.86 | 458 | 518 | 8 | 0 | 62 | 8 | 517 | 0 | 0 | 1 | 0 |
+| wasmtime | klu | difference | times | 0.8646 | 1.94 | 446 | 511 | 9 | 54 | 66 | 9 | 510 | 0 | 0 | 1 | 0 |
+| Node | dense | analytic | times | 0.9426 | 2.06 | 458 | 518 | 8 | 0 | 62 | 8 | 517 | 0 | 0 | 1 | 0 |
+| Node | dense | difference | times | 0.92 | 2.06 | 446 | 511 | 9 | 54 | 66 | 9 | 510 | 0 | 0 | 1 | 0 |
+| Node | klu | analytic | times | 0.8017 | 1.75 | 458 | 518 | 8 | 0 | 62 | 8 | 517 | 0 | 0 | 1 | 0 |
+| Node | klu | difference | times | 0.8464 | 1.9 | 446 | 511 | 9 | 54 | 66 | 9 | 510 | 0 | 0 | 1 | 0 |
+| Chrome | dense | analytic | times | 0.93 | 2.03 | 458 | 518 | 8 | 0 | 62 | 8 | 517 | 0 | 0 | 1 | 0 |
+| Chrome | dense | difference | times | 0.96 | 2.15 | 446 | 511 | 9 | 54 | 66 | 9 | 510 | 0 | 0 | 1 | 0 |
+| Chrome | klu | analytic | times | 0.835 | 1.82 | 458 | 518 | 8 | 0 | 62 | 8 | 517 | 0 | 0 | 1 | 0 |
+| Chrome | klu | difference | times | 0.835 | 1.87 | 446 | 511 | 9 | 54 | 66 | 9 | 510 | 0 | 0 | 1 | 0 |
 
 #### midazolam
 
 | host | solver | Jacobian | output | median ms | µs per step | steps | rhs | Jacobians | DQ rhs | lin setups | err test fails | nonlin iters | conv fails | roots | integrations | probe rhs |
 |---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| roadrunner dense | dense | difference_quotient | times | 0.7659 | 2.57 | 298 | 330 | 6 | 228 | 38 | 1 | 327 | 0 | - | 1 | - |
-| roadrunner 2.12.0 KLU | klu | sparse_difference_quotient | times | 0.5747 | 1.93 | 298 | 330 | 6 | - | 38 | 1 | 327 | 0 | - | 1 | - |
-| roadrunner KLU | klu | sparse_difference_quotient | times | 0.6096 | 2.05 | 298 | 330 | 6 | - | 38 | 1 | 327 | 0 | - | 1 | - |
-| wasmtime | dense | analytic | times | 0.7137 | 2.39 | 298 | 329 | 6 | 0 | 39 | 1 | 326 | 0 | 0 | 1 | 0 |
-| wasmtime | dense | difference | times | 0.7147 | 2.4 | 298 | 329 | 6 | 42 | 39 | 1 | 326 | 0 | 0 | 1 | 0 |
-| wasmtime | klu | analytic | times | 0.5567 | 1.87 | 298 | 329 | 6 | 0 | 39 | 1 | 326 | 0 | 0 | 1 | 0 |
-| wasmtime | klu | difference | times | 0.5634 | 1.89 | 298 | 329 | 6 | 42 | 39 | 1 | 326 | 0 | 0 | 1 | 0 |
-| Node | dense | analytic | times | 0.6381 | 2.14 | 298 | 329 | 6 | 0 | 39 | 1 | 326 | 0 | 0 | 1 | 0 |
-| Node | dense | difference | times | 0.6311 | 2.12 | 298 | 329 | 6 | 42 | 39 | 1 | 326 | 0 | 0 | 1 | 0 |
-| Node | klu | analytic | times | 0.4934 | 1.66 | 298 | 329 | 6 | 0 | 39 | 1 | 326 | 0 | 0 | 1 | 0 |
-| Node | klu | difference | times | 0.5 | 1.68 | 298 | 329 | 6 | 42 | 39 | 1 | 326 | 0 | 0 | 1 | 0 |
-| Chrome | dense | analytic | times | 0.6425 | 2.16 | 298 | 329 | 6 | 0 | 39 | 1 | 326 | 0 | 0 | 1 | 0 |
-| Chrome | dense | difference | times | 0.64 | 2.15 | 298 | 329 | 6 | 42 | 39 | 1 | 326 | 0 | 0 | 1 | 0 |
-| Chrome | klu | analytic | times | 0.5 | 1.68 | 298 | 329 | 6 | 0 | 39 | 1 | 326 | 0 | 0 | 1 | 0 |
+| roadrunner dense | dense | difference_quotient | times | 0.7746 | 2.6 | 298 | 330 | 6 | 228 | 38 | 1 | 327 | 0 | - | 1 | - |
+| roadrunner 2.12.0 KLU | klu | sparse_difference_quotient | times | 0.5719 | 1.92 | 298 | 330 | 6 | - | 38 | 1 | 327 | 0 | - | 1 | - |
+| roadrunner KLU | klu | sparse_difference_quotient | times | 0.6154 | 2.07 | 298 | 330 | 6 | - | 38 | 1 | 327 | 0 | - | 1 | - |
+| wasmtime | dense | analytic | times | 0.7017 | 2.35 | 298 | 329 | 6 | 0 | 39 | 1 | 326 | 0 | 0 | 1 | 0 |
+| wasmtime | dense | difference | times | 0.7176 | 2.41 | 298 | 329 | 6 | 42 | 39 | 1 | 326 | 0 | 0 | 1 | 0 |
+| wasmtime | klu | analytic | times | 0.5465 | 1.83 | 298 | 329 | 6 | 0 | 39 | 1 | 326 | 0 | 0 | 1 | 0 |
+| wasmtime | klu | difference | times | 0.5456 | 1.83 | 298 | 329 | 6 | 42 | 39 | 1 | 326 | 0 | 0 | 1 | 0 |
+| Node | dense | analytic | times | 0.6313 | 2.12 | 298 | 329 | 6 | 0 | 39 | 1 | 326 | 0 | 0 | 1 | 0 |
+| Node | dense | difference | times | 0.6384 | 2.14 | 298 | 329 | 6 | 42 | 39 | 1 | 326 | 0 | 0 | 1 | 0 |
+| Node | klu | analytic | times | 0.4844 | 1.63 | 298 | 329 | 6 | 0 | 39 | 1 | 326 | 0 | 0 | 1 | 0 |
+| Node | klu | difference | times | 0.4921 | 1.65 | 298 | 329 | 6 | 42 | 39 | 1 | 326 | 0 | 0 | 1 | 0 |
+| Chrome | dense | analytic | times | 0.645 | 2.16 | 298 | 329 | 6 | 0 | 39 | 1 | 326 | 0 | 0 | 1 | 0 |
+| Chrome | dense | difference | times | 0.6375 | 2.14 | 298 | 329 | 6 | 42 | 39 | 1 | 326 | 0 | 0 | 1 | 0 |
+| Chrome | klu | analytic | times | 0.505 | 1.69 | 298 | 329 | 6 | 0 | 39 | 1 | 326 | 0 | 0 | 1 | 0 |
 | Chrome | klu | difference | times | 0.4975 | 1.67 | 298 | 329 | 6 | 42 | 39 | 1 | 326 | 0 | 0 | 1 | 0 |
 
 #### repeated_dose
@@ -236,8 +236,8 @@ The largest error against a reference of roadrunner dense at rtol 1e-12 and atol
 
 | model | roadrunner dense | roadrunner KLU (2.12.0) | engine dense | engine KLU |
 |---|---|---|---|---|
-| hctz | 40.2 / 2.61 | 40.2 / 2.61 | 38 / 2.53 | 38 / 2.53 |
-| midazolam | 100 / 3.03 | 100 / 3.03 | 100 / 3.03 | 100 / 3.03 |
+| hctz | 46.9 / 3.95 | 46.9 / 3.95 | 17.9 / 1.33 | 17.9 / 1.33 |
+| midazolam | 81 / 3.03 | 81 / 3.03 | 81 / 3.03 | 81 / 3.03 |
 | repeated_dose | 36.4 / 3.16 | 36.4 / 3.16 | 36.4 / 3.16 | 36.4 / 3.16 |
 | mp_core | 2460 / 121 | 1550 / 66.8 | 182 / 6.58 | 222 / 4.56 |
 | chen | 394 / 67 | 312 / 77.8 | 251 / 205 | 527 / 75.8 |
@@ -305,22 +305,32 @@ The cost is one right hand side per step, which on this model of 4 states is abo
 
 ## Agreement with roadrunner
 
-`scripts/agreement.py`: the packaged models of sbmlsim (`HCTZ_SBML`, `MIDAZOLAM_SBML`, `REPRESSILATOR_SBML`, `DEMO_SBML`), the machine perfusion models and, beyond the brief, the event model, prepared with `scripts/prepare_model.py`, simulated with sbmlsim's `Simulator` (roadrunner 2.12.0, its defaults KLU and the sparse difference quotient, sbmlsim's pre-initialization, which the engine follows) and with `sbmlsim-core simulate` (`auto`: KLU above 16 states), both at rtol 1e-10 and atol 1e-12 scaled by sbmlsim per state (the engine gets the very vector), 201 uniform times, every column both have compared with `DataSetsComparison` (roadrunner the reference) with `tol_rel = 1e-7` and `tol_abs = 1e-12` (the absolute tolerance of the integrator: a value at that level is resolved by neither integrator). `--convergence` also simulates both at rtol 1e-12 and atol 1e-14 and compares each with roadrunner at 1e-12, which separates the integration error from a difference of the models.
+`scripts/agreement.py` (ruling R47a): the packaged models of sbmlsim (`HCTZ_SBML`, `MIDAZOLAM_SBML`, `REPRESSILATOR_SBML`, `DEMO_SBML`), the machine perfusion models and, beyond the brief, the event model, prepared with `scripts/prepare_model.py`. The reference is roadrunner through sbmlsim's `Simulator` (sbmlsim's pre-initialization, which the engine follows; libroadrunner 2.12.0 with its defaults, KLU and the sparse difference quotient) at rtol 1e-12 and atol 1e-14, the converged solution. The engine (`sbmlsim-core simulate`) runs at rtol 1e-10 and atol 1e-12 (scaled per state by sbmlsim; the engine gets the very vector roadrunner integrates with) with the dense solver and with KLU, both forced whatever `KLU_THRESHOLD`; 201 uniform times. Every column both have is compared with `DataSetsComparison` (`tol_rel = 1e-7`, `tol_abs = 1e-12`); the excess of a value is `|c - u| / (1e-12 + 1e-7 |c|)`. A solver passes when every value is within the criterion, or when its largest excess is no larger than the one of roadrunner at rtol 1e-10 and atol 1e-12 with the same linear solver (dense with CVODE's difference quotient, KLU with the sparse difference quotient) against the same reference. A model passes when both solvers pass. The last column, the engine against roadrunner at the same tolerances, is informative only.
 
-| model | columns | result | max relative (all values) | max relative (values above 1e-9) | max of \|c - u\| / (1e-12 + 1e-7 \|c\|) | failing values | roadrunner 1e-10 against roadrunner 1e-12: failing / max excess | sbmlsim-core 1e-10 against roadrunner 1e-12 | sbmlsim-core 1e-12 against roadrunner 1e-12 |
-|---|---:|---|---:|---:|---:|---:|---:|---:|---:|
-| hctz | 191 | FAIL | 2 (GU__application_hctz) | 7.66e-07 (transport_lu_hctz) | 2.24 | 4 | 4 / 1.78 | 0 / 0.467 | 0 / 0.00439 |
-| midazolam | 268 | pass | 0.000196 (dissolution_mid) | 0.000139 (GUTDOSE_mid) | 0.947 | 0 | 307 / 9.25 | 307 / 9.25 | 0 / 0.0038 |
-| repressilator | 42 | pass | 5.44e-11 (Reaction10) | 5.44e-11 (Reaction10) | 0.000544 | 0 | 0 / 0.125 | 0 / 0.126 | 0 / 0.0012 |
-| demo | 36 | pass | 0 (time) | 0 (time) | 0 | 0 | 0 / 0 | 0 / 0 | 0 / 0 |
-| mp_core | 237 | FAIL | 2 (BUF_ext) | 2 (LACEX) | 3530 | 1509 | 1704 / 2440 | 764 / 1780 | 221 / 40.7 |
-| mp_flat | 3299 | FAIL | 2 (BUF_in) | 4.35e-05 ([nadp_z20_cell]) | 7.28 | 56 | 122 / 7.21 | 101 / 5.23 | 0 / 0.125 |
-| repeated_dose | 26 | pass | 5.33e-09 (absorption) | 5.33e-09 (absorption) | 0.0533 | 0 | 1 / 1.74 | 1 / 1.74 | 0 / 0.000227 |
+| model | solver | result | engine max excess | roadrunner 1e-10 max excess (same solver) | engine failing values | roadrunner failing values | engine max relative above 1e-9 | engine against roadrunner 1e-10 (informative) |
+|---|---|---|---:|---:|---:|---:|---:|---:|
+| hctz | dense | pass | 1.7491 | 1.7789 | 4 | 4 | 6.1e-07 (transport_lu_hctz) | 0.167 |
+| hctz | klu | pass | 0.4667 | 1.7771 | 0 | 4 | 3.98e-07 (transport_re_hctz) | 2.24 |
+| midazolam | dense | pass | 9.2542 | 9.2542 | 307 | 307 | 0.000623 (GUTDOSE_mid) | 0.947 |
+| midazolam | klu | pass | 9.2542 | 9.2542 | 307 | 307 | 0.000623 (GUTDOSE_mid) | 0.947 |
+| repressilator | dense | pass | 0.12572 | 0.14883 | 0 | 0 | 1.26e-08 (Reaction2) | 0.0239 |
+| repressilator | klu | pass | 0.12579 | 0.12527 | 0 | 0 | 1.26e-08 (Reaction5) | 0.000637 |
+| demo | dense | pass | 0 | 0 | 0 | 0 | 0 | 0 |
+| demo | klu | pass | 0 | 0 | 0 | 0 | 0 | 0 |
+| mp_core | dense | FAIL | 1401 | 383.1 | 1050 | 7558 | 0.00521 (ATPU) | 1400 |
+| mp_core | klu | pass | 1783.4 | 2436.9 | 764 | 1704 | 0.00419 ([nadp_cell]) | 3530 |
+| mp_flat | dense | pass | 7.885 | 9.8605 | 200 | 147 | 0.000879 ([nadp_z20_cell]) | 16.2 |
+| mp_flat | klu | pass | 5.2276 | 7.2111 | 101 | 122 | 0.000752 ([nadp_z20_cell]) | 7.28 |
+| repeated_dose | dense | FAIL | 1.7386 | 1.7379 | 1 | 1 | 1.74e-07 (distribution) | 0.0176 |
+| repeated_dose | klu | pass | 1.7383 | 1.7383 | 1 | 1 | 1.74e-07 (distribution) | 0.0618 |
+
+hctz, midazolam, repressilator, demo and mp_flat pass with both solvers; mp_core and the event model fail with the dense solver. The script exits with 1.
+
+- hctz: with both solvers the engine is at least as close to the converged solution as roadrunner (dense 1.75 against 1.78, KLU 0.47 against 1.78); the largest excesses are transport rates and concentrations at 7.2 min, e.g. `[Clu_hctz]` 1.1303e-5 relative 3.3e-7, where roadrunner at 1e-10 misses the converged solution by as much. KLU is closer than dense, so the KLU path is not less accurate; the informative excess of 2.24 against roadrunner at 1e-10 is the distance between two solutions of the same error class, not an error of KLU. With `KLU_THRESHOLD = 64` hctz ran dense in the criterion of the first round (against roadrunner at 1e-10), which is why it passed there.
+- mp_flat: the engine dense (7.9) is closer to the converged solution than roadrunner dense (9.9), KLU (5.2) closer than roadrunner KLU (7.2). Against roadrunner's default KLU at 1e-10 (7.21) the engine dense would be above it, which is why the criterion pairs the linear solvers, as the benchmark does.
+- repeated_dose dense fails by a tie: the largest excess of every configuration is the same value (`distribution` at 42 h, 0.1486298706 converged, 0.1486298447 at 1e-10), roadrunner dense 1.73789, roadrunner KLU 1.73829, the engine KLU 1.73828 and the engine dense 1.73855, 0.04 % above roadrunner dense. The engine dense and roadrunner dense differ there by 2.6e-14 relative (the informative excess of 0.018). The criterion has no margin for a tie; whether it should (e.g. 1 % of the excess) is a question for the controller.
+- mp_core dense fails: the oxygen of the cell is 0 within 1e-29 (roadrunner -3.6e-221, the engine -8.2e-29) for the whole perfusion, exactly at the threshold of `s_hyp = piecewise(1, o2_cell <= 0, K^n / (K^n + o2_cell^n))`, and the ATP of the cell falls to 1e-13 at the threshold of `s_atp`. Roadrunner finds the roots of these conditions and restarts CVODE (4648 times dense, 161 times with KLU), the engine does not locate the roots of piecewise conditions; roadrunner dense at 1e-10 (383) is closer to the converged solution than the engine dense (1401), while with KLU the engine (1783) is closer than roadrunner (2437). The root finding of piecewise conditions is the next task (R48).
 
 The largest relative difference over all values is 2 where one result is 0 or below the absolute tolerance and the other is not (e.g. a rate of 1e-23 against an exact 0).
 
-- hctz: 4 values of transport rates (e.g. `transport_lu_hctz` -3.1166e-8, relative 1.5e-7) differ by up to 2.2 times the criterion. Roadrunner at 1e-10 is farther from roadrunner at 1e-12 (4 failing values, 1.78 times) than the engine at 1e-10 is (0 failing, 0.47 times), and at 1e-12 the two agree to 3.8e-9. The difference is roadrunner's integration error at rtol 1e-10. (With `KLU_THRESHOLD = 64` hctz used the dense solver and passed with 0.14 times the criterion; with KLU the steps of the engine differ.)
-- mp_flat: the 56 failing values are states and rates of 1e-4 and below whose integration error at rtol 1e-10 exceeds 1e-7 relative (`[fa_z1_cell]` 2.2e-4, relative 7.6e-7; `BUF_out`, the net rate of a fast equilibrium, h·hco3/Ka - co2, of 1e-10 against its terms). Roadrunner at 1e-10 fails the same criterion against itself at 1e-12 (122 values, 7.2 times); at 1e-12 the engine passes against roadrunner (0 failing, 0.125 times the criterion). The term order of the rates and the libm of wasm are not the cause: they would not vanish at 1e-12.
-- mp_core: the oxygen of the cell is 0 within 1e-29 (roadrunner -3.6e-221, the engine -8.2e-29) for the whole perfusion, exactly at the threshold of `s_hyp = piecewise(1, o2_cell <= 0, K^n / (K^n + o2_cell^n))`, and the ATP of the cell falls to 1e-13 at the threshold of `s_atp`. Roadrunner finds the roots of these conditions and restarts CVODE 161 times (dense: 4648 times); the engine does not locate the roots of piecewise conditions, the expressions are continuous there. The solution is ill-conditioned at that point: roadrunner's own solutions at 1e-10 and 1e-12 differ in 1704 values by up to 2440 times the criterion, more than the engine and roadrunner at 1e-10 (1509 values, 3530 times). At 1e-12, 221 values of 16 states and their rates fail (the necrosis and the enzymes released by it, `dmg`, `alt_dead`, `ldh_ext`, `k_dead`, with 1.8e-7 relative, and the exchange of lactate `LACEX`, a rate crossing 0 at 1e-10 to 1e-12). The agreement of 1e-7 is not reachable for this model at these tolerances by either integrator; whether the engine should find the roots of piecewise conditions as roadrunner does is a question for the owner (it would add restarts and cost: roadrunner dense takes 134 ms for 4648 restarts against 3.3 ms of the engine).
-
-Exit code of the script: 1 (three models fail the strict criterion), with the evidence above.
+The benchmark itself simulates the same problem with both: `scripts/roadrunner_reference.py` applies the pre-initialization as the initial values (`init(x)`, kept by every `resetAll`, which evaluates the initial assignments with them, as the engine and sbmlsim do), its tolerance vector is computed with that pre-initialization (roadrunner scales the absolute tolerance of a rate rule variable by its initial value: `PODOSE_hctz` 2.5e-11, `PODOSE_mid` 7.5e-12), and before it measures a model it checks that every state of roadrunner's state vector after the reset is the first row of the engine within 1e-12 relative (all six models: "roadrunner and the engine start from the same state"). No initial assignment of a benchmark model reads a target of its pre-initialization (`PODOSE_hctz`, `PODOSE_mid`, `c1`).

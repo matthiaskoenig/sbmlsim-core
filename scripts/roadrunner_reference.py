@@ -22,7 +22,9 @@
 
 Every model of the benchmark file (prepared with `scripts/prepare_model.py --bench`) is
 simulated as `sbmlsim-core bench` simulates it: from 0 to its end, its uniform output points,
-its pre-initialization (set after `resetAll`), BDF, its relative tolerance and its absolute
+its pre-initialization (the initial values `init(x)`, then `resetAll`, which evaluates the
+initial assignments with them, as the engine and sbmlsim apply it; checked: the state at the
+start is the engine's for every model, `--export`), BDF, its relative tolerance and its absolute
 tolerance (roadrunner scales it per state, checked equal to the vector of `<sbml>.atol.json`
 which the engine integrates with), at most 20000 steps, LLJIT at the optimization level `O2`
 (`DEFAULT`, as sbmlsim loads models), in a process of its own pinned with `taskset` to one CPU
@@ -44,9 +46,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import subprocess
 import sys
+import tempfile
 import time
 import tomllib
 from pathlib import Path
@@ -78,9 +82,13 @@ def worker(build: str, model: dict, warmups: int, reps: int) -> None:
     t0 = time.perf_counter()
     r = roadrunner.RoadRunner(model["sbml"], options)
     load = time.perf_counter() - t0
-    # the state vector: the variables of the rate rules, then the floating species
-    n_states = r.model.getNumRateRules() + r.model.getNumFloatingSpecies()
-    states = [r.model.getStateVectorId(i) for i in range(n_states)]
+    # the state vector (`getRatesOfChange` is in its order)
+    states = [r.model.getStateVectorId(i) for i in range(len(r.getRatesOfChange()))]
+    # the pre-initialization as the engine and sbmlsim apply it: the initial values, which every
+    # `resetAll` keeps and evaluates the initial assignments with (setting one regenerates the
+    # model and its selections, so it is set once, before the selections)
+    for key, value in model.get("preinit", []):
+        r.setValue(f"init({key})", value)
     r.timeCourseSelections = ["time", *states]
     atol_file = Path(model["sbml"]).with_suffix(".atol.json")
     atol_expected = json.loads(atol_file.read_text()) if atol_file.exists() else None
@@ -110,8 +118,6 @@ def worker(build: str, model: dict, warmups: int, reps: int) -> None:
             result = None
             for i in range(warmups + reps):
                 r.resetAll()
-                for key, value in model.get("preinit", []):
-                    r.setValue(key, value)
                 t0 = time.perf_counter()
                 if output == "steps":
                     result = np.array(r.simulate(0, model["end"]))
@@ -121,6 +127,9 @@ def worker(build: str, model: dict, warmups: int, reps: int) -> None:
                 if i >= warmups:
                     times.append(dt)
             s = r.integrator.getStatistics()
+            r.resetAll()
+            initial = {sid: float(r.getValue(sid)) for sid in states}
+            assert list(r.timeCourseSelections) == ["time", *states] or result.shape[1] == len(states) + 1
             if "linear_solver" in r.integrator.getSettings():
                 assert (r.integrator.getValue("linear_solver"), r.integrator.getValue("jacobian")) == (solver, jacobian)
             vector = r.integrator.getAbsoluteToleranceVector()
@@ -154,6 +163,8 @@ def worker(build: str, model: dict, warmups: int, reps: int) -> None:
                         "reinits": s.get("num_reinits"),
                     },
                     "atol_matches": atol_matches,
+                    # the state at the start (amounts), by the ids of the state vector
+                    "initial": initial,
                 }
             )
     print(json.dumps(rows))
@@ -170,6 +181,39 @@ def run_worker(build: str, name: str, args: argparse.Namespace) -> list[dict]:
     if out.returncode:
         raise RuntimeError(f"{build} {name}: {out.stderr[-3000:]}")
     return json.loads(out.stdout.strip().splitlines()[-1])
+
+
+def initial_state_problems(name: str, configs: list[dict], args: argparse.Namespace) -> list[str]:
+    """Compare the state at the start of roadrunner with the one of the engine.
+
+    The engine simulates the request of the export (`sbmlsim-core bench --export`, the dense
+    configuration of the output of times) with the command line; the value of every state of
+    roadrunner's state vector after the pre-initialization and the reset (an amount for a species)
+    must be the one of the first row of the engine within 1e-12 relative (1e-300 absolute), so
+    both simulate the same problem (the pre-initialization and the initial assignments).
+    """
+    if args.skip_initial_check:
+        return []
+    model_dir = args.export / name
+    request = model_dir / "dense_analytic_times.json"
+    if not request.exists() or not args.cli.exists():
+        return [f"{name}: no {request} or {args.cli} to check the initial state (--skip-initial-check)"]
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp) / "out.csv"
+        subprocess.run([str(args.cli), "simulate", str(model_dir), str(request), "-o", str(out)], check=True)
+        header, first = out.read_text().splitlines()[:2]
+    engine = dict(zip(header.split(","), map(float, first.split(",")), strict=True))
+    problems = []
+    for config in configs:
+        if config["output"] != "times":
+            continue
+        for sid, value in config["initial"].items():
+            other = engine.get(sid)
+            if other is None or abs(other - value) > 1e-12 * abs(value) + 1e-300:
+                problems.append(f"{name}: {config['host']}: the state {sid} starts at {value!r}, the engine's at {other!r}")
+    if not problems:
+        print(f"{name}: roadrunner and the engine start from the same state", file=sys.stderr)
+    return problems
 
 
 def measure(args: argparse.Namespace) -> int:
@@ -190,6 +234,7 @@ def measure(args: argparse.Namespace) -> int:
         "reps": args.reps,
         "models": [],
     }
+    problems: list[str] = []
     for name in models:
         if only and name not in only:
             continue
@@ -213,6 +258,7 @@ def measure(args: argparse.Namespace) -> int:
                     "round_medians_s": [r["median_s"] for r in rows],
                 }
             )
+        problems += initial_state_problems(name, configs, args)
         mismatch = [c["host"] for c in configs if c["atol_matches"] is False]
         if mismatch:
             print(f"warning: {name}: the absolute tolerances differ from the file ({mismatch})", file=sys.stderr)
@@ -228,7 +274,9 @@ def measure(args: argparse.Namespace) -> int:
                 f"  steps {s['steps']:6d}  rhs {s['rhs_evals'] + s['lin_rhs_evals']:7d}  jac {s['jacobian_evals']:5d}"
                 f"  reinits {s['reinits']}  load {c['load_s']:.3f} s"
             )
-    return 0
+    for problem in problems:
+        print(f"error: {problem}", file=sys.stderr)
+    return 1 if problems else 0
 
 
 def fmt(seconds: float) -> str:
@@ -238,11 +286,26 @@ def fmt(seconds: float) -> str:
 
 
 def compare(args: argparse.Namespace) -> int:
-    """Print the tables of the times and the ratios against roadrunner in Markdown."""
+    """Print the tables of the times and the ratios against roadrunner in Markdown.
+
+    The KLU baseline is the sparsedq build, else the KLU of the libroadrunner of this environment
+    (`roadrunner <version> KLU`). A configuration without a baseline, or with a ratio which is no
+    number, is an error (exit code 1), so no ratio passes the check of 2x unseen.
+    """
     reference = json.loads(args.compare[0].read_text())
     engines = [json.loads(p.read_text()) for p in args.compare[1:]]
     rr = {(m["name"], c["host"], c["output"]): c for m in reference["models"] for c in m["configs"]}
-    baseline = {"dense": "roadrunner dense", "klu": "roadrunner KLU"}
+
+    def baseline(name: str, solver: str, output: str) -> dict | None:
+        if solver == "dense":
+            return rr.get((name, "roadrunner dense", output))
+        found = rr.get((name, "roadrunner KLU", output))
+        if found is None:
+            found = next(
+                (c for (n, h, o), c in rr.items() if n == name and o == output and c["solver"] == "klu"), None
+            )
+        return found
+
     print(
         "| model | states | solver | output | roadrunner ms | "
         + " | ".join(f"{e['host']} ms | ratio" for e in engines)
@@ -250,11 +313,12 @@ def compare(args: argparse.Namespace) -> int:
     )
     print("|---|---:|---|---|---:|" + "---:|---:|" * len(engines))
     worst = []
+    errors = []
     names = [m["name"] for m in engines[0]["models"]]
     for name in names:
         for output in ("times", "steps"):
             for solver in ("dense", "klu"):
-                ref = rr.get((name, baseline[solver], output))
+                ref = baseline(name, solver, output)
                 cells = []
                 states = None
                 for e in engines:
@@ -272,17 +336,21 @@ def compare(args: argparse.Namespace) -> int:
                         continue
                     states = model["states"]
                     ratio = config["median_s"] / ref["median_s"] if ref else float("nan")
-                    if ratio > 2:
+                    if not math.isfinite(ratio):
+                        errors.append(f"{name} {solver} {output} {e['host']}: no roadrunner reference")
+                    elif ratio > 2:
                         worst.append((name, solver, output, e["host"], ratio))
                     cells += [fmt(config["median_s"]), f"{ratio:.2f}"]
                 if states is None:
                     continue
-                reference_ms = fmt(ref["median_s"]) if ref else "-"
+                reference_ms = f"{fmt(ref['median_s'])} ({ref['host']})" if ref else "-"
                 print(f"| {name} | {states} | {solver} | {output} | {reference_ms} | " + " | ".join(cells) + " |")
     print()
     for name, solver, output, host, ratio in worst:
         print(f"above 2x: {name} {solver} {output} {host} {ratio:.2f}")
-    return 0
+    for error in errors:
+        print(f"error: {error}", file=sys.stderr)
+    return 1 if errors else 0
 
 
 def main() -> int:
@@ -297,6 +365,16 @@ def main() -> int:
     parser.add_argument("--cpu", default="2", help="the CPU the workers are pinned to")
     parser.add_argument("--sparse-build", type=Path, default=SPARSE_BUILD)
     parser.add_argument("--compare", type=Path, nargs="+", help="print the tables of results")
+    parser.add_argument(
+        "--export",
+        type=Path,
+        default=Path(__file__).resolve().parent.parent / "target/bench/export",
+        help="the export of `sbmlsim-core bench --export`, whose initial states are checked",
+    )
+    parser.add_argument(
+        "--cli", type=Path, default=Path(__file__).resolve().parent.parent / "target/release/sbmlsim-core"
+    )
+    parser.add_argument("--skip-initial-check", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--worker", nargs=2, metavar=("BUILD", "MODEL"), help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.worker:
