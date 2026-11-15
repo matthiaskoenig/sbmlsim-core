@@ -198,17 +198,12 @@ fn a_discontinuity_at_the_time_of_an_event() {
     assert_eq!(column(&result, "n"), [0.0, 0.0, 1.0]);
     let x = column(&result, "x");
     assert!((x[2] - 1.0).abs() < 1e-11, "{x:?}");
-    // the steps: the event executes once, at a step within the probe of its trigger before 1
-    // (its two rows) or at its root, and the discontinuity has its two rows of one state there
-    // or right after it. At atol 1e-14 (the default of `request`) CVODE fails here with the
-    // flag -3: the event executes at a step within the probe of its trigger, 4.6e-13 before 1,
-    // and CVODE starts again from there into the jump of the rate at 1, where its first step
-    // cannot shrink below the jump within its 7 failures of the error test (open: a decision on
-    // the probe at the steps of the integrator or on CVODE's limit of failures, fix round 1 of
-    // Task 18b); atol 1e-12 until then
-    let mut steps_request = request(2.0, Output::IntegratorSteps);
-    steps_request.settings.absolute_tolerance = Tolerance::Scalar(1e-12);
-    let (steps, _) = run(&compiled, &steps_request);
+    // the steps: the event executes once, at its root at 1 (its two rows; a step evaluates the
+    // triggers at its time only, ruling R49), and the discontinuity has its two rows of one
+    // state there or right after it. At atol 1e-14 CVODE failed with the flag -3 when the event
+    // executed at a step within the probe of its trigger, 4.6e-13 before 1, and CVODE started
+    // again from there into the jump of the rate at 1
+    let (steps, _) = run(&compiled, &request(2.0, Output::IntegratorSteps));
     let (times, n, x) = (
         column(&steps, "time"),
         column(&steps, "n"),

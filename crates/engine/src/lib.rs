@@ -16,12 +16,37 @@
 //!
 //! - `changes`: the changes at times and how they are applied.
 //! - `steady`: the steady state before a simulation.
+//! - `roots`: the guard of the restarts at the roots of the discontinuities of the math.
 //!
 //! The initialization is `defaults`, then the pre-initialization values of the request and of
 //! its steady state (fixed for `init`, in the selections of sbmlsim as the changes), then `init`
 //! at the time 0 ([`INIT_TIME`], as sbmlsim); then the steady state, if the request has one
 //! (integrated from the time 0); the integration runs in absolute time from the start, in
 //! segments between the changes.
+//!
+//! # Known differences to libroadrunner
+//!
+//! Besides the known differences to sbmlsim's executors (`changes`, `events`), which are
+//! libroadrunner's as well where sbmlsim keeps them:
+//!
+//! - The roots of the conditions of `piecewise` are located with continuous root functions of
+//!   their operands (`a - b`, `min` and `max` for `and` and `or`), libroadrunner's with the
+//!   booleans of the branches (`1` or `-1`); both stop where the selected branch changes. The
+//!   kinetic laws with local parameters have them too, libroadrunner's none (a slip of its
+//!   generator).
+//! - The steps towards one output time are bounded by `maximum_num_steps` across the returns of
+//!   CVODE at roots and its restarts at the roots of discontinuities (`roots`, ruling R50);
+//!   libroadrunner counts the steps of one call of CVODE, which every return at a root ends,
+//!   so a model whose roots chatter may run far longer there (the sliding mode
+//!   `x' = piecewise(-1, x > 0, 1)` at rtol 1e-3, atol 1e-6: 28.6 million steps in
+//!   libroadrunner, `CV_TOO_MUCH_WORK` within 20000 steps of one output interval here).
+//! - libroadrunner's count of roots close together (`strikes`) ignores the events of an ignored
+//!   root as well; here it decides the restarts at the roots of discontinuities only, and the
+//!   events execute whatever it counts.
+//! - The output of the steps of the integrator has the two rows of a root (of an event, or a
+//!   root of a discontinuity) at its exact time; libroadrunner writes them at `t - tol` and
+//!   `t + tol` (`tol` its root tolerance, `100 * 32 * eps * (|t| + |h|)`), which sbmlsim moves
+//!   to the time half way between them for a model with events.
 
 mod changes;
 mod cvode;

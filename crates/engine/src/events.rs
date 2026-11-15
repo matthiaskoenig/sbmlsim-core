@@ -37,7 +37,11 @@
 //! again, which would execute its event at every such stop. An output at that very time is written between the two rounds, so it sees
 //! the state before such an event (as libroadrunner and sbmlsim show it); at the end the second
 //! round looks [`END_RTOL`] ahead ([`Probe::End`]) and the output is written after it (sbmlsim's
-//! event at the end).
+//! event at the end). At a step of the integrator in the output of its steps the triggers are
+//! evaluated at its time only, without the second round (ruling R49): a trigger which becomes
+//! true right after a step is located by its root function in the next step, so its event
+//! executes at its root, as in libroadrunner, and not up to the window of the probe before it
+//! (where CVODE, started again, could not step across a jump of a rate at the root).
 //!
 //! At a change (`changes`) the integration stops exactly at its time without executing the
 //! events there; after the change the events execute with the triggers before the change

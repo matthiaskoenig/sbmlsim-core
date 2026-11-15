@@ -287,6 +287,22 @@ fn stalled(t: f64, previous: f64) -> EngineError {
     }
 }
 
+/// Where the integration of a model with events stopped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StopKind {
+    /// A step of the integrator (the output of its steps).
+    Step,
+    /// A stop time (a pending execution, the end), an output time, or a time too close to
+    /// integrate to.
+    Stop,
+    /// A zero of a root function; `discontinuity` whether CVODE starts again there for a root
+    /// function of a discontinuity.
+    Root {
+        /// Whether CVODE starts again for a root function of a discontinuity.
+        discontinuity: bool,
+    },
+}
+
 /// The outputs of a run with events and where they stand.
 struct Outputs<'t> {
     /// The output times (empty for the integrator steps).
@@ -330,21 +346,22 @@ impl Outputs<'_> {
         Ok(())
     }
 
-    /// The integration stopped at `t`: the events at `t` execute and the outputs at `t` are
-    /// written; `step` is whether `t` is a step of the integrator (not a zero of a root
-    /// function), `discontinuity` whether it is a zero of a root function of a discontinuity,
-    /// where the integration starts again (in the steps of the integrator two rows of the state
-    /// at `t` before the end, the state before and after the new start, as libroadrunner writes
-    /// them, unless events execute, whose two rows they are). Returns whether an event
-    /// executed.
-    #[allow(clippy::too_many_arguments)]
+    /// The integration stopped at `t` (`kind`): the events at `t` execute and the outputs at
+    /// `t` are written. In the steps of the integrator: a step of the integrator is one row and
+    /// its events execute with the triggers at its time only (no probe right after it, ruling
+    /// R49: a trigger which becomes true right after a step is located by its root function in
+    /// the next step, so its event executes at its root, as in libroadrunner, and not up to the
+    /// window of the probe before it); a stop at a stop time is one row; at a zero of a root
+    /// function of a discontinuity, where the integration starts again, two rows of the state
+    /// at `t` before the end (libroadrunner's two rows of a root, which it writes a little
+    /// before and after `t`); where events execute, their two rows, the state before and after
+    /// them. Returns whether an event executed.
     fn stop(
         &mut self,
         t: f64,
         y: &mut [f64],
         p: &mut [f64],
-        step: bool,
-        discontinuity: bool,
+        kind: StopKind,
         events: &mut Events<'_>,
         recorder: &mut Recorder<'_>,
     ) -> Result<bool, EngineError> {
@@ -352,11 +369,19 @@ impl Outputs<'_> {
         let at_end = t >= self.end || too_close(t, self.end);
         if self.steps {
             let (before, p_before) = (y[..m].to_vec(), p.to_vec());
-            let executed = events.execute(t, &mut y[..m], p, at_end)?;
+            let executed = if kind == StopKind::Step && !at_end {
+                events.execute_at(t, &mut y[..m], p, Probe::Exact)?
+            } else {
+                events.execute(t, &mut y[..m], p, at_end)?
+            };
+            let discontinuity = kind
+                == (StopKind::Root {
+                    discontinuity: true,
+                });
             if executed || (discontinuity && !at_end) {
                 recorder.row(t, &before, &p_before)?;
                 recorder.row(t, &y[..m], p)?;
-            } else if step || at_end {
+            } else if !matches!(kind, StopKind::Root { .. }) || at_end {
                 recorder.row(t, &y[..m], p)?;
             }
             return Ok(executed);
@@ -445,7 +470,8 @@ impl Outputs<'_> {
 ///   event the state after it, except for an event whose trigger becomes true only right after
 ///   that time (a strict comparison at its threshold), which comes after the output; at the end
 ///   the output sees the state after every event at the end. A discontinuity adds no row.
-/// - of the integrator steps: the start (the state after the events at the start), every step,
+/// - of the integrator steps (the triggers at a step evaluated at its time only, [`StopKind`]):
+///   the start (the state after the events at the start), every step,
 ///   and two rows at the time of every other stop at which events execute, the state before and
 ///   after them (the end included), or else at a discontinuity before the end, the state there
 ///   twice (libroadrunner's two rows of a root, before and after the new start of CVODE).
@@ -551,7 +577,7 @@ pub(crate) fn integrate_events(
                 continue;
             }
             let next = out.next;
-            if out.stop(t, &mut y, &mut problem.p, true, false, events, recorder)? {
+            if out.stop(t, &mut y, &mut problem.p, StopKind::Stop, events, recorder)? {
                 started = false;
                 guard.executed(cvode.steps());
             }
@@ -618,15 +644,14 @@ pub(crate) fn integrate_events(
             continue;
         }
         let next = out.next;
-        let executed = out.stop(
-            t,
-            &mut y,
-            &mut problem.p,
-            !root,
-            discontinuity,
-            events,
-            recorder,
-        )?;
+        let kind = if root {
+            StopKind::Root { discontinuity }
+        } else if flag == CV_TSTOP_RETURN || !steps {
+            StopKind::Stop
+        } else {
+            StopKind::Step
+        };
+        let executed = out.stop(t, &mut y, &mut problem.p, kind, events, recorder)?;
         if executed || discontinuity {
             started = false;
         }

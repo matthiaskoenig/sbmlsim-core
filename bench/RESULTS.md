@@ -293,6 +293,8 @@ The crossover is at 11 to 14 states for the arrow head and 16 to 20 for the chai
 
 ## The probe of the triggers (carried from Task 13)
 
+Since ruling R49 (fix round of Task 18b) the triggers at a step of the integrator in the output of its steps are evaluated at its time only, without the probe (an event then executes at its root): the probe of the steps measured below (3596 calls on `repeated_dose`) is gone, the probe of the output times, the stop times and the roots stays. The rows of `repeated_dose` in the tables are of the first run, before R49.
+
 After a stop of the integration with a trigger which is false, the engine evaluates the triggers right after the time (`PROBE_RTOL` times the scale of the times, the state moved along its rate), one call of the right hand side per stop (`probe_rhs_evals`): per output time (201 outputs and 20 events: 221) and, for the output of the steps of the integrator, per step (3596 calls against CVODE's 4092). Measured directly on `repeated_dose` in wasmtime with a throwaway build whose probe skips the right hand side (identical output, the trigger `time >= tnext` reads no state; 3 rounds of 20 each, alternating):
 
 | output | solver | with the probe ms | without ms | cost |
@@ -323,6 +325,16 @@ roadrunner (its LLVM model generator, sys-bio/roadrunner#1383) makes a root func
 
 - `x' = piecewise(-1, x > 0, 1)` (a sliding mode at 0 from t = 1): at rtol 1e-6, atol 1e-12 CVODE never accepts a step across 0 and creeps towards it; roadrunner fails with `CV_TOO_MUCH_WORK` at t = 1.00000000157277, the engine at 1.00000000157206. In the steps of the integrator roadrunner stops at its `max_output_rows` (100000 rows, a warning), the engine at the limit of its output (flag -1000, 14 s): neither has a step limit there (ruling R20). At rtol 1e-3, atol 1e-4 up to 2 both end within the absolute tolerance of the exact solution `max(1 - t, 0)` (roadrunner 6.7e-6, the engine 5.5e-6) and of each other (1.1e-5); the engine restarts at about 3000 roots, roadrunner at none (the trajectories chatter differently). At rtol 1e-3, atol 1e-6 roadrunner ends after 28.6 million steps (25 s, 5981 restarts: every root return starts its count of steps again), the engine ends with `CV_TOO_MUCH_WORK` after at most 20000 steps of one output interval (6 ms). The sliding mode is chaotic at noise level: the engine at end 1.1 and at end 3 takes other roots.
 - `piecewise(0, S < 0, k * S)` as the rate of a decay (a guard at noise level): one restart in roadrunner and in the engine (times and steps), and against `exp(-t)` at rtol 1e-10, atol 1e-12 the largest excess of the engine is 1.67745 against roadrunner's 1.67732 dense and 1.67745 KLU (times) and 1.90227 against 1.90231 (steps): R47b passes.
+
+### Known differences to roadrunner
+
+The engine's documentation (`crates/engine/src/lib.rs`, "Known differences to libroadrunner") lists them; the ones of the root finding:
+
+- Root functions: continuous in the operands of the conditions (`a - b`, `min`, `max`), roadrunner's the booleans of the branches; the same stops. Kinetic laws with local parameters have them too (roadrunner none, a slip of its generator).
+- Chattering roots (ruling R50): the steps towards one output time are bounded by `maximum_num_steps` across the returns at roots and the restarts; roadrunner counts one call of CVODE, which every root return ends. The sliding mode at rtol 1e-3, atol 1e-6 ends in roadrunner after 28.6 million steps (25 s), in the engine with `CV_TOO_MUCH_WORK` within 20000 steps of one output interval.
+- roadrunner's count of roots close together also skips the events of an ignored root; the engine's events execute whatever the count.
+- The output of the integrator steps has the two rows of a root (an event or a discontinuity) at its exact time; roadrunner writes them at `t - tol` and `t + tol` (its root tolerance), which sbmlsim moves to the time half way between them for a model with events.
+- In the output of the integrator steps the triggers at a step are evaluated at its time only (ruling R49): an event executes at its root, as in roadrunner, not up to the window of the probe before it (the probe stays at the roots, the stop times and the output times).
 
 ## Agreement with roadrunner
 
