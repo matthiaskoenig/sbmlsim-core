@@ -7,7 +7,9 @@ name = "sbmlsim-core"
 dynamic = ["version"]
 description = "Compile SBML models to WebAssembly and simulate them"
 readme = "README.md"
-license = "MIT"
+license = "MIT AND BSD-3-Clause AND LGPL-2.1-or-later"
+# the extension embeds engine.wasm (SUNDIALS, KLU, BTF), whose notices THIRD_PARTY.md carries
+license-files = ["LICENSE", "THIRD_PARTY.md"]
 authors = [{ name = "Matthias König" }]
 requires-python = ">=3.14"
 dependencies = ["numpy"]

@@ -13,7 +13,7 @@ The code of sbmlsim-core is MIT licensed (`LICENSE`, Copyright (c) 2026 Matthias
 | COLAMD (SuiteSparse 7.14.1) | 3.3.5 | BSD-3-Clause |
 | SuiteSparse_config | 7.14.1 | BSD-3-Clause |
 
-So `engine.wasm` is under `MIT AND BSD-3-Clause AND LGPL-2.1-or-later`, and so are the packages which build or contain it: `sbmlsim-csolvers`, `sbmlsim-host` and `sbmlsim-cli` (which embed `engine.wasm`) and the JavaScript package, whose runtime is `engine.wasm`. A page which serves `engine.wasm` distributes it under these licenses.
+So `engine.wasm` is under `MIT AND BSD-3-Clause AND LGPL-2.1-or-later`, and so are the packages which build or contain it: `sbmlsim-csolvers`, `sbmlsim-host` and `sbmlsim-cli` (which embed `engine.wasm`), the JavaScript package, whose runtime is `engine.wasm`, and the python package `sbmlsim-core`, whose extension embeds it (its wheel carries `LICENSE` and `THIRD_PARTY.md`). A page which serves `engine.wasm` distributes it under these licenses.
 
 KLU and BTF are under the GNU Lesser General Public License 2.1 or later and are linked statically into `engine.wasm`. Their complete source is in the submodule, and the complete source of `engine.wasm` and its build are in the repository (`cargo build`, or `SBMLSIM_CORE_WASM_DIR` for an `engine.wasm` built otherwise), so a recipient can modify KLU or BTF, build `engine.wasm` again and use it with the hosts in place of the distributed one.
 
