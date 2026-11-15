@@ -137,8 +137,7 @@ impl<'m> Builder<'m> {
             let compartment = match self.items[v] {
                 Item::Species(s) => {
                     let info = self.species[s];
-                    (!info.has_only_substance_units && info.value == SpeciesValue::Amount)
-                        .then_some(info.compartment)
+                    (!info.has_only_substance_units).then_some(info.compartment)
                 }
                 _ => None,
             };

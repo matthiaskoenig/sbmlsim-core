@@ -44,7 +44,9 @@ impl<'m> Builder<'m> {
                 add(id, Item::SpeciesReference(i))?;
             }
         }
-        for e in &m.events {
+        // the id of an event which is ignored (no trigger with math) is not registered, as
+        // libroadrunner 2.11 does not: it may repeat another id
+        for (_, e, _, _) in events_with_trigger(m) {
             if let Some(id) = &e.id {
                 add(id, Item::Event)?;
             }

@@ -158,12 +158,17 @@ pub struct EventAssignment {
     pub target: Symbol,
     /// The value of the math, in the quantity the math sees.
     pub value: Expr,
-    /// For a species of a concentration stored as its amount, its compartment: the stored
-    /// value is `value * compartment`.
+    /// For a species of a concentration (`hasOnlySubstanceUnits` false), its compartment: the
+    /// amount of the species after the event is `value * compartment`, the compartment before
+    /// the assignments of the event (as libroadrunner 2.11 and the expected results of the SBML
+    /// Test Suite, case 01506, also when the event assigns the compartment).
     pub compartment: Option<Symbol>,
 }
 
-/// An event; its semantics are the engine's (Task 13).
+/// An event; its semantics are the engine's.
+///
+/// The engine locates the times at which a trigger may change by the zeros of its
+/// [`Event::root_functions`] and evaluates the trigger itself there.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Event {
     /// The id, absent for an event named by its position.
@@ -182,6 +187,98 @@ pub struct Event {
     pub priority: Option<Expr>,
     /// The assignments, in document order.
     pub assignments: Vec<EventAssignment>,
+}
+
+impl Event {
+    /// The root functions of the trigger: one per comparison (for a chain, one per adjacent
+    /// pair), positive where the comparison holds (`a - b` of `a > b` and `a >= b`, `b - a` of
+    /// `a < b` and `a <= b`, `a - b` of `a == b` and `a != b`), and one per expression read as a
+    /// boolean which is no boolean operator (a number, which is true where it is not 0), in
+    /// the written order. The trigger can change its value only where one of them changes its
+    /// sign, or at an event.
+    pub fn root_functions(&self) -> Vec<Expr> {
+        let mut out = Vec::new();
+        roots_of(&self.trigger, true, &mut out);
+        out
+    }
+}
+
+/// Collects the root functions of `e` into `out`; `boolean` is whether `e` is read as a boolean.
+fn roots_of(e: &Expr, boolean: bool, out: &mut Vec<Expr>) {
+    match e {
+        Expr::Number(_) | Expr::Bool(_) => {}
+        Expr::Symbol(_) => {
+            if boolean {
+                out.push(e.clone());
+            }
+        }
+        Expr::Apply { op, args } => match op {
+            Op::Eq | Op::Neq | Op::Gt | Op::Geq | Op::Lt | Op::Leq => {
+                for pair in args.windows(2) {
+                    let (a, b) = (pair[0].clone(), pair[1].clone());
+                    out.push(match op {
+                        Op::Lt | Op::Leq => Expr::apply(Op::Minus, vec![b, a]),
+                        _ => Expr::apply(Op::Minus, vec![a, b]),
+                    });
+                }
+                for a in args {
+                    roots_of(a, false, out);
+                }
+            }
+            Op::And | Op::Or | Op::Xor | Op::Not | Op::Implies => {
+                for a in args {
+                    roots_of(a, true, out);
+                }
+            }
+            _ => {
+                if boolean {
+                    out.push(e.clone());
+                }
+                for a in args {
+                    roots_of(a, false, out);
+                }
+            }
+        },
+        Expr::Piecewise { pieces, otherwise } => {
+            if boolean && !is_boolean_valued(e) {
+                out.push(e.clone());
+            }
+            for (value, condition) in pieces {
+                roots_of(value, boolean, out);
+                roots_of(condition, true, out);
+            }
+            if let Some(o) = otherwise {
+                roots_of(o, boolean, out);
+            }
+        }
+    }
+}
+
+/// Whether every value of a piecewise is a boolean (a relation, a boolean operator or a
+/// boolean constant), so it is no number read as a boolean.
+fn is_boolean_valued(e: &Expr) -> bool {
+    match e {
+        Expr::Bool(_) => true,
+        Expr::Apply { op, .. } => matches!(
+            op,
+            Op::Eq
+                | Op::Neq
+                | Op::Gt
+                | Op::Geq
+                | Op::Lt
+                | Op::Leq
+                | Op::And
+                | Op::Or
+                | Op::Xor
+                | Op::Not
+                | Op::Implies
+        ),
+        Expr::Piecewise { pieces, otherwise } => {
+            pieces.iter().all(|(v, _)| is_boolean_valued(v))
+                && otherwise.as_deref().is_none_or(is_boolean_valued)
+        }
+        _ => false,
+    }
 }
 
 /// What a selection is.

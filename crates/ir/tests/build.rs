@@ -1255,3 +1255,116 @@ fn a_local_parameter_as_an_argument_and_the_global_in_the_body() {
         ap(Op::Times, vec![num(0.5), sym(&m, "k")])
     );
 }
+
+#[test]
+fn the_id_of_an_ignored_event_is_not_registered() {
+    // libroadrunner 2.11 loads an event without a trigger whose id repeats another id (it
+    // crashes when the ignored event comes after a kept one of its id; this one is kept)
+    let ignored = r#"<event id="p" useValuesFromTriggerTime="true"><listOfEventAssignments><eventAssignment variable="p"><math $><cn>5</cn></math></eventAssignment></listOfEventAssignments></event>"#;
+    let kept = format!(
+        r#"<event id="E" useValuesFromTriggerTime="true">{}<listOfEventAssignments><eventAssignment variable="p"><math $><cn>5</cn></math></eventAssignment></listOfEventAssignments></event>"#,
+        trigger()
+    );
+    let m = p3(&format!(
+        "<listOfEvents>{ignored}{}{kept}</listOfEvents>",
+        ignored.replace(r#"id="p""#, r#"id="E""#)
+    ));
+    assert_eq!(m.events.len(), 1);
+    assert_eq!(m.events[0].id.as_deref(), Some("E"));
+    // two kept events of one id are invalid
+    let e = error(&format!(
+        r#"<listOfParameters><parameter id="p" value="3" constant="false"/></listOfParameters><listOfEvents>{kept}{kept}</listOfEvents>"#
+    ));
+    assert_eq!(
+        e,
+        CompileError::Invalid("the id E is used more than once".into())
+    );
+}
+
+#[test]
+fn an_event_whose_assignments_have_no_math_is_kept() {
+    // libroadrunner lists it in getEventIds (cases 01237, 01600-01603, 01605)
+    let m = p3(&event_of(
+        &trigger(),
+        "",
+        r#"<eventAssignment variable="p"/>"#,
+    ));
+    assert_eq!(m.events.len(), 1);
+    assert!(m.events[0].assignments.is_empty());
+    assert_eq!(m.events[0].root_functions().len(), 1);
+}
+
+#[test]
+fn root_functions_of_triggers() {
+    let p = || sym(&p3(""), "p");
+    let root = |trigger: &str| {
+        let m = p3(&event_of(
+            &format!(
+                r#"<trigger initialValue="true" persistent="true"><math $>{trigger}</math></trigger>"#
+            ),
+            "",
+            "",
+        ));
+        m.events[0].root_functions()
+    };
+    let t = || Expr::Symbol(Symbol::Time);
+    let minus = |a: Expr, b: Expr| ap(Op::Minus, vec![a, b]);
+    // positive where the comparison holds
+    assert_eq!(
+        root(&apply("gt", &[TIME, "<cn>1</cn>"])),
+        [minus(t(), num(1.0))]
+    );
+    assert_eq!(
+        root(&apply("geq", &[TIME, "<cn>1</cn>"])),
+        [minus(t(), num(1.0))]
+    );
+    assert_eq!(
+        root(&apply("lt", &[TIME, "<cn>1</cn>"])),
+        [minus(num(1.0), t())]
+    );
+    assert_eq!(
+        root(&apply("leq", &[TIME, "<cn>1</cn>"])),
+        [minus(num(1.0), t())]
+    );
+    // a chain gives one per adjacent pair, and boolean operators collect their arguments
+    assert_eq!(
+        root(&apply(
+            "and",
+            &[
+                &apply("lt", &["<cn>0</cn>", &ci("p"), "<cn>2</cn>"]),
+                &apply("not", &[&apply("eq", &[TIME, "<cn>3</cn>"])])
+            ]
+        )),
+        [
+            minus(p(), num(0.0)),
+            minus(num(2.0), p()),
+            minus(t(), num(3.0))
+        ]
+    );
+    // a number read as a boolean is its own root function, a boolean constant has none
+    assert_eq!(root(&ci("p")), [p()]);
+    assert_eq!(root("<true/>"), []);
+    // a comparison inside a number of a comparison gives its own
+    assert_eq!(
+        root(&apply(
+            "gt",
+            &[
+                &format!(
+                    r#"<piecewise><piece><cn>1</cn>{}</piece><otherwise><cn>0</cn></otherwise></piecewise>"#,
+                    apply("gt", &[TIME, "<cn>2</cn>"])
+                ),
+                "<cn>0.5</cn>"
+            ]
+        )),
+        [
+            minus(
+                Expr::Piecewise {
+                    pieces: vec![(num(1.0), ap(Op::Gt, vec![t(), num(2.0)]))],
+                    otherwise: Some(Box::new(num(0.0)))
+                },
+                num(0.5)
+            ),
+            minus(t(), num(2.0))
+        ]
+    );
+}
