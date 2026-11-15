@@ -20,14 +20,14 @@ pub(crate) enum Column {
     Selection(usize),
 }
 
-/// The rows of a result: every row is the time and the selections of the model after
-/// [`ModelFns::assign`], computed on copies of the state and the parameters, so the output does
-/// not change the integration.
+/// The rows of a result: every row is the time and the selections of the model
+/// ([`ModelFns::selections`], which computes the assignment rules it reads itself and reads the
+/// state and the parameters only, so the output does not change the integration).
 pub(crate) struct Recorder<'a> {
     model: &'a dyn ModelFns,
     columns: Vec<Column>,
-    y: Vec<f64>,
-    p: Vec<f64>,
+    /// A byte per selection of the model, 1 for the selections of a column.
+    mask: Vec<u8>,
     selections: Vec<f64>,
     /// The values of the rows, row major, after the `prefix` slots which the caller fills (the
     /// header of the output of `engine.wasm`, which so needs no second copy of the result).
@@ -62,11 +62,16 @@ impl<'a> Recorder<'a> {
             .try_reserve_exact(prefix)
             .map_err(|_| out_of_memory(prefix))?;
         values.resize(prefix, 0.0);
+        let mut mask = vec![0u8; n_selections];
+        for column in &columns {
+            if let Column::Selection(index) = column {
+                mask[*index] = 1;
+            }
+        }
         Ok(Recorder {
             model,
             columns,
-            y: Vec::new(),
-            p: Vec::new(),
+            mask,
             selections: vec![0.0; n_selections],
             values,
             prefix,
@@ -118,13 +123,8 @@ impl<'a> Recorder<'a> {
                 ),
             });
         }
-        self.y.clear();
-        self.y.extend_from_slice(y);
-        self.p.clear();
-        self.p.extend_from_slice(p);
-        self.model.assign(t, &mut self.y, &mut self.p);
         self.model
-            .selections(t, &self.y, &self.p, &mut self.selections);
+            .selections(t, y, p, &self.mask, &mut self.selections);
         self.grow(k)?;
         for column in &self.columns {
             self.values.push(match column {

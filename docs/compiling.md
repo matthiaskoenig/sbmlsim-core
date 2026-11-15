@@ -1,6 +1,6 @@
 # Compiling a model
 
-The command line compiles an SBML Level 3 Version 2 file into a model directory: `model.wasm`, the compiled model, and `model.json`, its description (`model/1`, see [Simulating](simulating.md#the-description-model1)).
+The command line compiles an SBML Level 3 Version 2 file into a model directory: `model.wasm`, the compiled model, and `model.json`, its description (`model/2`, see [Simulating](simulating.md#the-description-model1)).
 
 ```bash
 sbmlsim-core compile model.xml -o model-dir            # target/release/sbmlsim-core of a build
@@ -20,7 +20,7 @@ A feature the engine does not simulate as sbmlsim does is refused with its eleme
 
 ## What the compiler writes
 
-`model.wasm` imports the memory of the engine (`env.memory`) and the functions of `mathlib.wasm` it calls (`math.*`), and exports the functions of `model/1`: the defaults and the initialization of the model, the right hand side, the Jacobian, the root functions of the triggers and of the discontinuities of the math, the functions of the events, the selections and the sizes of the vectors. The expressions are emitted as written, without fast math, reassociation or folding of constants (`q / 49` is one division by `49`), with the meaning libroadrunner gives every operator; the optimizer folds constants and applies only rewrites which are exact in binary64, so it gives the bits of the code as written.
+`model.wasm` imports the memory of the engine (`env.memory`) and the functions of `mathlib.wasm` it calls (`math.*`), and exports the functions of `model/2`: the defaults and the initialization of the model, the right hand side, the Jacobian, the root functions of the triggers and of the discontinuities of the math, the functions of the events, the selections and the sizes of the vectors. The expressions are emitted as written, without fast math, reassociation or folding of constants (`q / 49` is one division by `49`), with the meaning libroadrunner gives every operator; the optimizer folds constants, applies only rewrites which are exact in binary64 and computes the subexpressions of the parameters alone once per change of the parameters (the constants of the model), so it gives the bits of the code as written.
 
 The states are the vector of libroadrunner: first the targets of the rate rules in the order of the rules, then every species which reactions change in the order of the species. A species is stored as its amount (the selection `S`; `[S]` is its concentration), except a species of a concentration which is the target of a rule, which stores its concentration, as libroadrunner does.
 

@@ -5,8 +5,8 @@
 //! `sunmatrix_sparse.h`, `sundials_linearsolver.h`, `sunlinsol_dense.h`, `sunlinsol_klu.h`,
 //! `sundials_nonlinearsolver.h`, `sunnonlinsol_fixedpoint.h`, `cvode.h`, `cvode_ls.h`) as this
 //! crate configures them: `sunrealtype` is `double`,
-//! `sunindextype` is `int64_t`, the counters are `long int` (32 bits on wasm32) and `SUNComm` is
-//! `int` (no MPI).
+//! `sunindextype` is `int32_t`, the counters are `long int` (32 bits on wasm32) and `SUNComm` is
+//! `int` (no MPI). The functions with the prefix `sbmlsim_` are the C sources of this crate.
 
 #![allow(non_camel_case_types, non_snake_case)]
 
@@ -14,8 +14,8 @@ use std::ffi::{c_char, c_int, c_long, c_void};
 
 /// The floating point type of SUNDIALS, `double`.
 pub type sunrealtype = f64;
-/// The index type of SUNDIALS, `int64_t` (`SUNDIALS_INDEX_SIZE=64`).
-pub type sunindextype = i64;
+/// The index type of SUNDIALS, `int32_t` (`SUNDIALS_INDEX_SIZE=32`).
+pub type sunindextype = i32;
 /// A boolean of SUNDIALS (`int`).
 pub type sunbooleantype = c_int;
 /// An error code of SUNDIALS, `0` is success.
@@ -120,6 +120,9 @@ pub const CV_TOO_MUCH_WORK: c_int = -1;
 pub const CSC_MAT: c_int = 0;
 /// A sparse matrix in compressed sparse row format (`SUN_CSR_MAT`).
 pub const CSR_MAT: c_int = 1;
+/// The fill-reducing ordering AMD of KLU (`SUNLinSol_KLUSetOrdering`); 1 is COLAMD, the
+/// default of `SUNLinSol_KLU`, 2 is the ordering of the user.
+pub const SUNKLU_ORDERING_AMD: c_int = 0;
 
 unsafe extern "C" {
     // the context
@@ -165,6 +168,25 @@ unsafe extern "C" {
     // linear solvers
     pub fn SUNLinSol_Dense(y: N_Vector, a: SUNMatrix, sunctx: SUNContext) -> SUNLinearSolver;
     pub fn SUNLinSol_KLU(y: N_Vector, a: SUNMatrix, sunctx: SUNContext) -> SUNLinearSolver;
+    /// Sets the fill-reducing ordering of the symbolic analysis of a KLU solver (0 AMD,
+    /// 1 COLAMD, 2 the ordering of the user).
+    pub fn SUNLinSol_KLUSetOrdering(s: SUNLinearSolver, ordering_choice: c_int) -> SUNErrCode;
+    /// `SUNLinSol_KLU` which keeps its symbolic analysis across the initializations of the
+    /// solver (every `CVodeReInit`): the first factorization after one reuses the analysis while
+    /// the pattern of the matrix and the settings of KLU are the ones it was made for, with
+    /// bitwise the same results (`csrc/sunlinsol_klu_kept.c` of this crate).
+    pub fn sbmlsim_SUNLinSol_KLUKept(
+        y: N_Vector,
+        a: SUNMatrix,
+        sunctx: SUNContext,
+    ) -> SUNLinearSolver;
+    /// The symbolic analyses a solver of [`sbmlsim_SUNLinSol_KLUKept`] made and the
+    /// factorizations which reused a kept one; `SUN_ERR_ARG_CORRUPT` for another solver.
+    pub fn sbmlsim_SUNLinSol_KLUKeptStats(
+        s: SUNLinearSolver,
+        analyses: *mut c_long,
+        reuses: *mut c_long,
+    ) -> SUNErrCode;
     pub fn SUNLinSolFree(s: SUNLinearSolver) -> SUNErrCode;
 
     // nonlinear solvers

@@ -1,13 +1,13 @@
 //! The functions of a compiled model, [`ModelFns`], and the test models.
 //!
-//! A compiled model is a WebAssembly module with the exports of the contract `model/1` (see
+//! A compiled model is a WebAssembly module with the exports of the contract `model/2` (see
 //! `sbmlsim_abi`); the host of the engine implements [`ModelFns`] by calling them. `p` is the
 //! vector of the parameters, `y` the vector of the states and `t` the time, in the orders of the
 //! [`ModelDescription`](sbmlsim_abi::ModelDescription) of the model.
 
 use sbmlsim_abi::ModelSizes;
 
-/// The functions of a compiled model, one per export of the contract `model/1`.
+/// The functions of a compiled model, one per export of the contract `model/2`.
 pub trait ModelFns {
     /// Writes the SBML values of the parameters and states.
     fn defaults(&self, p: &mut [f64], y: &mut [f64]);
@@ -32,9 +32,13 @@ pub trait ModelFns {
     fn event_values(&self, i: u32, t: f64, y: &[f64], p: &[f64], out: &mut [f64]);
     /// Applies the evaluated assignments of event `i` at the time `t`.
     fn event_apply(&self, i: u32, t: f64, values: &[f64], y: &mut [f64], p: &mut [f64]);
-    /// Writes every selection of the description, in its order.
-    fn selections(&self, t: f64, y: &[f64], p: &[f64], out: &mut [f64]);
-    /// Writes the current values of the targets of the assignment rules into `p` and `y`.
+    /// Writes the selections of the description whose byte of `mask` (one per selection) is
+    /// not 0, each at its index of `out` (it may write the others too); computes the values of
+    /// the assignment rules it reads itself (it does not read the targets of the rules in `p`
+    /// and `y`, which [`ModelFns::assign`] writes).
+    fn selections(&self, t: f64, y: &[f64], p: &[f64], mask: &[u8], out: &mut [f64]);
+    /// Writes the current values of the targets of the assignment rules into `p` and `y`, then
+    /// the constants of the model into `p` (behind the parameters).
     fn assign(&self, t: f64, y: &mut [f64], p: &mut [f64]);
     /// The sizes of the model (`model_sizes` and `model_event_sizes`), which the engine compares
     /// with the description.
@@ -78,7 +82,7 @@ mod test_models {
             .collect()
     }
 
-    /// A description of the contract `model/1` without events and units.
+    /// A description of the contract `model/2` without events and units.
     fn description(
         id: &str,
         states: Vec<Entity>,
@@ -97,6 +101,7 @@ mod test_models {
             events: vec![],
             n_roots: 0,
             n_discontinuity_roots: 0,
+            n_constants: 0,
             units: BTreeMap::new(),
         }
     }
@@ -177,9 +182,9 @@ mod test_models {
         fn jac(&self, _t: f64, _y: &[f64], p: &[f64], values: &mut [f64]) {
             values[0] = -p[0];
         }
-        fn selections(&self, _t: f64, y: &[f64], p: &[f64], out: &mut [f64]) {
+        fn selections(&self, _t: f64, y: &[f64], p: &[f64], _mask: &[u8], out: &mut [f64]) {
             out[0] = y[0];
-            out[1] = p[1];
+            out[1] = 2f64.ln() / p[0];
         }
         fn assign(&self, _t: f64, _y: &mut [f64], p: &mut [f64]) {
             p[1] = 2f64.ln() / p[0];
@@ -244,7 +249,7 @@ mod test_models {
                 -p[2] * y[1],
             ]);
         }
-        fn selections(&self, _t: f64, y: &[f64], _p: &[f64], out: &mut [f64]) {
+        fn selections(&self, _t: f64, y: &[f64], _p: &[f64], _mask: &[u8], out: &mut [f64]) {
             out.copy_from_slice(y);
         }
         fn assign(&self, _t: f64, _y: &mut [f64], _p: &mut [f64]) {}
@@ -284,7 +289,7 @@ mod test_models {
         fn jac(&self, t: f64, _y: &[f64], p: &[f64], values: &mut [f64]) {
             values[0] = if t > 1.0 { f64::NAN } else { -p[0] };
         }
-        fn selections(&self, _t: f64, y: &[f64], _p: &[f64], out: &mut [f64]) {
+        fn selections(&self, _t: f64, y: &[f64], _p: &[f64], _mask: &[u8], out: &mut [f64]) {
             out[0] = y[0];
         }
         fn assign(&self, _t: f64, _y: &mut [f64], _p: &mut [f64]) {}
@@ -335,7 +340,7 @@ mod test_models {
         fn jac(&self, _t: f64, _y: &[f64], p: &[f64], values: &mut [f64]) {
             values[0] = -p[1];
         }
-        fn selections(&self, _t: f64, y: &[f64], p: &[f64], out: &mut [f64]) {
+        fn selections(&self, _t: f64, y: &[f64], p: &[f64], _mask: &[u8], out: &mut [f64]) {
             out[0] = y[0];
             out[1] = p[1];
         }
@@ -404,7 +409,7 @@ mod test_models {
         fn jac(&self, _t: f64, _y: &[f64], p: &[f64], values: &mut [f64]) {
             values[0] = -p[1];
         }
-        fn selections(&self, _t: f64, y: &[f64], p: &[f64], out: &mut [f64]) {
+        fn selections(&self, _t: f64, y: &[f64], p: &[f64], _mask: &[u8], out: &mut [f64]) {
             out[0] = y[0];
             out[1] = y[0] / p[0];
             out[2] = y[1] * p[0];
@@ -547,6 +552,7 @@ mod test_models {
                     .sum::<u32>()
                     + self.discontinuities.len() as u32,
                 n_discontinuity_roots: self.discontinuities.len() as u32,
+                n_constants: 0,
                 units: BTreeMap::new(),
             }
         }
@@ -600,7 +606,7 @@ mod test_models {
                 }
             }
         }
-        fn selections(&self, _t: f64, y: &[f64], p: &[f64], out: &mut [f64]) {
+        fn selections(&self, _t: f64, y: &[f64], p: &[f64], _mask: &[u8], out: &mut [f64]) {
             for (o, v) in out.iter_mut().zip(y.iter().chain(p)) {
                 *o = *v;
             }

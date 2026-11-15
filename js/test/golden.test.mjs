@@ -40,8 +40,8 @@ test("another contract is refused by the loader", async () => {
   const { wasm, json } = goldenModel();
   const runtime = await loaderRuntime();
   await assert.rejects(
-    runtime.instantiate(wasm, json.replace('"model/1"', '"model/2"')),
-    /contract model\/2, not model\/1/,
+    runtime.instantiate(wasm, json.replace('"model/2"', '"model/1"')),
+    /contract model\/1, not model\/2/,
   );
   const instance = await runtime.instantiate(wasm, json);
   const req = readFileSync(path.join(GOLDEN, "request.json"), "utf8").replace('"simulation/1"', '"simulation/2"');

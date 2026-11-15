@@ -1,5 +1,5 @@
 //! The wire formats of the contracts as golden files: `testdata/golden/model.json` (the
-//! description `model/1` the compiler writes for `testdata/golden/model.xml`) and
+//! description `model/2` the compiler writes for `testdata/golden/model.xml`) and
 //! `testdata/golden/request.json` (a request `simulation/1` with every field). Both are read and
 //! written back byte for byte, the request runs on the model, and a description or a request of
 //! another contract is refused by every reader (the engine, the host; the loader in
@@ -94,23 +94,23 @@ fn another_contract_is_refused_by_the_engine_and_the_host() {
     // a description of another contract: the host refuses it before the engine sees it, the
     // engine refuses it too
     let desc: ModelDescription =
-        serde_json::from_str(&read("model.json").replace("\"model/1\"", "\"model/2\"")).unwrap();
+        serde_json::from_str(&read("model.json").replace("\"model/2\"", "\"model/1\"")).unwrap();
     let message = runtime
         .instantiate(&compiled.wasm, &desc)
         .err()
         .unwrap()
         .to_string();
     assert!(
-        message.contains("model/2") && message.contains("model/1"),
+        message.contains("model/1") && message.contains("model/2"),
         "{message}"
     );
     let decay = sbmlsim_engine::model::Decay { k: 0.5 };
     let mut decay_desc = decay.description();
-    decay_desc.contract = "model/2".to_string();
+    decay_desc.contract = "model/1".to_string();
     match sbmlsim_engine::Engine::new(Box::new(decay), decay_desc) {
-        Err(EngineError::Request(m)) => assert!(m.contains("model/2"), "{m}"),
+        Err(EngineError::Request(m)) => assert!(m.contains("model/1"), "{m}"),
         Err(other) => panic!("{other:?}"),
-        Ok(_) => panic!("model/2 accepted"),
+        Ok(_) => panic!("model/1 accepted"),
     }
     // a request of another contract: the engine in the host and the native engine
     let req: SimulationRequest =

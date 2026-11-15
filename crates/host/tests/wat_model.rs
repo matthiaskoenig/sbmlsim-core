@@ -265,7 +265,7 @@ fn descriptions_are_checked() {
         .unwrap()
         .to_string();
     assert!(
-        message.contains("model/0") && message.contains("model/1"),
+        message.contains("model/0") && message.contains("model/2"),
         "{message}"
     );
     // refused by engine_load: a Jacobian pattern of two states for one state
@@ -288,14 +288,14 @@ fn a_model_of_other_events_is_refused_before_its_event_sizes_are_read() {
     // the model claims 2^31 - 1 events and writes a count of assignments for every one: the
     // engine compares the number with the description (no event) and reads none of them,
     // instead of a buffer of 8 GiB which its memory does not hold
-    let sizes = "(i32.store offset=20 (local.get $out) (i32.const 0)))";
+    let sizes = "(i32.store offset=24 (local.get $out) (i32.const 0)))";
     let event_sizes = "(func (export \"model_event_sizes\") (param $out i32))";
     let wat = decay_wat();
     assert!(wat.contains(sizes) && wat.contains(event_sizes));
     let wat = wat
         .replace(
             sizes,
-            "(i32.store offset=20 (local.get $out) (i32.const 2147483647)))",
+            "(i32.store offset=24 (local.get $out) (i32.const 2147483647)))",
         )
         .replace(
             event_sizes,
@@ -312,7 +312,7 @@ fn a_model_of_other_events_is_refused_before_its_event_sizes_are_read() {
     assert!(
         message.contains(
             "the model has 1 states, 2 parameters, 2 selections, 1 entries of the \
-             Jacobian, 0 root functions, 2147483647 events of [] assignments"
+             Jacobian, 0 root functions, 0 constants, 2147483647 events of [] assignments"
         ),
         "{message}"
     );

@@ -9,7 +9,7 @@
 //! ```
 //!
 //! (the build script of `sbmlsim-host` runs it). It imports the memory as `env.memory`, the
-//! functions of the contract `model/1` as `model.<export name>` ([`ImportedModel`]) and the
+//! functions of the contract `model/2` as `model.<export name>` ([`ImportedModel`]) and the
 //! functions of WASI preview1 which Rust's std and wasi-libc reference; no WASI function is
 //! called by [`engine_load`] or [`engine_simulate`]. It exports the memory again (as `memory`,
 //! which a WASI host reads) and:
@@ -56,7 +56,7 @@ use serde::Serialize;
 
 use crate::{Engine, EngineError, ModelFns, Recorded};
 
-/// The functions of the contract `model/1`, imported from the module `model`; the names are the
+/// The functions of the contract `model/2`, imported from the module `model`; the names are the
 /// export names of `sbmlsim_abi` (`DEFAULTS`, `INIT`, ...). Every pointer is an offset into the
 /// shared memory.
 mod imports {
@@ -72,7 +72,13 @@ mod imports {
         pub fn model_delay(i: u32, t: f64, y: *const f64, p: *const f64) -> f64;
         pub fn model_event_values(i: u32, t: f64, y: *const f64, p: *const f64, out: *mut f64);
         pub fn model_event_apply(i: u32, t: f64, values: *const f64, y: *mut f64, p: *mut f64);
-        pub fn model_selections(t: f64, y: *const f64, p: *const f64, out: *mut f64);
+        pub fn model_selections(
+            t: f64,
+            y: *const f64,
+            p: *const f64,
+            mask: *const u8,
+            out: *mut f64,
+        );
         pub fn model_assign(t: f64, y: *mut f64, p: *mut f64);
         pub fn model_sizes(out: *mut u32);
         pub fn model_event_sizes(out: *mut u32);
@@ -127,15 +133,17 @@ impl ModelFns for ImportedModel {
     fn event_apply(&self, i: u32, t: f64, values: &[f64], y: &mut [f64], p: &mut [f64]) {
         unsafe { imports::model_event_apply(i, t, values.as_ptr(), y.as_mut_ptr(), p.as_mut_ptr()) }
     }
-    fn selections(&self, t: f64, y: &[f64], p: &[f64], out: &mut [f64]) {
-        unsafe { imports::model_selections(t, y.as_ptr(), p.as_ptr(), out.as_mut_ptr()) }
+    fn selections(&self, t: f64, y: &[f64], p: &[f64], mask: &[u8], out: &mut [f64]) {
+        unsafe {
+            imports::model_selections(t, y.as_ptr(), p.as_ptr(), mask.as_ptr(), out.as_mut_ptr())
+        }
     }
     fn assign(&self, t: f64, y: &mut [f64], p: &mut [f64]) {
         unsafe { imports::model_assign(t, y.as_mut_ptr(), p.as_mut_ptr()) }
     }
     fn sizes(&self) -> ModelSizes {
         let mut words = [0u32; ModelSizes::WORDS];
-        // SAFETY: the model writes its six sizes into the buffer of six `u32`
+        // SAFETY: the model writes its seven sizes into the buffer of seven `u32`
         unsafe { imports::model_sizes(words.as_mut_ptr()) };
         let words = words.map(u32::from_le);
         // the counts of assignments are read only when the model has the events of its
@@ -431,7 +439,7 @@ pub unsafe extern "C" fn engine_load(desc_ptr: i32, desc_len: i32) -> i32 {
     install_panic_hook();
     let bytes = unsafe { input(desc_ptr, desc_len) };
     let loaded = serde_json::from_slice::<ModelDescription>(bytes)
-        .map_err(|e| format!("the description is not one of model/1: {e}"))
+        .map_err(|e| format!("the description is not one of model/2: {e}"))
         .and_then(|desc| {
             let model = ImportedModel {
                 events: desc.events.len(),

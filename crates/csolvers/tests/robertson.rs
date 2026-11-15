@@ -399,3 +399,134 @@ fn native_and_wasm_bits() {
     }
     println!("largest relative difference {largest:e}");
 }
+
+/// `jac_sparse` with the structural zero `J31` as an explicit entry: another pattern of the same
+/// matrix (the column 0 has the rows 0, 1 and 2).
+extern "C" fn jac_sparse_wider(
+    _t: sunrealtype,
+    y: N_Vector,
+    _fy: N_Vector,
+    jac: SUNMatrix,
+    _data: *mut c_void,
+    _tmp1: N_Vector,
+    _tmp2: N_Vector,
+    _tmp3: N_Vector,
+) -> c_int {
+    let y = unsafe { values(y) };
+    let mut entries = jacobian(y).to_vec();
+    entries.insert(2, (2, 0, 0.0));
+    assert!(unsafe { SUNSparseMatrix_NNZ(jac) } as usize >= entries.len());
+    let (data, rows, cols) = unsafe {
+        (
+            std::slice::from_raw_parts_mut(SUNSparseMatrix_Data(jac), entries.len()),
+            std::slice::from_raw_parts_mut(SUNSparseMatrix_IndexValues(jac), entries.len()),
+            std::slice::from_raw_parts_mut(SUNSparseMatrix_IndexPointers(jac), NEQ + 1),
+        )
+    };
+    cols.fill(0);
+    for (k, (i, j, v)) in entries.into_iter().enumerate() {
+        data[k] = v;
+        rows[k] = i as sunindextype;
+        cols[j + 1] = k as sunindextype + 1;
+    }
+    0
+}
+
+/// Integrates Robertson with KLU to `4e10` and restarts CVODE (`CVodeReInit`) at every output,
+/// with the Jacobian of the pattern `wider[i]` (`jac_sparse_wider`, else `jac_sparse`) in the
+/// segment `i`. With `kept` the solver is `sbmlsim_SUNLinSol_KLUKept`, else `SUNLinSol_KLU`.
+/// The bits of the states at the outputs, the steps of every segment and the counters of the
+/// kept solver (the symbolic analyses and the factorizations which reused one).
+fn solve_restarted(kept: bool, wider: &[bool; NOUT]) -> (Vec<u64>, Vec<c_long>, (c_long, c_long)) {
+    unsafe {
+        let mut ctx: SUNContext = ptr::null_mut();
+        assert_eq!(SUNContext_Create(SUN_COMM_NULL, &mut ctx), 0);
+        let y = N_VNew_Serial(NEQ as sunindextype, ctx);
+        let abstol = N_VNew_Serial(NEQ as sunindextype, ctx);
+        assert!(!y.is_null() && !abstol.is_null());
+        values(y).copy_from_slice(&[1.0, 0.0, 0.0]);
+        values(abstol).copy_from_slice(&ATOL);
+        let mut mem = CVodeCreate(CV_BDF, ctx);
+        assert!(!mem.is_null());
+        check(CVodeInit(mem, Some(rhs), 0.0, y), "CVodeInit");
+        check(CVodeSVtolerances(mem, RTOL, abstol), "CVodeSVtolerances");
+        check(CVodeSetMaxNumSteps(mem, 100_000), "CVodeSetMaxNumSteps");
+        // room for the wider pattern and the diagonal entry `J33` CVODE adds
+        let n = NEQ as sunindextype;
+        let matrix = SUNSparseMatrix(n, n, NNZ as sunindextype + 2, CSC_MAT, ctx);
+        let solver = if kept {
+            sbmlsim_SUNLinSol_KLUKept(y, matrix, ctx)
+        } else {
+            SUNLinSol_KLU(y, matrix, ctx)
+        };
+        assert!(!matrix.is_null() && !solver.is_null());
+        check(
+            CVodeSetLinearSolver(mem, solver, matrix),
+            "CVodeSetLinearSolver",
+        );
+
+        let (mut bits, mut steps) = (Vec::new(), Vec::new());
+        let (mut t, mut tout) = (0.0, T1);
+        for (i, &wider) in wider.iter().enumerate() {
+            if i > 0 {
+                check(CVodeReInit(mem, t, y), "CVodeReInit");
+            }
+            let jac: CVLsJacFn = if wider {
+                Some(jac_sparse_wider)
+            } else {
+                Some(jac_sparse)
+            };
+            check(CVodeSetJacFn(mem, jac), "CVodeSetJacFn");
+            check(CVode(mem, tout, y, &mut t, CV_NORMAL), "CVode");
+            let mut n = 0;
+            check(CVodeGetNumSteps(mem, &mut n), "CVodeGetNumSteps");
+            steps.push(n);
+            bits.extend(values(y).iter().map(|v| v.to_bits()));
+            tout *= 10.0;
+        }
+        assert_eq!(t, 4e10);
+
+        let (mut analyses, mut reuses) = (0, 0);
+        let code = sbmlsim_SUNLinSol_KLUKeptStats(solver, &mut analyses, &mut reuses);
+        // the counters are only those of a kept solver
+        assert_eq!(
+            code == 0,
+            kept,
+            "sbmlsim_SUNLinSol_KLUKeptStats returned {code}"
+        );
+
+        CVodeFree(&mut mem);
+        check(SUNLinSolFree(solver), "SUNLinSolFree");
+        SUNMatDestroy(matrix);
+        N_VDestroy(abstol);
+        N_VDestroy(y);
+        assert_eq!(SUNContext_Free(&mut ctx), 0);
+        (bits, steps, (analyses, reuses))
+    }
+}
+
+#[test]
+fn klu_kept_reuses_the_analysis_of_the_same_pattern_with_the_same_bits() {
+    // every segment with the same pattern: one analysis, the 11 restarts reuse it
+    let same = [false; NOUT];
+    let kept = solve_restarted(true, &same);
+    let plain = solve_restarted(false, &same);
+    assert_eq!(kept.2, (1, NOUT as c_long - 1));
+    assert!(kept.1.iter().sum::<c_long>() > 500, "{:?} steps", kept.1);
+    assert_eq!(kept.1, plain.1);
+    assert_eq!(kept.0, plain.0);
+}
+
+#[test]
+fn klu_kept_analyzes_again_when_the_pattern_changes() {
+    // the pattern changes at the restarts 3 and 5, each needs a new analysis (only the last
+    // pattern is kept); the other 9 restarts reuse the analysis of the segment before
+    let mut wider = [false; NOUT];
+    wider[3] = true;
+    wider[4] = true;
+    let kept = solve_restarted(true, &wider);
+    let plain = solve_restarted(false, &wider);
+    assert_eq!(kept.2, (3, NOUT as c_long - 3));
+    assert_eq!(kept.1, plain.1);
+    assert_eq!(kept.0, plain.0);
+}

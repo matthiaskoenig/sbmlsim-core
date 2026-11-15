@@ -1,19 +1,19 @@
 # sbmlsim-core
 
-An SBML to WebAssembly compiler and a CVODE/KLU simulation engine, written in Rust. The two contracts `model/1` (the description and the exports of a compiled model) and `simulation/1` (the request and the result of a simulation) are defined in `crates/abi`.
+An SBML to WebAssembly compiler and a CVODE/KLU simulation engine, written in Rust. The two contracts `model/2` (the description and the exports of a compiled model) and `simulation/1` (the request and the result of a simulation) are defined in `crates/abi`.
 
 Documentation: https://matthiaskoenig.github.io/sbmlsim-core/ (built from `docs/` with Zensical: `uvx --from zensical==0.1.0 zensical build --clean`).
 
 ## What the core is
 
 - The compiler (`crates/compiler`, built on `sbml`, `ir` and `codegen`) turns an SBML Level 3 Version 2 core model (flat, no packages) into `model.wasm`, with analytic sparse Jacobians, and `model.json`, its description.
-- The engine (`crates/engine`, `engine.wasm`, wasm32-wasip1) is Rust with CVODE 7.9 and KLU. It runs a request on a compiled model: changes, events, steady states, dense or KLU linear solver (`KLU_THRESHOLD` 16 states).
+- The engine (`crates/engine`, `engine.wasm`, wasm32-wasip1) is Rust with CVODE 7.9 and KLU. It runs a request on a compiled model: changes, events, steady states, dense or KLU linear solver (`KLU_THRESHOLD` 12 states).
 - The hosts run the same `engine.wasm`, `mathlib.wasm` and `model.wasm` with bitwise identical results: wasmtime (`crates/host`, the command line `sbmlsim-core`) and Node and browsers (`js/loader.mjs`).
 - It is the simulation core of sbmlsim's web apps; the semantics are those of sbmlsim (PEtab v2), the integrator and the solvers those of roadrunner.
 
 ## Contracts
 
-- `model/1`: the description and the exports of a compiled model (`model.json`, `model.wasm`).
+- `model/2`: the description and the exports of a compiled model (`model.json`, `model.wasm`).
 - `simulation/1`: the request and the result of a simulation.
 
 Both are defined in `crates/abi`.
@@ -121,8 +121,13 @@ Measured in this repository: 1581 of 1789 cases pass, every case which sbmlsim p
 ```bash
 uv run scripts/prepare_model.py --bench bench/models.toml        # into target/bench-models/
 taskset -c 2 sbmlsim-core bench bench/models.toml --json target/bench/engine.json --export target/bench/export
+taskset -c 2 sbmlsim-core bench bench/models.toml --host native --json target/bench/native.json
+sbmlsim-core runtime -o js/runtime
 taskset -c 2 node js/bench.mjs target/bench/export --json target/bench/node.json
+node bench/web/serve.mjs target/bench/chrome.json &                # then open http://127.0.0.1:8765/bench/web/index.html
 uv run scripts/roadrunner_reference.py bench/models.toml --json target/bench/roadrunner.json
+uv run scripts/roadrunner_reference.py bench/models.toml --compare target/bench/roadrunner.json \
+    target/bench/native.json target/bench/engine.json target/bench/node.json target/bench/chrome.json
 uv run scripts/agreement.py                                        # the engine at rtol 1e-10 against roadrunner at 1e-12 (dense, KLU)
 ```
 
@@ -130,7 +135,9 @@ The KLU baseline of roadrunner is a `roadrunner-sparsedq` build (libroadrunner w
 
 The counters of the integrator of the last simulation are `Instance::stats` (wasmtime) and `instance.stats()` (`js/loader.mjs`).
 
-No model of the benchmark takes more than 2x the time of roadrunner native, dense or with KLU, in wasmtime, Node or Chrome (the largest 1.60, the event model in wasmtime), and every model agrees with roadrunner at tight tolerances. The engine locates the discontinuities of the math as roadrunner does: CVODE stops where the branch of a `piecewise` of a rule, a kinetic law or a trigger changes and starts again from the state there (the root functions after those of the triggers in `model_roots`, `n_discontinuity_roots` in `model.json`).
+`--host native` measures the engine compiled for the machine (`Runtime::instantiate_native`: `sbmlsim-engine` with the CVODE and KLU of the C compiler of the host, the model in wasmtime), the upper bound of what the integrator gives without WebAssembly. Its results are not bitwise those of `engine.wasm`: the C solvers call the `pow` of the C library of the host in the step sizes of CVODE.
+
+No model of the benchmark takes more than 2x the time of roadrunner native, dense or with KLU, in wasmtime, Node or Chrome (the largest 1.38, the event model dense in wasmtime; the PBPK models 0.57 to 0.83, Chen with KLU 0.16 to 0.19, `bench/RESULTS.md`, "Performance round"), and every model agrees with roadrunner at tight tolerances. The engine locates the discontinuities of the math as roadrunner does: CVODE stops where the branch of a `piecewise` of a rule, a kinetic law or a trigger changes and starts again from the state there (the root functions after those of the triggers in `model_roots`, `n_discontinuity_roots` in `model.json`).
 
 ## License
 

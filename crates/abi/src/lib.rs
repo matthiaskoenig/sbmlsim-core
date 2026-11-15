@@ -1,14 +1,24 @@
-//! The contracts of sbmlsim-core: `model/1` and `simulation/1`.
+//! The contracts of sbmlsim-core: `model/2` and `simulation/1`.
 //!
 //! A compiled model is a WebAssembly module which imports its linear memory and exports the
 //! functions below. Every pointer is an `i32` offset into the imported memory and every value
 //! is an `f64`, unless stated otherwise. `p` is the vector of the parameters (including the
-//! compartments and species references), `y` the vector of the states, `t` the time.
+//! compartments and species references), followed by the [`ModelDescription::n_constants`]
+//! constants of the model, `y` the vector of the states, `t` the time.
+//!
+//! The constants are the values of the subexpressions of the math which depend on nothing but
+//! the parameters which no assignment rule assigns (directly or through the assignment rules
+//! of such parameters alone): `pow(BW, 0.75)` of a parameter `BW`, say. `model_init` and
+//! `model_assign` compute them into `p` behind the parameters; the other functions read them
+//! there instead of computing them in every call, with the bits of the computation. The engine
+//! calls `model_assign` after every change of a parameter (by a change of the request or an
+//! event), so the constants are those of the current parameters whenever a function reads
+//! them.
 //!
 //! - `model_defaults(p, y)` writes the SBML values of the parameters and states.
 //! - `model_init(t, p, y, fixed)` evaluates the initial assignments and the initial values of
-//!   assignment rules in dependency order; `fixed` is a byte per entity (parameters, then
-//!   states), a fixed entity keeps its value.
+//!   assignment rules in dependency order, then the constants; `fixed` is a byte per entity
+//!   (parameters, then states), a fixed entity keeps its value.
 //! - `model_rhs(t, y, p, ydot)` is the right hand side of the ODEs.
 //! - `model_jac(t, y, p, values)` writes the values of the Jacobian in CSC order of the pattern
 //!   (an analytic Jacobian); it traps for a model of a colored difference quotient.
@@ -40,13 +50,15 @@
 //!   follows the assignments before it), and every other species keeps its amount, also one
 //!   which stores its concentration (the target of a rate rule) when its compartment changes
 //!   (directly or through an assignment rule).
-//! - `model_selections(t, y, p, out)` writes every value of [`ModelDescription::selections`],
-//!   in its order.
+//! - `model_selections(t, y, p, mask, out)` writes the values of
+//!   [`ModelDescription::selections`] whose byte of `mask` (one per selection, in its order) is
+//!   not 0, each at its position in `out`; it may write others too (the compiler computes only
+//!   the cheap ones, a load or two, without looking at the mask).
 //! - `model_assign(t, y, p)` writes the current values of the targets of assignment rules into
-//!   `p` and `y` (after a change or an event).
-//! - `model_sizes(out)` writes the sizes of the model as six `i32` (little endian) at `out`: the
-//!   numbers of states, parameters, selections, entries of the Jacobian, root functions and
-//!   events. `model_event_sizes(out)` writes the number of assignments of every event, one `i32`
+//!   `p` and `y`, then the constants into `p` (after a change or an event).
+//! - `model_sizes(out)` writes the sizes of the model as seven `i32` (little endian) at `out`:
+//!   the numbers of states, parameters, selections, entries of the Jacobian, root functions,
+//!   constants and events. `model_event_sizes(out)` writes the number of assignments of every event, one `i32`
 //!   per event. Together they are [`ModelSizes`], the length of every vector the engine lends to
 //!   the model (`p`, `y`, `fixed`, `ydot`, the values of the Jacobian, `g`, the values of each
 //!   event, the selections). The engine compares them with the description when it loads the
@@ -57,13 +69,20 @@
 //! only, and every function computes the values of the assignment rules it reads itself, so it
 //! does not depend on the values of the targets of the rules in `p` and `y`.
 //!
-//! Revisions of `model/1` before its first release: the field [`ModelDescription::n_roots`],
+//! `model/2` is `model/1` with the constants ([`ModelDescription::n_constants`], their word in
+//! `model_sizes`, their computation by `model_init` and `model_assign`) and the `mask` of
+//! `model_selections`, which make the right hand side and the output faster.
+//!
+//! `model/1` is the contract of sbmlsim-core 0.1.0; a model compiled for it is compiled again.
+//!
+//! Revisions of `model/1` before its release in 0.1.0: the field [`ModelDescription::n_roots`],
 //! the exports `model_sizes` and `model_event_sizes` and the time of `model_event_apply` were
-//! added with the events, the field `stores_concentration` of [`EntityKind::Species`] with the
-//! changes, the field [`ModelDescription::n_discontinuity_roots`] and the root functions of the
-//! discontinuities after those of the triggers with the root finding of the conditions of
-//! `piecewise`, the field [`ModelDescription::compiler`] (the compiler and its version) before
-//! the contracts were frozen (no version change, nothing was released).
+//! added with the events, the field
+//! `stores_concentration` of [`EntityKind::Species`] with the changes, the field
+//! [`ModelDescription::n_discontinuity_roots`] and the root functions of the discontinuities
+//! after those of the triggers with the root finding of the conditions of `piecewise`, the
+//! field [`ModelDescription::compiler`] (the compiler and its version) before the contracts
+//! were frozen (no version change, nothing was released).
 //!
 //! Revisions of `simulation/1` before its first release: the `seed` of a request is 1 when it
 //! is absent ([`DEFAULT_SEED`]), set before the contracts were frozen (no version change).
@@ -82,7 +101,7 @@ use serde::{Deserialize, Serialize};
 pub use request::*;
 
 /// The version of the description of a compiled model.
-pub const MODEL_CONTRACT: &str = "model/1";
+pub const MODEL_CONTRACT: &str = "model/2";
 /// The version of the request and the result of a simulation.
 pub const SIMULATION_CONTRACT: &str = "simulation/1";
 
@@ -172,6 +191,9 @@ pub struct ModelDescription {
     /// The number of root functions of the discontinuities of the math, the last ones of the
     /// `n_roots` (the ones before them are those of the triggers of the events).
     pub n_discontinuity_roots: u32,
+    /// The number of constants of the model, which `p` holds behind the parameters (see the
+    /// crate documentation).
+    pub n_constants: u32,
     /// The unit expression of every entity id.
     pub units: BTreeMap<String, String>,
 }
@@ -190,6 +212,8 @@ pub struct ModelSizes {
     pub jacobian_entries: u32,
     /// The number of root functions.
     pub roots: u32,
+    /// The number of constants (behind the parameters in `p`).
+    pub constants: u32,
     /// The number of events.
     pub events: u32,
     /// The number of assignments of every event, one per event (of a model whose number of
@@ -199,7 +223,7 @@ pub struct ModelSizes {
 
 impl ModelSizes {
     /// The number of `i32` values `model_sizes` writes.
-    pub const WORDS: usize = 6;
+    pub const WORDS: usize = 7;
 
     /// The sizes a description gives.
     pub fn of(desc: &ModelDescription) -> ModelSizes {
@@ -210,13 +234,14 @@ impl ModelSizes {
             selections: desc.selections.len() as u32,
             jacobian_entries: pattern.row_idx.len() as u32,
             roots: desc.n_roots,
+            constants: desc.n_constants,
             events: desc.events.len() as u32,
             assignments: desc.events.iter().map(|e| e.n_assignments).collect(),
         }
     }
 
     /// The words of `model_sizes`: the states, parameters, selections, entries of the Jacobian,
-    /// root functions and events.
+    /// root functions, constants and events.
     pub fn words(&self) -> [u32; Self::WORDS] {
         [
             self.states,
@@ -224,6 +249,7 @@ impl ModelSizes {
             self.selections,
             self.jacobian_entries,
             self.roots,
+            self.constants,
             self.events,
         ]
     }
@@ -237,6 +263,7 @@ impl ModelSizes {
             selections,
             jacobian_entries,
             roots,
+            constants,
             events,
         ] = words;
         ModelSizes {
@@ -245,6 +272,7 @@ impl ModelSizes {
             selections,
             jacobian_entries,
             roots,
+            constants,
             events,
             assignments,
         }
@@ -256,12 +284,13 @@ impl std::fmt::Display for ModelSizes {
         write!(
             f,
             "{} states, {} parameters, {} selections, {} entries of the Jacobian, {} root \
-             functions, {} events of {:?} assignments",
+             functions, {} constants, {} events of {:?} assignments",
             self.states,
             self.parameters,
             self.selections,
             self.jacobian_entries,
             self.roots,
+            self.constants,
             self.events,
             self.assignments
         )
@@ -596,10 +625,10 @@ mod tests {
 
     #[test]
     fn contract_mismatch_names_both() {
-        let message = check_contract("model/2", MODEL_CONTRACT)
+        let message = check_contract("model/1", MODEL_CONTRACT)
             .unwrap_err()
             .to_string();
-        assert!(message.contains("model/2") && message.contains("model/1"));
+        assert!(message.contains("model/1") && message.contains("model/2"));
         assert!(check_contract(MODEL_CONTRACT, MODEL_CONTRACT).is_ok());
     }
 
@@ -686,10 +715,11 @@ mod tests {
             }],
             n_roots: 3,
             n_discontinuity_roots: 1,
+            n_constants: 2,
             units: BTreeMap::new(),
         };
         let sizes = ModelSizes::of(&d);
-        assert_eq!(sizes.words(), [1, 0, 1, 1, 3, 1]);
+        assert_eq!(sizes.words(), [1, 0, 1, 1, 3, 2, 1]);
         assert_eq!(sizes.assignments, [2]);
         assert_eq!(
             ModelSizes::from_words(sizes.words(), sizes.assignments.clone()),

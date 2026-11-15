@@ -220,7 +220,7 @@ fn imports_only_memory_and_math() {
 }
 
 #[test]
-fn exports_model_1_functions() {
+fn exports_model_2_functions() {
     use ValType::{F64, I32};
     let p = parse(&wasm_of(&small()));
     let expected: [(&str, &[ValType], &[ValType]); 14] = [
@@ -234,7 +234,7 @@ fn exports_model_1_functions() {
         (abi::DELAY, &[I32, F64, I32, I32], &[F64]),
         (abi::EVENT_VALUES, &[I32, F64, I32, I32, I32], &[]),
         (abi::EVENT_APPLY, &[I32, F64, I32, I32, I32], &[]),
-        (abi::SELECTIONS, &[F64, I32, I32, I32], &[]),
+        (abi::SELECTIONS, &[F64, I32, I32, I32, I32], &[]),
         (abi::ASSIGN, &[F64, I32, I32], &[]),
         (abi::SIZES, &[I32], &[]),
         (abi::EVENT_SIZES, &[I32], &[]),
@@ -415,7 +415,8 @@ fn the_events_are_described() {
 #[test]
 fn a_statement_above_the_limits_is_an_error() {
     // a selection which reads more rules than a function may have locals: one statement whose
-    // values are alive at once, which no split makes smaller
+    // values are alive at once, which no split makes smaller (rules of the time, which are no
+    // constants of the optimizer)
     let n = MAX_LOCALS;
     let parameters = (0..=n)
         .map(|i| Entity {
@@ -431,7 +432,7 @@ fn a_statement_above_the_limits_is_an_error() {
             target: Symbol::Param(i as u32),
             expr: Expr::apply(
                 Op::Times,
-                vec![Expr::Symbol(Symbol::Param(0)), Expr::Number(i as f64)],
+                vec![Expr::Symbol(Symbol::Time), Expr::Number(i as f64)],
             ),
         })
         .collect();

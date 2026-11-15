@@ -455,3 +455,113 @@ fn unread_rules_are_not_computed() {
     assert_eq!(outputs(&plan.selections).len(), 4);
     assert_eq!(lets(&plan.selections).len(), 3);
 }
+
+fn constant(k: u32) -> Expr {
+    Expr::Symbol(Symbol::Constant(k))
+}
+
+#[test]
+fn subtrees_of_the_parameters_alone_are_constants() {
+    // parameters k, V, BW, b (b = pow(BW, 0.75), a rule of parameters alone) and r (r = x * k,
+    // a rule of the state); x' = k * V * b * x - r + x * k * V
+    let rules = vec![
+        Assignment {
+            target: Symbol::Param(3),
+            expr: ap(Op::Power, vec![p(2), n(0.75)]),
+        },
+        Assignment {
+            target: Symbol::Param(4),
+            expr: ap(Op::Times, vec![x(), p(0)]),
+        },
+    ];
+    let rate = ap(
+        Op::Plus,
+        vec![
+            ap(
+                Op::Minus,
+                vec![ap(Op::Times, vec![p(0), p(1), p(3), x()]), p(4)],
+            ),
+            ap(Op::Times, vec![x(), p(0), p(1)]),
+        ],
+    );
+    let model = Model {
+        id: Some("m".to_string()),
+        states: vec![entity("x")],
+        parameters: ["k", "V", "BW", "b", "r"]
+            .iter()
+            .map(|s| entity(s))
+            .collect(),
+        assignment_rules: rules,
+        initial: vec![],
+        rates: vec![rate],
+        events: vec![],
+        selections: vec![],
+    };
+    // without the common subexpressions, which would share `k * V * b` in the constants
+    let plan = plan(&model, &jacobian(&model), &[], false);
+    // the rule b is the constant 0, the leading factors `k * V * b` another (and the entry of
+    // the Jacobian, of the parameters alone, a third); the rule r is a let of the state;
+    // `x * k * V` is `(x * k) * V` and stays
+    assert_eq!(plan.n_constants(), 3, "{:?}", plan.constants);
+    let constants = outputs(&plan.constants);
+    assert_same(constants[0], &ap(Op::Power, vec![p(2), n(0.75)]));
+    let kvb = ap(Op::Times, vec![p(0), p(1), constant(0)]);
+    let k = constants
+        .iter()
+        .position(|c| same(c, &kvb))
+        .expect("k * V * b") as u32;
+    let rhs: Vec<Symbol> = lets(&plan.rhs).iter().map(|(s, _)| *s).collect();
+    assert_eq!(rhs, [Symbol::Param(4)]);
+    assert_same(
+        outputs(&plan.rhs)[0],
+        &ap(
+            Op::Plus,
+            vec![
+                ap(Op::Minus, vec![ap(Op::Times, vec![constant(k), x()]), p(4)]),
+                ap(Op::Times, vec![x(), p(0), p(1)]),
+            ],
+        ),
+    );
+    // the entry of the Jacobian is a constant, and no function computes pow
+    let jac = plan.jac.as_ref().expect("an analytic Jacobian");
+    assert!(
+        matches!(outputs(jac)[0], Expr::Symbol(Symbol::Constant(_))),
+        "{jac:?}"
+    );
+    assert_eq!(count(jac, Op::Power), 0, "{jac:?}");
+    assert_eq!(count(&plan.rhs, Op::Power), 0);
+    // the constants evaluate to the doubles of the code as written
+    let read = |s: Symbol| match s {
+        Symbol::Param(2) => 70.0,
+        Symbol::Param(_) => 1.5,
+        _ => unreachable!("{s:?}"),
+    };
+    assert_eq!(
+        eval(constants[0], &read).to_bits(),
+        sbmlsim_mathlib::f::math_pow(70.0, 0.75).to_bits()
+    );
+}
+
+#[test]
+fn a_parameter_of_a_rule_of_the_time_is_no_constant() {
+    // a = 2 * time, x' = -(a * k) * x: `a * k` varies, k alone is a symbol
+    let rules = vec![Assignment {
+        target: Symbol::Param(1),
+        expr: ap(Op::Times, vec![n(2.0), t()]),
+    }];
+    let model = Model {
+        id: Some("m".to_string()),
+        states: vec![entity("x")],
+        parameters: ["k", "a"].iter().map(|s| entity(s)).collect(),
+        assignment_rules: rules,
+        initial: vec![],
+        rates: vec![ap(
+            Op::Times,
+            vec![ap(Op::Minus, vec![ap(Op::Times, vec![p(1), p(0)])]), x()],
+        )],
+        events: vec![],
+        selections: vec![],
+    };
+    let plan = plan(&model, &jacobian(&model), &[], true);
+    assert_eq!(plan.n_constants(), 0, "{:?}", plan.constants);
+}

@@ -5,7 +5,7 @@
 //! is `-O3 -DNDEBUG -ffp-contract=off -fno-fast-math`, so neither the optimization level of the
 //! cargo profile, nor SIMD, nor the contraction into fused multiply-adds changes a result.
 //! `sundials_config.h` is generated per target into `OUT_DIR`, the configuration CMake writes
-//! with `SUNDIALS_INDEX_SIZE=64` and KLU enabled.
+//! with `SUNDIALS_INDEX_SIZE=32` and KLU enabled.
 //!
 //! The flags of the environment are not used: `cc` appends `CFLAGS` (and `CFLAGS_<target>`,
 //! `TARGET_CFLAGS`, `HOST_CFLAGS`) after the flags of the crate, so a stray `-ffast-math` there
@@ -72,49 +72,53 @@ const SUNDIALS_SOURCES: &[&str] = &[
     "sunnonlinsol/fixedpoint/sunnonlinsol_fixedpoint.c",
 ];
 
-/// The sources of SuiteSparse, relative to `third_party/SuiteSparse`: the real `int64_t`
-/// (`_l`) variants of KLU, AMD, COLAMD and BTF, which `SUNLinSol_KLU` calls with
-/// `SUNDIALS_INT64_T`, their version functions and SuiteSparse_config.
+/// The sources of SuiteSparse, relative to `third_party/SuiteSparse`: the real `int32_t`
+/// variants (without `_l`) of KLU, AMD, COLAMD and BTF, which `SUNLinSol_KLU` calls with
+/// `SUNDIALS_INT32_T`, their version functions and SuiteSparse_config.
 const SUITESPARSE_SOURCES: &[&str] = &[
     "SuiteSparse_config/SuiteSparse_config.c",
-    "AMD/Source/amd_l1.c",
-    "AMD/Source/amd_l2.c",
-    "AMD/Source/amd_l_aat.c",
-    "AMD/Source/amd_l_control.c",
-    "AMD/Source/amd_l_defaults.c",
-    "AMD/Source/amd_l_dump.c",
-    "AMD/Source/amd_l_info.c",
-    "AMD/Source/amd_l_order.c",
-    "AMD/Source/amd_l_postorder.c",
-    "AMD/Source/amd_l_post_tree.c",
-    "AMD/Source/amd_l_preprocess.c",
-    "AMD/Source/amd_l_valid.c",
+    "AMD/Source/amd_1.c",
+    "AMD/Source/amd_2.c",
+    "AMD/Source/amd_aat.c",
+    "AMD/Source/amd_control.c",
+    "AMD/Source/amd_defaults.c",
+    "AMD/Source/amd_dump.c",
+    "AMD/Source/amd_info.c",
+    "AMD/Source/amd_order.c",
+    "AMD/Source/amd_postorder.c",
+    "AMD/Source/amd_post_tree.c",
+    "AMD/Source/amd_preprocess.c",
+    "AMD/Source/amd_valid.c",
     "AMD/Source/amd_version.c",
-    "COLAMD/Source/colamd_l.c",
+    "COLAMD/Source/colamd.c",
     "COLAMD/Source/colamd_version.c",
-    "BTF/Source/btf_l_maxtrans.c",
-    "BTF/Source/btf_l_order.c",
-    "BTF/Source/btf_l_strongcomp.c",
+    "BTF/Source/btf_maxtrans.c",
+    "BTF/Source/btf_order.c",
+    "BTF/Source/btf_strongcomp.c",
     "BTF/Source/btf_version.c",
-    "KLU/Source/klu_l.c",
-    "KLU/Source/klu_l_analyze.c",
-    "KLU/Source/klu_l_analyze_given.c",
-    "KLU/Source/klu_l_defaults.c",
-    "KLU/Source/klu_l_diagnostics.c",
-    "KLU/Source/klu_l_dump.c",
-    "KLU/Source/klu_l_extract.c",
-    "KLU/Source/klu_l_factor.c",
-    "KLU/Source/klu_l_free_numeric.c",
-    "KLU/Source/klu_l_free_symbolic.c",
-    "KLU/Source/klu_l_kernel.c",
-    "KLU/Source/klu_l_memory.c",
-    "KLU/Source/klu_l_refactor.c",
-    "KLU/Source/klu_l_scale.c",
-    "KLU/Source/klu_l_solve.c",
-    "KLU/Source/klu_l_sort.c",
-    "KLU/Source/klu_l_tsolve.c",
+    "KLU/Source/klu.c",
+    "KLU/Source/klu_analyze.c",
+    "KLU/Source/klu_analyze_given.c",
+    "KLU/Source/klu_defaults.c",
+    "KLU/Source/klu_diagnostics.c",
+    "KLU/Source/klu_dump.c",
+    "KLU/Source/klu_extract.c",
+    "KLU/Source/klu_factor.c",
+    "KLU/Source/klu_free_numeric.c",
+    "KLU/Source/klu_free_symbolic.c",
+    "KLU/Source/klu_kernel.c",
+    "KLU/Source/klu_memory.c",
+    "KLU/Source/klu_refactor.c",
+    "KLU/Source/klu_scale.c",
+    "KLU/Source/klu_solve.c",
+    "KLU/Source/klu_sort.c",
+    "KLU/Source/klu_tsolve.c",
     "KLU/Source/klu_version.c",
 ];
+
+/// The C sources of this crate, relative to its directory: the KLU linear solver which keeps its
+/// symbolic analysis across the initializations of CVODE (`sbmlsim_SUNLinSol_KLUKept`).
+const CRATE_SOURCES: &[&str] = &["csrc/sunlinsol_klu_kept.c"];
 
 /// The include directories of SuiteSparse, relative to `third_party/SuiteSparse`.
 const SUITESPARSE_INCLUDES: &[&str] = &[
@@ -139,6 +143,9 @@ fn main() {
     }
     for source in SUITESPARSE_SOURCES {
         require(&suitesparse.join(source));
+    }
+    for source in CRATE_SOURCES {
+        require(&manifest.join(source));
     }
 
     for key in c_flag_variables() {
@@ -202,6 +209,9 @@ fn main() {
     for source in SUITESPARSE_SOURCES {
         build.file(suitesparse.join(source));
     }
+    for source in CRATE_SOURCES {
+        build.file(manifest.join(source));
+    }
     build.compile("sbmlsim_csolvers");
     if !wasm && env::var("CARGO_CFG_TARGET_FAMILY").as_deref() == Ok("unix") {
         println!("cargo:rustc-link-lib=m");
@@ -209,6 +219,7 @@ fn main() {
 
     println!("cargo:rerun-if-changed=build.rs");
     for dir in [
+        manifest.join("csrc"),
         sundials.join("include"),
         sundials.join("src/sundials"),
         sundials.join("src/cvode"),
@@ -243,12 +254,6 @@ fn require(path: &Path) {
     );
 }
 
-/// Writes `sundials/sundials_config.h` and `sundials/sundials_export.h` into `include`.
-///
-/// The configuration is the one CMake writes for this build: double precision, `int64_t`
-/// indices, `long int` counters, KLU, no MPI, the logging level 0 (no logging: the logger of a
-/// context reads no environment variable and writes nothing, the engine records the errors with
-/// an error handler of its own), and the modules of [`SUNDIALS_SOURCES`].
 /// The variables of C flags in the environment which `cc` would append to the flags of the
 /// crate: `CFLAGS` and its variants of a target and a kind (`CFLAGS_<target>`,
 /// `TARGET_CFLAGS`, `HOST_CFLAGS`).
@@ -266,6 +271,18 @@ fn c_flag_variables() -> Vec<std::ffi::OsString> {
         .collect()
 }
 
+/// Writes `sundials/sundials_config.h` and `sundials/sundials_export.h` into `include`.
+///
+/// The configuration is the one CMake writes for this build: double precision, `int32_t`
+/// indices, `long int` counters, KLU, no MPI, the logging level 0 (no logging: the logger of a
+/// context reads no environment variable and writes nothing, the engine records the errors with
+/// an error handler of its own), and the modules of [`SUNDIALS_SOURCES`].
+///
+/// The indices are 32 bits, also natively, so every target computes with the same code: half
+/// the memory of the index arrays of KLU and of the sparse matrix, and no conversion of a 64 bit
+/// index into a 32 bit address in wasm32, which makes the KLU runs 3 to 6% faster in wasm (the
+/// results are bitwise those of 64 bit indices). The engine refuses a model whose matrix would
+/// not fit (`sbmlsim-engine`, `cvode::check_index_range`).
 fn write_config(include: &Path, compiler: &str, flags: &str) {
     let dir = include.join("sundials");
     fs::create_dir_all(&dir).unwrap();
@@ -313,8 +330,8 @@ fn write_config(include: &Path, compiler: &str, flags: &str) {
         ("SUNDIALS_C_COMPILER_HAS_ATTRIBUTE_ASSUME", ""),
         ("SUNDIALS_C_COMPILER_HAS_ATTRIBUTE_UNUSED", ""),
         ("SUNDIALS_DOUBLE_PRECISION", "1"),
-        ("SUNDIALS_INT64_T", "1"),
-        ("SUNDIALS_INDEX_TYPE", "int64_t"),
+        ("SUNDIALS_INT32_T", "1"),
+        ("SUNDIALS_INDEX_TYPE", "int32_t"),
         ("SUNDIALS_COUNTER_TYPE", "long int"),
         ("SUNDIALS_HAVE_POSIX_TIMERS", ""),
         ("SUNDIALS_LOGGING_LEVEL", "0"),

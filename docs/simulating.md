@@ -61,7 +61,7 @@ The settings of the integrator:
 | `maximum_time_step` | `0.0` | the largest step in time, `0.0` for none |
 | `initial_time_step` | `0.0` | the first step in time, `0.0` for CVODE's choice |
 | `stiff` | `true` | BDF (`true`) or Adams (`false`) |
-| `linear_solver` | `"auto"` | `"auto"` (dense below 16 states, KLU from 16), `"dense"` or `"klu"` |
+| `linear_solver` | `"auto"` | `"auto"` (dense up to 12 states, KLU above), `"dense"` or `"klu"` |
 | `jacobian` | `"auto"` | `"auto"`, `"analytic"` (refused for a model without one) or `"difference_quotient"` (the sparse difference quotient over the colors of the columns of the pattern, also for a model with an analytic Jacobian) |
 
 **Initialization.** The model gets its SBML values, then the pre-initialization values of the request and of its steady state, then its initial assignments and the initial values of its assignment rules are evaluated at the time 0, whatever the start of the simulation (as sbmlsim initializes roadrunner at its time 0). The integration runs in absolute time from the start, in segments between the changes.
@@ -78,14 +78,14 @@ An error of the engine has a kind: `load` (the description is refused), `request
 
 The counters of the integrator of the last simulation (steps, calls of the right hand side and of the Jacobian, setups of the linear solver, error test and convergence failures, calls of the root functions, (re)initializations of CVODE, the calls of the probes of the triggers and of the criterion of a steady state) are `Instance::stats` in wasmtime and `instance.stats()` in JavaScript; they are diagnostics, no part of a result.
 
-## The description, `model/1`
+## The description, `model/2`
 
 `model.json` describes the compiled model next to its `model.wasm`. The engine compares the sizes of the description with the ones `model.wasm` reports when it loads the model, so a description which does not belong to its module is an error.
 
 | field | what it holds |
 |---|---|
-| `contract` | `"model/1"` |
-| `compiler` | the compiler and its version, e.g. `"sbmlsim-compiler 0.1.0"` |
+| `contract` | `"model/2"` |
+| `compiler` | the compiler and its version, e.g. `"sbmlsim-compiler 0.2.0"` |
 | `id` | the id of the model |
 | `states` | the states, in the order of the state vector (the order of a `per_state` tolerance) |
 | `parameters` | the parameters (with the compartments, the species which are not states and the species references), in the order of the parameter vector |
@@ -94,14 +94,15 @@ The counters of the integrator of the last simulation (steps, calls of the right
 | `events` | per event `id` (empty for an event without one), `has_delay`, `has_priority`, `persistent`, `initial_value`, `use_values_from_trigger_time`, `n_assignments` |
 | `n_roots` | the number of root functions of the model, those of the triggers first |
 | `n_discontinuity_roots` | the number of root functions of the discontinuities of the math (the branches of `piecewise`), the last of the `n_roots` |
+| `n_constants` | the number of constants of the model: the subexpressions of the parameters alone, which `model_init` and `model_assign` compute into the parameter vector behind the parameters, so the right hand side does not compute them in every call |
 | `units` | the unit expression of every entity id |
 
 An entity of `states` and `parameters` is `{"id", "kind", "initial", "settable"}`: its SBML id; its kind, `"compartment"`, `"parameter"`, `"species_reference"` or `{"species": {"compartment", "has_only_substance_units", "stores_concentration"}}`; its initial value as loaded (a value which is not finite is the string `"NaN"`, `"inf"` or `"-inf"`, since JSON has no such numbers); and whether a change may set it (the target of an assignment rule may not).
 
 ```json
 {
-  "contract": "model/1",
-  "compiler": "sbmlsim-compiler 0.1.0",
+  "contract": "model/2",
+  "compiler": "sbmlsim-compiler 0.2.0",
   "id": "toy",
   "states": [
     { "id": "A", "kind": { "species": { "compartment": "c", "has_only_substance_units": false, "stores_concentration": false } }, "initial": 20.0, "settable": true }
@@ -112,6 +113,7 @@ An entity of `states` and `parameters` is `{"id", "kind", "initial", "settable"}
   "events": [],
   "n_roots": 0,
   "n_discontinuity_roots": 0,
+  "n_constants": 0,
   "units": {}
 }
 ```

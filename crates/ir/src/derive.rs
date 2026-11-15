@@ -186,8 +186,8 @@ fn states_read(e: &Expr, position: &HashMap<Symbol, usize>, deps: &[Vec<u32>]) -
             }
         }
         Symbol::Time | Symbol::Derivative(_) => {}
-        Symbol::Common(_) => {
-            unreachable!("common subexpressions are only in the programs of the optimizer")
+        Symbol::Common(_) | Symbol::Constant(_) => {
+            unreachable!("the symbols of the optimizer are only in its programs")
         }
     });
     out.into_iter().collect()

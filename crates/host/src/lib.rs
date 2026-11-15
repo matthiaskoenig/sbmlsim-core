@@ -35,6 +35,10 @@ use wasmtime::{
 use wasmtime_wasi::WasiCtxBuilder;
 use wasmtime_wasi::p1::{self, WasiP1Ctx};
 
+mod native;
+
+pub use native::NativeInstance;
+
 /// `engine.wasm` of this build (`sbmlsim-engine` for `wasm32-wasip1`).
 pub static ENGINE_WASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/engine.wasm"));
 
@@ -141,6 +145,11 @@ fn store(engine: &Engine, max_memory: usize) -> Store<HostState> {
 }
 
 /// A linker with WASI preview1.
+/// A linker without WASI, of a store without data (the model of the native engine).
+fn linker_without_wasi(engine: &Engine) -> Linker<()> {
+    Linker::new(engine)
+}
+
 fn linker(engine: &Engine) -> anyhow::Result<Linker<HostState>> {
     let mut linker = Linker::new(engine);
     p1::add_to_linker_sync(&mut linker, |state: &mut HostState| &mut state.wasi)?;
@@ -344,13 +353,16 @@ impl Runtime {
             .context("model.wasm does not instantiate")?;
         let rhs = model.get_typed_func(&mut store, sbmlsim_abi::RHS)?;
         let jac = model.get_typed_func(&mut store, sbmlsim_abi::JAC)?;
+        let assign = model.get_typed_func(&mut store, sbmlsim_abi::ASSIGN)?;
         Ok(ModelFunctions {
             store,
             memory,
             rhs,
             jac,
+            assign,
             n: desc.states.len(),
             n_params: desc.parameters.len(),
+            n_constants: desc.n_constants as usize,
             nnz: desc.jacobian.pattern().nnz(),
         })
     }
@@ -363,8 +375,10 @@ pub struct ModelFunctions {
     memory: Memory,
     rhs: TypedFunc<(f64, i32, i32, i32), ()>,
     jac: TypedFunc<(f64, i32, i32, i32), ()>,
+    assign: TypedFunc<(f64, i32, i32), ()>,
     n: usize,
     n_params: usize,
+    n_constants: usize,
     nnz: usize,
 }
 
@@ -382,7 +396,9 @@ impl ModelFunctions {
         self.call(function, t, y, p, self.nnz)
     }
 
-    /// Calls `function(t, y, p, out)` with the vectors in the memory, `y` first.
+    /// Calls `function(t, y, p, out)` with the vectors in the memory, `y` first, after
+    /// `model_assign(t, y, p)` on them, which computes the constants of the model behind the
+    /// parameters (and the targets of the assignment rules, which the functions do not read).
     fn call(
         &mut self,
         function: TypedFunc<(f64, i32, i32, i32), ()>,
@@ -401,7 +417,7 @@ impl ModelFunctions {
         );
         let bytes = |v: &[f64]| v.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>();
         let (y_at, p_at) = (0usize, 8 * y.len());
-        let out_at = p_at + 8 * p.len();
+        let out_at = p_at + 8 * (p.len() + self.n_constants);
         let end = out_at + 8 * n_out;
         let size = self.memory.data_size(&self.store);
         if end > size {
@@ -411,6 +427,8 @@ impl ModelFunctions {
         self.memory.write(&mut self.store, y_at, &bytes(y))?;
         self.memory.write(&mut self.store, p_at, &bytes(p))?;
         let address = |a: usize| i32::try_from(a).context("the vectors do not fit the memory");
+        self.assign
+            .call(&mut self.store, (t, address(y_at)?, address(p_at)?))?;
         function.call(
             &mut self.store,
             (t, address(y_at)?, address(p_at)?, address(out_at)?),

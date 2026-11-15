@@ -4,7 +4,7 @@
 //! vectors of the states `y` and of the parameters `p`, the assignment rules in their order of
 //! dependency, the initial evaluations in their order of dependency, one rate per state, the
 //! events and the selections, every math an [`Expr`] over resolved [`Symbol`]s. Code generation
-//! (`sbmlsim-codegen`) emits the functions of `model/1` from it, as written or as the programs of the
+//! (`sbmlsim-codegen`) emits the functions of `model/2` from it, as written or as the programs of the
 //! optimizer ([`optimize`]), with the Jacobian of [`derive`](mod@derive) and the meanings of
 //! [`eval`]; nothing here does file system, environment or OS access, so the crate builds for
 //! `wasm32-unknown-unknown`.
@@ -354,13 +354,13 @@ impl Model {
     ///
     /// # Panics
     ///
-    /// For [`Symbol::Time`], a [`Symbol::Derivative`], a [`Symbol::Common`] or an index out of
-    /// range.
+    /// For [`Symbol::Time`], a [`Symbol::Derivative`], a [`Symbol::Common`], a
+    /// [`Symbol::Constant`] or an index out of range.
     pub fn entity(&self, symbol: Symbol) -> &Entity {
         match symbol {
             Symbol::State(i) => &self.states[i as usize],
             Symbol::Param(i) => &self.parameters[i as usize],
-            Symbol::Time | Symbol::Derivative(_) | Symbol::Common(_) => {
+            Symbol::Time | Symbol::Derivative(_) | Symbol::Common(_) | Symbol::Constant(_) => {
                 panic!("{symbol:?} is no entity")
             }
         }

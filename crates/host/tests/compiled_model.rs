@@ -663,3 +663,57 @@ fn a_failed_request_leaves_the_instance_as_a_fresh_one() {
         5.0
     );
 }
+
+/// `x' = -pow(k, 1.5) * BSA * x` with the rule `BSA = sqrt(BW * H / 3600)` of parameters, and
+/// the event `x < 0.5`: `k = 2 k`: the constants of the optimizer (`pow(k, 1.5) * BSA`) follow
+/// every change of their parameters, by a change of the request and by an event, so the
+/// optimized model gives the bits of the model as written.
+#[test]
+fn the_constants_follow_the_changes_and_the_events() {
+    let sbml = format!(
+        r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2"><model id="c">
+<listOfParameters><parameter id="x" value="1" constant="false"/><parameter id="k" value="0.3" constant="false"/><parameter id="BW" value="70" constant="true"/><parameter id="H" value="175" constant="true"/><parameter id="BSA" constant="false"/></listOfParameters>
+<listOfRules>
+<assignmentRule variable="BSA"><math {MATH}><apply><root/><apply><divide/><apply><times/><ci>BW</ci><ci>H</ci></apply><cn>3600</cn></apply></apply></math></assignmentRule>
+<rateRule variable="x"><math {MATH}><apply><times/><apply><minus/><apply><power/><ci>k</ci><cn>1.5</cn></apply></apply><ci>BSA</ci><ci>x</ci></apply></math></rateRule>
+</listOfRules>
+<listOfEvents><event id="e" useValuesFromTriggerTime="true"><trigger initialValue="false" persistent="true"><math {MATH}><apply><lt/><ci>x</ci><cn>0.5</cn></apply></math></trigger>
+<listOfEventAssignments><eventAssignment variable="k"><math {MATH}><apply><times/><cn>2</cn><ci>k</ci></apply></math></eventAssignment></listOfEventAssignments></event></listOfEvents>
+</model></sbml>"#
+    );
+    let compiled = |optimize| {
+        let options = CompileOptions {
+            optimize,
+            ..CompileOptions::default()
+        };
+        compile(&sbml, &options).unwrap()
+    };
+    let (written, optimized) = (compiled(false), compiled(true));
+    assert_eq!(written.description.n_constants, 0);
+    assert!(optimized.description.n_constants > 0);
+    let mut req = request(10.0, 40, &["time", "x", "k", "BSA"]);
+    req.changes = vec![
+        sbmlsim_abi::Change {
+            time: 1.0,
+            values: vec![("k".to_string(), 0.1)],
+        },
+        sbmlsim_abi::Change {
+            time: 6.0,
+            values: vec![("BW".to_string(), 50.0)],
+        },
+    ];
+    let run = |c: &sbmlsim_compiler::CompiledModel| {
+        runtime()
+            .instantiate(&c.wasm, &c.description)
+            .unwrap()
+            .simulate(&req)
+            .unwrap()
+    };
+    let (a, b) = (run(&written), run(&optimized));
+    let bits = |v: &[f64]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+    assert_eq!(bits(&a.values), bits(&b.values));
+    // the event fired (k doubled) and the change of BW changed BSA
+    let k_last = b.values[b.values.len() - 2];
+    let bsa_last = b.values[b.values.len() - 1];
+    assert!(k_last > 0.1 && (bsa_last - (50.0f64 * 175.0 / 3600.0).sqrt()).abs() < 1e-15);
+}

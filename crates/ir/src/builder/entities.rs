@@ -284,7 +284,9 @@ impl<'m> Builder<'m> {
                 Symbol::Param(k) => params.push((k, entity)),
                 Symbol::Time => unreachable!("no entity is time"),
                 Symbol::Derivative(_) => unreachable!("no entity is a derivative of a Jacobian"),
-                Symbol::Common(_) => unreachable!("no entity is a common subexpression"),
+                Symbol::Common(_) | Symbol::Constant(_) => {
+                    unreachable!("no entity is a symbol of the optimizer")
+                }
             }
         };
         // the missing values of libroadrunner: a compartment 1, a species 0, a stoichiometry 1;

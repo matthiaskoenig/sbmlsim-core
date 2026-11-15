@@ -547,7 +547,8 @@ fn initial_values(
     preinit: &[(Target, f64)],
 ) -> (Vec<f64>, Vec<f64>) {
     let (np, ns) = (desc.parameters.len(), desc.states.len());
-    let mut p = vec![0.0; np];
+    // the parameters, then the constants of the model, which `init` computes
+    let mut p = vec![0.0; np + desc.n_constants as usize];
     let mut y = vec![0.0; ns];
     model.defaults(&mut p, &mut y);
     let mut fixed = vec![0u8; np + ns];

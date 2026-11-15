@@ -11,7 +11,7 @@ See it run in the [glimepiride app](https://matthiaskoenig.github.io/sbmlsim-web
 A model passes through three parts, joined by two contracts which are defined in the crate `sbmlsim-abi` (`crates/abi`):
 
 ```text
-model.xml  --compiler-->  model.wasm + model.json   (model/1)
+model.xml  --compiler-->  model.wasm + model.json   (model/2)
                                  |
                                  v
 request    --engine.wasm + mathlib.wasm in a host-->  result   (simulation/1)
@@ -25,7 +25,7 @@ request    --engine.wasm + mathlib.wasm in a host-->  result   (simulation/1)
 
 ## Contracts
 
-- `model/1`: the description and the exports of a compiled model (`model.json`, `model.wasm`).
+- `model/2`: the description and the exports of a compiled model (`model.json`, `model.wasm`); `model/1` was the contract of 0.1.0, a model compiled by 0.1.0 is compiled again.
 - `simulation/1`: the request and the result of a simulation.
 
 Both are documented on [Simulating](simulating.md) and defined in `crates/abi`.
@@ -33,5 +33,5 @@ Both are documented on [Simulating](simulating.md) and defined in `crates/abi`.
 ## What it is measured against
 
 - The SBML Test Suite: 1581 of 1789 cases pass, every case which sbmlsim passes among them; the 208 failures are refused at compilation with a reason. See [Test suite and benchmark](testsuite.md).
-- roadrunner: no model of the benchmark takes more than 2x the time of roadrunner native, dense or with KLU, in wasmtime, Node or Chrome, and every model agrees with roadrunner at tight tolerances.
+- roadrunner: no model of the benchmark takes more than 1.4x the time of roadrunner native, dense or with KLU, in wasmtime, Node or Chrome (the PBPK models 0.57 to 0.83 of it, Chen with KLU 0.16 to 0.19), and every model agrees with roadrunner at tight tolerances.
 - sbmlsim: the known differences to roadrunner and to sbmlsim are listed on [Semantics](semantics.md).
