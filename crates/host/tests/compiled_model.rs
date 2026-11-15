@@ -749,3 +749,61 @@ fn a_loaded_model_is_send_and_sync() {
     fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<sbmlsim_host::LoadedModel>();
 }
+
+/// The values of the selections of a description in a loaded model, by id.
+fn initial_by_id(sbml: &str) -> std::collections::HashMap<String, f64> {
+    let compiled = compile(sbml, &CompileOptions::default()).unwrap();
+    let loaded = runtime()
+        .load(&compiled.wasm, &compiled.description)
+        .unwrap();
+    let values = loaded.initial_selections().unwrap();
+    let selections = &compiled.description.selections;
+    assert_eq!(values.len(), selections.len());
+    selections
+        .iter()
+        .map(|s| s.id.clone())
+        .zip(values)
+        .collect()
+}
+
+#[test]
+fn the_initial_selections_are_the_model_as_loaded() {
+    let sbml =
+        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/decay.xml"))
+            .unwrap();
+    let values = initial_by_id(&sbml);
+    // y starts at 1, k is 0.5 and t_half follows its assignment rule
+    assert_eq!(values["y"], 1.0);
+    assert_eq!(values["k"], 0.5);
+    assert_eq!(values["t_half"], 2.0f64.ln() / 0.5);
+}
+
+#[test]
+fn the_initial_selections_evaluate_the_initial_assignments() {
+    let sbml = format!(
+        r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2"><model id="ia">
+<listOfParameters><parameter id="q" value="3" constant="true"/><parameter id="p" constant="true"/></listOfParameters>
+<listOfInitialAssignments><initialAssignment symbol="p"><math {MATH}><apply><times/><cn>2</cn><ci>q</ci></apply></math></initialAssignment></listOfInitialAssignments>
+</model></sbml>"#
+    );
+    let values = initial_by_id(&sbml);
+    assert_eq!(values["q"], 3.0);
+    assert_eq!(values["p"], 6.0);
+}
+
+#[test]
+fn the_initial_selections_refuse_a_description_of_other_sizes() {
+    let sbml =
+        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/decay.xml"))
+            .unwrap();
+    let compiled = compile(&sbml, &CompileOptions::default()).unwrap();
+    let mut desc = compiled.description.clone();
+    desc.n_roots += 1;
+    let loaded = runtime().load(&compiled.wasm, &desc).unwrap();
+    let error = loaded.initial_selections().unwrap_err().to_string();
+    // the model has no root function, the description one
+    assert!(
+        error.contains("has the sizes") && error.contains("the description"),
+        "{error}"
+    );
+}
