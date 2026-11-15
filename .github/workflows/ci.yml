@@ -234,3 +234,10 @@ jobs:
           mkdir "$RUNNER_TEMP/typecheck" && cp python/typecheck/usage.py "$RUNNER_TEMP/typecheck/"
           cd "$RUNNER_TEMP/typecheck"
           "$RUNNER_TEMP/wheel-venv/bin/ty" check --error-on-warning --python "$RUNNER_TEMP/wheel-venv" usage.py
+      - name: The same wheel on python 3.15
+        # the wheel is cp314-abi3, so one build has to load on every later python
+        run: |
+          uv venv --python 3.15 "$RUNNER_TEMP/wheel-venv-315"
+          uv pip install --python "$RUNNER_TEMP/wheel-venv-315/bin/python" dist/*.whl --group dev
+          (cd "$RUNNER_TEMP" && "$RUNNER_TEMP/wheel-venv-315/bin/python" -I -c "import sbmlsim_core, sys; print(sys.version, sbmlsim_core.__file__); assert 'site-packages' in sbmlsim_core.__file__")
+          "$RUNNER_TEMP/wheel-venv-315/bin/pytest" python/tests -q
