@@ -311,11 +311,20 @@ export async function createRuntime({
         env: { memory },
         math: math.exports,
       });
-      const engineInstance = await WebAssembly.instantiate(engineModule, {
-        env: { memory },
-        model: model.exports,
-        [WASI]: wasi.imports,
-      });
+      let engineInstance;
+      try {
+        engineInstance = await WebAssembly.instantiate(engineModule, {
+          env: { memory },
+          model: model.exports,
+          [WASI]: wasi.imports,
+        });
+      } catch (error) {
+        // a model which lacks a function of the contract: the error of the wasmtime host
+        if (error instanceof WebAssembly.LinkError) {
+          throw new Error(`engine.wasm does not instantiate with the model: ${error.message}`);
+        }
+        throw error;
+      }
       const instance = new Instance(engineInstance.exports, memory, wasi.calls);
       if (engineInstance.exports._initialize) {
         instance.guard(() => engineInstance.exports._initialize());

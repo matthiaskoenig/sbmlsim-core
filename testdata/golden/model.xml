@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2">
+  <model id="golden" name="The golden model of the wire formats" substanceUnits="mole" timeUnits="second" volumeUnits="litre">
+    <listOfCompartments>
+      <compartment id="C" spatialDimensions="3" size="2" units="litre" constant="true"/>
+    </listOfCompartments>
+    <listOfSpecies>
+      <species id="S" compartment="C" initialConcentration="1" substanceUnits="mole" hasOnlySubstanceUnits="false" boundaryCondition="false" constant="false"/>
+      <species id="P" compartment="C" initialAmount="0" substanceUnits="mole" hasOnlySubstanceUnits="true" boundaryCondition="false" constant="false"/>
+    </listOfSpecies>
+    <listOfParameters>
+      <parameter id="k" value="0.5" units="per_second" constant="true"/>
+      <parameter id="x" value="0" constant="false"/>
+      <parameter id="dose" value="3" units="mole" constant="false"/>
+    </listOfParameters>
+    <listOfUnitDefinitions>
+      <unitDefinition id="per_second">
+        <listOfUnits><unit kind="second" exponent="-1" scale="0" multiplier="1"/></listOfUnits>
+      </unitDefinition>
+    </listOfUnitDefinitions>
+    <listOfRules>
+      <rateRule variable="x">
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+          <piecewise>
+            <piece><cn>1</cn><apply><lt/><csymbol encoding="text" definitionURL="http://www.sbml.org/sbml/symbols/time">t</csymbol><cn>2</cn></apply></piece>
+            <otherwise><cn>0</cn></otherwise>
+          </piecewise>
+        </math>
+      </rateRule>
+    </listOfRules>
+    <listOfReactions>
+      <reaction id="J" reversible="false">
+        <listOfReactants><speciesReference species="S" stoichiometry="1" constant="true"/></listOfReactants>
+        <listOfProducts><speciesReference species="P" stoichiometry="1" constant="true"/></listOfProducts>
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML"><apply><times/><ci>k</ci><ci>S</ci><ci>C</ci></apply></math>
+        </kineticLaw>
+      </reaction>
+    </listOfReactions>
+    <listOfEvents>
+      <event id="redose" useValuesFromTriggerTime="true">
+        <trigger initialValue="false" persistent="true">
+          <math xmlns="http://www.w3.org/1998/Math/MathML"><apply><geq/><csymbol encoding="text" definitionURL="http://www.sbml.org/sbml/symbols/time">t</csymbol><cn>4</cn></apply></math>
+        </trigger>
+        <delay>
+          <math xmlns="http://www.w3.org/1998/Math/MathML"><cn>0.5</cn></math>
+        </delay>
+        <priority>
+          <math xmlns="http://www.w3.org/1998/Math/MathML"><cn>1</cn></math>
+        </priority>
+        <listOfEventAssignments>
+          <eventAssignment variable="S">
+            <math xmlns="http://www.w3.org/1998/Math/MathML"><apply><plus/><ci>S</ci><apply><divide/><ci>dose</ci><ci>C</ci></apply></apply></math>
+          </eventAssignment>
+        </listOfEventAssignments>
+      </event>
+    </listOfEvents>
+  </model>
+</sbml>

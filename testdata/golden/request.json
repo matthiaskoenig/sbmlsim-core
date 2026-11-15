@@ -1,0 +1,60 @@
+{
+  "contract": "simulation/1",
+  "start": 0.0,
+  "end": 10.0,
+  "output": {
+    "times": [
+      0.0,
+      1.0,
+      2.5,
+      5.0,
+      10.0
+    ]
+  },
+  "preinit": [
+    [
+      "k",
+      0.25
+    ]
+  ],
+  "changes": [
+    {
+      "time": 5.0,
+      "values": [
+        [
+          "[S]",
+          2.0
+        ],
+        [
+          "dose",
+          1.0
+        ]
+      ]
+    }
+  ],
+  "steady_state": null,
+  "selections": [
+    "time",
+    "S",
+    "[S]",
+    "P",
+    "x"
+  ],
+  "settings": {
+    "relative_tolerance": 1e-8,
+    "absolute_tolerance": {
+      "per_state": [
+        1e-12,
+        1e-12,
+        1e-10
+      ]
+    },
+    "maximum_num_steps": 20000,
+    "maximum_time_step": 0.0,
+    "initial_time_step": 0.0,
+    "stiff": true,
+    "linear_solver": "auto",
+    "jacobian": "auto"
+  },
+  "seed": 1
+}

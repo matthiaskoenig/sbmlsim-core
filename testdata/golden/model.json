@@ -1,0 +1,132 @@
+{
+  "contract": "model/1",
+  "compiler": "sbmlsim-compiler 0.1.0",
+  "id": "golden",
+  "states": [
+    {
+      "id": "x",
+      "kind": "parameter",
+      "initial": 0.0,
+      "settable": true
+    },
+    {
+      "id": "S",
+      "kind": {
+        "species": {
+          "compartment": "C",
+          "has_only_substance_units": false,
+          "stores_concentration": false
+        }
+      },
+      "initial": 2.0,
+      "settable": true
+    },
+    {
+      "id": "P",
+      "kind": {
+        "species": {
+          "compartment": "C",
+          "has_only_substance_units": true,
+          "stores_concentration": false
+        }
+      },
+      "initial": 0.0,
+      "settable": true
+    }
+  ],
+  "parameters": [
+    {
+      "id": "C",
+      "kind": "compartment",
+      "initial": 2.0,
+      "settable": true
+    },
+    {
+      "id": "k",
+      "kind": "parameter",
+      "initial": 0.5,
+      "settable": true
+    },
+    {
+      "id": "dose",
+      "kind": "parameter",
+      "initial": 3.0,
+      "settable": true
+    }
+  ],
+  "selections": [
+    {
+      "id": "C",
+      "index": 0
+    },
+    {
+      "id": "S",
+      "index": 1
+    },
+    {
+      "id": "P",
+      "index": 2
+    },
+    {
+      "id": "[S]",
+      "index": 3
+    },
+    {
+      "id": "[P]",
+      "index": 4
+    },
+    {
+      "id": "k",
+      "index": 5
+    },
+    {
+      "id": "x",
+      "index": 6
+    },
+    {
+      "id": "dose",
+      "index": 7
+    },
+    {
+      "id": "J",
+      "index": 8
+    }
+  ],
+  "jacobian": {
+    "analytic": {
+      "n": 3,
+      "col_ptr": [
+        0,
+        0,
+        2,
+        2
+      ],
+      "row_idx": [
+        1,
+        2
+      ]
+    }
+  },
+  "events": [
+    {
+      "id": "redose",
+      "has_delay": true,
+      "has_priority": true,
+      "persistent": true,
+      "initial_value": false,
+      "use_values_from_trigger_time": true,
+      "n_assignments": 1
+    }
+  ],
+  "n_roots": 2,
+  "n_discontinuity_roots": 1,
+  "units": {
+    "C": "litre",
+    "P": "mole",
+    "S": "mole",
+    "[P]": "mole/litre",
+    "[S]": "mole/litre",
+    "dose": "mole",
+    "k": "second**-1"
+  }
+}
