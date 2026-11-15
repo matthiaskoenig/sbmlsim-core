@@ -235,18 +235,14 @@ impl Runtime {
         Runtime::new(ENGINE_WASM, MATHLIB_WASM)
     }
 
-    /// Instantiates a model with its description and loads it into a new engine.
+    /// Compiles a model and checks it against its description, without instantiating it.
     ///
     /// Checks the contract of the description and the module of the model: it imports
     /// `env.memory` and otherwise only functions of mathlib (each of the type mathlib exports),
     /// and defines no memory, no mutable global, no data segment and no start function (a model
     /// holds no state and writes nothing into the memory of the engine but where it is told);
-    /// gives the error of `engine_load` for a description the engine refuses.
-    pub fn instantiate(
-        &self,
-        model_wasm: &[u8],
-        desc: &ModelDescription,
-    ) -> anyhow::Result<Instance> {
+    /// compiles `model.wasm` once, so that every [`LoadedModel::instantiate`] reuses the module.
+    pub fn load(&self, model_wasm: &[u8], desc: &ModelDescription) -> anyhow::Result<LoadedModel> {
         check_contract(&desc.contract, MODEL_CONTRACT)?;
         check_model_sections(model_wasm)?;
         let model_module = Module::new(&self.engine, model_wasm)
@@ -274,6 +270,52 @@ impl Runtime {
             }
         }
         ensure!(memory_imported, "model.wasm does not import env.memory");
+        Ok(LoadedModel {
+            engine: self.engine.clone(),
+            engine_module: self.engine_module.clone(),
+            mathlib_module: self.mathlib_module.clone(),
+            model_module,
+            memory_type: self.memory_type.clone(),
+            max_memory: self.max_memory,
+            desc: desc.clone(),
+        })
+    }
+
+    /// Instantiates a model with its description and loads it into a new engine (`load`, then
+    /// [`LoadedModel::instantiate`]); gives the error of `engine_load` for a description the
+    /// engine refuses.
+    pub fn instantiate(
+        &self,
+        model_wasm: &[u8],
+        desc: &ModelDescription,
+    ) -> anyhow::Result<Instance> {
+        self.load(model_wasm, desc)?.instantiate()
+    }
+}
+
+/// A model compiled once ([`Runtime::load`]), which makes any number of independent
+/// [`Instance`]s; it is `Send + Sync`, so threads share it and each makes its own instances.
+pub struct LoadedModel {
+    engine: Engine,
+    engine_module: Module,
+    mathlib_module: Module,
+    model_module: Module,
+    memory_type: MemoryType,
+    max_memory: usize,
+    desc: ModelDescription,
+}
+
+impl LoadedModel {
+    /// The description the model was loaded with.
+    pub fn description(&self) -> &ModelDescription {
+        &self.desc
+    }
+
+    /// Instantiates the model in a new engine, which holds the description; gives the error of
+    /// `engine_load` for a description the engine refuses.
+    pub fn instantiate(&self) -> anyhow::Result<Instance> {
+        let desc = &self.desc;
+        let model_module = &self.model_module;
         let mut store = store(&self.engine, self.max_memory);
         let memory = Memory::new(&mut store, self.memory_type.clone())?;
         let mut linker = linker(&self.engine)?;
@@ -281,7 +323,7 @@ impl Runtime {
         let math = linker.instantiate(&mut store, &self.mathlib_module)?;
         linker.instance(&mut store, "math", math)?;
         let model = linker
-            .instantiate(&mut store, &model_module)
+            .instantiate(&mut store, model_module)
             .map_err(anyhow::Error::from)
             .context("model.wasm does not instantiate")?;
         linker.instance(&mut store, "model", model)?;

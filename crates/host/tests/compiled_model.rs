@@ -717,3 +717,35 @@ fn the_constants_follow_the_changes_and_the_events() {
     let bsa_last = b.values[b.values.len() - 1];
     assert!(k_last > 0.1 && (bsa_last - (50.0f64 * 175.0 / 3600.0).sqrt()).abs() < 1e-15);
 }
+
+#[test]
+fn a_loaded_model_makes_instances_which_simulate_the_same_bits() {
+    let sbml =
+        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/decay.xml"))
+            .unwrap();
+    let compiled = compile(&sbml, &CompileOptions::default()).unwrap();
+    let req = request(10.0, 10, &["time", "y", "t_half"]);
+    let loaded = runtime()
+        .load(&compiled.wasm, &compiled.description)
+        .unwrap();
+    let a = loaded.instantiate().unwrap().simulate(&req).unwrap();
+    let b = loaded.instantiate().unwrap().simulate(&req).unwrap();
+    // an instance of a fresh runtime, which compiles model.wasm again
+    let fresh = Runtime::embedded()
+        .unwrap()
+        .instantiate(&compiled.wasm, &compiled.description)
+        .unwrap()
+        .simulate(&req)
+        .unwrap();
+    let bits = |v: &[f64]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+    assert_eq!(a.columns, b.columns);
+    assert_eq!(bits(&a.values), bits(&b.values));
+    assert_eq!(a.columns, fresh.columns);
+    assert_eq!(bits(&a.values), bits(&fresh.values));
+}
+
+#[test]
+fn a_loaded_model_is_send_and_sync() {
+    fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<sbmlsim_host::LoadedModel>();
+}
