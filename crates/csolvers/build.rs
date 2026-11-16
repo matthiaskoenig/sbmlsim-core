@@ -201,8 +201,10 @@ fn main() {
         // KLU without CHOLMOD, SuiteSparse without BLAS (as the CMake build configures it)
         .define("NCHOLMOD", None)
         .define("BLAS_Generic", None)
+        // `-w`: the warnings of the C of SUNDIALS and SuiteSparse are not ours; what the compiler
+        // still writes, the errors, reaches the output of cargo
         .warnings(false)
-        .cargo_warnings(false);
+        .cargo_warnings(true);
 
     let include = out.join("include");
     write_config(&include, compiler_name, flags);
