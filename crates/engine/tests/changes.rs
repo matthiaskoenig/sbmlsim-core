@@ -5,7 +5,9 @@ use sbmlsim_abi::{
     Change, IntegratorSettings, Output, SIMULATION_CONTRACT, SimulationRequest, SimulationResult,
     SteadyState, Tolerance,
 };
-use sbmlsim_engine::model::{Compartmental, Decay, EventModel, Fun, Target, TestEvent};
+use sbmlsim_engine::model::{
+    Compartmental, Decay, DerivedCompartment, EventModel, Fun, Target, TestEvent,
+};
 use sbmlsim_engine::{Engine, EngineError, STEADY_STATE_FLAG, simulate};
 
 /// A request from `start` to `end` of the output, every selection, tight tolerances.
@@ -677,8 +679,8 @@ fn steady_state_from_time_zero() {
 fn preinit_takes_the_selections_of_sbmlsim() {
     // probed with libroadrunner 2.11.1 through sbmlsim: `R` is the
     // amount and `[R]` the concentration of a species which stores its concentration, `[S]`
-    // the concentration of one which stores its amount, in the compartment of the size as
-    // loaded or as an earlier value of the pre-initialization sets it
+    // the concentration of one which stores its amount, in the compartment of the size the
+    // initialization settles on, whatever the order of the values
     let run = |preinit: &[(&str, f64)]| {
         let mut req = request(0.0, 1.0, Output::Uniform { steps: 1 });
         req.preinit = preinit.iter().map(|(id, v)| (id.to_string(), *v)).collect();
@@ -703,11 +705,20 @@ fn preinit_takes_the_selections_of_sbmlsim() {
         run(&[("C", 2.0), ("[S]", 3.0)]),
         [6.0, 3.0, 2.0, 1.0, 1.0, 0.5, 2.0]
     );
-    // a value before its compartment is converted with the size as loaded (1)
+    // the order of the values does not matter: a concentration before its compartment is
+    // converted with the size the compartment settles on as well (2, not the loaded 1), and so
+    // is the amount of a species which stores its concentration
     assert_eq!(
         run(&[("[S]", 3.0), ("C", 2.0)]),
-        [3.0, 1.5, 2.0, 1.0, 1.0, 0.5, 2.0]
+        run(&[("C", 2.0), ("[S]", 3.0)])
     );
+    assert_eq!(
+        run(&[("R", 3.0), ("C", 2.0)]),
+        run(&[("C", 2.0), ("R", 3.0)])
+    );
+    for order in [[("[S]", 5.0), ("C", 3.0)], [("C", 3.0), ("[S]", 5.0)]] {
+        assert_eq!(run(&order), [15.0, 5.0, 3.0, 1.0, 1.0, 1.0 / 3.0, 3.0]);
+    }
     // the concentration of an entity which is no species is refused
     let mut req = request(0.0, 1.0, Output::Uniform { steps: 1 });
     req.preinit = vec![("[C]".to_string(), 1.0)];
@@ -716,6 +727,114 @@ fn preinit_takes_the_selections_of_sbmlsim() {
         simulate(&model, &model.description(), &req),
         Err(EngineError::Request(m)) if m.contains("[C]")
     ));
+}
+
+/// The first row of [`DerivedCompartment`] after the pre-initialization: `A`, `[A]`, `N`,
+/// `[N]`, `c`, `V`.
+fn derived_compartment(preinit: &[(&str, f64)]) -> Vec<f64> {
+    let mut req = request(0.0, 1.0, Output::Uniform { steps: 1 });
+    req.preinit = preinit.iter().map(|(id, v)| (id.to_string(), *v)).collect();
+    let model = DerivedCompartment;
+    let result = simulate(&model, &model.description(), &req).unwrap();
+    let k = result.columns.len();
+    result.values[1..k].to_vec()
+}
+
+/// A pre-initialization holds the concentration of a species over the whole initialization,
+/// also when the same pre-initialization changes the size of its compartment through an
+/// initial assignment, and whatever the order of the values.
+#[test]
+fn preinit_holds_a_concentration_across_the_initialization() {
+    // probed with libroadrunner 2.11.1 through sbmlsim on the same model: the compartment `c`
+    // of the initial assignment `c = V f` with `V = 2 g`, the species `A` of a concentration
+    // and `N` of an amount, both of the declared concentration 5 (so `A = N = 5 c`)
+    let both = |a: (&str, f64), b: (&str, f64)| {
+        let forward = derived_compartment(&[a, b]);
+        assert_eq!(forward, derived_compartment(&[b, a]), "{a:?} and {b:?}");
+        forward
+    };
+    // A, [A], N, [N], c, V
+    // the size of the conversion is the one the initialization settles on, not the loaded 2
+    assert_eq!(
+        both(("[A]", 5.0), ("V", 3.0)),
+        [15.0, 5.0, 15.0, 5.0, 3.0, 3.0]
+    );
+    assert_eq!(
+        both(("A", 5.0), ("V", 3.0)),
+        [5.0, 5.0 / 3.0, 15.0, 5.0, 3.0, 3.0]
+    );
+    // the chain `c = V f`, `V = 2 g`: a value at either end gives the size 6
+    assert_eq!(
+        both(("[A]", 5.0), ("f", 3.0)),
+        [30.0, 5.0, 30.0, 5.0, 6.0, 2.0]
+    );
+    assert_eq!(
+        both(("[A]", 5.0), ("g", 3.0)),
+        [30.0, 5.0, 30.0, 5.0, 6.0, 6.0]
+    );
+    // a species of an amount (`hasOnlySubstanceUnits`) set by its concentration converts too
+    assert_eq!(
+        both(("[N]", 5.0), ("f", 3.0)),
+        [30.0, 5.0, 30.0, 5.0, 6.0, 2.0]
+    );
+    // the size set directly, against the initial assignment which derives it
+    assert_eq!(
+        both(("[A]", 5.0), ("c", 6.0)),
+        [30.0, 5.0, 30.0, 5.0, 6.0, 2.0]
+    );
+    // the cases without a conversion are not touched: an amount is the amount, and a value
+    // which changes the size alone leaves the declared concentrations where they are
+    assert_eq!(
+        both(("A", 5.0), ("f", 3.0)),
+        [5.0, 5.0 / 6.0, 30.0, 5.0, 6.0, 2.0]
+    );
+    assert_eq!(
+        both(("N", 5.0), ("f", 3.0)),
+        [30.0, 5.0, 5.0, 5.0 / 6.0, 6.0, 2.0]
+    );
+    assert_eq!(
+        derived_compartment(&[("f", 3.0)]),
+        [30.0, 5.0, 30.0, 5.0, 6.0, 2.0]
+    );
+    // and a concentration alone takes the size of the model as loaded
+    assert_eq!(
+        derived_compartment(&[("[A]", 5.0)]),
+        [10.0, 5.0, 10.0, 5.0, 2.0, 2.0]
+    );
+}
+
+/// Several values which need a size are converted against one state, whatever their order:
+/// nothing a conversion writes is a size, which is the invariant the second pass of
+/// `initial_values` rests on, and a target whose `compartment` were something other than that
+/// of a species would break it.
+#[test]
+fn preinit_converts_several_concentrations_against_one_state() {
+    let (a, n) = (("[A]", 5.0), ("[N]", 7.0));
+    // with a third value which changes the size, through the chain `c = V f` or directly
+    for third in [("f", 3.0), ("c", 6.0)] {
+        for order in [
+            [a, n, third],
+            [a, third, n],
+            [n, a, third],
+            [n, third, a],
+            [third, a, n],
+            [third, n, a],
+        ] {
+            assert_eq!(
+                derived_compartment(&order),
+                [30.0, 5.0, 42.0, 7.0, 6.0, 2.0],
+                "{order:?}"
+            );
+        }
+    }
+    // and without one, against the size of the model as loaded
+    for order in [[a, n], [n, a]] {
+        assert_eq!(
+            derived_compartment(&order),
+            [10.0, 5.0, 14.0, 7.0, 2.0, 2.0],
+            "{order:?}"
+        );
+    }
 }
 
 /// `y' = -y`, `y(0) = 1`, with an event which never executes (its root function `time - 100`

@@ -20,7 +20,9 @@
 //!
 //! The initialization is `defaults`, then the pre-initialization values of the request and of
 //! its steady state (fixed for `init`, in the selections of sbmlsim as the changes), then `init`
-//! at the time 0 ([`INIT_TIME`], as sbmlsim); then the steady state, if the request has one
+//! at the time 0 ([`INIT_TIME`], as sbmlsim), the values and `init` in two passes when one of
+//! them needs the size of a compartment (`initial_values`); then the steady state, if the
+//! request has one
 //! (integrated from the time 0); the integration runs in absolute time from the start, in
 //! segments between the changes.
 //!
@@ -214,8 +216,6 @@ struct Scratch {
     p: Vec<f64>,
     y: Vec<f64>,
     fixed: Vec<u8>,
-    loaded_p: Vec<f64>,
-    loaded_y: Vec<f64>,
     jac_values: Vec<f64>,
     preinit: Vec<(Target, f64)>,
     selections: Vec<f64>,
@@ -761,14 +761,25 @@ fn check_steady_state(
     Ok(())
 }
 
-/// The parameters and the state at the start: `defaults`, the pre-initialization values (fixed
-/// for `init`), `init` at [`INIT_TIME`].
+/// The parameters and the state at the start: `defaults`, then the pre-initialization values
+/// (fixed for `init`) and `init` at [`INIT_TIME`] in two passes, one pass when no value needs
+/// the size of a compartment.
 ///
 /// A value which needs the size of a compartment (the amount of a species which stores its
 /// concentration, the concentration of a species which stores its amount) is converted with
-/// the size of the model as loaded (`defaults` and `init`), or with the value an earlier
-/// pre-initialization value of the request gave the compartment, as sbmlsim's `setValue` of
-/// the selections on the reset model, in the order of the values.
+/// the size the initial assignments settle on, so a pre-initialization holds the concentration
+/// of a species over the whole initialization, as sbmlsim and libroadrunner do. The values are
+/// therefore set in two passes: the ones which need no conversion first, then `init`, which
+/// derives the sizes with them, then the converted ones, then `init` again, so whatever an
+/// initial assignment derives from those species settles too. A conversion cannot change a
+/// size (only a species is converted), so the result does not depend on the order of the
+/// values of the request.
+///
+/// The size of a conversion is the one the **first** evaluation settles on. That is the size
+/// of the initialized model unless an initial assignment of that size reads a species a value
+/// converts, which is circular: the second evaluation then moves the size the first one
+/// converted against, and there is no fixed point to take instead (libroadrunner's `setValue`
+/// defines none either, it reads whichever size the model carries at the time).
 fn initial_values(
     model: &dyn ModelFns,
     desc: &ModelDescription,
@@ -787,19 +798,6 @@ fn initial_values(
     let fixed = &mut scratch.fixed;
     fixed.clear();
     fixed.resize(np + ns, 0);
-    // the model as loaded, with the values set so far, for the sizes of the conversions
-    let mut loaded = preinit
-        .iter()
-        .any(|(target, _)| target.compartment().is_some())
-        .then(|| {
-            let (lp, ly) = (&mut scratch.loaded_p, &mut scratch.loaded_y);
-            lp.clone_from(p);
-            ly.clone_from(y);
-            model.init(INIT_TIME, lp, ly, fixed);
-            model.check_error()?;
-            Ok::<_, EngineError>((lp, ly))
-        })
-        .transpose()?;
     let get = |p: &[f64], y: &[f64], i: usize| if i < np { p[i] } else { y[i - np] };
     let set = |p: &mut [f64], y: &mut [f64], i: usize, v: f64| {
         if i < np {
@@ -808,20 +806,37 @@ fn initial_values(
             y[i - np] = v;
         }
     };
+    // a value which is no concentration is set before the initialization, so the
+    // initial assignments see it and the sizes of the compartments afterwards are
+    // the ones of the initialized model
     for &(target, value) in preinit {
-        let stored = match (&loaded, target.compartment()) {
-            (Some((lp, ly)), Some(c)) => target.stored(value, get(lp, ly, c)),
-            _ => value,
-        };
-        let index = target.index();
-        set(p, y, index, stored);
-        if let Some((lp, ly)) = &mut loaded {
-            set(lp, ly, index, stored);
+        if target.compartment().is_none() {
+            let index = target.index();
+            set(p, y, index, value);
+            fixed[index] = 1;
         }
-        fixed[index] = 1;
     }
     model.init(INIT_TIME, p, y, fixed);
     model.check_error()?;
+    // a concentration is converted with the size its compartment has once the
+    // initial assignments are evaluated, so the pre-initialization holds the
+    // concentration across the initialization, also when it changes that size,
+    // directly or through an initial assignment, and the order of the values of
+    // the request does not matter
+    let mut converted = false;
+    for &(target, value) in preinit {
+        if let Some(c) = target.compartment() {
+            let size = get(p, y, c);
+            let index = target.index();
+            set(p, y, index, target.stored(value, size));
+            fixed[index] = 1;
+            converted = true;
+        }
+    }
+    if converted {
+        model.init(INIT_TIME, p, y, fixed);
+        model.check_error()?;
+    }
     Ok(())
 }
 
@@ -1173,8 +1188,6 @@ mod tests {
                 scratch.p.as_ptr(),
                 scratch.y.as_ptr(),
                 scratch.fixed.as_ptr(),
-                scratch.loaded_p.as_ptr(),
-                scratch.loaded_y.as_ptr(),
                 scratch.jac_values.as_ptr(),
                 scratch.selections.as_ptr(),
                 scratch.preinit.as_ptr(),

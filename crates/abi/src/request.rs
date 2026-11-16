@@ -16,8 +16,10 @@ pub struct SimulationRequest {
     pub output: Output,
     /// Values set before the initialization, as `(id, value)`; the ids are selections, as the
     /// ones of a [`Change`]: `S` is the amount of a species, `[S]` its concentration (converted
-    /// with the size of its compartment as loaded, or as an earlier value of the
-    /// pre-initialization sets it), any other id the value of its entity.
+    /// with the size its compartment has once the initial assignments are evaluated, so a
+    /// pre-initialization holds the concentration of a species across the initialization, also
+    /// when it changes that size, directly or through an initial assignment), any other id the
+    /// value of its entity. The order of the values does not matter.
     pub preinit: Vec<(String, f64)>,
     /// Changes at absolute times in `[start, end]`, in non-decreasing order of the time.
     pub changes: Vec<Change>,
