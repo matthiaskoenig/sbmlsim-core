@@ -7,7 +7,7 @@
 // build of `inline.mjs` embeds (`WORKER_SOURCE`); both are IIFEs without `import.meta` (the URL of a
 // module, which a classic script has not, is a constant of no origin, `sbmlsim-core.invalid`, which
 // the inline endpoint never fetches). The build is committed, so a build of the python package
-// needs no Node; the job `web` of CI checks it with `--check`.
+// needs no Node; `python/tests/test_web.py` checks its version and `--check` the whole build.
 
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
