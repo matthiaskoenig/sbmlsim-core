@@ -120,3 +120,14 @@ def refused(model: LoadedModel, request: dict[str, Any], sbml: str) -> None:
     model.instance().simulate("request")  # ty: ignore[invalid-argument-type]
     wrong: int = model.initial_values()  # ty: ignore[invalid-assignment]
     print(wrong)
+
+
+def the_runtime_and_the_inline_build() -> None:
+    """The runtime and the inline build which a page of one file embeds."""
+    from sbmlsim_core import web
+
+    files: dict[str, bytes] = sbmlsim_core.runtime_wasm()
+    engine: bytes = files["engine"]
+    notices: str = sbmlsim_core.THIRD_PARTY
+    script: str = web.script()
+    print(engine, notices, script)

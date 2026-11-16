@@ -8,6 +8,7 @@ import numpy.typing
 
 MODEL_CONTRACT: str
 SIMULATION_CONTRACT: str
+THIRD_PARTY: str
 __version__: str
 
 class SbmlsimCoreError(Exception):
@@ -162,3 +163,6 @@ def compile_sbml(
     sbml: str, *, optimize: bool = True, jacobian: str = "auto"
 ) -> CompiledModel:
     """Compiles the text of an SBML Level 3 document into `model.wasm` and its description."""
+
+def runtime_wasm() -> dict[str, bytes]:
+    """The bytes of `engine.wasm` and `mathlib.wasm` this extension embeds."""

@@ -3,6 +3,7 @@
 from sbmlsim_core._core import (
     MODEL_CONTRACT,
     SIMULATION_CONTRACT,
+    THIRD_PARTY,
     BatchExecutor,
     CompiledModel,
     CompileError,
@@ -21,12 +22,14 @@ from sbmlsim_core._core import (
     UnsupportedError,
     __version__,
     compile_sbml,
+    runtime_wasm,
 )
 from sbmlsim_core.batch import simulate_stream
 
 __all__ = [
     "MODEL_CONTRACT",
     "SIMULATION_CONTRACT",
+    "THIRD_PARTY",
     "BatchExecutor",
     "CompileError",
     "CompiledModel",
@@ -45,5 +48,6 @@ __all__ = [
     "UnsupportedError",
     "__version__",
     "compile_sbml",
+    "runtime_wasm",
     "simulate_stream",
 ]

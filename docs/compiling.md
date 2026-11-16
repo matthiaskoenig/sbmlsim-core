@@ -1,6 +1,6 @@
 # Compiling a model
 
-The command line compiles an SBML Level 3 Version 2 file into a model directory: `model.wasm`, the compiled model, and `model.json`, its description (`model/2`, see [Simulating](simulating.md#the-description-model1)).
+The command line compiles an SBML Level 3 file (Version 1 or 2) into a model directory: `model.wasm`, the compiled model, and `model.json`, its description (`model/2`, see [Simulating](simulating.md#the-description-model2)).
 
 ```bash
 sbmlsim-core compile model.xml -o model-dir            # target/release/sbmlsim-core of a build

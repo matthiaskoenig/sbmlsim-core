@@ -15,7 +15,7 @@ The package is published to npm as [`sbmlsim-core`](https://www.npmjs.com/packag
 npm install sbmlsim-core
 ```
 
-A page imports the modules from its own files or from a CDN (`https://cdn.jsdelivr.net/npm/sbmlsim-core@0.2.0/panels.mjs`); a pool of a module of another origin starts its workers through a module of the page's own origin, which browsers require of a worker. A checkout serves the files of `js/` with the runtime of a build (`sbmlsim-core runtime -o js/runtime`, see [Installation](installation.md#building)). A release publishes the package from the tag `vX.Y.Z` (`.github/workflows/publish.yml`, trusted publishing with provenance); the version of `js/package.json` is the one of the crates and of `CORE_VERSION`, which `npm pack` checks.
+A page imports the modules from its own files or from a CDN (`https://cdn.jsdelivr.net/npm/sbmlsim-core@0.4.0/panels.mjs`); a pool of a module of another origin starts its workers through a module of the page's own origin, which browsers require of a worker. A checkout serves the files of `js/` with the runtime of a build (`sbmlsim-core runtime -o js/runtime`, see [Installation](installation.md#building)). A release publishes the package from the tag `vX.Y.Z` (`.github/workflows/publish.yml`, trusted publishing with provenance, together with the python package on PyPI); the version of `js/package.json` is the one of the crates and of `CORE_VERSION`, which `npm pack` checks.
 
 ## The loader
 
@@ -235,6 +235,10 @@ Nothing of the semantics of a simulation lives in JavaScript. The formulas of th
 5. Serve the directory from any static server, e.g. GitHub Pages. The workers are module workers, so the page is served over HTTP(S), not opened as a file. `sha256Hex` takes `crypto.subtle`, which a browser has only in a secure context (HTTPS or localhost), and a digest in plain JavaScript elsewhere.
 
 The components, their attributes and `registerEndpoint` are documented with [sbmlsim-web](https://matthiaskoenig.github.io/sbmlsim-web/), which has the glimepiride app as an example.
+
+### A panel app of one file
+
+The inline build (`js/inline.mjs`, built with esbuild by `node js/build.mjs` into `python/sbmlsim_core/web/sbmlsim-core.js`, committed and checked by the tests) is the host as one classic script with the global `sbmlsimCore`: `createInlineEndpoint({ bundle, files, engine, mathlib, workers })` answers the routes of a bundle held in memory (the bundle as an object, its compiled models as bytes by their path in the bundle, the runtime as bytes), and its pool starts its workers as classic workers from a `blob:` URL of the worker the script embeds (`WORKER_SOURCE`). A page which embeds the script, the runtime, the bundle and its models needs neither a server nor the network and opens from `file://` too. The python package ships the build with the runtime (see [Python](python.md#a-page-of-one-file)); sbmlsim writes the app of a model as such a page.
 
 ## Prepared simulations
 
