@@ -1,9 +1,11 @@
-# Publish the JavaScript host (`js/`, the npm package `sbmlsim-core`) for a tag `vX.Y.Z` on a
-# commit of develop: the engine and its math library are built from the tagged sources into
-# `js/runtime`, the tests of the host run against them, and npm publishes with trusted
+# Publish a release for a tag `vX.Y.Z` on a commit of develop: the JavaScript host (`js/`) as the
+# npm package `sbmlsim-core` and the python package `sbmlsim-core` on PyPI, both with trusted
 # publishing (the OIDC token of GitHub, no stored token) and the provenance of this workflow.
-# A version npm has already (the first release was published by hand to create the package) is
-# not published again.
+# The engine and its math library are built once from the tagged sources (`wheels.yml`, job
+# `runtime`): the npm package carries them in `js/runtime`, and every wheel embeds the same bytes.
+# Nothing is published unless the tests of the JavaScript host and of every wheel passed, so
+# both registries get a release or neither. A version a registry has already (the first npm
+# release was published by hand to create the package) is not published there again.
 name: publish
 
 on:
@@ -14,40 +16,74 @@ on:
 permissions:
   contents: read
 
-env:
-  WASI_SDK_VERSION: "34.0"
-  WASI_SDK_SHA256: b761e3a0721dbae9c09a0059e5fdb2bf917d1b4a8a7b430fb3b5aafb0984b2c4
-
 jobs:
-  publish:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: The version of the tag is the version of every package
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          js="$(node -p "require('./js/package.json').version")"
+          cargo="$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"/\1/p' Cargo.toml)"
+          for found in "$js" "$cargo"; do
+            if [ "$found" != "$version" ]; then
+              echo "the tag ${GITHUB_REF_NAME} is not the version $found of js/package.json or Cargo.toml"
+              exit 1
+            fi
+          done
+          test -f "release-notes/${version}.md" || { echo "release-notes/${version}.md is missing"; exit 1; }
+
+  wheels:
+    needs: check
+    uses: ./.github/workflows/wheels.yml
+
+  js:
+    needs: wheels
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: runtime
+          path: js/runtime
+      - uses: actions/download-artifact@v4
+        with:
+          name: cli
+          path: cli
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: The tests of the JavaScript host
+        run: |
+          chmod +x cli/sbmlsim-core
+          node --test js/test
+        env:
+          SBMLSIM_CORE_CLI: ${{ github.workspace }}/cli/sbmlsim-core
+      - name: The package npm publishes
+        working-directory: js
+        run: npm pack --dry-run
+
+  npm:
+    needs: [wheels, js]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
       id-token: write # trusted publishing and provenance of npm
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: true
           persist-credentials: false
-      - name: Check the version of the tag
-        run: |
-          version="$(node -p "require('./js/package.json').version")"
-          if [ "v${version}" != "${GITHUB_REF_NAME}" ]; then
-            echo "the tag ${GITHUB_REF_NAME} is not the version ${version} of js/package.json"
-            exit 1
-          fi
-          test -f "release-notes/${version}.md" || { echo "release-notes/${version}.md is missing"; exit 1; }
-      - name: Install the toolchain of rust-toolchain.toml
-        run: rustup show active-toolchain || rustup toolchain install
-      - name: Install wasi-sdk
-        run: |
-          mkdir -p "$HOME/tools" && cd "$HOME/tools"
-          sdk="wasi-sdk-${WASI_SDK_VERSION}-x86_64-linux"
-          curl -sSLO "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-${WASI_SDK_VERSION%%.*}/${sdk}.tar.gz"
-          echo "${WASI_SDK_SHA256}  ${sdk}.tar.gz" | sha256sum -c -
-          tar xzf "${sdk}.tar.gz"
-          echo "WASI_SDK_PATH=$HOME/tools/${sdk}" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@v4
+        with:
+          name: runtime
+          path: js/runtime
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
@@ -59,14 +95,6 @@ jobs:
             const ok = major > 11 || (major === 11 && (minor > 5 || (minor === 5 && patch >= 1)));
             if (!ok) { console.error(`npm ${process.argv[1]} has no trusted publishing, 11.5.1 or newer has`); process.exit(1); }
           ' "$(npm --version)"
-      - name: Build the command line, the engine and its math library
-        run: |
-          cargo build --release -p sbmlsim-cli
-          target/release/sbmlsim-core runtime -o js/runtime
-      - name: The tests of the JavaScript host
-        run: node --test js/test
-        env:
-          SBMLSIM_CORE_CLI: ${{ github.workspace }}/target/release/sbmlsim-core
       - name: Publish
         working-directory: js
         run: |
@@ -76,3 +104,27 @@ jobs:
             exit 0
           fi
           npm publish --provenance --access public
+
+  pypi:
+    needs: [wheels, js]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # the environment of the trusted publisher of the project sbmlsim-core on PyPI
+    environment:
+      name: pypi
+      url: https://pypi.org/project/sbmlsim-core/
+    permissions:
+      id-token: write # trusted publishing and the attestations of PyPI
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-*
+          path: dist
+          merge-multiple: true
+      - name: One wheel per platform
+        run: |
+          ls dist
+          test "$(ls dist/*.whl | wc -l)" -eq 5
+      - uses: pypa/gh-action-pypi-publish@v1.14.3
+        with:
+          skip-existing: true

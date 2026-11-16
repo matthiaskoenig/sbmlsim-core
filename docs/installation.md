@@ -1,6 +1,13 @@
 # Installation
 
-sbmlsim-core is built from source. The crates are not published, and the JavaScript package (`js/`) is private: a page uses the files of `js/` and the `engine.wasm` and `mathlib.wasm` of a build.
+The releases of sbmlsim-core are two packages of the same name, built from the same tag with the same `engine.wasm` and `mathlib.wasm`:
+
+```bash
+pip install sbmlsim-core   # the compiler and the engine for python 3.14 or newer, see Python
+npm install sbmlsim-core   # the JavaScript host for browsers and Node, see JavaScript
+```
+
+The crates are not published. The rest of this page builds sbmlsim-core from a checkout: the command line, the runtime and the python package of the sources.
 
 ## Toolchain
 
