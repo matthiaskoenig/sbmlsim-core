@@ -47,7 +47,8 @@ pub trait ModelFns {
 
 #[cfg(any(test, feature = "test-models"))]
 pub use test_models::{
-    Compartmental, Decay, Derived, EventModel, Fun, NanRhs, Robertson, Target, TestEvent,
+    Compartmental, Decay, Derived, DerivedCompartment, EventModel, Fun, NanRhs, Robertson, Target,
+    TestEvent,
 };
 
 #[cfg(any(test, feature = "test-models"))]
@@ -417,6 +418,91 @@ mod test_models {
             out[4] = y[2];
             out[5] = y[2] / p[0];
             out[6] = p[0];
+        }
+        fn assign(&self, _t: f64, _y: &mut [f64], _p: &mut [f64]) {}
+        no_events!();
+    }
+
+    /// A compartment whose size an initial assignment derives, with two species of a declared
+    /// concentration in it: the chain `V = 2 g`, `c = V f` of the initial assignments, the
+    /// species `A` of a concentration and `N` of an amount (`hasOnlySubstanceUnits`), both
+    /// storing their amount, both with the initial assignment `5 c` of the concentration 5
+    /// they declare, and both of the rate 0.
+    ///
+    /// Loaded (`g = f = 1`) it is `V = 2`, `c = 2`, `A = N = 10`. The parameters are
+    /// `[c, V, f, g]`, the states `[A, N]`, the selections `[A, [A], N, [N], c, V]`.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct DerivedCompartment;
+
+    impl DerivedCompartment {
+        /// The description of the model.
+        pub fn description(&self) -> ModelDescription {
+            let species = |id: &str, has_only_substance_units| Entity {
+                id: id.to_string(),
+                kind: EntityKind::Species {
+                    compartment: "c".to_string(),
+                    has_only_substance_units,
+                    stores_concentration: false,
+                },
+                initial: 10.0,
+                settable: true,
+            };
+            let mut compartment = entity("c", 2.0, true);
+            compartment.kind = EntityKind::Compartment;
+            description(
+                "derived compartment",
+                vec![species("A", false), species("N", true)],
+                vec![
+                    compartment,
+                    entity("V", 2.0, true),
+                    entity("f", 1.0, true),
+                    entity("g", 1.0, true),
+                ],
+                selections(&["A", "[A]", "N", "[N]", "c", "V"]),
+                SparsityPattern {
+                    n: 2,
+                    col_ptr: vec![0, 0, 0],
+                    row_idx: vec![],
+                },
+            )
+        }
+    }
+
+    impl ModelFns for DerivedCompartment {
+        fn defaults(&self, p: &mut [f64], y: &mut [f64]) {
+            p[0] = 2.0;
+            p[1] = 2.0;
+            p[2] = 1.0;
+            p[3] = 1.0;
+            y.fill(10.0);
+        }
+        fn init(&self, _t: f64, p: &mut [f64], y: &mut [f64], fixed: &[u8]) {
+            // in the order of the dependencies: `V = 2 g`, `c = V f`, then the amounts of the
+            // concentration 5 the species declare
+            if fixed[1] == 0 {
+                p[1] = 2.0 * p[3];
+            }
+            if fixed[0] == 0 {
+                p[0] = p[1] * p[2];
+            }
+            if fixed[4] == 0 {
+                y[0] = 5.0 * p[0];
+            }
+            if fixed[5] == 0 {
+                y[1] = 5.0 * p[0];
+            }
+        }
+        fn rhs(&self, _t: f64, _y: &[f64], _p: &[f64], ydot: &mut [f64]) {
+            ydot.fill(0.0);
+        }
+        fn jac(&self, _t: f64, _y: &[f64], _p: &[f64], _values: &mut [f64]) {}
+        fn selections(&self, _t: f64, y: &[f64], p: &[f64], _mask: &[u8], out: &mut [f64]) {
+            out[0] = y[0];
+            out[1] = y[0] / p[0];
+            out[2] = y[1];
+            out[3] = y[1] / p[0];
+            out[4] = p[0];
+            out[5] = p[1];
         }
         fn assign(&self, _t: f64, _y: &mut [f64], _p: &mut [f64]) {}
         no_events!();

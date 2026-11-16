@@ -538,9 +538,13 @@ fn check_steady_state(
 ///
 /// A value which needs the size of a compartment (the amount of a species which stores its
 /// concentration, the concentration of a species which stores its amount) is converted with
-/// the size of the model as loaded (`defaults` and `init`), or with the value an earlier
-/// pre-initialization value of the request gave the compartment, as sbmlsim's `setValue` of
-/// the selections on the reset model, in the order of the values.
+/// the size the initialization settles on, so a pre-initialization holds the concentration of
+/// a species over the whole initialization, as sbmlsim and libroadrunner do. The values are
+/// therefore set in two passes: the ones which need no conversion first, then `init`, which
+/// derives the sizes with them, then the converted ones, then `init` again, so whatever an
+/// initial assignment derives from those species settles too. A conversion cannot change a
+/// size (only a species is converted), so the result does not depend on the order of the
+/// values of the request.
 fn initial_values(
     model: &dyn ModelFns,
     desc: &ModelDescription,
@@ -552,15 +556,6 @@ fn initial_values(
     let mut y = vec![0.0; ns];
     model.defaults(&mut p, &mut y);
     let mut fixed = vec![0u8; np + ns];
-    // the model as loaded, with the values set so far, for the sizes of the conversions
-    let mut loaded = preinit
-        .iter()
-        .any(|(target, _)| target.compartment().is_some())
-        .then(|| {
-            let (mut lp, mut ly) = (p.clone(), y.clone());
-            model.init(INIT_TIME, &mut lp, &mut ly, &fixed);
-            (lp, ly)
-        });
     let get = |p: &[f64], y: &[f64], i: usize| if i < np { p[i] } else { y[i - np] };
     let set = |p: &mut [f64], y: &mut [f64], i: usize, v: f64| {
         if i < np {
@@ -570,18 +565,24 @@ fn initial_values(
         }
     };
     for &(target, value) in preinit {
-        let stored = match (&loaded, target.compartment()) {
-            (Some((lp, ly)), Some(c)) => target.stored(value, get(lp, ly, c)),
-            _ => value,
-        };
-        let index = target.index();
-        set(&mut p, &mut y, index, stored);
-        if let Some((lp, ly)) = &mut loaded {
-            set(lp, ly, index, stored);
+        if target.compartment().is_none() {
+            set(&mut p, &mut y, target.index(), value);
+            fixed[target.index()] = 1;
         }
-        fixed[index] = 1;
     }
     model.init(INIT_TIME, &mut p, &mut y, &fixed);
+    let mut converted = false;
+    for &(target, value) in preinit {
+        if let Some(c) = target.compartment() {
+            let size = get(&p, &y, c);
+            set(&mut p, &mut y, target.index(), target.stored(value, size));
+            fixed[target.index()] = 1;
+            converted = true;
+        }
+    }
+    if converted {
+        model.init(INIT_TIME, &mut p, &mut y, &fixed);
+    }
     (p, y)
 }
 
