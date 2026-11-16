@@ -33,6 +33,8 @@ Node 20 or newer runs the JavaScript host and its tests (CI uses Node 24). [uv](
 
 ## Building
 
+On windows the native C solvers (`sbmlsim-csolvers`, which the command line and the python package link) are compiled with the `clang` of [LLVM](https://releases.llvm.org/) on the path, unless `CC` names another compiler; `cl` of MSVC cannot compile them.
+
 `cargo build` builds `engine.wasm` (wasm32-wasip1, the C solvers compiled with the clang of wasi-sdk, `WASI_SDK_PATH`) and `mathlib.wasm` (wasm32-unknown-unknown) in the build script of `sbmlsim-host`, which embeds them; `SBMLSIM_CORE_WASM_DIR` names a directory with prebuilt ones instead.
 
 ```bash

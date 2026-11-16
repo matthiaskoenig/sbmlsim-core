@@ -100,6 +100,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: wheel-${{ matrix.name }}
+      - name: The clang of LLVM, which compiles the C solvers for the target of MSVC
+        if: runner.os == 'Windows'
+        run: |
+          echo "C:\\Program Files\\LLVM\\bin" >> "$GITHUB_PATH"
+          "/c/Program Files/LLVM/bin/clang" --version
       - name: Build the wheel with the runtime of the job runtime
         run: |
           export SBMLSIM_CORE_WASM_DIR="$GITHUB_WORKSPACE/runtime"

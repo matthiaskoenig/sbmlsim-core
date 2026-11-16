@@ -1,6 +1,8 @@
 //! Compiles SUNDIALS CVODE and SuiteSparse KLU from the submodules in `third_party` with `cc`.
 //!
-//! For a native target the C compiler is the one `cc` finds (`CC`, else `cc`); for `wasm32-wasip1`
+//! For a native target the C compiler is the one `cc` finds (`CC`, else `cc`), for a target of
+//! MSVC without `CC` the `clang` of LLVM on the path, since `cl` reads neither the GNU attributes
+//! of the configuration of SUNDIALS nor the flags below; for `wasm32-wasip1`
 //! it is `$WASI_SDK_PATH/bin/clang` with the sysroot of wasi-sdk and `-msimd128`. Every compile
 //! is `-O3 -DNDEBUG -ffp-contract=off -fno-fast-math`, so neither the optimization level of the
 //! cargo profile, nor SIMD, nor the contraction into fused multiply-adds changes a result.
@@ -169,10 +171,18 @@ fn main() {
             ))
             .flag("-msimd128");
         "Clang"
-    } else if build.get_compiler().is_like_clang() {
-        "Clang"
     } else {
-        "GNU"
+        if env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") && !compiler_given() {
+            // cl of MSVC reads neither the GNU attributes of the configuration of SUNDIALS nor
+            // the flags which fix the bits (`-ffp-contract=off`), so a windows build compiles the
+            // C with clang of LLVM for the target of MSVC unless a compiler is given
+            build.compiler("clang");
+        }
+        if build.get_compiler().is_like_clang() {
+            "Clang"
+        } else {
+            "GNU"
+        }
     };
     let flags = if wasm {
         "-O3 -DNDEBUG -ffp-contract=off -fno-fast-math -msimd128"
@@ -269,6 +279,22 @@ fn c_flag_variables() -> Vec<std::ffi::OsString> {
             })
         })
         .collect()
+}
+
+/// Whether the environment names the C compiler `cc` takes: `CC`, its variants of a target
+/// (`CC_<target>`, with `-` or `_`) and `TARGET_CC`.
+fn compiler_given() -> bool {
+    let target = env::var("TARGET").unwrap_or_default();
+    let names = [
+        "CC".to_string(),
+        format!("CC_{target}"),
+        format!("CC_{}", target.replace('-', "_")),
+        "TARGET_CC".to_string(),
+    ];
+    for name in &names {
+        println!("cargo:rerun-if-env-changed={name}");
+    }
+    names.iter().any(|name| env::var_os(name).is_some())
 }
 
 /// Writes `sundials/sundials_config.h` and `sundials/sundials_export.h` into `include`.
