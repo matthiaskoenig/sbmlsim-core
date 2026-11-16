@@ -148,7 +148,13 @@ impl Target {
 
     /// The value the entity stores for the value `value` of the target in a compartment of
     /// the size `size` (used only by a target with a [`Target::compartment`]): `value / size`
-    /// for an amount, `value * size` for a concentration (sbmlsim's `setValue`).
+    /// for an amount, `value * size` for a concentration, the conversion of sbmlsim's
+    /// `setValue`.
+    ///
+    /// Which size that is, is the caller's: the pre-initialization takes the one the initial
+    /// assignments settle on (`initial_values` of the crate) and deliberately not, as
+    /// `setValue` does, the one the model carries at the moment of the assignment, which
+    /// would make the result depend on the order of the values.
     pub fn stored(&self, value: f64, size: f64) -> f64 {
         match self {
             Target::Amount(s) if s.stores_concentration => value / size,

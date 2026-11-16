@@ -744,6 +744,40 @@ fn preinit_holds_a_concentration_across_the_initialization() {
     );
 }
 
+/// Several values which need a size are converted against one state, whatever their order:
+/// nothing a conversion writes is a size, which is the invariant the second pass of
+/// `initial_values` rests on, and a target whose `compartment` were something other than that
+/// of a species would break it.
+#[test]
+fn preinit_converts_several_concentrations_against_one_state() {
+    let (a, n) = (("[A]", 5.0), ("[N]", 7.0));
+    // with a third value which changes the size, through the chain `c = V f` or directly
+    for third in [("f", 3.0), ("c", 6.0)] {
+        for order in [
+            [a, n, third],
+            [a, third, n],
+            [n, a, third],
+            [n, third, a],
+            [third, a, n],
+            [third, n, a],
+        ] {
+            assert_eq!(
+                derived_compartment(&order),
+                [30.0, 5.0, 42.0, 7.0, 6.0, 2.0],
+                "{order:?}"
+            );
+        }
+    }
+    // and without one, against the size of the model as loaded
+    for order in [[a, n], [n, a]] {
+        assert_eq!(
+            derived_compartment(&order),
+            [10.0, 5.0, 14.0, 7.0, 2.0, 2.0],
+            "{order:?}"
+        );
+    }
+}
+
 /// `y' = -y`, `y(0) = 1`, with an event which never executes (its root function `time - 100`
 /// is located, so the run takes the path of the events), or without events.
 fn falling(with_event: bool) -> EventModel {

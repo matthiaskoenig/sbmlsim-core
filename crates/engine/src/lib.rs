@@ -20,7 +20,9 @@
 //!
 //! The initialization is `defaults`, then the pre-initialization values of the request and of
 //! its steady state (fixed for `init`, in the selections of sbmlsim as the changes), then `init`
-//! at the time 0 ([`INIT_TIME`], as sbmlsim); then the steady state, if the request has one
+//! at the time 0 ([`INIT_TIME`], as sbmlsim), the values and `init` in two passes when one of
+//! them needs the size of a compartment (`initial_values`); then the steady state, if the
+//! request has one
 //! (integrated from the time 0); the integration runs in absolute time from the start, in
 //! segments between the changes.
 //!
@@ -533,18 +535,25 @@ fn check_steady_state(
     Ok(())
 }
 
-/// The parameters and the state at the start: `defaults`, the pre-initialization values (fixed
-/// for `init`), `init` at [`INIT_TIME`].
+/// The parameters and the state at the start: `defaults`, then the pre-initialization values
+/// (fixed for `init`) and `init` at [`INIT_TIME`] in two passes, one pass when no value needs
+/// the size of a compartment.
 ///
 /// A value which needs the size of a compartment (the amount of a species which stores its
 /// concentration, the concentration of a species which stores its amount) is converted with
-/// the size the initialization settles on, so a pre-initialization holds the concentration of
-/// a species over the whole initialization, as sbmlsim and libroadrunner do. The values are
+/// the size the initial assignments settle on, so a pre-initialization holds the concentration
+/// of a species over the whole initialization, as sbmlsim and libroadrunner do. The values are
 /// therefore set in two passes: the ones which need no conversion first, then `init`, which
 /// derives the sizes with them, then the converted ones, then `init` again, so whatever an
 /// initial assignment derives from those species settles too. A conversion cannot change a
 /// size (only a species is converted), so the result does not depend on the order of the
 /// values of the request.
+///
+/// The size of a conversion is the one the **first** evaluation settles on. That is the size
+/// of the initialized model unless an initial assignment of that size reads a species a value
+/// converts, which is circular: the second evaluation then moves the size the first one
+/// converted against, and there is no fixed point to take instead (libroadrunner's `setValue`
+/// defines none either, it reads whichever size the model carries at the time).
 fn initial_values(
     model: &dyn ModelFns,
     desc: &ModelDescription,
