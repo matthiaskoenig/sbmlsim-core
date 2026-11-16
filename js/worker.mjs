@@ -93,9 +93,11 @@ if (typeof WorkerGlobalScope !== "undefined" && globalThis instanceof WorkerGlob
   globalThis.addEventListener("message", (event) => receive(event.data));
 } else {
   // a worker thread of Node: the messages wait in `parentPort` until a listener is added
+  // No top-level await, so the inline build (`inline.mjs`) runs this script as a classic worker.
   const specifier = "node:worker_threads";
-  const { parentPort } = await import(specifier);
-  if (!parentPort) throw new Error("worker.mjs runs as a Web Worker or as a worker thread of Node");
-  post = (message, transfer = []) => parentPort.postMessage(message, transfer);
-  parentPort.on("message", receive);
+  import(specifier).then(({ parentPort }) => {
+    if (!parentPort) throw new Error("worker.mjs runs as a Web Worker or as a worker thread of Node");
+    post = (message, transfer = []) => parentPort.postMessage(message, transfer);
+    parentPort.on("message", receive);
+  });
 }

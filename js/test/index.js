@@ -8,3 +8,5 @@ import "./large.test.mjs";
 import "./stack.test.mjs";
 import "./same_bits.test.mjs";
 import "./bench.test.mjs";
+import "./golden.test.mjs";
+import "./inline.test.mjs";

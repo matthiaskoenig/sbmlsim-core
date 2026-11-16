@@ -96,7 +96,10 @@ jobs:
       - run: cargo build --release -p sbmlsim-cli
       - name: Export every passing case with the outputs of the wasmtime host (the parity is the job testsuite-parity)
         run: target/release/sbmlsim-core testsuite testdata/cases --export "$RUNNER_TEMP/export"
+      - name: The build tools of the JavaScript host (esbuild of the inline build)
+        run: npm ci --prefix js --no-audit --no-fund
       - name: The tests of the loader in Node
+        # inline.test.mjs checks that the committed inline build is the one of the sources
         run: node --test js/test
         env:
           SBMLSIM_CORE_CLI: ${{ github.workspace }}/target/release/sbmlsim-core
