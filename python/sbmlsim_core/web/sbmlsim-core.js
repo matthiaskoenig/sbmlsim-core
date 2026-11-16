@@ -1,4 +1,4 @@
-// sbmlsim-core 0.4.0, the inline build of its JavaScript host (js/inline.mjs, js/build.mjs).
+// sbmlsim-core 0.5.0, the inline build of its JavaScript host (js/inline.mjs, js/build.mjs).
 // Generated, do not edit. MIT AND BSD-3-Clause AND LGPL-2.1-or-later, see LICENSE and THIRD_PARTY.md.
 var sbmlsimCore = (() => {
   var __defProp = Object.defineProperty;
@@ -69,6 +69,12 @@ var sbmlsimCore = (() => {
       this.detail = message;
       if (flag !== void 0) this.flag = flag;
       if (time !== void 0) this.time = time === null ? NaN : time;
+    }
+  };
+  var UnsupportedError = class extends EngineError {
+    constructor(message) {
+      super("unsupported", message);
+      this.name = "UnsupportedError";
     }
   };
   var WasiExit = class extends Error {
@@ -194,6 +200,64 @@ var sbmlsimCore = (() => {
       );
     }
   }
+  function validateModelBytes(source) {
+    const bytes = source instanceof ArrayBuffer ? new Uint8Array(source) : ArrayBuffer.isView(source) ? new Uint8Array(source.buffer, source.byteOffset, source.byteLength) : null;
+    if (!bytes || bytes.length < 8) throw new Error("model.wasm is not a WASM binary");
+    let pos = 8;
+    const leb = (end) => {
+      let value = 0;
+      for (let shift = 0; shift < 35 && pos < end; shift += 7) {
+        const byte = bytes[pos++];
+        value += (byte & 127) * 2 ** shift;
+        if (!(byte & 128)) return value;
+      }
+      throw new Error("invalid model.wasm section encoding");
+    };
+    while (pos < bytes.length) {
+      const id = bytes[pos++];
+      const length = leb(bytes.length);
+      const end = pos + length;
+      if (end > bytes.length) throw new Error("invalid model.wasm section length");
+      if (id === 1) {
+        const count = leb(end);
+        for (let i = 0; i < count; i++) {
+          if (bytes[pos++] !== 96) throw new Error("model.wasm has an unsupported type");
+          for (let vector = 0; vector < 2; vector++) {
+            const n = leb(end);
+            for (let j = 0; j < n; j++) {
+              if (pos >= end || ![127, 126, 125, 124, 123].includes(bytes[pos++])) {
+                throw new Error("model.wasm has an unsupported reference type");
+              }
+            }
+          }
+        }
+      }
+      if (id === 13) throw new Error("model.wasm must not define exception tags");
+      if ([4, 5, 8, 9, 11, 12].includes(id)) {
+        if (id === 8 || id === 12 || leb(end) !== 0) {
+          throw new Error("model.wasm must not define tables, memories, a start function, elements or data");
+        }
+      }
+      if (id === 6) {
+        const count = leb(end);
+        for (let i = 0; i < count; i++) {
+          const type = bytes[pos++];
+          if (![127, 126, 125, 124].includes(type)) throw new Error("model.wasm has an unsupported global type");
+          if (bytes[pos++] !== 0) throw new Error("model.wasm must not define mutable globals");
+          const op = bytes[pos++];
+          if (op === 65 || op === 66) {
+            let n = 0;
+            while (pos < end && n++ < 10 && bytes[pos++] & 128) {
+            }
+          } else if (op === 67) pos += 4;
+          else if (op === 68) pos += 8;
+          else throw new Error("model.wasm has an unsupported global initializer");
+          if (pos >= end || bytes[pos++] !== 11) throw new Error("model.wasm has an invalid global initializer");
+        }
+      }
+      pos = end;
+    }
+  }
   function checkModel(modelModule, mathlibModule) {
     const math = new Set(
       WebAssembly.Module.exports(mathlibModule).filter((e) => e.kind === "function").map((e) => e.name)
@@ -223,6 +287,9 @@ var sbmlsimCore = (() => {
     const mathlibModule = await toModule(mathlib, "mathlib.wasm");
     checkRuntime(engineModule, mathlibModule);
     const minimum = memoryMinimum(engineModule);
+    if (!Number.isSafeInteger(maxMemoryPages) || maxMemoryPages < minimum || maxMemoryPages > MAX_MEMORY_PAGES) {
+      throw new Error(`maxMemoryPages must be between ${minimum} and ${MAX_MEMORY_PAGES}`);
+    }
     return {
       /** The compiled modules, which a worker gets to create a runtime of its own. */
       modules: { engine: engineModule, mathlib: mathlibModule },
@@ -238,6 +305,7 @@ var sbmlsimCore = (() => {
         if (desc.contract !== MODEL_CONTRACT) {
           throw new Error(`the description is of the contract ${desc.contract}, not ${MODEL_CONTRACT}`);
         }
+        if (!(modelWasm instanceof WebAssembly.Module)) validateModelBytes(modelWasm);
         const modelModule = await toModule(modelWasm, "model.wasm");
         checkModel(modelModule, mathlibModule);
         const memory = new WebAssembly.Memory({ initial: minimum, maximum: maxMemoryPages });
@@ -270,6 +338,23 @@ var sbmlsimCore = (() => {
       }
     };
   }
+  var preparedStates = /* @__PURE__ */ new WeakMap();
+  var PreparedSimulation = class {
+    constructor(token, state) {
+      if (token !== preparedStates) throw new TypeError("use instance.prepare()");
+      preparedStates.set(this, state);
+    }
+    get nValues() {
+      return preparedStates.get(this).nValues;
+    }
+    close() {
+      const state = preparedStates.get(this);
+      if (state.closed) return;
+      state.closed = true;
+      state.instance.plans.delete(this);
+      if (!state.instance.trapped) state.instance.guard(() => state.instance.exports.engine_release_prepared(state.handle));
+    }
+  };
   var Instance = class {
     constructor(exports, memory, calls) {
       this.exports = exports;
@@ -278,6 +363,9 @@ var sbmlsimCore = (() => {
       this.trapped = false;
       this.encoder = new TextEncoder();
       this.decoder = new TextDecoder();
+      this.inputPtr = 0;
+      this.inputCapacity = 0;
+      this.plans = /* @__PURE__ */ new Set();
     }
     /** The number of calls of the engine into WASI since the instance was created. */
     wasiCalls() {
@@ -315,6 +403,49 @@ var sbmlsimCore = (() => {
       if (code === 1 && output.error) throw output.error;
       throw new EngineError("internal", `engine_simulate returned ${code} with the output ${JSON.stringify(output.header)}`);
     }
+    /** Prepares fixed request structure once; varying IDs define the raw value order. */
+    prepare(request, { varying = [] } = {}) {
+      if (!["engine_prepare", "engine_simulate_prepared", "engine_release_prepared"].every((name) => typeof this.exports[name] === "function")) {
+        throw new UnsupportedError("this engine does not support prepared requests");
+      }
+      if (this.trapped) throw new EngineError("internal", "the instance trapped before and is not used again");
+      if (this.plans.size >= 32) throw new EngineError("request", "prepared request limit reached (32)");
+      const code = this.call(this.exports.engine_prepare, jsonText({ request: typeof request === "string" ? JSON.parse(request) : request, varying }));
+      const output = this.output();
+      if (code !== 0) throw output.error ?? new EngineError("internal", "engine_prepare failed without an error");
+      const { prepared: handle, n_values: nValues } = output.header;
+      if (!Number.isInteger(handle) || !Number.isSafeInteger(nValues) || nValues < 0) throw new EngineError("internal", "invalid prepared request output");
+      const plan = new PreparedSimulation(preparedStates, { instance: this, handle, nValues, closed: false });
+      this.plans.add(plan);
+      return plan;
+    }
+    simulatePrepared(plan, values = []) {
+      const state = preparedStates.get(plan);
+      if (!state || state.instance !== this || state.closed) throw new EngineError("request", "foreign or closed prepared request");
+      if (this.trapped) throw new EngineError("internal", "the instance trapped before and is not used again");
+      if (!Array.isArray(values) && !(values instanceof Float64Array) || values.length !== state.nValues || values.findIndex((value) => !Number.isFinite(value)) >= 0) {
+        throw new EngineError("request", `prepared request requires ${state.nValues} finite values`);
+      }
+      const ptr = this.inputBuffer(values.length * 8);
+      const view = new DataView(this.memory.buffer, ptr, values.length * 8);
+      for (let i = 0; i < values.length; i++) view.setFloat64(i * 8, values[i], true);
+      const code = this.guard(() => this.exports.engine_simulate_prepared(state.handle, ptr, values.length));
+      const output = this.output();
+      if (code === 0 && output.table) return output.table;
+      if (output.error) throw output.error;
+      throw new EngineError("internal", "engine_simulate_prepared returned invalid output");
+    }
+    inputBuffer(length) {
+      if (length > this.inputCapacity) {
+        const capacity = Math.max(length, this.inputCapacity * 2, 256);
+        const ptr = this.guard(() => this.exports.engine_alloc(capacity)) >>> 0;
+        if (!ptr) throw new EngineError("internal", "engine_alloc found no memory for the input");
+        if (this.inputCapacity) this.guard(() => this.exports.engine_free(this.inputPtr, this.inputCapacity));
+        this.inputPtr = ptr;
+        this.inputCapacity = capacity;
+      }
+      return this.inputPtr;
+    }
     /** Loads the description (`engine_load`). */
     load(descText, id) {
       const before = this.calls();
@@ -332,13 +463,9 @@ var sbmlsimCore = (() => {
         throw new EngineError("internal", "the instance trapped before and is not used again");
       }
       const bytes = this.encoder.encode(text);
-      const ptr = this.guard(() => this.exports.engine_alloc(bytes.length)) >>> 0;
-      if (ptr === 0 && bytes.length > 0) {
-        throw new EngineError("internal", "engine_alloc found no memory for the input");
-      }
+      const ptr = this.inputBuffer(bytes.length);
       new Uint8Array(this.memory.buffer, ptr, bytes.length).set(bytes);
       const code = this.guard(() => fn(ptr, bytes.length));
-      this.guard(() => this.exports.engine_free(ptr, bytes.length));
       return code;
     }
     /**
@@ -382,6 +509,7 @@ var sbmlsimCore = (() => {
         error.engineKind = kind;
         return { header, error };
       }
+      if (header.prepared !== void 0) return { header };
       const { columns, n_rows: nRows } = header;
       const start = 4 + headerLength + 7 & ~7;
       const n = nRows * columns.length;
@@ -410,6 +538,20 @@ var sbmlsimCore = (() => {
   }
 
   // pool.mjs
+  var poolPlanStates = /* @__PURE__ */ new WeakMap();
+  var preparedJob = /* @__PURE__ */ Symbol("prepared job");
+  var PreparedPoolSimulation = class {
+    constructor(token, state) {
+      if (token !== poolPlanStates) throw new TypeError("use pool.prepare()");
+      poolPlanStates.set(this, state);
+    }
+    get nValues() {
+      return poolPlanStates.get(this).nValues;
+    }
+    close() {
+      poolPlanStates.get(this).close();
+    }
+  };
   var WORKER_URL = new URL("./worker.mjs", "https://sbmlsim-core.invalid/");
   function defaultWorkers() {
     const cores = globalThis.navigator?.hardwareConcurrency ?? 2;
@@ -439,6 +581,7 @@ var sbmlsimCore = (() => {
       worker.on("message", onMessage);
       worker.on("error", onError);
       worker.on("messageerror", onError);
+      worker.on("exit", (code) => onError(new Error(`the worker exited (${code})`)));
     } else {
       worker.addEventListener("message", (event) => onMessage(event.data));
       worker.addEventListener("error", (event) => {
@@ -449,9 +592,10 @@ var sbmlsimCore = (() => {
     }
   }
   function remoteError(fields) {
-    if (fields.kind !== void 0 && fields.name === "EngineError") {
+    if (fields.kind !== void 0 && ["EngineError", "UnsupportedError"].includes(fields.name)) {
       const error2 = new EngineError(fields.kind, fields.detail ?? fields.message, { flag: fields.flag, time: fields.time });
       if (fields.message) error2.message = fields.message;
+      error2.name = fields.name;
       return error2;
     }
     const error = new Error(fields.message);
@@ -463,73 +607,189 @@ var sbmlsimCore = (() => {
     mathlib,
     workers = defaultWorkers(),
     createWorker = browserWorker,
-    workerUrl = WORKER_URL
+    workerUrl = WORKER_URL,
+    maxWorkers = 32,
+    maxQueuedJobs = 1024,
+    maxQueuedBytes = 64 * 2 ** 20,
+    maxModelBytes = 128 * 2 ** 20,
+    maxModels = 128,
+    maxWorkerModels = 8,
+    maxMemoryPages,
+    maxTotalMemoryBytes = 2 ** 31,
+    maxModuleBytes = 32 * 2 ** 20,
+    maxDescriptionBytes = 16 * 2 ** 20,
+    maxRequestBytes = 16 * 2 ** 20,
+    deadlineMs = 3e4,
+    hardAbort = false
   }) {
     if (!Number.isInteger(workers) || workers < 1) {
       throw new Error(`a pool needs at least one worker, not ${workers}`);
     }
-    const runtime = await createRuntime({ engine, mathlib });
+    for (const [name, value] of Object.entries({ maxWorkers, maxQueuedJobs, maxQueuedBytes, maxModelBytes, maxModels, maxWorkerModels, maxTotalMemoryBytes, maxModuleBytes, maxDescriptionBytes, maxRequestBytes })) {
+      if (!Number.isSafeInteger(value) || value < 1) throw new Error(`${name} must be a positive safe integer`);
+    }
+    if (workers > maxWorkers) throw new Error(`workers exceeds maxWorkers (${maxWorkers})`);
+    const checkDeadline = (value) => {
+      if (!Number.isFinite(value) || value < 0 || value > 2147483647) throw new Error("deadlineMs must be between 0 and 2147483647");
+    };
+    checkDeadline(deadlineMs);
+    const checkModuleSize = (module) => {
+      if (!(module instanceof WebAssembly.Module) && module?.byteLength > maxModuleBytes) {
+        throw new Error(`module exceeds maxModuleBytes (${maxModuleBytes})`);
+      }
+    };
+    checkModuleSize(engine);
+    checkModuleSize(mathlib);
+    const runtime = await createRuntime({ engine, mathlib, maxMemoryPages });
+    const retained = workers * Math.min(maxWorkerModels, maxModels);
+    const aggregatePages = Math.floor(maxTotalMemoryBytes / 65536 / retained);
+    const sections = WebAssembly.Module.customSections(runtime.modules.engine, ENGINE_SECTION);
+    const minimum = JSON.parse(new TextDecoder().decode(sections[0])).memory_minimum_pages;
+    if (aggregatePages < minimum) {
+      throw new Error(`maxTotalMemoryBytes (${maxTotalMemoryBytes}) cannot fit ${retained} retained instances at the engine minimum (${minimum} pages)`);
+    }
+    if (maxMemoryPages !== void 0 && maxMemoryPages > aggregatePages) {
+      throw new Error(`maxMemoryPages (${maxMemoryPages}) exceeds maxTotalMemoryBytes (${maxTotalMemoryBytes}) for ${retained} retained instances; lower workers/maxWorkerModels or raise the total budget`);
+    }
+    maxMemoryPages ??= Math.min(MAX_MEMORY_PAGES, aggregatePages);
+    const checkTextSize = (text, maximum, name) => {
+      if (typeof text !== "string") throw new Error(`${name} must serialize to JSON text`);
+      let bytes = 0;
+      for (let i = 0; i < text.length; i++) {
+        const code = text.charCodeAt(i);
+        if (code < 128) bytes += 1;
+        else if (code < 2048) bytes += 2;
+        else if (code >= 55296 && code <= 56319 && text.charCodeAt(i + 1) >= 56320 && text.charCodeAt(i + 1) <= 57343) {
+          bytes += 4;
+          i++;
+        } else bytes += 3;
+        if (bytes > maximum) throw new Error(`${name} exceeds its byte limit (${maximum})`);
+      }
+      return bytes;
+    };
     const models = /* @__PURE__ */ new Map();
+    const plans = /* @__PURE__ */ new Map();
+    let nextPlanId = 1;
+    const loadingModels = /* @__PURE__ */ new Set();
     const slots = [];
-    const queue = [];
+    const queue = /* @__PURE__ */ new Map();
+    let queuedBytes = 0;
+    let modelBytes = 0;
+    const dequeue = (job) => {
+      if (queue.delete(job.id)) queuedBytes -= job.bytes;
+    };
+    let pumping = false;
     let nextId = 1;
     let closed = false;
-    const settle = (job, error, result) => {
+    const settle = (job, error, result, failed = true) => {
       if (job.settled) return;
       job.settled = true;
       job.signal?.removeEventListener("abort", job.onAbort);
-      if (error) job.reject(error);
+      if (failed) job.reject(error);
       else job.resolve(result);
     };
+    const stop = (worker) => {
+      try {
+        Promise.resolve(worker.terminate()).catch(() => {
+        });
+      } catch {
+      }
+    };
     const spawn = () => {
-      const slot = { worker: createWorker(workerUrl), models: /* @__PURE__ */ new Set(), job: null, dead: false };
-      listen(
-        slot.worker,
-        (message) => {
-          const job = slot.job;
-          if (!job || message?.id !== job.id) return;
-          slot.job = null;
-          if (message.type === "result") {
-            settle(job, null, { columns: message.columns, nRows: message.nRows, values: message.values });
-          } else {
-            settle(job, remoteError(message.error ?? {}));
-          }
-          pump();
-        },
-        (error) => {
-          if (slot.dead) return;
-          slot.dead = true;
-          const index = slots.indexOf(slot);
-          if (index >= 0) slots.splice(index, 1);
-          slot.worker.terminate();
-          if (slot.job) settle(slot.job, error instanceof Error ? error : new Error(String(error)));
-          slot.job = null;
-          pump();
-        }
-      );
-      slot.worker.postMessage({ type: "init", ...runtime.modules });
+      const slot = { worker: createWorker(workerUrl), models: /* @__PURE__ */ new Set(), plans: /* @__PURE__ */ new Set(), job: null, dead: false };
+      try {
+        listen(
+          slot.worker,
+          (message) => {
+            const job = slot.job;
+            if (slot.dead || !job || message?.id !== job.id) return;
+            clearTimeout(job.timer);
+            slot.job = null;
+            if (message.type === "prepared") {
+              settle(job, null, message.nValues, false);
+            } else if (message.type === "result") {
+              settle(job, null, { columns: message.columns, nRows: message.nRows, values: message.values }, false);
+            } else {
+              settle(job, remoteError(message.error ?? {}));
+            }
+            pump();
+          },
+          (error) => retire(slot, error)
+        );
+        slot.worker.postMessage({ type: "init", ...runtime.modules, maxMemoryPages });
+      } catch (error) {
+        slot.dead = true;
+        stop(slot.worker);
+        throw error;
+      }
       slots.push(slot);
       return slot;
     };
+    const retire = (slot, error) => {
+      if (slot.dead) return;
+      slot.dead = true;
+      const index = slots.indexOf(slot);
+      if (index >= 0) slots.splice(index, 1);
+      stop(slot.worker);
+      if (slot.job) {
+        clearTimeout(slot.job.timer);
+        settle(slot.job, error);
+      }
+      slot.job = null;
+      pump();
+    };
     const pump = () => {
-      while (!closed && queue.length > 0) {
-        const key = queue[0].key;
-        const idle = slots.filter((slot2) => !slot2.job);
-        const slot = idle.find((s) => s.models.has(key)) ?? idle[0] ?? (slots.length < workers ? spawn() : null);
-        if (!slot) return;
-        const job = queue.shift();
-        if (!slot.models.has(job.key)) {
-          const { module, description } = models.get(job.key);
-          slot.worker.postMessage({ type: "model", key: job.key, module, description });
-          slot.models.add(job.key);
+      if (pumping) return;
+      pumping = true;
+      try {
+        while (!closed && queue.size > 0) {
+          const job = queue.values().next().value;
+          const key = job.key;
+          const idle = slots.filter((slot2) => !slot2.job);
+          let slot = idle.find((s) => s.models.has(key)) ?? idle[0];
+          if (!slot && slots.length >= workers) return;
+          dequeue(job);
+          try {
+            slot ??= spawn();
+            slot.job = job;
+            if (job.deadlineMs > 0) job.timer = setTimeout(() => {
+              const error = new Error(`worker deadline exceeded (${job.deadlineMs} ms)`);
+              error.name = "TimeoutError";
+              retire(slot, error);
+            }, job.deadlineMs);
+            if (!slot.models.has(job.key)) {
+              if (slot.models.size >= maxWorkerModels) {
+                const oldest = slot.models.values().next().value;
+                slot.worker.postMessage({ type: "removeModel", key: oldest });
+                slot.models.delete(oldest);
+                for (const id of slot.plans) if (plans.get(id)?.key === oldest) slot.plans.delete(id);
+              }
+              const { module, description } = models.get(job.key);
+              slot.worker.postMessage({ type: "model", key: job.key, module, description });
+            }
+            slot.models.delete(job.key);
+            slot.models.add(job.key);
+            if (job.prepared) {
+              const state = job.prepared;
+              const definition = slot.plans.has(state.id) ? {} : { request: state.request, varying: state.varying };
+              slot.worker.postMessage({ type: job.type, id: job.id, key: job.key, planId: state.id, values: job.values, ...definition }, job.values ? [job.values.buffer] : []);
+              slot.plans.add(state.id);
+            } else slot.worker.postMessage({ type: "simulate", id: job.id, key: job.key, request: job.request });
+          } catch (error) {
+            settle(job, error);
+            if (slot) retire(slot, error);
+          }
         }
-        slot.job = job;
-        slot.worker.postMessage({ type: "simulate", id: job.id, key: job.key, request: job.request });
+      } finally {
+        pumping = false;
       }
     };
-    return {
+    const api = {
       /** The most workers of the pool. */
       size: workers,
+      /** Effective per-instance and aggregate linear-memory policies. */
+      maxMemoryPages,
+      maxTotalMemoryBytes,
       /** The compiled modules of the runtime. */
       modules: runtime.modules,
       /**
@@ -539,15 +799,96 @@ var sbmlsimCore = (() => {
        */
       async addModel(key, model, description) {
         if (closed) throw new Error("the pool is closed");
-        if (models.has(key)) throw new Error(`the pool has a model ${key} already`);
+        if (models.has(key) || loadingModels.has(key)) throw new Error(`the pool has a model ${key} already`);
+        if (models.size + loadingModels.size >= maxModels) throw new Error(`model limit reached (${maxModels})`);
+        checkModuleSize(model);
+        if (!(model instanceof WebAssembly.Module)) validateModelBytes(model);
         const text = typeof description === "string" ? description : JSON.stringify(description);
-        const module = model instanceof WebAssembly.Module ? model : await WebAssembly.compile(model);
-        if (models.has(key)) throw new Error(`the pool has a model ${key} already`);
-        models.set(key, { module, description: text });
+        const bytes = checkTextSize(text, maxDescriptionBytes, "description") + (model instanceof WebAssembly.Module ? 0 : model.byteLength);
+        if (modelBytes + bytes > maxModelBytes) throw new Error(`registered models exceed maxModelBytes (${maxModelBytes})`);
+        loadingModels.add(key);
+        modelBytes += bytes;
+        let registered = false;
+        try {
+          const module = model instanceof WebAssembly.Module ? model : await WebAssembly.compile(model);
+          if (closed) throw new Error("the pool is closed");
+          models.set(key, { module, description: text, bytes });
+          registered = true;
+        } finally {
+          if (loadingModels.delete(key) && !registered) modelBytes -= bytes;
+        }
+      },
+      /** Removes an idle model; queued/running users must complete or abort first. */
+      removeModel(key) {
+        if (loadingModels.has(key) || [...queue.values()].some((job) => job.key === key) || slots.some((slot) => slot.job?.key === key)) {
+          throw new Error(`model ${key} is in use`);
+        }
+        const model = models.get(key);
+        if (!model) return false;
+        for (const state of [...plans.values()]) if (state.key === key) state.close();
+        models.delete(key);
+        modelBytes -= model.bytes;
+        for (const slot of [...slots]) {
+          if (!slot.models.delete(key)) continue;
+          try {
+            slot.worker.postMessage({ type: "removeModel", key });
+          } catch (error) {
+            retire(slot, error);
+          }
+        }
+        return true;
       },
       /** Whether the pool has a model under a key. */
       hasModel(key) {
         return models.has(key);
+      },
+      async prepare(key, request, { varying = [] } = {}) {
+        if (closed) throw new Error("the pool is closed");
+        if (!models.has(key)) throw new Error(`the pool has no model ${key}`);
+        if (plans.size >= 32) throw new Error("prepared request limit reached (32)");
+        const text = typeof request === "string" ? request : JSON.stringify(request);
+        const bytes = checkTextSize(text, maxRequestBytes, "request");
+        const varyingText = JSON.stringify(varying);
+        const varyingBytes = checkTextSize(varyingText, maxRequestBytes, "varying");
+        if (modelBytes + bytes + varyingBytes > maxModelBytes) throw new Error(`prepared requests exceed maxModelBytes (${maxModelBytes})`);
+        const state = { owner: api, id: nextPlanId++, key, request: text, varying: JSON.parse(varyingText), bytes: bytes + varyingBytes, nValues: 0, closed: false };
+        const plan = new PreparedPoolSimulation(poolPlanStates, state);
+        state.close = () => {
+          if (state.closed) return;
+          state.closed = true;
+          plans.delete(state.id);
+          modelBytes -= state.bytes;
+          const error = new Error("the prepared request is closed");
+          for (const job of [...queue.values()]) if (job.prepared === state) {
+            dequeue(job);
+            settle(job, error);
+          }
+          for (const slot of [...slots]) if (slot.plans.delete(state.id)) {
+            try {
+              slot.worker.postMessage({ type: "releasePrepared", key, planId: state.id });
+            } catch (error2) {
+              retire(slot, error2);
+            }
+          }
+        };
+        plans.set(state.id, state);
+        modelBytes += state.bytes;
+        try {
+          state.nValues = await api.simulate(key, { [preparedJob]: { type: "prepare", prepared: state } });
+          if (state.closed || closed) throw new Error("the prepared request is closed");
+          return plan;
+        } catch (error) {
+          state.close();
+          throw error;
+        }
+      },
+      simulatePrepared(plan, values = [], options = {}) {
+        const state = poolPlanStates.get(plan);
+        if (!state || state.owner !== api || state.closed) return Promise.reject(new Error("foreign or closed prepared request"));
+        if (!Array.isArray(values) && !(values instanceof Float64Array) || values.length !== state.nValues || values.findIndex((value) => !Number.isFinite(value)) >= 0) {
+          return Promise.reject(new Error(`prepared request requires ${state.nValues} finite values`));
+        }
+        return api.simulate(state.key, { [preparedJob]: { type: "simulatePrepared", prepared: state, values: Float64Array.from(values) } }, options);
       },
       /**
        * Simulates a request of `simulation/1` (an object or its JSON text) on the model `key` in
@@ -555,19 +896,33 @@ var sbmlsimCore = (() => {
        * the values a `Float64Array`. `signal` (an `AbortSignal`) drops the request, see the module
        * comment.
        */
-      simulate(key, request, { signal } = {}) {
+      simulate(key, request, { signal, deadlineMs: jobDeadline = deadlineMs, hardAbort: jobHardAbort = hardAbort } = {}) {
         return new Promise((resolve, reject) => {
           if (closed) throw new Error("the pool is closed");
           if (!models.has(key)) throw new Error(`the pool has no model ${key}`);
+          checkDeadline(jobDeadline);
+          if (queue.size >= maxQueuedJobs) throw new Error(`pool queue limit reached (${maxQueuedJobs})`);
           signal?.throwIfAborted();
-          const job = { id: nextId++, key, request, signal, resolve, reject, settled: false };
+          const prepared = request?.[preparedJob];
+          const text = prepared ? "" : typeof request === "string" ? request : JSON.stringify(request, (_key, value) => {
+            if (typeof value === "function" || typeof value === "symbol") {
+              throw new DOMException("request values could not be cloned", "DataCloneError");
+            }
+            return value;
+          });
+          const bytes = prepared ? prepared.values?.byteLength ?? prepared.prepared.bytes : checkTextSize(text, maxRequestBytes, "request");
+          if (bytes > maxRequestBytes) throw new Error(`request exceeds its byte limit (${maxRequestBytes})`);
+          if (queuedBytes + bytes > maxQueuedBytes) throw new Error(`pool queue exceeds maxQueuedBytes (${maxQueuedBytes})`);
+          const job = { ...prepared, bytes, id: nextId++, key, request: text, signal, resolve, reject, settled: false, deadlineMs: jobDeadline };
           job.onAbort = () => {
-            const index = queue.indexOf(job);
-            if (index >= 0) queue.splice(index, 1);
+            dequeue(job);
             settle(job, signal.reason);
+            const slot = slots.find((slot2) => slot2.job === job);
+            if (slot && jobHardAbort) retire(slot, signal.reason);
           };
           signal?.addEventListener("abort", job.onAbort, { once: true });
-          queue.push(job);
+          queue.set(job.id, job);
+          queuedBytes += bytes;
           pump();
         });
       },
@@ -578,19 +933,29 @@ var sbmlsimCore = (() => {
       close() {
         if (closed) return;
         closed = true;
+        for (const state of [...plans.values()]) state.close();
         const error = new Error("the pool is closed");
-        for (const job of queue.splice(0)) settle(job, error);
+        for (const job of queue.values()) settle(job, error);
+        queue.clear();
+        queuedBytes = 0;
+        models.clear();
+        loadingModels.clear();
+        modelBytes = 0;
         for (const slot of slots.splice(0)) {
           slot.dead = true;
-          slot.worker.terminate();
-          if (slot.job) settle(slot.job, error);
+          stop(slot.worker);
+          if (slot.job) {
+            clearTimeout(slot.job.timer);
+            settle(slot.job, error);
+          }
         }
       }
     };
+    return api;
   }
 
   // panels.mjs
-  var CORE_VERSION = "0.4.0";
+  var CORE_VERSION = "0.5.0";
   var ENGINE = `sbmlsim-core ${CORE_VERSION}`;
   var BUNDLE_CONTRACT = "panelbundle/1";
   var PANEL_CONTRACT = "panel/1";
@@ -882,7 +1247,9 @@ var sbmlsimCore = (() => {
     return points;
   }
   var Runs = class {
-    constructor(maxBytes) {
+    constructor(maxBytes, maxEntries, maxInflight) {
+      this.maxEntries = maxEntries;
+      this.maxInflight = maxInflight;
       this.maxBytes = maxBytes;
       this.bytes = 0;
       this.inflight = /* @__PURE__ */ new Map();
@@ -903,6 +1270,7 @@ var sbmlsimCore = (() => {
       }
       let entry = this.inflight.get(key);
       if (!entry) {
+        if (this.inflight.size >= this.maxInflight) return Promise.reject(new Error("panel run limit reached"));
         const controller = new AbortController();
         entry = { controller, waiters: 0 };
         entry.promise = start(controller.signal).then(
@@ -951,12 +1319,18 @@ var sbmlsimCore = (() => {
     }
     /** Keeps the results of a run, evicting the least recently used ones beyond the bound. */
     store(key, results) {
-      const bytes = results.reduce((sum, result) => sum + (result ? result.values.byteLength : 0), 0);
+      if (results.some((result) => result === null)) return;
+      const bytes = 256 + key.length * 2 + results.reduce((sum, result) => sum + 128 + result.values.byteLength + JSON.stringify(result.columns).length * 2, 0);
       if (bytes > this.maxBytes) return;
+      const previous = this.done.get(key);
+      if (previous) {
+        this.bytes -= previous.bytes;
+        this.done.delete(key);
+      }
       this.done.set(key, { results, bytes });
       this.bytes += bytes;
       for (const [old, entry] of this.done) {
-        if (this.bytes <= this.maxBytes) break;
+        if (this.bytes <= this.maxBytes && this.done.size <= this.maxEntries) break;
         this.done.delete(old);
         this.bytes -= entry.bytes;
       }
@@ -973,11 +1347,16 @@ var sbmlsimCore = (() => {
       createWorker,
       pool: givenPool = null,
       fetch: load = (url) => globalThis.fetch(url),
-      maxRunBytes = MAX_RUN_BYTES
+      maxRunBytes = MAX_RUN_BYTES,
+      maxRunEntries = 128,
+      maxInflightRuns = 32
     } = options;
     if (bundle === void 0 || bundle === null) throw new Error("createPanelEndpoint needs the URL of a bundle");
     const bundleUrl = new URL(String(bundle), globalThis.location?.href);
-    const runs = new Runs(maxRunBytes);
+    for (const [name, value] of Object.entries({ maxRunBytes, maxRunEntries, maxInflightRuns })) {
+      if (!Number.isSafeInteger(value) || value < 1) throw new Error(`${name} must be a positive safe integer`);
+    }
+    const runs = new Runs(maxRunBytes, maxRunEntries, maxInflightRuns);
     const models = /* @__PURE__ */ new Map();
     let loading = null;
     let ownPool = null;
@@ -1246,7 +1625,7 @@ var sbmlsimCore = (() => {
   }
 
   // inline.mjs
-  var WORKER_SOURCE = '(() => {\n  // loader.mjs\n  var MODEL_CONTRACT = "model/2";\n  var MAX_MEMORY_PAGES = 32768;\n  var ENGINE_SECTION = "sbmlsim.engine";\n  var ENGINE_OUTPUT_FORMAT = 1;\n  var WASI = "wasi_snapshot_preview1";\n  var ENGINE_EXPORTS = [\n    "engine_alloc",\n    "engine_free",\n    "engine_load",\n    "engine_simulate",\n    "engine_output_ptr",\n    "engine_output_len",\n    "engine_stats_ptr"\n  ];\n  var STATS_NAMES = [\n    "steps",\n    "rhs_evals",\n    "jacobian_evals",\n    "jacobian_rhs_evals",\n    "jacobian_fallbacks",\n    "linear_setups",\n    "error_test_failures",\n    "nonlinear_iterations",\n    "nonlinear_convergence_failures",\n    "root_evals",\n    "integrations",\n    "probe_rhs_evals",\n    "steady_state_rhs_evals"\n  ];\n  var LITTLE_ENDIAN = new Uint8Array(new Uint16Array([1]).buffer)[0] === 1;\n  var EngineError = class extends Error {\n    constructor(kind, message, { flag, time } = {}) {\n      super(`${kind}: ${message}`);\n      this.name = "EngineError";\n      this.kind = kind;\n      this.detail = message;\n      if (flag !== void 0) this.flag = flag;\n      if (time !== void 0) this.time = time === null ? NaN : time;\n    }\n  };\n  var WasiExit = class extends Error {\n    constructor(code) {\n      super(`engine.wasm called proc_exit(${code})`);\n      this.name = "WasiExit";\n      this.code = code;\n    }\n  };\n  async function toModule(source, what) {\n    if (source instanceof WebAssembly.Module) return source;\n    try {\n      return await WebAssembly.compile(source);\n    } catch (error) {\n      throw new Error(`${what} does not compile: ${error.message}`);\n    }\n  }\n  function memoryMinimum(engineModule) {\n    const sections = WebAssembly.Module.customSections(engineModule, ENGINE_SECTION);\n    if (sections.length !== 1) {\n      throw new Error(\n        `engine.wasm has no custom section ${ENGINE_SECTION} with the minimum of its memory and the version of its output (the build script of sbmlsim-host adds it)`\n      );\n    }\n    const { memory_minimum_pages: pages, output_format: format } = JSON.parse(\n      new TextDecoder().decode(sections[0])\n    );\n    if (format === void 0) {\n      throw new Error(\n        `engine.wasm declares no output format in its section ${ENGINE_SECTION}, this loader reads ${ENGINE_OUTPUT_FORMAT}`\n      );\n    }\n    if (format !== ENGINE_OUTPUT_FORMAT) {\n      throw new Error(\n        `engine.wasm writes the output format ${format}, this loader reads ${ENGINE_OUTPUT_FORMAT}`\n      );\n    }\n    if (!Number.isInteger(pages) || pages < 0 || pages > MAX_MEMORY_PAGES) {\n      throw new Error(`engine.wasm declares a memory of ${pages} pages`);\n    }\n    return pages;\n  }\n  function wasiImports(engineModule, getMemory, out) {\n    let calls = 0;\n    const decoders = /* @__PURE__ */ new Map();\n    const lines = /* @__PURE__ */ new Map();\n    const view = () => new DataView(getMemory().buffer);\n    const write = (fd, bytes) => {\n      if (!decoders.has(fd)) decoders.set(fd, new TextDecoder());\n      let text = (lines.get(fd) ?? "") + decoders.get(fd).decode(bytes, { stream: true });\n      let newline;\n      while ((newline = text.indexOf("\\n")) >= 0) {\n        (fd === 2 ? out.error : out.log)(text.slice(0, newline));\n        text = text.slice(newline + 1);\n      }\n      lines.set(fd, text);\n    };\n    const provided = {\n      fd_write(fd, iovs, iovsLen, nwritten) {\n        calls += 1;\n        if (fd !== 1 && fd !== 2) return 8;\n        const memory = view();\n        let total = 0;\n        for (let i = 0; i < iovsLen; i += 1) {\n          const ptr = memory.getUint32(iovs + 8 * i, true);\n          const len = memory.getUint32(iovs + 8 * i + 4, true);\n          write(fd, new Uint8Array(getMemory().buffer, ptr, len));\n          total += len;\n        }\n        memory.setUint32(nwritten, total, true);\n        return 0;\n      },\n      proc_exit(code) {\n        calls += 1;\n        throw new WasiExit(code);\n      },\n      environ_get() {\n        calls += 1;\n        return 0;\n      },\n      environ_sizes_get(count, size) {\n        calls += 1;\n        const memory = view();\n        memory.setUint32(count, 0, true);\n        memory.setUint32(size, 0, true);\n        return 0;\n      },\n      clock_time_get() {\n        calls += 1;\n        throw new Error("engine.wasm called WASI clock_time_get: the engine reads no clock");\n      },\n      random_get() {\n        calls += 1;\n        throw new Error("engine.wasm called WASI random_get: the engine draws no random bytes");\n      }\n    };\n    const imports = {};\n    for (const { module, name, kind } of WebAssembly.Module.imports(engineModule)) {\n      if (module !== WASI || kind !== "function") continue;\n      imports[name] = provided[name] ?? (() => {\n        calls += 1;\n        throw new Error(`engine.wasm called WASI ${name}, which the loader does not provide`);\n      });\n    }\n    return { imports, calls: () => calls };\n  }\n  function checkRuntime(engineModule, mathlibModule) {\n    let memory = false;\n    for (const { module, name, kind } of WebAssembly.Module.imports(engineModule)) {\n      if (module === "env" && name === "memory" && kind === "memory") memory = true;\n      else if ((module === "model" || module === WASI) && kind === "function") continue;\n      else throw new Error(`engine.wasm imports ${module}.${name}`);\n    }\n    if (!memory) throw new Error("engine.wasm imports no memory");\n    const exports = new Set(WebAssembly.Module.exports(engineModule).map((e) => e.name));\n    for (const name of ENGINE_EXPORTS) {\n      if (!exports.has(name)) throw new Error(`engine.wasm does not export ${name}`);\n    }\n    const [mathImport] = WebAssembly.Module.imports(mathlibModule);\n    if (mathImport) {\n      throw new Error(\n        `mathlib.wasm imports ${mathImport.module}.${mathImport.name}, it imports nothing`\n      );\n    }\n  }\n  function checkModel(modelModule, mathlibModule) {\n    const math = new Set(\n      WebAssembly.Module.exports(mathlibModule).filter((e) => e.kind === "function").map((e) => e.name)\n    );\n    let memory = false;\n    for (const { module, name, kind } of WebAssembly.Module.imports(modelModule)) {\n      if (module === "env" && name === "memory" && kind === "memory") memory = true;\n      else if (module === "math" && kind === "function" && math.has(name)) continue;\n      else {\n        throw new Error(\n          `model.wasm imports ${module}.${name}, which is neither env.memory nor a function of mathlib`\n        );\n      }\n    }\n    if (!memory) throw new Error("model.wasm does not import env.memory");\n  }\n  function jsonText(value) {\n    return typeof value === "string" ? value : JSON.stringify(value);\n  }\n  async function createRuntime({\n    engine,\n    mathlib,\n    console: out = globalThis.console,\n    maxMemoryPages = MAX_MEMORY_PAGES\n  }) {\n    const engineModule = await toModule(engine, "engine.wasm");\n    const mathlibModule = await toModule(mathlib, "mathlib.wasm");\n    checkRuntime(engineModule, mathlibModule);\n    const minimum = memoryMinimum(engineModule);\n    return {\n      /** The compiled modules, which a worker gets to create a runtime of its own. */\n      modules: { engine: engineModule, mathlib: mathlibModule },\n      /**\n       * Instantiates a model (a `WebAssembly.Module` or the bytes of `model.wasm`) with its\n       * description (the text of `model.json` or its object) and loads it into a new engine.\n       * Asynchronous (a Promise of the instance): bytes compile with `WebAssembly.compile`, which\n       * browsers require for modules above a few KB on the main thread.\n       */\n      async instantiate(modelWasm, description) {\n        const descText = jsonText(description);\n        const desc = typeof description === "string" ? JSON.parse(description) : description;\n        if (desc.contract !== MODEL_CONTRACT) {\n          throw new Error(`the description is of the contract ${desc.contract}, not ${MODEL_CONTRACT}`);\n        }\n        const modelModule = await toModule(modelWasm, "model.wasm");\n        checkModel(modelModule, mathlibModule);\n        const memory = new WebAssembly.Memory({ initial: minimum, maximum: maxMemoryPages });\n        const wasi = wasiImports(engineModule, () => memory, out);\n        const math = await WebAssembly.instantiate(mathlibModule, {});\n        const model = await WebAssembly.instantiate(modelModule, {\n          env: { memory },\n          math: math.exports\n        });\n        let engineInstance;\n        try {\n          engineInstance = await WebAssembly.instantiate(engineModule, {\n            env: { memory },\n            model: model.exports,\n            [WASI]: wasi.imports\n          });\n        } catch (error) {\n          if (error instanceof WebAssembly.LinkError) {\n            throw new Error(`engine.wasm does not instantiate with the model: ${error.message}`);\n          }\n          throw error;\n        }\n        const instance = new Instance(engineInstance.exports, memory, wasi.calls);\n        if (engineInstance.exports._initialize) {\n          instance.guard(() => engineInstance.exports._initialize());\n        }\n        instance.initializeCalls = wasi.calls();\n        instance.load(descText, desc.id);\n        return instance;\n      }\n    };\n  }\n  var Instance = class {\n    constructor(exports, memory, calls) {\n      this.exports = exports;\n      this.memory = memory;\n      this.calls = calls;\n      this.trapped = false;\n      this.encoder = new TextEncoder();\n      this.decoder = new TextDecoder();\n    }\n    /** The number of calls of the engine into WASI since the instance was created. */\n    wasiCalls() {\n      return this.calls();\n    }\n    /** The size of the memory of the instance in bytes. */\n    memoryBytes() {\n      return this.memory.buffer.byteLength;\n    }\n    /**\n     * The counters of the integrator of the last simulation: an object of the names of\n     * `STATS_NAMES` to numbers (`engine_stats_ptr`).\n     */\n    stats() {\n      if (this.trapped) {\n        throw new EngineError("internal", "the instance trapped before and is not used again");\n      }\n      const ptr = this.guard(() => this.exports.engine_stats_ptr()) >>> 0;\n      const view = new DataView(this.memory.buffer, ptr, 8 * STATS_NAMES.length);\n      return Object.fromEntries(STATS_NAMES.map((name, i) => [name, Number(view.getBigUint64(8 * i, true))]));\n    }\n    /** The address of the output of the last call in the memory (aligned to 8). */\n    outputAddress() {\n      return this.exports.engine_output_ptr() >>> 0;\n    }\n    /**\n     * Simulates a request (an object of the contract `simulation/1` or its JSON text); gives\n     * `{ columns, nRows, values }`, the values a `Float64Array` of the rows, row major. The result\n     * does not depend on the simulations before. An error of the engine is an `EngineError`.\n     */\n    simulate(request) {\n      const code = this.call(this.exports.engine_simulate, jsonText(request));\n      const output = this.output();\n      if (code === 0 && output.table) return output.table;\n      if (code === 1 && output.error) throw output.error;\n      throw new EngineError("internal", `engine_simulate returned ${code} with the output ${JSON.stringify(output.header)}`);\n    }\n    /** Loads the description (`engine_load`). */\n    load(descText, id) {\n      const before = this.calls();\n      const code = this.call(this.exports.engine_load, descText);\n      this.loadCalls = this.calls() - before;\n      if (code !== 0) {\n        const { error } = this.output();\n        const message = error?.kind === "load" ? error.detail : `engine_load failed: ${error?.message}`;\n        throw new Error(`the engine refuses the description of model ${id}: ${message}`);\n      }\n    }\n    /** Calls `engine_load` or `engine_simulate` with `text` in a buffer of the engine. */\n    call(fn, text) {\n      if (this.trapped) {\n        throw new EngineError("internal", "the instance trapped before and is not used again");\n      }\n      const bytes = this.encoder.encode(text);\n      const ptr = this.guard(() => this.exports.engine_alloc(bytes.length)) >>> 0;\n      if (ptr === 0 && bytes.length > 0) {\n        throw new EngineError("internal", "engine_alloc found no memory for the input");\n      }\n      new Uint8Array(this.memory.buffer, ptr, bytes.length).set(bytes);\n      const code = this.guard(() => fn(ptr, bytes.length));\n      this.guard(() => this.exports.engine_free(ptr, bytes.length));\n      return code;\n    }\n    /**\n     * Runs a call of the engine; whatever it throws marks the instance and is an `EngineError`\n     * `internal` ([`trapError`]), as a trap of the wasmtime host, but `WasiExit`.\n     */\n    guard(call) {\n      try {\n        return call();\n      } catch (error) {\n        this.trapped = true;\n        if (error instanceof WasiExit) throw error;\n        let panic = null;\n        try {\n          const { error: e } = this.output();\n          if (e?.engineKind === "panic") panic = e.detail;\n        } catch {\n        }\n        throw trapError(error, panic);\n      }\n    }\n    /** The output of the last call: `{ header, table }` or `{ header, error }`. */\n    output() {\n      const ptr = this.exports.engine_output_ptr() >>> 0;\n      const len = this.exports.engine_output_len() >>> 0;\n      const buffer = this.memory.buffer;\n      if (len < 4 || ptr + len > buffer.byteLength) {\n        throw new EngineError("internal", "the output of the engine is outside of the memory");\n      }\n      const view = new DataView(buffer, ptr, len);\n      const headerLength = view.getUint32(0, true);\n      if (4 + headerLength > len) {\n        throw new EngineError("internal", "the header of the output of the engine is cut off");\n      }\n      const header = JSON.parse(this.decoder.decode(new Uint8Array(buffer, ptr + 4, headerLength)));\n      if (header.error) {\n        const { kind, message, flag, time } = header.error;\n        const known = ["load", "request", "unsupported", "integration"];\n        const error = known.includes(kind) ? new EngineError(kind, message, { flag, time }) : new EngineError("internal", kind === "panic" ? `engine.wasm panicked: ${message}` : `an error of the unknown kind ${kind}: ${message}`);\n        error.detail = message;\n        error.engineKind = kind;\n        return { header, error };\n      }\n      const { columns, n_rows: nRows } = header;\n      const start = 4 + headerLength + 7 & ~7;\n      const n = nRows * columns.length;\n      if (start + 8 * n !== len) {\n        throw new EngineError(\n          "internal",\n          `the output of the engine does not hold ${nRows} rows of ${columns.length} columns`\n        );\n      }\n      let values;\n      if (LITTLE_ENDIAN) {\n        values = new Float64Array(buffer, ptr + start, n).slice();\n      } else {\n        values = new Float64Array(n);\n        for (let i = 0; i < n; i += 1) values[i] = view.getFloat64(start + 8 * i, true);\n      }\n      return { header, table: { columns, nRows, values } };\n    }\n  };\n  function trapError(error, panic = null) {\n    const what = error instanceof WebAssembly.RuntimeError ? "trapped" : `failed (${error?.name ?? "Error"})`;\n    const message = `engine.wasm ${what}: ${error?.message ?? String(error)}${panic ? ` (${panic})` : ""}`;\n    const mapped = new EngineError("internal", message);\n    mapped.cause = error;\n    return mapped;\n  }\n\n  // worker.mjs\n  var runtime = null;\n  var models = /* @__PURE__ */ new Map();\n  var post = null;\n  var queue = Promise.resolve();\n  function errorFields(error) {\n    const fields = { name: error?.name ?? "Error", message: error?.message ?? String(error) };\n    for (const name of ["kind", "detail", "flag", "time"]) {\n      if (error?.[name] !== void 0) fields[name] = error[name];\n    }\n    return fields;\n  }\n  async function instanceOf(key) {\n    const model = models.get(key);\n    if (!model) throw new Error(`the pool posted no model ${key} to this worker`);\n    if (!runtime) throw new Error("the pool posted no runtime to this worker");\n    if (!model.instance) model.instance = (await runtime).instantiate(model.module, model.description);\n    try {\n      return await model.instance;\n    } catch (error) {\n      model.instance = null;\n      throw error;\n    }\n  }\n  async function handle(message) {\n    switch (message.type) {\n      case "init":\n        runtime = createRuntime({ engine: message.engine, mathlib: message.mathlib });\n        runtime.catch(() => {\n        });\n        return;\n      case "model":\n        models.set(message.key, { module: message.module, description: message.description, instance: null });\n        return;\n      case "simulate": {\n        let instance = null;\n        try {\n          instance = await instanceOf(message.key);\n          const { columns, nRows, values } = instance.simulate(message.request);\n          post({ type: "result", id: message.id, columns, nRows, values }, [values.buffer]);\n        } catch (error) {\n          if (instance?.trapped) models.get(message.key).instance = null;\n          post({ type: "error", id: message.id, error: errorFields(error) });\n        }\n        return;\n      }\n      default:\n        throw new Error(`a message of the unknown type ${message.type}`);\n    }\n  }\n  function receive(message) {\n    queue = queue.then(() => handle(message)).catch((error) => console.error("sbmlsim-core worker:", error));\n  }\n  if (typeof WorkerGlobalScope !== "undefined" && globalThis instanceof WorkerGlobalScope) {\n    post = (message, transfer = []) => globalThis.postMessage(message, transfer);\n    globalThis.addEventListener("message", (event) => receive(event.data));\n  } else {\n    const specifier = "node:worker_threads";\n    import(specifier).then(({ parentPort }) => {\n      if (!parentPort) throw new Error("worker.mjs runs as a Web Worker or as a worker thread of Node");\n      post = (message, transfer = []) => parentPort.postMessage(message, transfer);\n      parentPort.on("message", receive);\n    });\n  }\n})();\n';
+  var WORKER_SOURCE = '(() => {\n  // loader.mjs\n  var MODEL_CONTRACT = "model/2";\n  var MAX_MEMORY_PAGES = 32768;\n  var ENGINE_SECTION = "sbmlsim.engine";\n  var ENGINE_OUTPUT_FORMAT = 1;\n  var WASI = "wasi_snapshot_preview1";\n  var ENGINE_EXPORTS = [\n    "engine_alloc",\n    "engine_free",\n    "engine_load",\n    "engine_simulate",\n    "engine_output_ptr",\n    "engine_output_len",\n    "engine_stats_ptr"\n  ];\n  var STATS_NAMES = [\n    "steps",\n    "rhs_evals",\n    "jacobian_evals",\n    "jacobian_rhs_evals",\n    "jacobian_fallbacks",\n    "linear_setups",\n    "error_test_failures",\n    "nonlinear_iterations",\n    "nonlinear_convergence_failures",\n    "root_evals",\n    "integrations",\n    "probe_rhs_evals",\n    "steady_state_rhs_evals"\n  ];\n  var LITTLE_ENDIAN = new Uint8Array(new Uint16Array([1]).buffer)[0] === 1;\n  var EngineError = class extends Error {\n    constructor(kind, message, { flag, time } = {}) {\n      super(`${kind}: ${message}`);\n      this.name = "EngineError";\n      this.kind = kind;\n      this.detail = message;\n      if (flag !== void 0) this.flag = flag;\n      if (time !== void 0) this.time = time === null ? NaN : time;\n    }\n  };\n  var UnsupportedError = class extends EngineError {\n    constructor(message) {\n      super("unsupported", message);\n      this.name = "UnsupportedError";\n    }\n  };\n  var WasiExit = class extends Error {\n    constructor(code) {\n      super(`engine.wasm called proc_exit(${code})`);\n      this.name = "WasiExit";\n      this.code = code;\n    }\n  };\n  async function toModule(source, what) {\n    if (source instanceof WebAssembly.Module) return source;\n    try {\n      return await WebAssembly.compile(source);\n    } catch (error) {\n      throw new Error(`${what} does not compile: ${error.message}`);\n    }\n  }\n  function memoryMinimum(engineModule) {\n    const sections = WebAssembly.Module.customSections(engineModule, ENGINE_SECTION);\n    if (sections.length !== 1) {\n      throw new Error(\n        `engine.wasm has no custom section ${ENGINE_SECTION} with the minimum of its memory and the version of its output (the build script of sbmlsim-host adds it)`\n      );\n    }\n    const { memory_minimum_pages: pages, output_format: format } = JSON.parse(\n      new TextDecoder().decode(sections[0])\n    );\n    if (format === void 0) {\n      throw new Error(\n        `engine.wasm declares no output format in its section ${ENGINE_SECTION}, this loader reads ${ENGINE_OUTPUT_FORMAT}`\n      );\n    }\n    if (format !== ENGINE_OUTPUT_FORMAT) {\n      throw new Error(\n        `engine.wasm writes the output format ${format}, this loader reads ${ENGINE_OUTPUT_FORMAT}`\n      );\n    }\n    if (!Number.isInteger(pages) || pages < 0 || pages > MAX_MEMORY_PAGES) {\n      throw new Error(`engine.wasm declares a memory of ${pages} pages`);\n    }\n    return pages;\n  }\n  function wasiImports(engineModule, getMemory, out) {\n    let calls = 0;\n    const decoders = /* @__PURE__ */ new Map();\n    const lines = /* @__PURE__ */ new Map();\n    const view = () => new DataView(getMemory().buffer);\n    const write = (fd, bytes) => {\n      if (!decoders.has(fd)) decoders.set(fd, new TextDecoder());\n      let text = (lines.get(fd) ?? "") + decoders.get(fd).decode(bytes, { stream: true });\n      let newline;\n      while ((newline = text.indexOf("\\n")) >= 0) {\n        (fd === 2 ? out.error : out.log)(text.slice(0, newline));\n        text = text.slice(newline + 1);\n      }\n      lines.set(fd, text);\n    };\n    const provided = {\n      fd_write(fd, iovs, iovsLen, nwritten) {\n        calls += 1;\n        if (fd !== 1 && fd !== 2) return 8;\n        const memory = view();\n        let total = 0;\n        for (let i = 0; i < iovsLen; i += 1) {\n          const ptr = memory.getUint32(iovs + 8 * i, true);\n          const len = memory.getUint32(iovs + 8 * i + 4, true);\n          write(fd, new Uint8Array(getMemory().buffer, ptr, len));\n          total += len;\n        }\n        memory.setUint32(nwritten, total, true);\n        return 0;\n      },\n      proc_exit(code) {\n        calls += 1;\n        throw new WasiExit(code);\n      },\n      environ_get() {\n        calls += 1;\n        return 0;\n      },\n      environ_sizes_get(count, size) {\n        calls += 1;\n        const memory = view();\n        memory.setUint32(count, 0, true);\n        memory.setUint32(size, 0, true);\n        return 0;\n      },\n      clock_time_get() {\n        calls += 1;\n        throw new Error("engine.wasm called WASI clock_time_get: the engine reads no clock");\n      },\n      random_get() {\n        calls += 1;\n        throw new Error("engine.wasm called WASI random_get: the engine draws no random bytes");\n      }\n    };\n    const imports = {};\n    for (const { module, name, kind } of WebAssembly.Module.imports(engineModule)) {\n      if (module !== WASI || kind !== "function") continue;\n      imports[name] = provided[name] ?? (() => {\n        calls += 1;\n        throw new Error(`engine.wasm called WASI ${name}, which the loader does not provide`);\n      });\n    }\n    return { imports, calls: () => calls };\n  }\n  function checkRuntime(engineModule, mathlibModule) {\n    let memory = false;\n    for (const { module, name, kind } of WebAssembly.Module.imports(engineModule)) {\n      if (module === "env" && name === "memory" && kind === "memory") memory = true;\n      else if ((module === "model" || module === WASI) && kind === "function") continue;\n      else throw new Error(`engine.wasm imports ${module}.${name}`);\n    }\n    if (!memory) throw new Error("engine.wasm imports no memory");\n    const exports = new Set(WebAssembly.Module.exports(engineModule).map((e) => e.name));\n    for (const name of ENGINE_EXPORTS) {\n      if (!exports.has(name)) throw new Error(`engine.wasm does not export ${name}`);\n    }\n    const [mathImport] = WebAssembly.Module.imports(mathlibModule);\n    if (mathImport) {\n      throw new Error(\n        `mathlib.wasm imports ${mathImport.module}.${mathImport.name}, it imports nothing`\n      );\n    }\n  }\n  function validateModelBytes(source) {\n    const bytes = source instanceof ArrayBuffer ? new Uint8Array(source) : ArrayBuffer.isView(source) ? new Uint8Array(source.buffer, source.byteOffset, source.byteLength) : null;\n    if (!bytes || bytes.length < 8) throw new Error("model.wasm is not a WASM binary");\n    let pos = 8;\n    const leb = (end) => {\n      let value = 0;\n      for (let shift = 0; shift < 35 && pos < end; shift += 7) {\n        const byte = bytes[pos++];\n        value += (byte & 127) * 2 ** shift;\n        if (!(byte & 128)) return value;\n      }\n      throw new Error("invalid model.wasm section encoding");\n    };\n    while (pos < bytes.length) {\n      const id = bytes[pos++];\n      const length = leb(bytes.length);\n      const end = pos + length;\n      if (end > bytes.length) throw new Error("invalid model.wasm section length");\n      if (id === 1) {\n        const count = leb(end);\n        for (let i = 0; i < count; i++) {\n          if (bytes[pos++] !== 96) throw new Error("model.wasm has an unsupported type");\n          for (let vector = 0; vector < 2; vector++) {\n            const n = leb(end);\n            for (let j = 0; j < n; j++) {\n              if (pos >= end || ![127, 126, 125, 124, 123].includes(bytes[pos++])) {\n                throw new Error("model.wasm has an unsupported reference type");\n              }\n            }\n          }\n        }\n      }\n      if (id === 13) throw new Error("model.wasm must not define exception tags");\n      if ([4, 5, 8, 9, 11, 12].includes(id)) {\n        if (id === 8 || id === 12 || leb(end) !== 0) {\n          throw new Error("model.wasm must not define tables, memories, a start function, elements or data");\n        }\n      }\n      if (id === 6) {\n        const count = leb(end);\n        for (let i = 0; i < count; i++) {\n          const type = bytes[pos++];\n          if (![127, 126, 125, 124].includes(type)) throw new Error("model.wasm has an unsupported global type");\n          if (bytes[pos++] !== 0) throw new Error("model.wasm must not define mutable globals");\n          const op = bytes[pos++];\n          if (op === 65 || op === 66) {\n            let n = 0;\n            while (pos < end && n++ < 10 && bytes[pos++] & 128) {\n            }\n          } else if (op === 67) pos += 4;\n          else if (op === 68) pos += 8;\n          else throw new Error("model.wasm has an unsupported global initializer");\n          if (pos >= end || bytes[pos++] !== 11) throw new Error("model.wasm has an invalid global initializer");\n        }\n      }\n      pos = end;\n    }\n  }\n  function checkModel(modelModule, mathlibModule) {\n    const math = new Set(\n      WebAssembly.Module.exports(mathlibModule).filter((e) => e.kind === "function").map((e) => e.name)\n    );\n    let memory = false;\n    for (const { module, name, kind } of WebAssembly.Module.imports(modelModule)) {\n      if (module === "env" && name === "memory" && kind === "memory") memory = true;\n      else if (module === "math" && kind === "function" && math.has(name)) continue;\n      else {\n        throw new Error(\n          `model.wasm imports ${module}.${name}, which is neither env.memory nor a function of mathlib`\n        );\n      }\n    }\n    if (!memory) throw new Error("model.wasm does not import env.memory");\n  }\n  function jsonText(value) {\n    return typeof value === "string" ? value : JSON.stringify(value);\n  }\n  async function createRuntime({\n    engine,\n    mathlib,\n    console: out = globalThis.console,\n    maxMemoryPages = MAX_MEMORY_PAGES\n  }) {\n    const engineModule = await toModule(engine, "engine.wasm");\n    const mathlibModule = await toModule(mathlib, "mathlib.wasm");\n    checkRuntime(engineModule, mathlibModule);\n    const minimum = memoryMinimum(engineModule);\n    if (!Number.isSafeInteger(maxMemoryPages) || maxMemoryPages < minimum || maxMemoryPages > MAX_MEMORY_PAGES) {\n      throw new Error(`maxMemoryPages must be between ${minimum} and ${MAX_MEMORY_PAGES}`);\n    }\n    return {\n      /** The compiled modules, which a worker gets to create a runtime of its own. */\n      modules: { engine: engineModule, mathlib: mathlibModule },\n      /**\n       * Instantiates a model (a `WebAssembly.Module` or the bytes of `model.wasm`) with its\n       * description (the text of `model.json` or its object) and loads it into a new engine.\n       * Asynchronous (a Promise of the instance): bytes compile with `WebAssembly.compile`, which\n       * browsers require for modules above a few KB on the main thread.\n       */\n      async instantiate(modelWasm, description) {\n        const descText = jsonText(description);\n        const desc = typeof description === "string" ? JSON.parse(description) : description;\n        if (desc.contract !== MODEL_CONTRACT) {\n          throw new Error(`the description is of the contract ${desc.contract}, not ${MODEL_CONTRACT}`);\n        }\n        if (!(modelWasm instanceof WebAssembly.Module)) validateModelBytes(modelWasm);\n        const modelModule = await toModule(modelWasm, "model.wasm");\n        checkModel(modelModule, mathlibModule);\n        const memory = new WebAssembly.Memory({ initial: minimum, maximum: maxMemoryPages });\n        const wasi = wasiImports(engineModule, () => memory, out);\n        const math = await WebAssembly.instantiate(mathlibModule, {});\n        const model = await WebAssembly.instantiate(modelModule, {\n          env: { memory },\n          math: math.exports\n        });\n        let engineInstance;\n        try {\n          engineInstance = await WebAssembly.instantiate(engineModule, {\n            env: { memory },\n            model: model.exports,\n            [WASI]: wasi.imports\n          });\n        } catch (error) {\n          if (error instanceof WebAssembly.LinkError) {\n            throw new Error(`engine.wasm does not instantiate with the model: ${error.message}`);\n          }\n          throw error;\n        }\n        const instance = new Instance(engineInstance.exports, memory, wasi.calls);\n        if (engineInstance.exports._initialize) {\n          instance.guard(() => engineInstance.exports._initialize());\n        }\n        instance.initializeCalls = wasi.calls();\n        instance.load(descText, desc.id);\n        return instance;\n      }\n    };\n  }\n  var preparedStates = /* @__PURE__ */ new WeakMap();\n  var PreparedSimulation = class {\n    constructor(token, state) {\n      if (token !== preparedStates) throw new TypeError("use instance.prepare()");\n      preparedStates.set(this, state);\n    }\n    get nValues() {\n      return preparedStates.get(this).nValues;\n    }\n    close() {\n      const state = preparedStates.get(this);\n      if (state.closed) return;\n      state.closed = true;\n      state.instance.plans.delete(this);\n      if (!state.instance.trapped) state.instance.guard(() => state.instance.exports.engine_release_prepared(state.handle));\n    }\n  };\n  var Instance = class {\n    constructor(exports, memory, calls) {\n      this.exports = exports;\n      this.memory = memory;\n      this.calls = calls;\n      this.trapped = false;\n      this.encoder = new TextEncoder();\n      this.decoder = new TextDecoder();\n      this.inputPtr = 0;\n      this.inputCapacity = 0;\n      this.plans = /* @__PURE__ */ new Set();\n    }\n    /** The number of calls of the engine into WASI since the instance was created. */\n    wasiCalls() {\n      return this.calls();\n    }\n    /** The size of the memory of the instance in bytes. */\n    memoryBytes() {\n      return this.memory.buffer.byteLength;\n    }\n    /**\n     * The counters of the integrator of the last simulation: an object of the names of\n     * `STATS_NAMES` to numbers (`engine_stats_ptr`).\n     */\n    stats() {\n      if (this.trapped) {\n        throw new EngineError("internal", "the instance trapped before and is not used again");\n      }\n      const ptr = this.guard(() => this.exports.engine_stats_ptr()) >>> 0;\n      const view = new DataView(this.memory.buffer, ptr, 8 * STATS_NAMES.length);\n      return Object.fromEntries(STATS_NAMES.map((name, i) => [name, Number(view.getBigUint64(8 * i, true))]));\n    }\n    /** The address of the output of the last call in the memory (aligned to 8). */\n    outputAddress() {\n      return this.exports.engine_output_ptr() >>> 0;\n    }\n    /**\n     * Simulates a request (an object of the contract `simulation/1` or its JSON text); gives\n     * `{ columns, nRows, values }`, the values a `Float64Array` of the rows, row major. The result\n     * does not depend on the simulations before. An error of the engine is an `EngineError`.\n     */\n    simulate(request) {\n      const code = this.call(this.exports.engine_simulate, jsonText(request));\n      const output = this.output();\n      if (code === 0 && output.table) return output.table;\n      if (code === 1 && output.error) throw output.error;\n      throw new EngineError("internal", `engine_simulate returned ${code} with the output ${JSON.stringify(output.header)}`);\n    }\n    /** Prepares fixed request structure once; varying IDs define the raw value order. */\n    prepare(request, { varying = [] } = {}) {\n      if (!["engine_prepare", "engine_simulate_prepared", "engine_release_prepared"].every((name) => typeof this.exports[name] === "function")) {\n        throw new UnsupportedError("this engine does not support prepared requests");\n      }\n      if (this.trapped) throw new EngineError("internal", "the instance trapped before and is not used again");\n      if (this.plans.size >= 32) throw new EngineError("request", "prepared request limit reached (32)");\n      const code = this.call(this.exports.engine_prepare, jsonText({ request: typeof request === "string" ? JSON.parse(request) : request, varying }));\n      const output = this.output();\n      if (code !== 0) throw output.error ?? new EngineError("internal", "engine_prepare failed without an error");\n      const { prepared: handle2, n_values: nValues } = output.header;\n      if (!Number.isInteger(handle2) || !Number.isSafeInteger(nValues) || nValues < 0) throw new EngineError("internal", "invalid prepared request output");\n      const plan = new PreparedSimulation(preparedStates, { instance: this, handle: handle2, nValues, closed: false });\n      this.plans.add(plan);\n      return plan;\n    }\n    simulatePrepared(plan, values = []) {\n      const state = preparedStates.get(plan);\n      if (!state || state.instance !== this || state.closed) throw new EngineError("request", "foreign or closed prepared request");\n      if (this.trapped) throw new EngineError("internal", "the instance trapped before and is not used again");\n      if (!Array.isArray(values) && !(values instanceof Float64Array) || values.length !== state.nValues || values.findIndex((value) => !Number.isFinite(value)) >= 0) {\n        throw new EngineError("request", `prepared request requires ${state.nValues} finite values`);\n      }\n      const ptr = this.inputBuffer(values.length * 8);\n      const view = new DataView(this.memory.buffer, ptr, values.length * 8);\n      for (let i = 0; i < values.length; i++) view.setFloat64(i * 8, values[i], true);\n      const code = this.guard(() => this.exports.engine_simulate_prepared(state.handle, ptr, values.length));\n      const output = this.output();\n      if (code === 0 && output.table) return output.table;\n      if (output.error) throw output.error;\n      throw new EngineError("internal", "engine_simulate_prepared returned invalid output");\n    }\n    inputBuffer(length) {\n      if (length > this.inputCapacity) {\n        const capacity = Math.max(length, this.inputCapacity * 2, 256);\n        const ptr = this.guard(() => this.exports.engine_alloc(capacity)) >>> 0;\n        if (!ptr) throw new EngineError("internal", "engine_alloc found no memory for the input");\n        if (this.inputCapacity) this.guard(() => this.exports.engine_free(this.inputPtr, this.inputCapacity));\n        this.inputPtr = ptr;\n        this.inputCapacity = capacity;\n      }\n      return this.inputPtr;\n    }\n    /** Loads the description (`engine_load`). */\n    load(descText, id) {\n      const before = this.calls();\n      const code = this.call(this.exports.engine_load, descText);\n      this.loadCalls = this.calls() - before;\n      if (code !== 0) {\n        const { error } = this.output();\n        const message = error?.kind === "load" ? error.detail : `engine_load failed: ${error?.message}`;\n        throw new Error(`the engine refuses the description of model ${id}: ${message}`);\n      }\n    }\n    /** Calls `engine_load` or `engine_simulate` with `text` in a buffer of the engine. */\n    call(fn, text) {\n      if (this.trapped) {\n        throw new EngineError("internal", "the instance trapped before and is not used again");\n      }\n      const bytes = this.encoder.encode(text);\n      const ptr = this.inputBuffer(bytes.length);\n      new Uint8Array(this.memory.buffer, ptr, bytes.length).set(bytes);\n      const code = this.guard(() => fn(ptr, bytes.length));\n      return code;\n    }\n    /**\n     * Runs a call of the engine; whatever it throws marks the instance and is an `EngineError`\n     * `internal` ([`trapError`]), as a trap of the wasmtime host, but `WasiExit`.\n     */\n    guard(call) {\n      try {\n        return call();\n      } catch (error) {\n        this.trapped = true;\n        if (error instanceof WasiExit) throw error;\n        let panic = null;\n        try {\n          const { error: e } = this.output();\n          if (e?.engineKind === "panic") panic = e.detail;\n        } catch {\n        }\n        throw trapError(error, panic);\n      }\n    }\n    /** The output of the last call: `{ header, table }` or `{ header, error }`. */\n    output() {\n      const ptr = this.exports.engine_output_ptr() >>> 0;\n      const len = this.exports.engine_output_len() >>> 0;\n      const buffer = this.memory.buffer;\n      if (len < 4 || ptr + len > buffer.byteLength) {\n        throw new EngineError("internal", "the output of the engine is outside of the memory");\n      }\n      const view = new DataView(buffer, ptr, len);\n      const headerLength = view.getUint32(0, true);\n      if (4 + headerLength > len) {\n        throw new EngineError("internal", "the header of the output of the engine is cut off");\n      }\n      const header = JSON.parse(this.decoder.decode(new Uint8Array(buffer, ptr + 4, headerLength)));\n      if (header.error) {\n        const { kind, message, flag, time } = header.error;\n        const known = ["load", "request", "unsupported", "integration"];\n        const error = known.includes(kind) ? new EngineError(kind, message, { flag, time }) : new EngineError("internal", kind === "panic" ? `engine.wasm panicked: ${message}` : `an error of the unknown kind ${kind}: ${message}`);\n        error.detail = message;\n        error.engineKind = kind;\n        return { header, error };\n      }\n      if (header.prepared !== void 0) return { header };\n      const { columns, n_rows: nRows } = header;\n      const start = 4 + headerLength + 7 & ~7;\n      const n = nRows * columns.length;\n      if (start + 8 * n !== len) {\n        throw new EngineError(\n          "internal",\n          `the output of the engine does not hold ${nRows} rows of ${columns.length} columns`\n        );\n      }\n      let values;\n      if (LITTLE_ENDIAN) {\n        values = new Float64Array(buffer, ptr + start, n).slice();\n      } else {\n        values = new Float64Array(n);\n        for (let i = 0; i < n; i += 1) values[i] = view.getFloat64(start + 8 * i, true);\n      }\n      return { header, table: { columns, nRows, values } };\n    }\n  };\n  function trapError(error, panic = null) {\n    const what = error instanceof WebAssembly.RuntimeError ? "trapped" : `failed (${error?.name ?? "Error"})`;\n    const message = `engine.wasm ${what}: ${error?.message ?? String(error)}${panic ? ` (${panic})` : ""}`;\n    const mapped = new EngineError("internal", message);\n    mapped.cause = error;\n    return mapped;\n  }\n\n  // worker.mjs\n  var runtime = null;\n  var models = /* @__PURE__ */ new Map();\n  var post = null;\n  var queue = Promise.resolve();\n  function errorFields(error) {\n    const fields = { name: error?.name ?? "Error", message: error?.message ?? String(error) };\n    for (const name of ["kind", "detail", "flag", "time"]) {\n      if (error?.[name] !== void 0) fields[name] = error[name];\n    }\n    return fields;\n  }\n  async function instanceOf(key) {\n    const model = models.get(key);\n    if (!model) throw new Error(`the pool posted no model ${key} to this worker`);\n    if (!runtime) throw new Error("the pool posted no runtime to this worker");\n    if (!model.instance) model.instance = (await runtime).instantiate(model.module, model.description);\n    try {\n      return await model.instance;\n    } catch (error) {\n      model.instance = null;\n      throw error;\n    }\n  }\n  async function handle(message) {\n    switch (message.type) {\n      case "init":\n        runtime = createRuntime({ engine: message.engine, mathlib: message.mathlib, maxMemoryPages: message.maxMemoryPages });\n        runtime.catch(() => {\n        });\n        return;\n      case "model":\n        models.set(message.key, { module: message.module, description: message.description, instance: null, plans: /* @__PURE__ */ new Map(), definitions: /* @__PURE__ */ new Map() });\n        return;\n      case "releasePrepared": {\n        const model = models.get(message.key);\n        model?.plans.get(message.planId)?.close();\n        model?.plans.delete(message.planId);\n        model?.definitions.delete(message.planId);\n        return;\n      }\n      case "removeModel":\n        for (const plan of models.get(message.key)?.plans.values() ?? []) plan.close();\n        models.delete(message.key);\n        return;\n      case "prepare":\n      case "simulatePrepared":\n      case "simulate": {\n        let instance = null;\n        try {\n          instance = await instanceOf(message.key);\n          const model = models.get(message.key);\n          let plan;\n          if (message.type !== "simulate") {\n            if (message.request !== void 0) model.definitions.set(message.planId, { request: message.request, varying: message.varying });\n            plan = model.plans.get(message.planId);\n            if (!plan) {\n              const definition = model.definitions.get(message.planId);\n              if (!definition) throw new Error("missing prepared request definition");\n              plan = instance.prepare(definition.request, { varying: definition.varying });\n              model.plans.set(message.planId, plan);\n            }\n          }\n          if (message.type === "prepare") {\n            post({ type: "prepared", id: message.id, nValues: plan.nValues });\n            return;\n          }\n          const { columns, nRows, values } = plan ? instance.simulatePrepared(plan, message.values) : instance.simulate(message.request);\n          post({ type: "result", id: message.id, columns, nRows, values }, [values.buffer]);\n        } catch (error) {\n          if (instance?.trapped) {\n            const model = models.get(message.key);\n            model.instance = null;\n            model.plans.clear();\n          }\n          post({ type: "error", id: message.id, error: errorFields(error) });\n        }\n        return;\n      }\n      default:\n        throw new Error(`a message of the unknown type ${message.type}`);\n    }\n  }\n  function receive(message) {\n    queue = queue.then(() => handle(message)).catch((error) => console.error("sbmlsim-core worker:", error));\n  }\n  if (typeof WorkerGlobalScope !== "undefined" && globalThis instanceof WorkerGlobalScope) {\n    post = (message, transfer = []) => globalThis.postMessage(message, transfer);\n    globalThis.addEventListener("message", (event) => receive(event.data));\n  } else {\n    const specifier = "node:worker_threads";\n    import(specifier).then(({ parentPort }) => {\n      if (!parentPort) throw new Error("worker.mjs runs as a Web Worker or as a worker thread of Node");\n      post = (message, transfer = []) => parentPort.postMessage(message, transfer);\n      parentPort.on("message", receive);\n    });\n  }\n})();\n';
   var ORIGIN = "https://sbmlsim-core.invalid";
   var BUNDLE_URL = `${ORIGIN}/bundle/bundle.json`;
   function blobWorkers(source = WORKER_SOURCE) {

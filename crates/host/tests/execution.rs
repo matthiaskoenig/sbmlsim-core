@@ -39,7 +39,10 @@ fn child(name: &str, run: impl FnOnce()) {
             assert!(status.success(), "{name} exited with {status}");
             break;
         }
-        if started.elapsed() > Duration::from_secs(15) {
+        // Each child first compiles the embedded runtime. Concurrent tests on a busy
+        // runner can spend more than 15 seconds there; the 20 ms model deadlines are
+        // checked independently after compilation.
+        if started.elapsed() > Duration::from_secs(60) {
             process.kill().unwrap();
             process.wait().unwrap();
             panic!("{name} did not contain the model within the watchdog limit");

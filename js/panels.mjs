@@ -58,7 +58,7 @@ import { EngineError } from "./loader.mjs";
 import { createPool, defaultWorkers } from "./pool.mjs";
 
 /** The version of sbmlsim-core (`js/package.json`), which the provenance of a run names. */
-export const CORE_VERSION = "0.4.0";
+export const CORE_VERSION = "0.5.0";
 
 /** The engine a provenance names. */
 export const ENGINE = `sbmlsim-core ${CORE_VERSION}`;
