@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { readFileSync } from "node:fs";
 import { createRuntime, validateModelBytes } from "../loader.mjs";
 import { createPool } from "../pool.mjs";
+import { runtimeBytes } from "./helpers.mjs";
 
 const header = [0, 97, 115, 109, 1, 0, 0, 0];
 const memory = [2, 15, 1, 3, 101, 110, 118, 6, 109, 101, 109, 111, 114, 121, 2, 0, 1];
@@ -16,8 +17,7 @@ const fixtures = {
 };
 
 test("byte-input model policy rejects state, tables, starts and data before instantiation", async () => {
-  const engine = readFileSync(new URL("../runtime/engine.wasm", import.meta.url));
-  const mathlib = readFileSync(new URL("../runtime/mathlib.wasm", import.meta.url));
+  const { engine, mathlib } = runtimeBytes();
   const description = readFileSync(new URL("../../crates/host/tests/decay-model/model.json", import.meta.url), "utf8");
   const runtime = await createRuntime({ engine, mathlib });
   const pool = await createPool({ engine, mathlib });
