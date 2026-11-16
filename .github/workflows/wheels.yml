@@ -1,0 +1,137 @@
+# The wheels of the python package sbmlsim-core: one abi3 wheel per platform, every one with the
+# same engine.wasm and mathlib.wasm. The runtime is built once (job `runtime`, the artifact
+# `runtime`, which `publish` also gives the npm package), and every wheel embeds it through
+# SBMLSIM_CORE_WASM_DIR, so the extension of every platform runs the bits of the JavaScript host.
+# The linux wheels are linked with zig against glibc 2.28 (manylinux_2_28). Every wheel is
+# installed in a fresh environment on python 3.14 and 3.15, imported from outside the checkout,
+# and the tests of python/tests and the type check of python/typecheck run against it. Called by
+# `ci` (pull requests and develop) and by `publish` (a tag), which publishes the artifacts
+# `wheel-*`.
+name: wheels
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  WASI_SDK_VERSION: "34.0"
+  WASI_SDK_SHA256: b761e3a0721dbae9c09a0059e5fdb2bf917d1b4a8a7b430fb3b5aafb0984b2c4
+  MATURIN: "maturin[zig]==1.16.0"
+
+jobs:
+  runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          persist-credentials: false
+      - name: Install the toolchain of rust-toolchain.toml
+        run: rustup show active-toolchain || rustup toolchain install
+      - name: Install wasi-sdk
+        run: |
+          mkdir -p "$HOME/tools" && cd "$HOME/tools"
+          sdk="wasi-sdk-${WASI_SDK_VERSION}-x86_64-linux"
+          curl -sSLO "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-${WASI_SDK_VERSION%%.*}/${sdk}.tar.gz"
+          echo "${WASI_SDK_SHA256}  ${sdk}.tar.gz" | sha256sum -c -
+          tar xzf "${sdk}.tar.gz"
+          echo "WASI_SDK_PATH=$HOME/tools/${sdk}" >> "$GITHUB_ENV"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: runtime
+      - name: Build the command line, the engine and its math library
+        run: |
+          cargo build --release --locked -p sbmlsim-cli
+          target/release/sbmlsim-core runtime -o runtime
+      - uses: actions/upload-artifact@v4
+        with:
+          name: runtime
+          path: runtime/
+          if-no-files-found: error
+      # the command line compiles the fixtures of the tests of the JavaScript host
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli
+          path: target/release/sbmlsim-core
+          if-no-files-found: error
+
+  wheel:
+    needs: runtime
+    name: wheel (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-latest
+            args: --zig --compatibility manylinux_2_28
+          - name: linux-aarch64
+            os: ubuntu-24.04-arm
+            args: --zig --compatibility manylinux_2_28
+          - name: macos-arm64
+            os: macos-latest
+            args: ""
+          - name: macos-x86_64
+            os: macos-15-intel
+            args: ""
+          - name: windows-x86_64
+            os: windows-latest
+            args: ""
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          persist-credentials: false
+      - name: Install the toolchain of rust-toolchain.toml
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: actions/download-artifact@v4
+        with:
+          name: runtime
+          path: runtime
+      - uses: astral-sh/setup-uv@v5
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: wheel-${{ matrix.name }}
+      - name: The clang of LLVM, which compiles the C solvers for the target of MSVC
+        if: runner.os == 'Windows'
+        run: |
+          echo "C:\\Program Files\\LLVM\\bin" >> "$GITHUB_PATH"
+          "/c/Program Files/LLVM/bin/clang" --version
+      - name: Build the wheel with the runtime of the job runtime
+        run: |
+          export SBMLSIM_CORE_WASM_DIR="$GITHUB_WORKSPACE/runtime"
+          uvx --from "$MATURIN" maturin build --release --locked ${{ matrix.args }} --out dist
+      - name: The wheel is abi3 for python 3.14
+        run: |
+          ls dist
+          test "$(ls dist/*.whl | wc -l)" -eq 1
+          test -n "$(ls dist/sbmlsim_core-*-cp314-abi3-*.whl)"
+      - name: The tests and the type check against the installed wheel, on python 3.14 and 3.15
+        # the wheel is cp314-abi3, so one build has to load on every later python
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then bin=Scripts; else bin=bin; fi
+          mkdir "$RUNNER_TEMP/typecheck" && cp python/typecheck/usage.py "$RUNNER_TEMP/typecheck/"
+          for python in 3.14 3.15; do
+            venv="$RUNNER_TEMP/venv-$python"
+            uv venv --python "$python" "$venv"
+            # the pins of the dev group, so the environments of ci cannot drift apart
+            uv pip install --python "$venv" dist/*.whl --group dev
+            (cd "$RUNNER_TEMP" && "$venv/$bin/python" -I -c "import sbmlsim_core, sys; print(sys.version, sbmlsim_core.__file__, sbmlsim_core.__version__); assert 'site-packages' in sbmlsim_core.__file__")
+            "$venv/$bin/pytest" python/tests -q
+            # from a directory without the package: the checkout holds python/sbmlsim_core, which
+            # ty would resolve instead of the installed wheel
+            (cd "$RUNNER_TEMP/typecheck" && "$venv/$bin/ty" check --error-on-warning --python "$venv" usage.py)
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.name }}
+          path: dist/*.whl
+          if-no-files-found: error

@@ -1,6 +1,8 @@
 //! Compiles SUNDIALS CVODE and SuiteSparse KLU from the submodules in `third_party` with `cc`.
 //!
-//! For a native target the C compiler is the one `cc` finds (`CC`, else `cc`); for `wasm32-wasip1`
+//! For a native target the C compiler is the one `cc` finds (`CC`, else `cc`), for a target of
+//! MSVC without `CC` the `clang` of LLVM on the path, since `cl` reads neither the GNU attributes
+//! of the configuration of SUNDIALS nor the flags below; for `wasm32-wasip1`
 //! it is `$WASI_SDK_PATH/bin/clang` with the sysroot of wasi-sdk and `-msimd128`. Every compile
 //! is `-O3 -DNDEBUG -ffp-contract=off -fno-fast-math`, so neither the optimization level of the
 //! cargo profile, nor SIMD, nor the contraction into fused multiply-adds changes a result.
@@ -137,6 +139,9 @@ fn main() {
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     let target = env::var("TARGET").unwrap();
     let wasm = target == "wasm32-wasip1";
+    // windows has no POSIX timers: SUNDIALS profiles with the timers of windows and SuiteSparse
+    // without a timer (`NTIMER`), as their CMake builds configure it; no solver reads a timer
+    let windows = env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows");
 
     for source in SUNDIALS_SOURCES {
         require(&sundials.join("src").join(source));
@@ -169,10 +174,18 @@ fn main() {
             ))
             .flag("-msimd128");
         "Clang"
-    } else if build.get_compiler().is_like_clang() {
-        "Clang"
     } else {
-        "GNU"
+        if env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") && !compiler_given() {
+            // cl of MSVC reads neither the GNU attributes of the configuration of SUNDIALS nor
+            // the flags which fix the bits (`-ffp-contract=off`), so a windows build compiles the
+            // C with clang of LLVM for the target of MSVC unless a compiler is given
+            build.compiler("clang");
+        }
+        if build.get_compiler().is_like_clang() {
+            "Clang"
+        } else {
+            "GNU"
+        }
     };
     let flags = if wasm {
         "-O3 -DNDEBUG -ffp-contract=off -fno-fast-math -msimd128"
@@ -191,11 +204,16 @@ fn main() {
         // KLU without CHOLMOD, SuiteSparse without BLAS (as the CMake build configures it)
         .define("NCHOLMOD", None)
         .define("BLAS_Generic", None)
+        // `-w`: the warnings of the C of SUNDIALS and SuiteSparse are not ours; what the compiler
+        // still writes, the errors, reaches the output of cargo
         .warnings(false)
-        .cargo_warnings(false);
+        .cargo_warnings(true);
 
     let include = out.join("include");
-    write_config(&include, compiler_name, flags);
+    if windows {
+        build.define("NTIMER", None);
+    }
+    write_config(&include, compiler_name, flags, !windows);
     build
         .include(&include)
         .include(sundials.join("include"))
@@ -271,19 +289,36 @@ fn c_flag_variables() -> Vec<std::ffi::OsString> {
         .collect()
 }
 
+/// Whether the environment names the C compiler `cc` takes: `CC`, its variants of a target
+/// (`CC_<target>`, with `-` or `_`) and `TARGET_CC`.
+fn compiler_given() -> bool {
+    let target = env::var("TARGET").unwrap_or_default();
+    let names = [
+        "CC".to_string(),
+        format!("CC_{target}"),
+        format!("CC_{}", target.replace('-', "_")),
+        "TARGET_CC".to_string(),
+    ];
+    for name in &names {
+        println!("cargo:rerun-if-env-changed={name}");
+    }
+    names.iter().any(|name| env::var_os(name).is_some())
+}
+
 /// Writes `sundials/sundials_config.h` and `sundials/sundials_export.h` into `include`.
 ///
 /// The configuration is the one CMake writes for this build: double precision, `int32_t`
 /// indices, `long int` counters, KLU, no MPI, the logging level 0 (no logging: the logger of a
 /// context reads no environment variable and writes nothing, the engine records the errors with
-/// an error handler of its own), and the modules of [`SUNDIALS_SOURCES`].
+/// an error handler of its own), the POSIX timers of the profiler where the target has them
+/// (`posix_timers`, every target but windows), and the modules of [`SUNDIALS_SOURCES`].
 ///
 /// The indices are 32 bits, also natively, so every target computes with the same code: half
 /// the memory of the index arrays of KLU and of the sparse matrix, and no conversion of a 64 bit
 /// index into a 32 bit address in wasm32, which makes the KLU runs 3 to 6% faster in wasm (the
 /// results are bitwise those of 64 bit indices). The engine refuses a model whose matrix would
 /// not fit (`sbmlsim-engine`, `cvode::check_index_range`).
-fn write_config(include: &Path, compiler: &str, flags: &str) {
+fn write_config(include: &Path, compiler: &str, flags: &str, posix_timers: bool) {
     let dir = include.join("sundials");
     fs::create_dir_all(&dir).unwrap();
     let (major, minor, patch) = SUNDIALS_VERSION;
@@ -333,7 +368,6 @@ fn write_config(include: &Path, compiler: &str, flags: &str) {
         ("SUNDIALS_INT32_T", "1"),
         ("SUNDIALS_INDEX_TYPE", "int32_t"),
         ("SUNDIALS_COUNTER_TYPE", "long int"),
-        ("SUNDIALS_HAVE_POSIX_TIMERS", ""),
         ("SUNDIALS_LOGGING_LEVEL", "0"),
         ("SUN_C_COMPILER", &format!("\"{compiler}\"")),
         ("SUN_C_COMPILER_VERSION", "\"\""),
@@ -365,6 +399,9 @@ fn write_config(include: &Path, compiler: &str, flags: &str) {
     ];
     for (name, value) in defines {
         writeln!(config, "#define {name} {value}").unwrap();
+    }
+    if posix_timers {
+        writeln!(config, "#define SUNDIALS_HAVE_POSIX_TIMERS").unwrap();
     }
     writeln!(config, "#endif /* _SUNDIALS_CONFIG_H */").unwrap();
     write_if_changed(&dir.join("sundials_config.h"), &config);

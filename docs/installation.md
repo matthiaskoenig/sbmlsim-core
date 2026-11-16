@@ -1,6 +1,13 @@
 # Installation
 
-sbmlsim-core is built from source. The crates are not published, and the JavaScript package (`js/`) is private: a page uses the files of `js/` and the `engine.wasm` and `mathlib.wasm` of a build.
+The releases of sbmlsim-core are two packages of the same name, built from the same tag with the same `engine.wasm` and `mathlib.wasm`:
+
+```bash
+pip install sbmlsim-core   # the compiler and the engine for python 3.14 or newer, see Python
+npm install sbmlsim-core   # the JavaScript host for browsers and Node, see JavaScript
+```
+
+The crates are not published. The rest of this page builds sbmlsim-core from a checkout: the command line, the runtime and the python package of the sources.
 
 ## Toolchain
 
@@ -25,6 +32,8 @@ git clone --recurse-submodules https://github.com/matthiaskoenig/sbmlsim-core
 Node 20 or newer runs the JavaScript host and its tests (CI uses Node 24). [uv](https://docs.astral.sh/uv/) runs the Python scripts (`scripts/`), which prepare models and the SBML Test Suite and compute the references of roadrunner.
 
 ## Building
+
+On windows the native C solvers (`sbmlsim-csolvers`, which the command line and the python package link) are compiled with the `clang` of [LLVM](https://releases.llvm.org/) on the path, unless `CC` names another compiler; `cl` of MSVC cannot compile them.
 
 `cargo build` builds `engine.wasm` (wasm32-wasip1, the C solvers compiled with the clang of wasi-sdk, `WASI_SDK_PATH`) and `mathlib.wasm` (wasm32-unknown-unknown) in the build script of `sbmlsim-host`, which embeds them; `SBMLSIM_CORE_WASM_DIR` names a directory with prebuilt ones instead.
 

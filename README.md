@@ -104,7 +104,7 @@ The tests (`node --test js/test`) build the command line (`SBMLSIM_CORE_CLI` nam
 
 ## Python
 
-`sbmlsim-core` is also a python package (python 3.14 or newer, one abi3 wheel per platform, built with maturin; the extension embeds `engine.wasm` through `sbmlsim-host`, so the build needs `WASI_SDK_PATH` or `SBMLSIM_CORE_WASM_DIR` as above). It ships `py.typed` and a stub of the extension, `python/sbmlsim_core/_core.pyi`, which `ty check python/typecheck` holds against a file that uses the API as a caller does:
+`sbmlsim-core` is also a python package on PyPI, `pip install sbmlsim-core` (python 3.14 or newer, one abi3 wheel per platform, built with maturin by `.github/workflows/wheels.yml` and published with the npm package by `publish.yml`, see [Python](https://matthiaskoenig.github.io/sbmlsim-core/python/); the extension embeds `engine.wasm` through `sbmlsim-host`, so the build needs `WASI_SDK_PATH` or `SBMLSIM_CORE_WASM_DIR` as above). It ships `py.typed` and a stub of the extension, `python/sbmlsim_core/_core.pyi`, which `ty check python/typecheck` holds against a file that uses the API as a caller does:
 
 ```bash
 uv venv --python 3.14 && uv pip install -e . --group dev   # editable, with pytest and ty
