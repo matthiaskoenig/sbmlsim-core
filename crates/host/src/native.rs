@@ -14,25 +14,28 @@
 //! tolerances of the integration). The math of the model is `mathlib.wasm` in both.
 
 use std::cell::RefCell;
+use std::rc::Rc;
 
 use anyhow::Context;
 use sbmlsim_abi::{
-    self as abi, ModelDescription, ModelSizes, SimulationRequest, SimulationResult,
-    SimulationStats, check_contract,
+    self as abi, ModelDescription, ModelSizes, SimulationRequest, SimulationResult, SimulationStats,
 };
 use sbmlsim_engine::{EngineError, ModelFns};
-use wasmtime::{Memory, MemoryType, Module, Store, TypedFunc};
+use wasmtime::{Memory, MemoryType, Store, TypedFunc};
 
-use crate::{Runtime, check_model_sections, linker_without_wasi};
+use crate::{MemoryLimit, Runtime, linker_without_wasi};
 
 /// A model loaded into the native engine ([`Runtime::instantiate_native`]).
 pub struct NativeInstance {
     engine: sbmlsim_engine::Engine,
+    inner: Rc<RefCell<Inner>>,
+    execution: crate::Execution,
 }
 
 impl NativeInstance {
     /// Simulates the model; the result does not depend on the simulations before.
     pub fn simulate(&mut self, req: &SimulationRequest) -> Result<SimulationResult, EngineError> {
+        self.execution.begin(&mut self.inner.borrow_mut().store);
         self.engine.simulate(req)
     }
 
@@ -51,13 +54,21 @@ impl Runtime {
         model_wasm: &[u8],
         desc: &ModelDescription,
     ) -> anyhow::Result<NativeInstance> {
-        check_contract(&desc.contract, abi::MODEL_CONTRACT)?;
-        check_model_sections(model_wasm)?;
-        let module = Module::new(&self.engine, model_wasm)
-            .map_err(anyhow::Error::from)
-            .context("model.wasm does not compile")?;
-        let mut store = Store::new(&self.engine, ());
+        let module = self.load(model_wasm, desc)?.model_module;
+        let mut store = Store::new(
+            &self.engine,
+            MemoryLimit {
+                max_bytes: self.max_memory,
+                grows: 0,
+            },
+        );
+        store.limiter(|limit| limit);
+        self.execution.begin(&mut store);
         let layout = Layout::of(desc);
+        anyhow::ensure!(
+            layout.end <= self.max_memory && layout.end <= i32::MAX as usize,
+            "the model vectors do not fit into the runtime memory limit"
+        );
         let pages = layout.end.div_ceil(PAGE) as u64;
         let memory = Memory::new(&mut store, MemoryType::new(pages as u32, None))?;
         let mut linker = linker_without_wasi(&self.engine);
@@ -109,15 +120,21 @@ impl Runtime {
             sizes: sizes.typed(&store)?,
             event_sizes: event_sizes.typed(&store)?,
         };
+        let inner = Rc::new(RefCell::new(Inner { store, memory }));
         let model = WasmModel {
-            inner: RefCell::new(Inner { store, memory }),
+            inner: inner.clone(),
             functions,
             layout,
             events: desc.events.len(),
+            error: RefCell::new(None),
         };
         let engine = sbmlsim_engine::Engine::new(Box::new(model), desc.clone())
             .map_err(|e| anyhow::anyhow!("{e}"))?;
-        Ok(NativeInstance { engine })
+        Ok(NativeInstance {
+            engine,
+            inner,
+            execution: self.execution.clone(),
+        })
     }
 }
 
@@ -158,7 +175,7 @@ impl Layout {
     fn of(desc: &ModelDescription) -> Layout {
         let sizes = ModelSizes::of(desc);
         let n = sizes.states as usize;
-        let np = (sizes.parameters + sizes.constants) as usize;
+        let np = sizes.parameters as usize + sizes.constants as usize;
         let assignments = sizes.assignments.iter().copied().max().unwrap_or(0) as usize;
         // the outputs: ydot, the Jacobian, the root functions, the selections, the event values
         // and the words of the sizes (as many as the events, at least the words)
@@ -174,7 +191,8 @@ impl Layout {
         .max()
         .unwrap_or(0);
         // bytes: `fixed` (a byte per entity) or the mask (a byte per selection)
-        let bytes = (sizes.parameters + sizes.states).max(sizes.selections) as usize;
+        let bytes =
+            (sizes.parameters as usize + sizes.states as usize).max(sizes.selections as usize);
         let y = 0;
         let p = y + 8 * n;
         let out_at = p + 8 * np;
@@ -193,7 +211,7 @@ impl Layout {
 
 /// The store of the model and its memory.
 struct Inner {
-    store: Store<()>,
+    store: Store<MemoryLimit>,
     memory: Memory,
 }
 
@@ -224,13 +242,14 @@ impl Inner {
     }
 }
 
-/// A model of `model/2` in wasmtime behind [`ModelFns`]. A trap of the model is a panic of the
-/// native engine (as a trap of `engine.wasm` ends its instance).
+/// A model of `model/2` in wasmtime behind [`ModelFns`]. The first trap is recorded and
+/// returned by the engine as an internal error, without unwinding across the C ABI.
 struct WasmModel {
-    inner: RefCell<Inner>,
+    inner: Rc<RefCell<Inner>>,
     functions: Functions,
     layout: Layout,
     events: usize,
+    error: RefCell<Option<String>>,
 }
 
 /// An offset as the `i32` of a pointer of wasm.
@@ -250,14 +269,31 @@ impl WasmModel {
 }
 
 /// The result of a call of the model, which traps only for a defect of the model.
-fn ok<T>(result: wasmtime::Result<T>) -> T {
-    result.unwrap_or_else(|e| panic!("the model trapped: {e:#}"))
+impl WasmModel {
+    fn ok<T: Default>(&self, result: wasmtime::Result<T>) -> T {
+        match result {
+            Ok(value) => value,
+            Err(error) => {
+                self.error
+                    .borrow_mut()
+                    .get_or_insert_with(|| format!("the model trapped: {error:#}"));
+                T::default()
+            }
+        }
+    }
 }
 
 impl ModelFns for WasmModel {
+    fn check_error(&self) -> Result<(), EngineError> {
+        match &*self.error.borrow() {
+            Some(error) => Err(EngineError::Internal(error.clone())),
+            None => Ok(()),
+        }
+    }
+
     fn defaults(&self, p: &mut [f64], y: &mut [f64]) {
         let (mut m, l) = self.enter(y, p);
-        ok(self
+        self.ok(self
             .functions
             .defaults
             .call(&mut m.store, (ptr(l.p), ptr(l.y))));
@@ -268,54 +304,54 @@ impl ModelFns for WasmModel {
         let (mut m, l) = self.enter(y, p);
         m.put_bytes(l.bytes, fixed);
         let args = (t, ptr(l.p), ptr(l.y), ptr(l.bytes));
-        ok(self.functions.init.call(&mut m.store, args));
+        self.ok(self.functions.init.call(&mut m.store, args));
         m.get(l.p, p);
         m.get(l.y, y);
     }
     fn rhs(&self, t: f64, y: &[f64], p: &[f64], ydot: &mut [f64]) {
         let (mut m, l) = self.enter(y, p);
         let args = (t, ptr(l.y), ptr(l.p), ptr(l.out));
-        ok(self.functions.rhs.call(&mut m.store, args));
+        self.ok(self.functions.rhs.call(&mut m.store, args));
         m.get(l.out, ydot);
     }
     fn jac(&self, t: f64, y: &[f64], p: &[f64], values: &mut [f64]) {
         let (mut m, l) = self.enter(y, p);
         let args = (t, ptr(l.y), ptr(l.p), ptr(l.out));
-        ok(self.functions.jac.call(&mut m.store, args));
+        self.ok(self.functions.jac.call(&mut m.store, args));
         m.get(l.out, values);
     }
     fn roots(&self, t: f64, y: &[f64], p: &[f64], g: &mut [f64]) {
         let (mut m, l) = self.enter(y, p);
         let args = (t, ptr(l.y), ptr(l.p), ptr(l.out));
-        ok(self.functions.roots.call(&mut m.store, args));
+        self.ok(self.functions.roots.call(&mut m.store, args));
         m.get(l.out, g);
     }
     fn trigger(&self, i: u32, t: f64, y: &[f64], p: &[f64]) -> bool {
         let (mut m, l) = self.enter(y, p);
         let args = (i as i32, t, ptr(l.y), ptr(l.p));
-        ok(self.functions.trigger.call(&mut m.store, args)) != 0
+        self.ok(self.functions.trigger.call(&mut m.store, args)) != 0
     }
     fn priority(&self, i: u32, t: f64, y: &[f64], p: &[f64]) -> f64 {
         let (mut m, l) = self.enter(y, p);
         let args = (i as i32, t, ptr(l.y), ptr(l.p));
-        ok(self.functions.priority.call(&mut m.store, args))
+        self.ok(self.functions.priority.call(&mut m.store, args))
     }
     fn delay(&self, i: u32, t: f64, y: &[f64], p: &[f64]) -> f64 {
         let (mut m, l) = self.enter(y, p);
         let args = (i as i32, t, ptr(l.y), ptr(l.p));
-        ok(self.functions.delay.call(&mut m.store, args))
+        self.ok(self.functions.delay.call(&mut m.store, args))
     }
     fn event_values(&self, i: u32, t: f64, y: &[f64], p: &[f64], out: &mut [f64]) {
         let (mut m, l) = self.enter(y, p);
         let args = (i as i32, t, ptr(l.y), ptr(l.p), ptr(l.out));
-        ok(self.functions.event_values.call(&mut m.store, args));
+        self.ok(self.functions.event_values.call(&mut m.store, args));
         m.get(l.out, out);
     }
     fn event_apply(&self, i: u32, t: f64, values: &[f64], y: &mut [f64], p: &mut [f64]) {
         let (mut m, l) = self.enter(y, p);
         m.put(l.values, values);
         let args = (i as i32, t, ptr(l.values), ptr(l.y), ptr(l.p));
-        ok(self.functions.event_apply.call(&mut m.store, args));
+        self.ok(self.functions.event_apply.call(&mut m.store, args));
         m.get(l.y, y);
         m.get(l.p, p);
     }
@@ -323,12 +359,12 @@ impl ModelFns for WasmModel {
         let (mut m, l) = self.enter(y, p);
         m.put_bytes(l.bytes, mask);
         let args = (t, ptr(l.y), ptr(l.p), ptr(l.bytes), ptr(l.out));
-        ok(self.functions.selections.call(&mut m.store, args));
+        self.ok(self.functions.selections.call(&mut m.store, args));
         m.get(l.out, out);
     }
     fn assign(&self, t: f64, y: &mut [f64], p: &mut [f64]) {
         let (mut m, l) = self.enter(y, p);
-        ok(self
+        self.ok(self
             .functions
             .assign
             .call(&mut m.store, (t, ptr(l.y), ptr(l.p))));
@@ -338,14 +374,14 @@ impl ModelFns for WasmModel {
     fn sizes(&self) -> ModelSizes {
         let mut m = self.inner.borrow_mut();
         let l = self.layout;
-        ok(self.functions.sizes.call(&mut m.store, ptr(l.out)));
+        self.ok(self.functions.sizes.call(&mut m.store, ptr(l.out)));
         let mut words = [0u32; ModelSizes::WORDS];
         m.get_words(l.out, &mut words);
         // the counts of assignments only for the events of the description, whose room the
         // layout has
         let events = words[ModelSizes::WORDS - 1] as usize;
         let assignments = if events == self.events {
-            ok(self.functions.event_sizes.call(&mut m.store, ptr(l.out)));
+            self.ok(self.functions.event_sizes.call(&mut m.store, ptr(l.out)));
             let mut assignments = vec![0u32; events];
             m.get_words(l.out, &mut assignments);
             assignments

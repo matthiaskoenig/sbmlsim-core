@@ -1,7 +1,7 @@
 //! The exceptions of `sbmlsim_core` and the mapping of the errors of the engine onto them.
 
 use pyo3::prelude::*;
-use sbmlsim_engine::EngineError;
+use sbmlsim_abi::EngineError;
 use std::sync::PoisonError;
 
 pyo3::create_exception!(

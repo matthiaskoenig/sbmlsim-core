@@ -11,17 +11,20 @@ license = "MIT AND BSD-3-Clause AND LGPL-2.1-or-later"
 authors.workspace = true
 description = "The wasmtime host of sbmlsim-core: links mathlib, a compiled model and the engine"
 
+[features]
+default = []
+native = ["dep:sbmlsim-engine", "sbmlsim-engine/test-models"]
+
 [dependencies]
 anyhow = "1"
 sbmlsim-abi = { path = "../abi" }
-# `EngineError`, which the host gives back as the native engine does
-sbmlsim-engine = { path = "../engine" }
+# Optional adapter for benchmarking the engine compiled for the native machine
+sbmlsim-engine = { path = "../engine", optional = true }
 serde.workspace = true
 serde_json.workspace = true
 # the call hook counts the calls of the engine into the host (its WASI imports), wasmparser
 # checks the sections of a model
-wasmtime = { version = "50.0.1", features = ["call-hook", "reexport-wasmparser"] }
-wasmtime-wasi = "50.0.1"
+wasmtime = { version = "50.0.1", default-features = false, features = ["anyhow", "std", "runtime", "cranelift", "call-hook", "demangle", "reexport-wasmparser"] }
 
 [build-dependencies]
 # the name of the custom section of `engine.wasm` and the version of its output
@@ -30,7 +33,21 @@ sbmlsim-abi = { path = "../abi" }
 [dev-dependencies]
 # compiled models, whose description is compared with what their module computes
 sbmlsim-compiler = { path = "../compiler" }
-# the native test model `Decay`, which the wasm chain is compared with
-sbmlsim-engine = { path = "../engine", features = ["test-models"] }
 serde_json.workspace = true
 wat = "1"
+
+[[test]]
+name = "wat_model"
+required-features = ["native"]
+
+[[test]]
+name = "compiled_model"
+required-features = ["native"]
+
+[[test]]
+name = "golden"
+required-features = ["native"]
+
+[[test]]
+name = "native"
+required-features = ["native"]

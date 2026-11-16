@@ -40,7 +40,9 @@ use sbmlsim_abi::{
     SIMULATION_CONTRACT, SimulationRequest, SimulationStats, Tolerance,
 };
 use sbmlsim_compiler::CompileOptions;
-use sbmlsim_host::{Instance, NativeInstance, Runtime};
+#[cfg(feature = "native")]
+use sbmlsim_host::NativeInstance;
+use sbmlsim_host::{Instance, Runtime};
 use serde::{Deserialize, Serialize};
 
 /// The arguments of `bench`.
@@ -84,6 +86,7 @@ pub struct BenchArgs {
 /// A loaded model of the engine of `--host`.
 enum Loaded {
     Wasm(Box<Instance>),
+    #[cfg(feature = "native")]
     Native(Box<NativeInstance>),
 }
 
@@ -94,6 +97,7 @@ impl Loaded {
     ) -> anyhow::Result<sbmlsim_abi::SimulationResult> {
         Ok(match self {
             Loaded::Wasm(i) => i.simulate(req)?,
+            #[cfg(feature = "native")]
             Loaded::Native(i) => i.simulate(req)?,
         })
     }
@@ -101,6 +105,7 @@ impl Loaded {
     fn stats(&mut self) -> anyhow::Result<SimulationStats> {
         Ok(match self {
             Loaded::Wasm(i) => i.stats()?,
+            #[cfg(feature = "native")]
             Loaded::Native(i) => i.stats(),
         })
     }
@@ -433,12 +438,20 @@ pub fn run(args: &BenchArgs) -> anyhow::Result<bool> {
     let jacobians = checked_list("--jacobians", &args.jacobians, &["analytic", "difference"])?;
     let host: &'static str = match args.host.as_str() {
         "wasmtime" => "wasmtime",
-        "native" => "native",
+        "native" => {
+            #[cfg(not(feature = "native"))]
+            bail!("--host native requires a build with --features native");
+            #[cfg(feature = "native")]
+            {
+                "native"
+            }
+        }
         other => bail!("--host: unknown value {other} (wasmtime or native)"),
     };
     let runtime = Runtime::embedded()?;
     let load = |wasm: &[u8], desc: &ModelDescription| -> anyhow::Result<Loaded> {
         Ok(match host {
+            #[cfg(feature = "native")]
             "native" => Loaded::Native(Box::new(runtime.instantiate_native(wasm, desc)?)),
             _ => Loaded::Wasm(Box::new(runtime.instantiate(wasm, desc)?)),
         })

@@ -222,6 +222,17 @@ fn apply(op: Op, args: &[Expr], read: &dyn Fn(Symbol) -> f64) -> f64 {
             let r = 1.0 / x(0);
             (f::math_log(1.0 + r) - f::math_log(1.0 - r)) * 0.5
         }
+        Op::XorSign => match args.split_first() {
+            None => -1.0,
+            Some((first, rest)) => rest.iter().fold(eval(first, read), |a, e| {
+                let b = eval(e, read);
+                let na = 0.0 - a;
+                let nb = 0.0 - b;
+                let left = if a < nb { a } else { nb };
+                let right = if na < b { na } else { b };
+                if left > right { left } else { right }
+            }),
+        },
         Op::Max | Op::Min => match args.split_first() {
             None if op == Op::Max => f64::NEG_INFINITY,
             None => f64::INFINITY,

@@ -33,12 +33,13 @@ jobs:
           echo "CARGO_TARGET_WASM32_WASIP1_RUNNER=wasmtime" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --check
-      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo check -p sbmlsim-host -p sbmlsim-cli --no-default-features
+      - run: cargo clippy --all-targets --all-features -- -D warnings
       - run: cargo clippy -p sbmlsim-csolvers --all-targets --target wasm32-wasip1 -- -D warnings
       - run: cargo clippy -p sbmlsim-engine --all-targets --target wasm32-wasip1 -- -D warnings
       - run: cargo clippy -p sbmlsim-engine --lib --features exports --target wasm32-wasip1 -- -D warnings
       # the tests of sbmlsim-host and sbmlsim-cli build engine.wasm and mathlib.wasm (WASI_SDK_PATH)
-      - run: cargo test
+      - run: cargo test --all-features
       - run: cargo run -p sbmlsim-cli -- simulate crates/host/tests/decay-model crates/host/tests/decay-model/request.json
       - run: cargo build -p sbmlsim-mathlib --target wasm32-unknown-unknown --release
       - run: cargo test -p sbmlsim-mathlib wasm_has_no_imports

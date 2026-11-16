@@ -138,7 +138,7 @@ fn emit_limited(
     let jacobian = choose_jacobian(model, choice, limits)?;
     // the root functions of the discontinuities, computed once for every function of the module
     // and the description
-    let discontinuities = model.discontinuity_roots();
+    let discontinuities = model.try_discontinuity_roots()?;
     let d = &discontinuities;
     let wasm = if optimized {
         // the common subexpressions add locals: without them when a function is above the
@@ -250,10 +250,15 @@ fn choose_jacobian(
     choice: JacobianChoice,
     limits: Limits,
 ) -> Result<JacobianIr, CompileError> {
+    if choice == JacobianChoice::DifferenceQuotient {
+        let pattern = derive::pattern(model);
+        return Ok(JacobianIr::ColoredDifference {
+            colors: pattern.greedy_colors(),
+            pattern,
+            reason: DIFFERENCE_REQUESTED.into(),
+        });
+    }
     let jacobian = match (derive::jacobian(model), choice) {
-        (jacobian, JacobianChoice::DifferenceQuotient) => {
-            return Ok(jacobian.into_difference(DIFFERENCE_REQUESTED));
-        }
         (JacobianIr::ColoredDifference { reason, .. }, JacobianChoice::Analytic) => {
             return Err(CompileError::Unsupported {
                 feature: format!("an analytic Jacobian: {reason}"),

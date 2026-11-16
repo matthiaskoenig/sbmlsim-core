@@ -144,6 +144,9 @@ pub const SIZES: &str = "model_sizes";
 /// Export name of `model_event_sizes`.
 pub const EVENT_SIZES: &str = "model_event_sizes";
 
+/// Maximum live prepared plans retained by one engine instance.
+pub const MAX_PREPARED_REQUESTS: usize = 32;
+
 /// A contract version which is not the expected one.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("contract mismatch: found {found}, expected {expected}")]
@@ -729,4 +732,30 @@ mod tests {
             serde_json::from_str(&serde_json::to_string(&d).unwrap()).unwrap();
         assert_eq!(d, back);
     }
+}
+
+/// The error of a simulation.
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+pub enum EngineError {
+    /// The request or the description is invalid.
+    #[error("invalid request: {0}")]
+    Request(String),
+    /// CVODE failed: its return flag, the time it reached and the message of its last error.
+    #[error("integration failed at t = {time} (flag {flag}): {message}")]
+    Integration {
+        /// The return flag of CVODE.
+        flag: i32,
+        /// The time CVODE reached.
+        time: f64,
+        /// The message of the last error SUNDIALS reported.
+        message: String,
+    },
+    /// The engine does not simulate this yet.
+    #[error("unsupported: {0}")]
+    Unsupported(String),
+    /// The engine failed in itself: a panic of `engine.wasm`, a trap of its instance (also one
+    /// of the model it calls) or a failure of the host around it. The host does not use such an
+    /// instance again. Native callback failures are contained and reported here too.
+    #[error("internal error of the engine: {0}")]
+    Internal(String),
 }

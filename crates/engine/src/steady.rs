@@ -53,6 +53,7 @@ pub(crate) fn steady_state(
     steady: &SteadyState,
     mut events: Option<&mut Events<'_>>,
     model_id: &str,
+    rates: &mut Vec<f64>,
 ) -> Result<(), EngineError> {
     let m = problem.n_model;
     let model = problem.model;
@@ -61,7 +62,8 @@ pub(crate) fn steady_state(
         // the events at the time 0 are part of the initial state
         events.execute_at(from, &mut y[..m], &mut problem.p, Probe::Exact)?;
     }
-    let mut rates = vec![0.0; m];
+    rates.clear();
+    rates.resize(m, 0.0);
     let mut t = from;
     let mut horizon = 1.0f64;
     loop {
@@ -79,8 +81,9 @@ pub(crate) fn steady_state(
             _ => {}
         }
         t = stop;
-        model.rhs(t, &y[..m], &problem.p, &mut rates);
         problem.counts.steady_state_rhs += 1;
+        model.rhs(t, &y[..m], &problem.p, rates);
+        model.check_error()?;
         let steady_now = rates.iter().zip(&y[..m]).all(|(r, x)| {
             r.abs() <= steady.absolute_tolerance + steady.relative_tolerance * x.abs()
         });

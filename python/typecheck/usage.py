@@ -23,6 +23,7 @@ from sbmlsim_core import (
     LoadedModel,
     LoadError,
     PointError,
+    PreparedSimulation,
     RequestError,
     Runtime,
     SbmlsimCoreError,
@@ -55,10 +56,18 @@ def use(sbml: str, request: dict[str, Any]) -> None:
     columns: list[str] = out.columns
     table: numpy.typing.NDArray[numpy.float64] = out.values
     stats: dict[str, int] = instance.stats()
+    prepared: PreparedSimulation = model.prepare(request, varying=["k"])
+    n_values: int = prepared.n_values
+    instance.simulate_prepared(prepared, [0.5])
+    instance.simulate_prepared(model.prepare(request))
 
     results: list[SimulationOutput | PointError] = model.simulate_many([request])
     model.simulate_many([request], threads=4)
     model.simulate_many([request], threads=None)
+    with model.batch_executor(threads=2) as executor:
+        executor.simulate_many([request])
+        executor.simulate_prepared(prepared, [[0.5], [0.8]])
+    executor.close()
     for result in results:
         if isinstance(result, PointError):
             kind: str = result.kind

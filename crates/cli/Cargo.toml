@@ -16,6 +16,10 @@ description = "The command line of sbmlsim-core"
 name = "sbmlsim-core"
 path = "src/main.rs"
 
+[features]
+default = []
+native = ["sbmlsim-host/native"]
+
 [dependencies]
 anyhow = "1"
 clap = { version = "4.5", features = ["derive"] }

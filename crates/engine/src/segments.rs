@@ -3,6 +3,7 @@
 
 use sbmlsim_abi::IntegratorSettings;
 use sbmlsim_csolvers::ffi::{CV_NORMAL, CV_ONE_STEP, CV_ROOT_RETURN, CV_TSTOP_RETURN};
+use std::borrow::Cow;
 
 use crate::changes::Changes;
 use crate::cvode::{Cvode, Problem};
@@ -25,10 +26,11 @@ pub(crate) enum Column {
 /// state and the parameters only, so the output does not change the integration).
 pub(crate) struct Recorder<'a> {
     model: &'a dyn ModelFns,
-    columns: Vec<Column>,
+    columns: Cow<'a, [Column]>,
     /// A byte per selection of the model, 1 for the selections of a column.
-    mask: Vec<u8>,
+    mask: Cow<'a, [u8]>,
     selections: Vec<f64>,
+    selection_scratch: Option<&'a mut Vec<f64>>,
     /// The values of the rows, row major, after the `prefix` slots which the caller fills (the
     /// header of the output of `engine.wasm`, which so needs no second copy of the result).
     pub values: Vec<f64>,
@@ -47,9 +49,18 @@ fn out_of_memory(values: usize) -> EngineError {
     ))
 }
 
+impl Drop for Recorder<'_> {
+    fn drop(&mut self) {
+        if let Some(scratch) = self.selection_scratch.take() {
+            *scratch = std::mem::take(&mut self.selections);
+        }
+    }
+}
+
 impl<'a> Recorder<'a> {
     /// A recorder of the columns with `prefix` slots of 0 before the first row;
     /// `n_selections` is the length of the output of [`ModelFns::selections`].
+    #[cfg(test)]
     pub fn new(
         model: &'a dyn ModelFns,
         columns: Vec<Column>,
@@ -70,9 +81,38 @@ impl<'a> Recorder<'a> {
         }
         Ok(Recorder {
             model,
-            columns,
-            mask,
+            columns: Cow::Owned(columns),
+            mask: Cow::Owned(mask),
             selections: vec![0.0; n_selections],
+            selection_scratch: None,
+            values,
+            prefix,
+            n_rows: 0,
+            cap,
+        })
+    }
+
+    pub fn with_scratch(
+        model: &'a dyn ModelFns,
+        columns: &'a [Column],
+        mask: &'a [u8],
+        selections: &'a mut Vec<f64>,
+        cap: usize,
+        prefix: usize,
+    ) -> Result<Self, EngineError> {
+        let mut values = Vec::new();
+        values
+            .try_reserve_exact(prefix)
+            .map_err(|_| out_of_memory(prefix))?;
+        values.resize(prefix, 0.0);
+        selections.clear();
+        selections.resize(mask.len(), 0.0);
+        Ok(Self {
+            model,
+            columns: Cow::Borrowed(columns),
+            mask: Cow::Borrowed(mask),
+            selections: std::mem::take(selections),
+            selection_scratch: Some(selections),
             values,
             prefix,
             n_rows: 0,
@@ -125,8 +165,9 @@ impl<'a> Recorder<'a> {
         }
         self.model
             .selections(t, y, p, &self.mask, &mut self.selections);
+        self.model.check_error()?;
         self.grow(k)?;
-        for column in &self.columns {
+        for column in self.columns.iter() {
             self.values.push(match column {
                 Column::Time => t,
                 Column::Selection(index) => self.selections[*index],
@@ -171,17 +212,17 @@ pub(crate) fn integrate(
     problem: &mut Problem<'_>,
     settings: &IntegratorSettings,
     t0: f64,
-    y0: &[f64],
+    y0: &mut [f64],
     end: f64,
     output: SegmentOutput<'_>,
     recorder: &mut Recorder<'_>,
     changes: &Changes,
 ) -> Result<(), EngineError> {
     let model = problem.model;
-    let mut y = y0.to_vec();
+    let y = y0;
     let mut k = 0;
     if changes.time(0) == Some(t0) {
-        changes.apply(0, model, &mut y, &mut problem.p);
+        changes.apply(0, model, y, &mut problem.p)?;
         k = 1;
     }
     let mut t = t0;
@@ -189,9 +230,6 @@ pub(crate) fn integrate(
     loop {
         let change = changes.time(k);
         let stop = change.unwrap_or(end);
-        // the parameters of the rows (a copy: CVODE borrows the problem while the rows are
-        // written)
-        let p = problem.p.clone();
         match output {
             SegmentOutput::Times(times) => {
                 let mut started = false;
@@ -200,19 +238,19 @@ pub(crate) fn integrate(
                     let tout = times[next];
                     next += 1;
                     let Some(cvode) = cvode.as_deref_mut() else {
-                        recorder.row(tout, &y, &p)?;
+                        recorder.row(tout, y, &problem.p)?;
                         continue;
                     };
                     if !started && too_close(t, tout) {
-                        recorder.row(tout, &y, &p)?;
+                        recorder.row(tout, y, &problem.p)?;
                         continue;
                     }
                     if !started {
-                        cvode.start(t, &y, stop, settings, 0)?;
+                        cvode.start(t, y, stop, settings, 0)?;
                         started = true;
                     }
                     cvode.integrate(problem, tout, CV_NORMAL)?;
-                    recorder.row(tout, cvode.state(), &p)?;
+                    recorder.row(tout, cvode.state(), &problem.p)?;
                 }
                 // nothing after the last output time is seen
                 let Some(c) = change.filter(|_| next < times.len()) else {
@@ -222,7 +260,7 @@ pub(crate) fn integrate(
                     && (started || !too_close(t, c))
                 {
                     if !started {
-                        cvode.start(t, &y, c, settings, 0)?;
+                        cvode.start(t, y, c, settings, 0)?;
                     }
                     cvode.integrate(problem, c, CV_NORMAL)?;
                     y.copy_from_slice(cvode.state());
@@ -230,18 +268,18 @@ pub(crate) fn integrate(
                 // the state before the change at an output time; the rows of the state after
                 // it are the ones of the next segment
                 if times[next] == c {
-                    recorder.row(c, &y, &p)?;
+                    recorder.row(c, y, &problem.p)?;
                 }
                 t = c;
             }
             SegmentOutput::Steps => {
                 if t == t0 {
-                    recorder.row(t0, &y, &p)?;
+                    recorder.row(t0, y, &problem.p)?;
                 }
                 if stop != t {
                     match cvode.as_deref_mut() {
                         Some(cvode) if !too_close(t, stop) => {
-                            cvode.start(t, &y, stop, settings, 0)?;
+                            cvode.start(t, y, stop, settings, 0)?;
                             let mut previous = t;
                             loop {
                                 let (tret, flag) = cvode.integrate(problem, stop, CV_ONE_STEP)?;
@@ -253,14 +291,14 @@ pub(crate) fn integrate(
                                 previous = tret;
                                 // CVODE returns the stop time exactly when it reaches it
                                 let tret = if flag == CV_TSTOP_RETURN { stop } else { tret };
-                                recorder.row(tret, cvode.state(), &p)?;
+                                recorder.row(tret, cvode.state(), &problem.p)?;
                                 if flag == CV_TSTOP_RETURN || tret >= stop {
                                     break;
                                 }
                             }
                             y.copy_from_slice(cvode.state());
                         }
-                        _ => recorder.row(stop, &y, &p)?,
+                        _ => recorder.row(stop, y, &problem.p)?,
                     }
                 }
                 let Some(c) = change else {
@@ -270,10 +308,10 @@ pub(crate) fn integrate(
             }
         }
         // the change at `t`, whose state after it starts the next segment
-        changes.apply(k, model, &mut y, &mut problem.p);
+        changes.apply(k, model, y, &mut problem.p)?;
         k += 1;
         if matches!(output, SegmentOutput::Steps) {
-            recorder.row(t, &y, &problem.p)?;
+            recorder.row(t, y, &problem.p)?;
         }
     }
 }
@@ -303,8 +341,15 @@ enum StopKind {
     },
 }
 
+#[derive(Default)]
+pub(crate) struct Scratch {
+    before: Vec<f64>,
+    p_before: Vec<f64>,
+}
+
 /// The outputs of a run with events and where they stand.
 struct Outputs<'t> {
+    scratch: &'t mut Scratch,
     /// The output times (empty for the integrator steps).
     times: &'t [f64],
     /// Whether the output is the steps of the integrator.
@@ -368,7 +413,10 @@ impl Outputs<'_> {
         let m = self.m;
         let at_end = t >= self.end || too_close(t, self.end);
         if self.steps {
-            let (before, p_before) = (y[..m].to_vec(), p.to_vec());
+            self.scratch.before.clear();
+            self.scratch.before.extend_from_slice(&y[..m]);
+            self.scratch.p_before.clear();
+            self.scratch.p_before.extend_from_slice(p);
             let executed = if kind == StopKind::Step && !at_end {
                 events.execute_at(t, &mut y[..m], p, Probe::Exact)?
             } else {
@@ -379,7 +427,7 @@ impl Outputs<'_> {
                     discontinuity: true,
                 });
             if executed || (discontinuity && !at_end) {
-                recorder.row(t, &before, &p_before)?;
+                recorder.row(t, &self.scratch.before, &self.scratch.p_before)?;
                 recorder.row(t, &y[..m], p)?;
             } else if !matches!(kind, StopKind::Root { .. }) || at_end {
                 recorder.row(t, &y[..m], p)?;
@@ -429,7 +477,7 @@ impl Outputs<'_> {
         if self.steps || self.times.get(self.next) == Some(&t) {
             recorder.row(t, &y[..m], p)?;
         }
-        changes.apply(k, model, &mut y[..m], p);
+        changes.apply(k, model, &mut y[..m], p)?;
         self.limit = changes.time(k + 1).unwrap_or(f64::INFINITY);
         events.execute_at(t, &mut y[..m], p, Probe::Change)?;
         if at_end {
@@ -489,24 +537,26 @@ pub(crate) fn integrate_events(
     problem: &mut Problem<'_>,
     settings: &IntegratorSettings,
     start: f64,
-    y0: &[f64],
+    y0: &mut [f64],
     end: f64,
     output: SegmentOutput<'_>,
     recorder: &mut Recorder<'_>,
     events: &mut Events<'_>,
     changes: &Changes,
+    scratch: &mut Scratch,
 ) -> Result<(), EngineError> {
     let m = problem.n_model;
     let model = problem.model;
     let n_roots = problem.n_roots;
     // the state of CVODE (of `n` values), the model reads its first `m`
-    let mut y = y0.to_vec();
-    y.resize(problem.n, 0.0);
+    let y = y0;
+    debug_assert_eq!(y.len(), problem.n);
     let (times, steps): (&[f64], bool) = match output {
         SegmentOutput::Times(times) => (times, false),
         SegmentOutput::Steps => (&[], true),
     };
     let mut out = Outputs {
+        scratch,
         times,
         steps,
         next: 0,
@@ -524,7 +574,7 @@ pub(crate) fn integrate_events(
     // the events it triggers execute with it
     let mut k = 0;
     if changes.time(0) == Some(start) {
-        changes.apply(0, model, &mut y[..m], &mut problem.p);
+        changes.apply(0, model, &mut y[..m], &mut problem.p)?;
         events.execute_at(t, &mut y[..m], &mut problem.p, Probe::Change)?;
         k = 1;
     }
@@ -539,12 +589,12 @@ pub(crate) fn integrate_events(
     } else {
         // at the end, the output sees the state after every event
         if !only_start {
-            out.write(t, &y, &problem.p, false, recorder)?;
+            out.write(t, y, &problem.p, false, recorder)?;
         }
         let probe = if only_start { Probe::End } else { Probe::After };
         events.execute_at(t, &mut y[..m], &mut problem.p, probe)?;
         if only_start {
-            out.write(t, &y, &problem.p, true, recorder)?;
+            out.write(t, y, &problem.p, true, recorder)?;
         }
     }
     if only_start {
@@ -569,7 +619,7 @@ pub(crate) fn integrate_events(
             t = tstop;
             guard.stop(t)?;
             if change == Some(t) {
-                out.change(t, k, changes, &mut y, &mut problem.p, events, recorder)?;
+                out.change(t, k, changes, y, &mut problem.p, events, recorder)?;
                 k += 1;
                 started = false;
                 guard.interval(cvode.steps());
@@ -579,7 +629,7 @@ pub(crate) fn integrate_events(
                 continue;
             }
             let next = out.next;
-            if out.stop(t, &mut y, &mut problem.p, StopKind::Stop, events, recorder)? {
+            if out.stop(t, y, &mut problem.p, StopKind::Stop, events, recorder)? {
                 started = false;
                 guard.executed(t, cvode.steps());
             }
@@ -592,14 +642,14 @@ pub(crate) fn integrate_events(
             continue;
         }
         if !started {
-            cvode.start(t, &y, tstop, settings, n_roots)?;
+            cvode.start(t, y, tstop, settings, n_roots)?;
             started = true;
             stop = tstop;
             previous = t;
         } else if tstop != stop {
             if tstop < stop {
                 // CVODE may have stepped past the new stop: start again from `t`
-                cvode.start(t, &y, tstop, settings, n_roots)?;
+                cvode.start(t, y, tstop, settings, n_roots)?;
                 previous = t;
             } else {
                 cvode.set_stop(tstop)?;
@@ -637,7 +687,7 @@ pub(crate) fn integrate_events(
         let output = !steps && !root && flag != CV_TSTOP_RETURN;
         if let Some(c) = change.filter(|c| t >= *c || (!output && too_close(t, *c))) {
             t = c;
-            out.change(t, k, changes, &mut y, &mut problem.p, events, recorder)?;
+            out.change(t, k, changes, y, &mut problem.p, events, recorder)?;
             k += 1;
             started = false;
             guard.interval(cvode.steps());
@@ -654,7 +704,7 @@ pub(crate) fn integrate_events(
         } else {
             StopKind::Step
         };
-        let executed = out.stop(t, &mut y, &mut problem.p, kind, events, recorder)?;
+        let executed = out.stop(t, y, &mut problem.p, kind, events, recorder)?;
         if executed || discontinuity {
             started = false;
         }
@@ -708,9 +758,11 @@ mod tests {
             difference: None,
             mem: std::ptr::null_mut(),
             counts: crate::cvode::Counts::default(),
+            callback_error: None,
         };
         let no_changes = Changes::new(&desc, &[], 0.0, 50.0).unwrap();
         let mut run = |cap: usize| {
+            let mut y0 = y0.clone();
             let columns = vec![Column::Time, Column::Selection(0)];
             let mut recorder = Recorder::new(&model, columns, 2, cap, 0).unwrap();
             let result = integrate(
@@ -718,7 +770,7 @@ mod tests {
                 &mut problem,
                 &settings,
                 0.0,
-                &y0,
+                &mut y0,
                 50.0,
                 SegmentOutput::Steps,
                 &mut recorder,

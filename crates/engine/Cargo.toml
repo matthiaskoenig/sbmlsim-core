@@ -19,7 +19,6 @@ exports = ["dep:serde", "dep:serde_json"]
 [dependencies]
 sbmlsim-abi = { path = "../abi" }
 sbmlsim-csolvers = { path = "../csolvers" }
-thiserror.workspace = true
 # the generator which orders simultaneous events of equal priority, seeded by the request
 rand_pcg = { version = "0.10", default-features = false }
 

@@ -60,6 +60,74 @@ fn after_one() -> TestEvent {
     TestEvent::new("after_one", |t, _, _| t > 1.0, vec![|t, _, _| t - 1.0])
 }
 
+#[test]
+fn delayed_events_obey_storage_limits_and_release_cancelled_snapshots() {
+    use sbmlsim_engine::{EventLimits, PENDING_EVENT_LIMIT_FLAG};
+    let recurring = |persistent| {
+        let wave: Fun = |t, _, _| (std::f64::consts::TAU * t).sin();
+        let mut event = TestEvent::new(
+            "recurring",
+            |t, _, _| (std::f64::consts::TAU * t).sin() > 0.0,
+            vec![wave],
+        );
+        event.delay = Some(|_, _, _| 100.0);
+        event.persistent = persistent;
+        event.assignments = vec![(X, |t, _, _| t)];
+        ramp(vec![event])
+    };
+    let mut req = request(0.0, 5.0, Output::Times(vec![5.0]), 1);
+    req.settings.maximum_time_step = 0.1;
+    let model = recurring(true);
+    let desc = model.description();
+    let mut engine = Engine::new(Box::new(model), desc)
+        .unwrap()
+        .with_event_limits(EventLimits {
+            pending_events: 2,
+            assignment_values: 2,
+        });
+    assert!(
+        matches!(engine.simulate(&req), Err(EngineError::Integration { flag: PENDING_EVENT_LIMIT_FLAG, time, .. }) if time < 3.0)
+    );
+    // A storage failure belongs to this request; a fresh run has an empty queue.
+    let short = request(0.0, 0.1, Output::Times(vec![0.1]), 1);
+    assert!(engine.simulate(&short).is_ok());
+
+    let model = recurring(false);
+    let desc = model.description();
+    let mut engine = Engine::new(Box::new(model), desc)
+        .unwrap()
+        .with_event_limits(EventLimits {
+            pending_events: 1,
+            assignment_values: 1,
+        });
+    let result = engine.simulate(&req).unwrap();
+    assert_eq!(column(&result, "x"), [0.0]);
+    assert_eq!(result, engine.simulate(&req).unwrap());
+}
+
+#[test]
+fn an_assignment_snapshot_is_checked_before_it_is_allocated() {
+    use sbmlsim_engine::{EventLimits, PENDING_EVENT_LIMIT_FLAG};
+    let mut event = after_one();
+    event.delay = Some(|_, _, _| 100.0);
+    event.assignments = vec![(X, |_, _, _| 1.0), (N, |_, _, _| 2.0)];
+    let model = ramp(vec![event]);
+    let desc = model.description();
+    let mut engine = Engine::new(Box::new(model), desc)
+        .unwrap()
+        .with_event_limits(EventLimits {
+            pending_events: 10,
+            assignment_values: 1,
+        });
+    assert!(matches!(
+        engine.simulate(&request(0.0, 2.0, Output::Times(vec![2.0]), 1)),
+        Err(EngineError::Integration {
+            flag: PENDING_EVENT_LIMIT_FLAG,
+            ..
+        })
+    ));
+}
+
 const Y: Target = Target::State(0);
 const X: Target = Target::Param(0);
 const N: Target = Target::Param(1);

@@ -183,3 +183,11 @@ def test_a_result_which_does_not_fit_is_a_request_error():
         instance.simulate(request(end=1.0, steps=3_000_000))
     # the instance answers the next request
     assert instance.simulate(request(end=1.0, steps=10)).values.shape == (11, 4)
+
+
+def test_runtime_timeout_requires_nonnegative_integer():
+    for value in (-1, 2**64):
+        with pytest.raises(OverflowError):
+            sbmlsim_core.Runtime(timeout_ms=value)
+    with pytest.raises(TypeError):
+        sbmlsim_core.Runtime(timeout_ms=1.5)

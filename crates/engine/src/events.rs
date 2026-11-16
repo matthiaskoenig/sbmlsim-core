@@ -71,7 +71,7 @@ use rand_pcg::rand_core::{Rng, SeedableRng};
 use sbmlsim_abi::{EventInfo, ModelDescription};
 
 use crate::model::ModelFns;
-use crate::{DELAY_FLAG, EVENT_LIMIT_FLAG, EngineError};
+use crate::{DELAY_FLAG, EVENT_LIMIT_FLAG, EngineError, EventLimits, PENDING_EVENT_LIMIT_FLAG};
 
 /// The most executions of one event at one time.
 pub const MAX_EXECUTIONS_PER_EVENT: u32 = 1000;
@@ -128,8 +128,21 @@ struct Pending {
     held: bool,
 }
 
+/// Reusable event storage. Every execution resets logical state before use.
+#[derive(Default)]
+pub(crate) struct Scratch {
+    armed: Vec<bool>,
+    probed_until: Vec<f64>,
+    pending: Vec<Pending>,
+    executions: Vec<u32>,
+    current: Vec<bool>,
+    y_probe: Vec<f64>,
+    ydot: Vec<f64>,
+}
+
 /// The events of a simulation: the last values of the triggers and the pending executions.
 pub(crate) struct Events<'a> {
+    scratch: &'a mut Scratch,
     model: &'a dyn ModelFns,
     info: &'a [EventInfo],
     /// The value of every trigger where it was evaluated last.
@@ -140,6 +153,8 @@ pub(crate) struct Events<'a> {
     probed_until: Vec<f64>,
     /// The pending executions, in the order they were triggered.
     pending: Vec<Pending>,
+    pending_values: usize,
+    limits: EventLimits,
     rng: Pcg64,
     /// The probe of a trigger: the time after a time at which it is evaluated again.
     probe: f64,
@@ -174,31 +189,73 @@ pub(crate) enum Probe {
     Change,
 }
 
+impl Drop for Events<'_> {
+    fn drop(&mut self) {
+        let scratch = &mut self.scratch;
+        self.pending.clear();
+        scratch.armed = std::mem::take(&mut self.armed);
+        scratch.probed_until = std::mem::take(&mut self.probed_until);
+        scratch.pending = std::mem::take(&mut self.pending);
+        scratch.executions = std::mem::take(&mut self.executions);
+        scratch.current = std::mem::take(&mut self.current);
+        scratch.y_probe = std::mem::take(&mut self.y_probe);
+        scratch.ydot = std::mem::take(&mut self.ydot);
+    }
+}
+
 impl<'a> Events<'a> {
     /// The events of a model for a simulation from `start` to `end` with the seed of the order
     /// of ties; the triggers have their initial values.
-    pub fn new(
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_scratch(
         model: &'a dyn ModelFns,
         desc: &'a ModelDescription,
         seed: u64,
         start: f64,
         end: f64,
+        limits: EventLimits,
+        scratch: &'a mut Scratch,
     ) -> Events<'a> {
-        let n = desc.states.len();
+        let storage = std::mem::take(scratch);
+        let Scratch {
+            mut armed,
+            mut probed_until,
+            mut pending,
+            mut executions,
+            mut current,
+            mut y_probe,
+            mut ydot,
+        } = storage;
+        armed.clear();
+        armed.extend(desc.events.iter().map(|e| e.initial_value));
+        probed_until.clear();
+        probed_until.resize(desc.events.len(), f64::NEG_INFINITY);
+        pending.clear();
+        executions.clear();
+        executions.resize(desc.events.len(), 0);
+        current.clear();
+        current.resize(desc.events.len(), false);
+        y_probe.clear();
+        y_probe.resize(desc.states.len(), 0.0);
+        ydot.clear();
+        ydot.resize(desc.states.len(), 0.0);
         let mut events = Events {
+            scratch,
             model,
             info: &desc.events,
-            armed: desc.events.iter().map(|e| e.initial_value).collect(),
-            probed_until: vec![f64::NEG_INFINITY; desc.events.len()],
-            pending: Vec::new(),
+            armed,
+            probed_until,
+            pending,
+            pending_values: 0,
+            limits,
             rng: Pcg64::seed_from_u64(seed),
             probe: 0.0,
             end_probe: 0.0,
-            executions: vec![0; desc.events.len()],
+            executions,
             executions_at: f64::NAN,
-            current: vec![false; desc.events.len()],
-            y_probe: vec![0.0; n],
-            ydot: vec![0.0; n],
+            current,
+            y_probe,
+            ydot,
             probe_rhs: 0,
         };
         events.set_window(start, end);
@@ -256,13 +313,14 @@ impl<'a> Events<'a> {
     /// along its rate to it (an execution may have changed what it reads): it rises there, so a
     /// stop before it (a step of the integrator, a zero of a root function at the same time
     /// again) does not see it fall and rise again.
-    fn evaluate(&mut self, t: f64, y: &[f64], p: &[f64], probe: Probe) {
+    fn evaluate(&mut self, t: f64, y: &[f64], p: &[f64], probe: Probe) -> Result<(), EngineError> {
         // the rate at t and the state moved along it for a time, computed when needed and once
         // per time
         let mut moved = None;
         let model = self.model;
         for i in 0..self.info.len() {
             let exact = model.trigger(i as u32, t, y, p);
+            model.check_error()?;
             self.current[i] = exact;
             if exact {
                 self.probed_until[i] = f64::NEG_INFINITY;
@@ -270,7 +328,7 @@ impl<'a> Events<'a> {
             }
             if self.armed[i] && t <= self.probed_until[i] {
                 let delta = self.probed_until[i] - t;
-                if self.probe_trigger(i, t, delta, y, p, &mut moved) {
+                if self.probe_trigger(i, t, delta, y, p, &mut moved)? {
                     self.current[i] = true;
                     continue;
                 }
@@ -281,11 +339,12 @@ impl<'a> Events<'a> {
                 Probe::After => self.probe,
                 Probe::End => self.end_probe,
             };
-            self.current[i] = self.probe_trigger(i, t, delta, y, p, &mut moved);
+            self.current[i] = self.probe_trigger(i, t, delta, y, p, &mut moved)?;
             if self.current[i] {
                 self.probed_until[i] = t + delta;
             }
         }
+        Ok(())
     }
 
     /// The trigger `i` at `t + delta` with the state moved along its rate at `t` for `delta`;
@@ -298,11 +357,12 @@ impl<'a> Events<'a> {
         y: &[f64],
         p: &[f64],
         moved: &mut Option<f64>,
-    ) -> bool {
+    ) -> Result<bool, EngineError> {
         let model = self.model;
         if moved.is_none() {
-            model.rhs(t, y, p, &mut self.ydot);
             self.probe_rhs += 1;
+            model.rhs(t, y, p, &mut self.ydot);
+            model.check_error()?;
         }
         if *moved != Some(delta) {
             for ((q, x), r) in self.y_probe.iter_mut().zip(y).zip(&self.ydot) {
@@ -310,7 +370,9 @@ impl<'a> Events<'a> {
             }
             *moved = Some(delta);
         }
-        model.trigger(i as u32, t + delta, &self.y_probe, p)
+        let trigger = model.trigger(i as u32, t + delta, &self.y_probe, p);
+        model.check_error()?;
+        Ok(trigger)
     }
 
     /// Executes the events at the time `t`: [`Events::execute_at`] with the triggers at `t`,
@@ -367,12 +429,19 @@ impl<'a> Events<'a> {
         let mut executed = false;
         loop {
             model.assign(t, y, p);
-            self.evaluate(t, y, p, probe);
+            model.check_error()?;
+            self.evaluate(t, y, p, probe)?;
             // a pending execution of an event whose trigger is not persistent and false is
             // cancelled
             let (info, current) = (self.info, &self.current);
-            self.pending
-                .retain(|e| info[e.event as usize].persistent || current[e.event as usize]);
+            let pending_values = &mut self.pending_values;
+            self.pending.retain(|e| {
+                let keep = info[e.event as usize].persistent || current[e.event as usize];
+                if !keep {
+                    *pending_values -= e.values.as_ref().map_or(0, Vec::len);
+                }
+                keep
+            });
             for i in 0..self.info.len() {
                 if self.armed[i] || !self.current[i] {
                     continue;
@@ -396,6 +465,7 @@ impl<'a> Events<'a> {
                 }
                 let time = if event.has_delay {
                     let delay = model.delay(i as u32, t, y, p);
+                    model.check_error()?;
                     if delay.is_nan() || delay < 0.0 {
                         return Err(EngineError::Integration {
                             flag: DELAY_FLAG,
@@ -410,11 +480,29 @@ impl<'a> Events<'a> {
                 } else {
                     t
                 };
-                let values = event.use_values_from_trigger_time.then(|| {
-                    let mut values = vec![0.0; event.n_assignments as usize];
-                    model.event_values(i as u32, t, y, p, &mut values);
-                    values
-                });
+                let count = if event.use_values_from_trigger_time {
+                    event.n_assignments as usize
+                } else {
+                    0
+                };
+                if self.pending.len() >= self.limits.pending_events
+                    || count
+                        > self
+                            .limits
+                            .assignment_values
+                            .saturating_sub(self.pending_values)
+                {
+                    return Err(self.limit_error(t));
+                }
+                self.pending
+                    .try_reserve(1)
+                    .map_err(|_| self.limit_error(t))?;
+                let values = if event.use_values_from_trigger_time {
+                    Some(self.snapshot(i, t, y, p)?)
+                } else {
+                    None
+                };
+                self.pending_values += count;
                 self.pending.push(Pending {
                     event: i as u32,
                     time,
@@ -428,10 +516,11 @@ impl<'a> Events<'a> {
             } else {
                 0.0
             };
-            let Some(k) = self.choose(t, horizon, y, p) else {
+            let Some(k) = self.choose(t, horizon, y, p)? else {
                 break;
             };
             let chosen = self.pending.remove(k);
+            self.pending_values -= chosen.values.as_ref().map_or(0, Vec::len);
             let i = chosen.event as usize;
             self.executions[i] += 1;
             if self.executions[i] > MAX_EXECUTIONS_PER_EVENT {
@@ -445,21 +534,53 @@ impl<'a> Events<'a> {
                     ),
                 });
             }
-            let values = chosen.values.unwrap_or_else(|| {
-                let mut values = vec![0.0; self.info[i].n_assignments as usize];
-                model.event_values(i as u32, t, y, p, &mut values);
-                values
-            });
+            let values = match chosen.values {
+                Some(values) => values,
+                None => self.snapshot(i, t, y, p)?,
+            };
             model.event_apply(i as u32, t, &values, y, p);
+            model.check_error()?;
             executed = true;
         }
         Ok(executed)
     }
 
+    fn limit_error(&self, time: f64) -> EngineError {
+        EngineError::Integration {
+            flag: PENDING_EVENT_LIMIT_FLAG,
+            time,
+            message: format!(
+                "event storage exceeds {} pending executions or {} assignment values",
+                self.limits.pending_events, self.limits.assignment_values
+            ),
+        }
+    }
+
+    fn snapshot(&self, i: usize, t: f64, y: &[f64], p: &[f64]) -> Result<Vec<f64>, EngineError> {
+        let count = self.info[i].n_assignments as usize;
+        if count > self.limits.assignment_values {
+            return Err(self.limit_error(t));
+        }
+        let mut values = Vec::new();
+        values
+            .try_reserve_exact(count)
+            .map_err(|_| self.limit_error(t))?;
+        values.resize(count, 0.0);
+        self.model.event_values(i as u32, t, y, p, &mut values);
+        self.model.check_error()?;
+        Ok(values)
+    }
+
     /// The position in `pending` of the execution which comes next at `t`: of the executions
     /// whose time has come (up to `t + horizon`), the one of the highest priority (NaN is the
     /// lowest), a tie chosen by the generator; `None` when no execution is due.
-    fn choose(&mut self, t: f64, horizon: f64, y: &[f64], p: &[f64]) -> Option<usize> {
+    fn choose(
+        &mut self,
+        t: f64,
+        horizon: f64,
+        y: &[f64],
+        p: &[f64],
+    ) -> Result<Option<usize>, EngineError> {
         let mut best: Vec<usize> = Vec::new();
         let mut best_priority = f64::NEG_INFINITY;
         for (k, e) in self.pending.iter().enumerate() {
@@ -467,6 +588,7 @@ impl<'a> Events<'a> {
                 continue;
             }
             let priority = self.model.priority(e.event, t, y, p);
+            self.model.check_error()?;
             let priority = if priority.is_nan() {
                 f64::NEG_INFINITY
             } else {
@@ -480,7 +602,7 @@ impl<'a> Events<'a> {
                 best.push(k);
             }
         }
-        match best.len() {
+        Ok(match best.len() {
             0 => None,
             1 => Some(best[0]),
             n => {
@@ -488,6 +610,6 @@ impl<'a> Events<'a> {
                 let r = ((u128::from(self.rng.next_u64()) * n as u128) >> 64) as usize;
                 Some(best[r])
             }
-        }
+        })
     }
 }

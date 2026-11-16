@@ -1089,6 +1089,56 @@ impl Body<'_> {
                 self.call(MathFn::Log);
                 self.release(x);
             }
+            Op::XorSign => match args.split_first() {
+                None => {
+                    self.sink().f64_const(f64c(-1.0));
+                }
+                Some((first, rest)) => {
+                    let a = self.eval_to_temp(first);
+                    for e in rest {
+                        let b = self.eval_to_temp(e);
+                        let left = self.temp();
+                        let right = self.temp();
+                        // Preserve ordered selections and unary minus (0 - x), including
+                        // NaNs and signed zero, while evaluating each operand once.
+                        let mut s = self.sink();
+                        s.local_get(a)
+                            .f64_const(f64c(0.0))
+                            .local_get(b)
+                            .f64_sub()
+                            .local_get(a)
+                            .f64_const(f64c(0.0))
+                            .local_get(b)
+                            .f64_sub()
+                            .f64_lt()
+                            .select()
+                            .local_set(left);
+                        s.f64_const(f64c(0.0))
+                            .local_get(a)
+                            .f64_sub()
+                            .local_get(b)
+                            .f64_const(f64c(0.0))
+                            .local_get(a)
+                            .f64_sub()
+                            .local_get(b)
+                            .f64_lt()
+                            .select()
+                            .local_set(right);
+                        s.local_get(left)
+                            .local_get(right)
+                            .local_get(left)
+                            .local_get(right)
+                            .f64_gt()
+                            .select()
+                            .local_set(a);
+                        self.release(right);
+                        self.release(left);
+                        self.release(b);
+                    }
+                    self.sink().local_get(a);
+                    self.release(a);
+                }
+            },
             Op::Max | Op::Min => match args.split_first() {
                 None => {
                     let empty = if op == Op::Max {

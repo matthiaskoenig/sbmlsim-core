@@ -40,6 +40,8 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<CompiledModel>()?;
     m.add_class::<Runtime>()?;
     m.add_class::<LoadedModel>()?;
+    m.add_class::<simulate::BatchExecutor>()?;
+    m.add_class::<simulate::PreparedSimulation>()?;
     m.add_class::<Instance>()?;
     m.add_class::<PointError>()?;
     m.add_class::<SimulationOutput>()?;
