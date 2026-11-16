@@ -126,6 +126,7 @@ fn the_counters_are_the_ones_of_the_native_engine() {
     req.changes = vec![Change {
         time: 5.0,
         values: vec![("y".to_string(), 2.0)],
+        increments: Vec::new(),
     }];
     let mut sweep = vec![];
     for solver in [
@@ -243,6 +244,7 @@ fn errors_of_the_engine_come_back() {
     req.changes = vec![Change {
         time: 5.0,
         values: vec![("k".to_string(), 1.0)],
+        increments: Vec::new(),
     }];
     assert_close(
         &instance.simulate(&req).unwrap(),

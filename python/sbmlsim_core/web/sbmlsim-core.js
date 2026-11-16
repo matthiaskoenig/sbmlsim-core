@@ -1,4 +1,4 @@
-// sbmlsim-core 0.5.0, the inline build of its JavaScript host (js/inline.mjs, js/build.mjs).
+// sbmlsim-core 0.6.0, the inline build of its JavaScript host (js/inline.mjs, js/build.mjs).
 // Generated, do not edit. MIT AND BSD-3-Clause AND LGPL-2.1-or-later, see LICENSE and THIRD_PARTY.md.
 var sbmlsimCore = (() => {
   var __defProp = Object.defineProperty;
@@ -955,7 +955,7 @@ var sbmlsimCore = (() => {
   }
 
   // panels.mjs
-  var CORE_VERSION = "0.5.0";
+  var CORE_VERSION = "0.6.0";
   var ENGINE = `sbmlsim-core ${CORE_VERSION}`;
   var BUNDLE_CONTRACT = "panelbundle/1";
   var PANEL_CONTRACT = "panel/1";
@@ -1336,6 +1336,41 @@ var sbmlsimCore = (() => {
       }
     }
   };
+  var MAX_DOSES = 1e3;
+  function doseTimes(interval, duration, end) {
+    if (!(interval > 0)) return [];
+    const until = duration === null || duration === void 0 ? end : Math.min(duration, end);
+    const times = [];
+    for (let k = 1; k <= MAX_DOSES; k += 1) {
+      const time = k * interval;
+      if (!(time < until)) break;
+      times.push(time);
+    }
+    return times;
+  }
+  function doseChanges(run, state) {
+    const changes = [];
+    for (const dosing of run.dosing ?? []) {
+      const dose = state[dosing.dose] * run.knobs[dosing.dose].factor;
+      const interval = state[dosing.interval] * dosing.interval_factor;
+      const duration = dosing.duration === null || dosing.duration === void 0 ? null : state[dosing.duration] * dosing.duration_factor;
+      for (const time of doseTimes(interval, duration, run.end)) {
+        changes.push({ time, values: [], increments: [[dosing.target, dose]] });
+      }
+    }
+    return changes.sort((a, b) => a.time - b.time);
+  }
+  function outputRows(result) {
+    if (result.columns[0] !== "time") throw new Error(`a result has the first column ${result.columns[0]}, not time`);
+    const width = result.columns.length;
+    const time = (r) => result.values[r * width];
+    const rows = [];
+    for (let r = 0; r < result.nRows; r += 1) {
+      if (r + 1 < result.nRows && time(r + 1) === time(r)) continue;
+      rows.push(r);
+    }
+    return rows;
+  }
   function createPanelEndpoint(options) {
     const {
       bundle,
@@ -1478,19 +1513,22 @@ var sbmlsimCore = (() => {
           if (spec.target !== null && spec.target !== void 0) preinit.set(spec.target, state[knob.id] * spec.factor);
           if (spec.parameter !== null && spec.parameter !== void 0) preinit.set(spec.parameter, state[knob.id]);
         }
-        return [...preinit].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+        return {
+          preinit: [...preinit].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0),
+          changes: doseChanges(run, state)
+        };
       });
       const runKey = JSON.stringify([run.model, run.start, run.end, run.points, points]);
       const results = await runs.get(
         runKey,
         async (runSignal) => {
-          const requests = points.map((preinit) => ({
+          const requests = points.map(({ preinit, changes }) => ({
             contract: "simulation/1",
             start: run.start,
             end: run.end,
             output: { uniform: { steps: run.points } },
             preinit,
-            changes: [],
+            changes,
             steady_state: null,
             selections: info.selections,
             settings: info.settings
@@ -1511,8 +1549,9 @@ var sbmlsimCore = (() => {
       for (const curve of declaration.curves ?? []) curves[curve.id] = [];
       results.forEach((result, index) => {
         if (result === null) failed.push(index);
-        if (result !== null && result.nRows !== run.x.length) {
-          throw new Error(`the run of the panel ${panel} has ${result.nRows} rows, its x ${run.x.length}`);
+        const rows = result === null ? [] : outputRows(result);
+        if (result !== null && rows.length !== run.x.length) {
+          throw new Error(`the run of the panel ${panel} has ${rows.length} rows, its x ${run.x.length}`);
         }
         for (const curve of declaration.curves ?? []) {
           const spec = run.curves?.[curve.id];
@@ -1524,11 +1563,11 @@ var sbmlsimCore = (() => {
           const width = result.columns.length;
           const column = result.columns.indexOf(spec.selection);
           if (column < 0) throw new Error(`the model ${run.model} does not select ${spec.selection}`);
-          const row = new Array(result.nRows);
-          for (let r = 0; r < result.nRows; r += 1) {
+          const row = new Array(rows.length);
+          rows.forEach((r, i) => {
             const value = result.values[r * width + column] * spec.factor;
-            row[r] = Number.isFinite(value) ? value : null;
-          }
+            row[i] = Number.isFinite(value) ? value : null;
+          });
           curves[curve.id].push(row);
         }
       });

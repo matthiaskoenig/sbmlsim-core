@@ -79,6 +79,8 @@ pub(crate) struct ResolvedChange {
     pub time: f64,
     /// The targets and their values, in the order of the request.
     values: Vec<(Target, f64)>,
+    /// The targets and their increments, added to their values before the change.
+    increments: Vec<(Target, f64)>,
 }
 
 /// The species of a concentration in a compartment which a change of the compartment
@@ -191,6 +193,18 @@ impl Target {
         }
     }
 
+    /// The value of the target for the value `stored` the entity stores in a compartment of
+    /// the size `size`, the inverse of [`Target::stored`]: `stored * size` for an amount of a
+    /// species which stores its concentration, `stored / size` for a concentration of one which
+    /// stores its amount (sbmlsim's `getValue`).
+    pub fn read(&self, stored: f64, size: f64) -> f64 {
+        match self {
+            Target::Amount(s) if s.stores_concentration => stored * size,
+            Target::Concentration(s) if !s.stores_concentration => stored / size,
+            _ => stored,
+        }
+    }
+
     /// The value the entity stores for the value `value` of the target in a compartment of
     /// the size `size` (used only by a target with a [`Target::compartment`]): `value / size`
     /// for an amount, `value * size` for a concentration (sbmlsim's `setValue`).
@@ -273,7 +287,8 @@ impl Changes {
         start: f64,
         end: f64,
     ) -> Result<Changes, EngineError> {
-        let mut merged: Vec<(f64, Vec<(String, f64)>)> = Vec::with_capacity(changes.len());
+        type Pairs = Vec<(String, f64)>;
+        let mut merged: Vec<(f64, Pairs, Pairs)> = Vec::with_capacity(changes.len());
         let mut previous = start;
         for change in changes {
             let t = change.time;
@@ -284,17 +299,26 @@ impl Changes {
                 )));
             }
             match merged.last_mut() {
-                Some((time, values)) if *time == t => values.extend(change.values.iter().cloned()),
-                _ => merged.push((t, change.values.clone())),
+                Some((time, values, increments)) if *time == t => {
+                    values.extend(change.values.iter().cloned());
+                    increments.extend(change.increments.iter().cloned());
+                }
+                _ => merged.push((t, change.values.clone(), change.increments.clone())),
             }
             previous = t;
         }
         let resolved = merged
             .iter()
-            .map(|(time, values)| {
+            .map(|(time, values, increments)| {
+                let place = format!("at t = {time}");
+                // one id is set or incremented once: resolved together, then split
+                let all: Vec<(String, f64)> = values.iter().chain(increments).cloned().collect();
+                let mut resolved = resolve_values(metadata, &all, &place)?;
+                let increments = resolved.split_off(values.len());
                 Ok(ResolvedChange {
                     time: *time,
-                    values: resolve_values(metadata, values, &format!("at t = {time}"))?,
+                    values: resolved,
+                    increments,
                 })
             })
             .collect::<Result<Vec<_>, EngineError>>()?;
@@ -333,14 +357,28 @@ impl Changes {
                 y[i - np] = v;
             }
         };
+        // an increment is a value: the value of its target before the change plus it, read
+        // in the state after the assignment rules, as the other values are set into it
+        let incremented: Vec<(Target, f64)> = change
+            .increments
+            .iter()
+            .map(|&(target, increment)| {
+                let size = target.compartment().map_or(f64::NAN, |c| get(y, p, c));
+                (
+                    target,
+                    target.read(get(y, p, target.index()), size) + increment,
+                )
+            })
+            .collect();
+        let values: Vec<(Target, f64)> = change.values.iter().copied().chain(incremented).collect();
         let targeted = |i: usize| {
-            change.values.iter().any(|(target, _)| match target {
+            values.iter().any(|(target, _)| match target {
                 Target::Entity(e) => *e == i,
                 Target::Amount(s) | Target::Concentration(s) => s.index == i,
             })
         };
         // the compartments first, each keeping the concentrations of its species
-        for &(target, value) in &change.values {
+        for &(target, value) in &values {
             let Target::Entity(c) = target else { continue };
             let before = get(y, p, c);
             set(y, p, c, value);
@@ -353,7 +391,7 @@ impl Changes {
             }
         }
         // then the species, in the compartments after the change
-        for &(target, value) in &change.values {
+        for &(target, value) in &values {
             if matches!(target, Target::Entity(_)) {
                 continue;
             }

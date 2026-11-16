@@ -445,6 +445,7 @@ fn compiled_changes_keep_concentrations() {
         req.changes = vec![sbmlsim_abi::Change {
             time: 5.0,
             values: values.iter().map(|(id, v)| (id.to_string(), *v)).collect(),
+            increments: Vec::new(),
         }];
         let result = runtime()
             .instantiate(&compiled.wasm, &compiled.description)
@@ -472,6 +473,7 @@ fn requests_on_one_instance_are_independent() {
     b.changes = vec![sbmlsim_abi::Change {
         time: 0.5,
         values: vec![("C".to_string(), 4.0), ("x".to_string(), 1.0)],
+        increments: Vec::new(),
     }];
     b.steady_state = Some(sbmlsim_abi::SteadyState {
         max_time: 100.0,
@@ -553,6 +555,7 @@ fn a_change_converts_with_the_size_of_a_compartment_of_a_rule() {
         req.changes = vec![sbmlsim_abi::Change {
             time: 5.0,
             values: vec![("[S]".to_string(), 3.0)],
+            increments: Vec::new(),
         }];
         let result = runtime()
             .instantiate(&compiled.wasm, &compiled.description)
@@ -634,6 +637,7 @@ fn a_failed_request_leaves_the_instance_as_a_fresh_one() {
     good.changes = vec![sbmlsim_abi::Change {
         time: 1.0,
         values: vec![("z".to_string(), 0.0)],
+        increments: Vec::new(),
     }];
     let mut instance = runtime()
         .instantiate(&compiled.wasm, &compiled.description)
@@ -696,10 +700,12 @@ fn the_constants_follow_the_changes_and_the_events() {
         sbmlsim_abi::Change {
             time: 1.0,
             values: vec![("k".to_string(), 0.1)],
+            increments: Vec::new(),
         },
         sbmlsim_abi::Change {
             time: 6.0,
             values: vec![("BW".to_string(), 50.0)],
+            increments: Vec::new(),
         },
     ];
     let run = |c: &sbmlsim_compiler::CompiledModel| {

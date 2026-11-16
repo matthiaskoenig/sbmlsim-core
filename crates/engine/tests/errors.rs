@@ -99,6 +99,7 @@ fn invalid_requests_are_refused() {
     let change = |time: f64, value: f64| Change {
         time,
         values: vec![("k".to_string(), value)],
+        increments: Vec::new(),
     };
     assert_request(
         decay(&with(&|r| r.changes = vec![change(20.0, 1.0)])),
@@ -122,6 +123,7 @@ fn invalid_requests_are_refused() {
             r.changes = vec![Change {
                 time: 5.0,
                 values: vec![(id.to_string(), 1.0)],
+                increments: Vec::new(),
             }]
         });
         assert_request(decay(&r), &[id]);
