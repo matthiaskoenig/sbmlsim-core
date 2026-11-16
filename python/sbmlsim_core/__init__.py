@@ -3,6 +3,7 @@
 from sbmlsim_core._core import (
     MODEL_CONTRACT,
     SIMULATION_CONTRACT,
+    THIRD_PARTY,
     CompiledModel,
     CompileError,
     Instance,
@@ -19,11 +20,13 @@ from sbmlsim_core._core import (
     UnsupportedError,
     __version__,
     compile_sbml,
+    runtime_wasm,
 )
 
 __all__ = [
     "MODEL_CONTRACT",
     "SIMULATION_CONTRACT",
+    "THIRD_PARTY",
     "CompileError",
     "CompiledModel",
     "Instance",
@@ -40,4 +43,5 @@ __all__ = [
     "UnsupportedError",
     "__version__",
     "compile_sbml",
+    "runtime_wasm",
 ]

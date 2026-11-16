@@ -7,7 +7,7 @@
 // `mathlib.wasm`; without it the tests write those of the command line into a temporary one.
 
 import { execFileSync } from "node:child_process";
-import { cpSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -46,9 +46,17 @@ export function runCli(args, options = {}) {
   });
 }
 
-/** A new temporary directory. */
+/** The temporary directories of the tests, removed when the process exits. */
+const temporary = [];
+process.on("exit", () => {
+  for (const dir of temporary) rmSync(dir, { recursive: true, force: true });
+});
+
+/** A new temporary directory, removed when the process exits. */
 export function tempDir(prefix = "sbmlsim-core-") {
-  return mkdtempSync(path.join(tmpdir(), prefix));
+  const dir = mkdtempSync(path.join(tmpdir(), prefix));
+  temporary.push(dir);
+  return dir;
 }
 
 let runtimeDirPath = null;

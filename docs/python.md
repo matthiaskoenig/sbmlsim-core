@@ -38,6 +38,10 @@ request["settings"]["absolute_tolerance"] = {"per_state": [1e-12] * n_states}
 
 `description` and `initial_values()` of a model, `description` of a compiled model and `columns` of an output are computed anew by every access, so read them once. The parallelism of `simulate_many` is `min(threads, len(requests))`, and its pool and its per-thread instances live only for the duration of the call (an instance costs about 0.3 s to make for a model of 700 kB of description), so give it as many points as you can rather than many small batches: 320 points in one call on 20 threads took 2.09 s against 22.0 s serially.
 
+## A page of one file
+
+The package carries what a page needs to simulate the models compiled here without a server: `sbmlsim_core.runtime_wasm()` gives the bytes of `engine.wasm` and `mathlib.wasm` the extension embeds (`{"engine": ..., "mathlib": ...}`), `sbmlsim_core.web.script()` the inline build of the JavaScript host, one classic script with the global `sbmlsimCore`, and `sbmlsim_core.THIRD_PARTY` the notices of the libraries of the engine, which a page that distributes it carries. `sbmlsimCore.createInlineEndpoint({ bundle, files, engine, mathlib })` is the panel endpoint ([JavaScript](javascript.md#the-panel-endpoint)) of a bundle held in memory: `bundle` the content of `bundle.json`, `files` its compiled models by their path in the bundle (`models/<key>/model.wasm` and `model.json`), and the workers of its pool start from a `blob:` URL of the worker the script embeds. So a page which embeds the script, the runtime, a bundle and its models as base64 opens from `file://` as well; sbmlsim writes the app of a model so.
+
 ## Errors
 
 Errors derive from `SbmlsimCoreError`: `CompileError`, `LoadError` (a runtime which cannot start, a model which does not match its description, an instance or a pool which cannot be made) and `SimulationError` with `RequestError`, `IntegrationError` (`flag`, `time`), `UnsupportedError` and `InternalError`. A point of a batch which failed is a `PointError` (`kind`, `message`, `flag`, `time`) in its position of the result, so one failing request does not fail the batch.

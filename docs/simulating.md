@@ -85,7 +85,7 @@ The counters of the integrator of the last simulation (steps, calls of the right
 | field | what it holds |
 |---|---|
 | `contract` | `"model/2"` |
-| `compiler` | the compiler and its version, e.g. `"sbmlsim-compiler 0.3.0"` |
+| `compiler` | the compiler and its version, e.g. `"sbmlsim-compiler 0.4.0"` |
 | `id` | the id of the model |
 | `states` | the states, in the order of the state vector (the order of a `per_state` tolerance) |
 | `parameters` | the parameters (with the compartments, the species which are not states and the species references), in the order of the parameter vector |
@@ -102,7 +102,7 @@ An entity of `states` and `parameters` is `{"id", "kind", "initial", "settable"}
 ```json
 {
   "contract": "model/2",
-  "compiler": "sbmlsim-compiler 0.3.0",
+  "compiler": "sbmlsim-compiler 0.4.0",
   "id": "toy",
   "states": [
     { "id": "A", "kind": { "species": { "compartment": "c", "has_only_substance_units": false, "stores_concentration": false } }, "initial": 20.0, "settable": true }
