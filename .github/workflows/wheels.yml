@@ -123,7 +123,7 @@ jobs:
             venv="$RUNNER_TEMP/venv-$python"
             uv venv --python "$python" "$venv"
             # the pins of the dev group, so the environments of ci cannot drift apart
-            uv pip install --python "$venv/$bin/python" dist/*.whl --group dev
+            uv pip install --python "$venv" dist/*.whl --group dev
             (cd "$RUNNER_TEMP" && "$venv/$bin/python" -I -c "import sbmlsim_core, sys; print(sys.version, sbmlsim_core.__file__, sbmlsim_core.__version__); assert 'site-packages' in sbmlsim_core.__file__")
             "$venv/$bin/pytest" python/tests -q
             # from a directory without the package: the checkout holds python/sbmlsim_core, which
