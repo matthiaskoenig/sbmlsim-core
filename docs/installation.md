@@ -40,17 +40,22 @@ cargo build --release -p sbmlsim-cli          # the command line target/release/
 
 `engine.wasm` uses fixed-width SIMD (WebAssembly SIMD, the C solvers are compiled with `-msimd128`). The results do not depend on it, they are the same bits as without, but a host without SIMD cannot instantiate `engine.wasm`. wasmtime, Node and the current browsers (Chrome 91, Firefox 89, Safari 16.4 and later) support it. The memory of an instance grows to at most 2 GiB.
 
+The default Rust host and CLI use a minimal Wasmtime build and do not link the native C solvers. The embedded WebAssembly engine still contains its solvers. Its WASI adapter captures stdout and stderr locally (up to 1 MiB each), exposes an empty environment, and rejects process exit, clocks, randomness, filesystem and socket operations.
+
+Build with `cargo build -p sbmlsim-cli --features native` to enable `bench --host native`. Native comparison tests run with `cargo test -p sbmlsim-host --features native`. `EngineError` is defined in `sbmlsim-abi` and reexported by the engine and host.
+
 ## Checks
 
 clippy runs with `-D warnings` and the default lints.
 
 ```bash
 cargo fmt --check
-cargo clippy --all-targets -- -D warnings
+cargo check -p sbmlsim-host -p sbmlsim-cli --no-default-features
+cargo clippy --all-targets --all-features -- -D warnings
 cargo clippy -p sbmlsim-csolvers --all-targets --target wasm32-wasip1 -- -D warnings
 cargo clippy -p sbmlsim-engine --all-targets --target wasm32-wasip1 -- -D warnings
 cargo clippy -p sbmlsim-engine --lib --features exports --target wasm32-wasip1 -- -D warnings
-cargo test
+cargo test --all-features
 cargo build -p sbmlsim-compiler --target wasm32-unknown-unknown
 node --test js/test
 ```

@@ -425,3 +425,47 @@ test("a request which aborts is rejected and its run is dropped when nobody wait
   // a signal which aborted before
   await assert.rejects(simulate(shared, "amount", {}, { signal: AbortSignal.abort() }), { name: "AbortError" });
 });
+
+test("failed runs are not retained and completed runs obey the entry cap", async () => {
+  const { pool, calls } = await countingPool();
+  const bounded = create({ pool, maxRunEntries: 1 });
+  closing.push(pool);
+  await simulate(bounded, "amount", { values: { renal: 0 } });
+  await simulate(bounded, "amount", { values: { renal: 0 } });
+  assert.equal(calls.length, 2);
+  calls.length = 0;
+  await simulate(bounded, "amount", { values: { dose: 0.01 } });
+  await simulate(bounded, "amount", { values: { dose: 0.02 } });
+  await simulate(bounded, "amount", { values: { dose: 0.02 } });
+  assert.equal(calls.length, 2);
+  await simulate(bounded, "amount", { values: { dose: 0.01 } });
+  assert.equal(calls.length, 3);
+});
+
+test("panel cache byte budget charges keys and metadata", async () => {
+  const { pool, calls } = await countingPool();
+  // The numeric buffers fit, but the metadata charge prevents retention.
+  const bounded = create({ pool, maxRunBytes: 200 });
+  closing.push(pool);
+  await simulate(bounded, "amount");
+  await simulate(bounded, "amount");
+  assert.equal(calls.length, 2);
+});
+
+test("panel runs in flight obey their independent count cap", async () => {
+  const { pool, calls, hold, release } = await countingPool();
+  const bounded = create({ pool, maxInflightRuns: 1 });
+  closing.push(pool);
+  await simulate(bounded, "amount");
+  calls.length = 0;
+  hold();
+  const running = simulate(bounded, "amount", { values: { dose: 0.02 } });
+  await settle();
+  assert.equal(calls.length, 1);
+  const refused = await simulate(bounded, "amount", { values: { dose: 0.015 } });
+  assert.equal(refused.status, 500);
+  assert.match(refused.body.detail, /run limit/);
+  release();
+  assert.equal((await running).status, 200);
+  assert.equal((await simulate(bounded, "amount", { values: { dose: 0.015 } })).status, 200);
+});

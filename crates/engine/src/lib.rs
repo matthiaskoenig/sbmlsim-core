@@ -81,6 +81,8 @@ use sbmlsim_abi::{
     ModelDescription, ModelSizes, Output, SIMULATION_CONTRACT, SimulationRequest, SimulationResult,
     SimulationStats, SparsityPattern, Tolerance, check_contract,
 };
+use std::collections::BTreeMap;
+use std::sync::Arc;
 
 pub use cvode::KLU_THRESHOLD;
 
@@ -128,6 +130,27 @@ pub const INIT_TIME: f64 = 0.0;
 /// `max_time`: an engine code, distinct from CVODE's and the other engine flags.
 pub const STEADY_STATE_FLAG: i32 = -1004;
 
+/// A delayed-event queue or assignment snapshot exceeded its resource policy.
+pub const PENDING_EVENT_LIMIT_FLAG: i32 = -1005;
+
+/// Bounds event storage independently of numerical step settings.
+#[derive(Debug, Clone, Copy)]
+pub struct EventLimits {
+    /// Maximum pending executions, including delayed persistent events.
+    pub pending_events: usize,
+    /// Maximum retained assignment values, and maximum values of one execution.
+    pub assignment_values: usize,
+}
+
+impl Default for EventLimits {
+    fn default() -> Self {
+        Self {
+            pending_events: 65_536,
+            assignment_values: 1 << 20,
+        }
+    }
+}
+
 pub use events::MAX_EXECUTIONS_PER_EVENT;
 pub use model::ModelFns;
 
@@ -136,31 +159,7 @@ use cvode::{Config, Counts, Cvode, Difference, Jacobian, Linear, Method, Problem
 use events::Events;
 use segments::{Column, Recorder, SegmentOutput};
 
-/// The error of a simulation.
-#[derive(Debug, Clone, PartialEq, thiserror::Error)]
-pub enum EngineError {
-    /// The request or the description is invalid.
-    #[error("invalid request: {0}")]
-    Request(String),
-    /// CVODE failed: its return flag, the time it reached and the message of its last error.
-    #[error("integration failed at t = {time} (flag {flag}): {message}")]
-    Integration {
-        /// The return flag of CVODE.
-        flag: i32,
-        /// The time CVODE reached.
-        time: f64,
-        /// The message of the last error SUNDIALS reported.
-        message: String,
-    },
-    /// The engine does not simulate this yet.
-    #[error("unsupported: {0}")]
-    Unsupported(String),
-    /// The engine failed in itself: a panic of `engine.wasm`, a trap of its instance (also one
-    /// of the model it calls) or a failure of the host around it. The host does not use such an
-    /// instance again; the native engine never gives this error.
-    #[error("internal error of the engine: {0}")]
-    Internal(String),
-}
+pub use sbmlsim_abi::EngineError;
 
 /// A loaded model with the CVODE memory of its last simulation, which the next simulation of
 /// the same configuration (number of states, method, linear solver) re-initializes.
@@ -169,6 +168,94 @@ pub struct Engine {
     desc: ModelDescription,
     cvode: Option<Cvode>,
     stats: SimulationStats,
+    metadata: Metadata,
+    failed: bool,
+    identity: Arc<()>,
+    scratch: Scratch,
+}
+
+/// An immutable request resolved for one loaded engine. Clones share the plan.
+#[derive(Clone)]
+pub struct PreparedRequest {
+    identity: Arc<()>,
+    plan: Arc<Plan>,
+}
+
+impl PreparedRequest {
+    /// Number of finite values required by each execution, in the varying ID order.
+    pub fn n_values(&self) -> usize {
+        self.plan.varying.len()
+    }
+}
+
+struct Plan {
+    req: RunSettings,
+    names: Vec<String>,
+    columns: Vec<Column>,
+    times: Vec<f64>,
+    changes: Changes,
+    preinit: Vec<(Target, f64)>,
+    varying: Vec<usize>,
+    config: Option<Config>,
+    mask: Vec<u8>,
+}
+
+struct RunSettings {
+    start: f64,
+    end: f64,
+    steps: bool,
+    settings: IntegratorSettings,
+    steady_state: Option<sbmlsim_abi::SteadyState>,
+    seed: u64,
+}
+
+#[derive(Default)]
+struct Scratch {
+    p: Vec<f64>,
+    y: Vec<f64>,
+    fixed: Vec<u8>,
+    loaded_p: Vec<f64>,
+    loaded_y: Vec<f64>,
+    jac_values: Vec<f64>,
+    preinit: Vec<(Target, f64)>,
+    selections: Vec<f64>,
+    steady_rates: Vec<f64>,
+    events: events::Scratch,
+    segments: segments::Scratch,
+}
+
+/// Lookups and finite-difference workspace reused by simulations of this model.
+struct Metadata {
+    changes: changes::Metadata,
+    selections: BTreeMap<String, usize>,
+    difference: Option<Difference>,
+    event_limits: EventLimits,
+}
+
+impl Metadata {
+    fn new(desc: &ModelDescription) -> Self {
+        let mut selections = BTreeMap::new();
+        for selection in &desc.selections {
+            selections
+                .entry(selection.id.clone())
+                .or_insert(selection.index as usize);
+        }
+        Self {
+            changes: changes::Metadata::new(desc),
+            selections,
+            difference: None,
+            event_limits: EventLimits::default(),
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+    payload
+        .downcast_ref::<String>()
+        .cloned()
+        .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_string()))
+        .unwrap_or_else(|| "model panicked without a message".to_string())
 }
 
 impl Engine {
@@ -177,10 +264,14 @@ impl Engine {
         check_description(&desc)?;
         check_sizes(&*model, &desc)?;
         Ok(Engine {
+            metadata: Metadata::new(&desc),
             model,
             desc,
             cvode: None,
             stats: SimulationStats::default(),
+            failed: false,
+            identity: Arc::new(()),
+            scratch: Scratch::default(),
         })
     }
 
@@ -189,10 +280,17 @@ impl Engine {
         &self.desc
     }
 
+    /// Overrides this engine's event resource policy. Zero refuses storage; it does not
+    /// mean unlimited. The WASM engine uses the bounded default policy.
+    pub fn with_event_limits(mut self, limits: EventLimits) -> Self {
+        self.metadata.event_limits = limits;
+        self
+    }
+
     /// Simulates the model; the result does not depend on the simulations before.
     pub fn simulate(&mut self, req: &SimulationRequest) -> Result<SimulationResult, EngineError> {
-        let (model, desc) = (&*self.model, &self.desc);
-        run(model, desc, &mut self.cvode, req, &|_| 0, &mut self.stats).map(Recorded::into_result)
+        self.simulate_with_prefix(req, &|_| 0)
+            .map(Recorded::into_result)
     }
 
     /// The counters of the last simulation (also of one which failed; all 0 for one refused
@@ -209,8 +307,102 @@ impl Engine {
         req: &SimulationRequest,
         prefix: &dyn Fn(&[String]) -> usize,
     ) -> Result<Recorded, EngineError> {
-        let (model, desc) = (&*self.model, &self.desc);
-        run(model, desc, &mut self.cvode, req, prefix, &mut self.stats)
+        self.stats = SimulationStats::default();
+        self.ensure_ready()?;
+        let plan = prepare(&self.desc, &self.metadata, req, &[])?;
+        let rows = self.execute_plan(&plan, &[], prefix)?;
+        Ok(rows.with_columns(plan.names))
+    }
+
+    /// Validates and resolves a request once for repeated executions on this engine.
+    ///
+    /// Each varying ID must name a distinct settable entity. It overrides an existing
+    /// pre-initialization slot for that entity, preserving the slot's order and quantity,
+    /// or appends a slot when absent. Every execution must supply one finite value per ID.
+    /// The returned plan and its clones can only be executed by this engine.
+    pub fn prepare(
+        &self,
+        request: &SimulationRequest,
+        varying: &[String],
+    ) -> Result<PreparedRequest, EngineError> {
+        self.ensure_ready()?;
+        Ok(PreparedRequest {
+            identity: self.identity.clone(),
+            plan: Arc::new(prepare(&self.desc, &self.metadata, request, varying)?),
+        })
+    }
+
+    /// Executes a prepared request with values in the varying ID order.
+    /// Each result owns its output independently of other executions.
+    pub fn simulate_prepared(
+        &mut self,
+        prepared: &PreparedRequest,
+        values: &[f64],
+    ) -> Result<SimulationResult, EngineError> {
+        self.simulate_prepared_with_prefix(prepared, values, &|_| 0)
+            .map(Recorded::into_result)
+    }
+
+    #[cfg_attr(not(feature = "exports"), allow(dead_code))]
+    pub(crate) fn simulate_prepared_with_prefix(
+        &mut self,
+        prepared: &PreparedRequest,
+        values: &[f64],
+        prefix: &dyn Fn(&[String]) -> usize,
+    ) -> Result<Recorded, EngineError> {
+        self.stats = SimulationStats::default();
+        if !Arc::ptr_eq(&self.identity, &prepared.identity) {
+            return Err(request("prepared request belongs to another engine"));
+        }
+        if values.len() != prepared.n_values() || values.iter().any(|value| !value.is_finite()) {
+            return Err(request(format!(
+                "prepared request requires {} finite values",
+                prepared.n_values()
+            )));
+        }
+        let rows = self.execute_plan(&prepared.plan, values, prefix)?;
+        Ok(rows.with_columns(prepared.plan.names.clone()))
+    }
+
+    fn ensure_ready(&self) -> Result<(), EngineError> {
+        if self.failed {
+            return Err(EngineError::Internal(
+                "the instance failed before and is not used again".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn execute_plan(
+        &mut self,
+        plan: &Plan,
+        values: &[f64],
+        prefix: &dyn Fn(&[String]) -> usize,
+    ) -> Result<RecordedValues, EngineError> {
+        self.ensure_ready()?;
+        let mut execute = || {
+            run(
+                &*self.model,
+                &self.desc,
+                &mut self.metadata,
+                &mut self.cvode,
+                plan,
+                values,
+                &mut self.scratch,
+                prefix,
+                &mut self.stats,
+            )
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(&mut execute))
+            .unwrap_or_else(|error| Err(EngineError::Internal(panic_message(&*error))));
+        #[cfg(target_arch = "wasm32")]
+        let outcome = execute();
+        let outcome = self.model.check_error().and(outcome);
+        if matches!(outcome, Err(EngineError::Internal(_))) {
+            self.failed = true;
+        }
+        outcome
     }
 }
 
@@ -224,6 +416,24 @@ pub(crate) struct Recorded {
     pub values: Vec<f64>,
     /// The number of slots before the values.
     pub prefix: usize,
+}
+
+/// Recorded rows before their caller transfers or clones the resolved column names.
+struct RecordedValues {
+    n_rows: usize,
+    values: Vec<f64>,
+    prefix: usize,
+}
+
+impl RecordedValues {
+    fn with_columns(self, columns: Vec<String>) -> Recorded {
+        Recorded {
+            columns,
+            n_rows: self.n_rows,
+            values: self.values,
+            prefix: self.prefix,
+        }
+    }
 }
 
 impl Recorded {
@@ -250,7 +460,23 @@ pub fn simulate(
     check_description(desc)?;
     check_sizes(model, desc)?;
     let mut stats = SimulationStats::default();
-    run(model, desc, &mut None, req, &|_| 0, &mut stats).map(Recorded::into_result)
+    let mut metadata = Metadata::new(desc);
+    let plan = prepare(desc, &metadata, req, &[])?;
+    let result = run(
+        model,
+        desc,
+        &mut metadata,
+        &mut None,
+        &plan,
+        &[],
+        &mut Scratch::default(),
+        &|_| 0,
+        &mut stats,
+    );
+    model
+        .check_error()
+        .and(result)
+        .map(|rows| rows.with_columns(plan.names).into_result())
 }
 
 /// Checks that the sizes of a model (`model_sizes`, `model_event_sizes`) are the ones of its
@@ -259,6 +485,7 @@ pub fn simulate(
 /// past its vectors.
 fn check_sizes(model: &dyn ModelFns, desc: &ModelDescription) -> Result<(), EngineError> {
     let (sizes, described) = (model.sizes(), ModelSizes::of(desc));
+    model.check_error()?;
     if sizes != described {
         return Err(request(format!(
             "the description of model {} is not the one of its model: the model has {sizes}, \
@@ -479,10 +706,11 @@ fn output_times(
 fn columns_of(
     desc: &ModelDescription,
     req: &SimulationRequest,
+    selections: &BTreeMap<String, usize>,
 ) -> Result<(Vec<String>, Vec<Column>), EngineError> {
     let selection = |id: &str| -> Result<Column, EngineError> {
-        match desc.selections.iter().find(|s| s.id == id) {
-            Some(s) => Ok(Column::Selection(s.index as usize)),
+        match selections.get(id) {
+            Some(&index) => Ok(Column::Selection(index)),
             None if id == "time" => Ok(Column::Time),
             None => Err(request(format!("model {} has no selection {id}", desc.id))),
         }
@@ -505,18 +733,18 @@ fn columns_of(
 /// Resolves the pre-initialization values, in the selections of sbmlsim as the changes (`S`
 /// the amount of a species, `[S]` its concentration, see `changes`).
 fn resolve_preinit(
-    desc: &ModelDescription,
+    metadata: &changes::Metadata,
     values: &[(String, f64)],
 ) -> Result<Vec<(Target, f64)>, EngineError> {
-    changes::resolve_values(desc, values, "in the pre-initialization")
+    changes::resolve_values(metadata, values, "in the pre-initialization")
 }
 
 /// Checks the steady state of a request.
 fn check_steady_state(
-    desc: &ModelDescription,
+    metadata: &changes::Metadata,
     steady: &sbmlsim_abi::SteadyState,
 ) -> Result<(), EngineError> {
-    resolve_preinit(desc, &steady.preinit)?;
+    resolve_preinit(metadata, &steady.preinit)?;
     let valid = |x: f64| x.is_finite() && x >= 0.0;
     if !valid(steady.absolute_tolerance) || !valid(steady.relative_tolerance) {
         return Err(request(format!(
@@ -545,22 +773,33 @@ fn initial_values(
     model: &dyn ModelFns,
     desc: &ModelDescription,
     preinit: &[(Target, f64)],
-) -> (Vec<f64>, Vec<f64>) {
+    scratch: &mut Scratch,
+) -> Result<(), EngineError> {
     let (np, ns) = (desc.parameters.len(), desc.states.len());
     // the parameters, then the constants of the model, which `init` computes
-    let mut p = vec![0.0; np + desc.n_constants as usize];
-    let mut y = vec![0.0; ns];
-    model.defaults(&mut p, &mut y);
-    let mut fixed = vec![0u8; np + ns];
+    let (p, y) = (&mut scratch.p, &mut scratch.y);
+    p.clear();
+    p.resize(np + desc.n_constants as usize, 0.0);
+    y.clear();
+    y.resize(ns, 0.0);
+    model.defaults(p, y);
+    model.check_error()?;
+    let fixed = &mut scratch.fixed;
+    fixed.clear();
+    fixed.resize(np + ns, 0);
     // the model as loaded, with the values set so far, for the sizes of the conversions
     let mut loaded = preinit
         .iter()
         .any(|(target, _)| target.compartment().is_some())
         .then(|| {
-            let (mut lp, mut ly) = (p.clone(), y.clone());
-            model.init(INIT_TIME, &mut lp, &mut ly, &fixed);
-            (lp, ly)
-        });
+            let (lp, ly) = (&mut scratch.loaded_p, &mut scratch.loaded_y);
+            lp.clone_from(p);
+            ly.clone_from(y);
+            model.init(INIT_TIME, lp, ly, fixed);
+            model.check_error()?;
+            Ok::<_, EngineError>((lp, ly))
+        })
+        .transpose()?;
     let get = |p: &[f64], y: &[f64], i: usize| if i < np { p[i] } else { y[i - np] };
     let set = |p: &mut [f64], y: &mut [f64], i: usize, v: f64| {
         if i < np {
@@ -575,30 +814,23 @@ fn initial_values(
             _ => value,
         };
         let index = target.index();
-        set(&mut p, &mut y, index, stored);
+        set(p, y, index, stored);
         if let Some((lp, ly)) = &mut loaded {
             set(lp, ly, index, stored);
         }
         fixed[index] = 1;
     }
-    model.init(INIT_TIME, &mut p, &mut y, &fixed);
-    (p, y)
+    model.init(INIT_TIME, p, y, fixed);
+    model.check_error()?;
+    Ok(())
 }
 
-/// The simulation [`simulate`] and [`Engine::simulate`] share; `cache` is the CVODE memory of
-/// the last simulation, replaced when the configuration differs; the result has
-/// `prefix(columns)` slots of 0 before its values; `stats` gets the counters of the simulation
-/// (0 for a request refused before the integration).
-fn run(
-    model: &dyn ModelFns,
+fn prepare(
     desc: &ModelDescription,
-    cache: &mut Option<Cvode>,
+    metadata: &Metadata,
     req: &SimulationRequest,
-    prefix: &dyn Fn(&[String]) -> usize,
-    stats: &mut SimulationStats,
-) -> Result<Recorded, EngineError> {
-    *stats = SimulationStats::default();
-    // 1. the request is validated before any feature is refused and before any integration
+    varying: &[String],
+) -> Result<Plan, EngineError> {
     check_contract(&req.contract, SIMULATION_CONTRACT).map_err(|e| request(e.to_string()))?;
     let (start, end) = (req.start, req.end);
     if !start.is_finite() || !end.is_finite() || end < start || !(end - start).is_finite() {
@@ -608,19 +840,135 @@ fn run(
     }
     let n = desc.states.len();
     check_settings(&req.settings, n)?;
-    let (names, columns) = columns_of(desc, req)?;
+    let (names, columns) = columns_of(desc, req, &metadata.selections)?;
     let times = output_times(&req.output, start, end, names.len())?;
-    let changes = Changes::new(desc, &req.changes, start, end)?;
+    let changes = Changes::with_metadata(&metadata.changes, &req.changes, start, end)?;
     // the model is initialized once, with the pre-initialization values of the request and of
     // its steady state together (sbmlsim refuses a target in both)
     let mut preinit = req.preinit.clone();
     if let Some(steady) = &req.steady_state {
-        check_steady_state(desc, steady)?;
+        check_steady_state(&metadata.changes, steady)?;
         preinit.extend(steady.preinit.iter().cloned());
     }
-    let preinit = resolve_preinit(desc, &preinit)?;
+    let preinit = resolve_preinit(&metadata.changes, &preinit)?;
+    let targets = resolve_preinit(
+        &metadata.changes,
+        &varying
+            .iter()
+            .map(|id| (id.clone(), 0.0))
+            .collect::<Vec<_>>(),
+    )?;
+    let mut preinit = preinit;
+    let mut slots = Vec::with_capacity(targets.len());
+    for (target, _) in targets {
+        // Match the entity, retaining the template's quantity and position.
+        let slot = match preinit
+            .iter()
+            .position(|(existing, _)| existing.index() == target.index())
+        {
+            Some(slot) => slot,
+            None => {
+                preinit.push((target, 0.0));
+                preinit.len() - 1
+            }
+        };
+        slots.push(slot);
+    }
+    let with_events = !desc.events.is_empty() || desc.n_roots > 0;
+    let n_cvode = if with_events { n.max(1) } else { n };
+    let config = if n_cvode == 0 {
+        None
+    } else {
+        Some(Config {
+            n: n_cvode,
+            method: if req.settings.stiff {
+                Method::Bdf(if n == 0 {
+                    Linear::Dense {
+                        jacobian: Jacobian::Internal,
+                    }
+                } else {
+                    linear_of(desc, &req.settings)?
+                })
+            } else {
+                Method::Adams
+            },
+        })
+    };
+    let mut req = RunSettings {
+        start,
+        end,
+        steps: matches!(req.output, Output::IntegratorSteps),
+        settings: req.settings.clone(),
+        steady_state: req
+            .steady_state
+            .as_ref()
+            .map(|steady| sbmlsim_abi::SteadyState {
+                preinit: Vec::new(),
+                absolute_tolerance: steady.absolute_tolerance,
+                relative_tolerance: steady.relative_tolerance,
+                max_time: steady.max_time,
+            }),
+        seed: req.seed,
+    };
+    if n_cvode > n && matches!(req.settings.absolute_tolerance, Tolerance::PerState(_)) {
+        req.settings.absolute_tolerance = Tolerance::Scalar(1.0);
+    }
+    let n_selections = desc
+        .selections
+        .iter()
+        .map(|s| s.index as usize + 1)
+        .max()
+        .unwrap_or(0);
+    let mut mask = vec![0; n_selections];
+    for column in &columns {
+        if let Column::Selection(index) = column {
+            mask[*index] = 1;
+        }
+    }
+    Ok(Plan {
+        req,
+        names,
+        columns,
+        times,
+        changes,
+        preinit,
+        varying: slots,
+        config,
+        mask,
+    })
+}
+
+/// The simulation [`simulate`] and [`Engine::simulate`] share; `cache` is the CVODE memory of
+/// the last simulation, replaced when the configuration differs; the result has
+/// `prefix(columns)` slots of 0 before its values; `stats` gets the counters of the simulation
+/// (0 for a request refused before the integration).
+#[allow(clippy::too_many_arguments)]
+fn run(
+    model: &dyn ModelFns,
+    desc: &ModelDescription,
+    metadata: &mut Metadata,
+    cache: &mut Option<Cvode>,
+    plan: &Plan,
+    values: &[f64],
+    scratch: &mut Scratch,
+    prefix: &dyn Fn(&[String]) -> usize,
+    stats: &mut SimulationStats,
+) -> Result<RecordedValues, EngineError> {
+    *stats = SimulationStats::default();
+    let req = &plan.req;
+    let (start, end) = (req.start, req.end);
+    let n = desc.states.len();
+    let (names, columns, times, changes) = (&plan.names, &plan.columns, &plan.times, &plan.changes);
+    scratch.preinit.clone_from(&plan.preinit);
+    for (&slot, &value) in plan.varying.iter().zip(values) {
+        scratch.preinit[slot].1 = value;
+    }
+    let preinit = std::mem::take(&mut scratch.preinit);
+    let initialized = initial_values(model, desc, &preinit, scratch);
+    scratch.preinit = preinit;
+    initialized?;
     // 2. the initialization
-    let (p, mut y0) = initial_values(model, desc, &preinit);
+
     let with_events = !desc.events.is_empty() || desc.n_roots > 0;
 
     // a model without states but with events integrates one state of the rate 0, so CVODE
@@ -632,33 +980,26 @@ fn run(
     let cvode = if n_cvode == 0 {
         None
     } else {
-        let method = if req.settings.stiff {
-            // the one state of the rate 0 of a model without states has no pattern
-            let linear = if n == 0 {
+        let config = plan.config.expect("nonempty integration");
+        if let Method::Bdf(linear) = config.method
+            && n > 0
+        {
+            pattern = Some(pattern_of(desc));
+            difference = Some(
+                metadata
+                    .difference
+                    .get_or_insert_with(|| difference_of(desc)),
+            );
+            analytic = matches!(
+                linear,
                 Linear::Dense {
-                    jacobian: Jacobian::Internal,
+                    jacobian: Jacobian::Analytic
+                } | Linear::Klu {
+                    jacobian: Jacobian::Analytic,
+                    ..
                 }
-            } else {
-                linear_of(desc, &req.settings)?
-            };
-            if n > 0 {
-                pattern = Some(pattern_of(desc));
-                difference = Some(difference_of(desc));
-                analytic = matches!(
-                    linear,
-                    Linear::Dense {
-                        jacobian: Jacobian::Analytic
-                    } | Linear::Klu {
-                        jacobian: Jacobian::Analytic,
-                        ..
-                    }
-                );
-            }
-            Method::Bdf(linear)
-        } else {
-            Method::Adams
-        };
-        let config = Config { n: n_cvode, method };
+            );
+        }
         if cache.as_ref().map(Cvode::config) != Some(config) {
             *cache = None;
             *cache = Some(Cvode::new(config)?);
@@ -672,77 +1013,85 @@ fn run(
             None
         }
     };
-    let settings = match (&req.settings.absolute_tolerance, n_cvode > n) {
-        // the state of the rate 0 of a model without states gets the tolerance of no state
-        (Tolerance::PerState(_), true) => IntegratorSettings {
-            absolute_tolerance: Tolerance::Scalar(1.0),
-            ..req.settings.clone()
-        },
-        _ => req.settings.clone(),
-    };
+    let settings = &req.settings;
+    let prefix = prefix(names);
+    let mut recorder = Recorder::with_scratch(
+        model,
+        columns,
+        &plan.mask,
+        &mut scratch.selections,
+        MAX_OUTPUT_VALUES,
+        prefix,
+    )?;
+    if !req.steps {
+        recorder.reserve(times.len())?;
+    }
+    scratch.jac_values.clear();
+    scratch
+        .jac_values
+        .resize(pattern.map_or(0, |p| p.row_idx.len()), 0.0);
+    let mut y0 = std::mem::take(&mut scratch.y);
     let mut problem = Problem {
         n: n_cvode,
         n_model: n,
         n_roots: desc.n_roots as usize,
         n_discontinuity_roots: desc.n_discontinuity_roots as usize,
         model,
-        p,
+        p: std::mem::take(&mut scratch.p),
         pattern,
-        jac_values: vec![0.0; pattern.map_or(0, |p| p.row_idx.len())],
+        jac_values: std::mem::take(&mut scratch.jac_values),
         analytic,
         difference,
         mem: std::ptr::null_mut(),
         counts: Counts::default(),
+        callback_error: None,
     };
-    let n_selections = desc
-        .selections
-        .iter()
-        .map(|s| s.index as usize + 1)
-        .max()
-        .unwrap_or(0);
-    let prefix = prefix(&names);
-    let mut recorder = Recorder::new(model, columns, n_selections, MAX_OUTPUT_VALUES, prefix)?;
-    // the size of an output of times is known (and checked against the cap): one allocation,
-    // not a growth by doubling, whose peak would be twice the result; the steps of the
-    // integrator have no known count and grow by doubling up to the cap
-    if !matches!(req.output, Output::IntegratorSteps) {
-        recorder.reserve(times.len())?;
-    }
-    let output = match req.output {
-        Output::IntegratorSteps => SegmentOutput::Steps,
-        _ => SegmentOutput::Times(&times),
+    let output = if req.steps {
+        SegmentOutput::Steps
+    } else {
+        SegmentOutput::Times(times)
     };
     // the state of CVODE: the model reads its first `n` values
     y0.resize(n_cvode, 0.0);
     let mut probe_rhs = 0;
     let (outcome, cvode_counts) = match cvode {
         Some(cvode) if with_events => {
-            let mut events = Events::new(model, desc, req.seed, start, end);
+            let mut events = Events::with_scratch(
+                model,
+                desc,
+                req.seed,
+                start,
+                end,
+                metadata.event_limits,
+                &mut scratch.events,
+            );
             let mut integrate = || {
                 if let Some(steady) = &req.steady_state {
                     steady::steady_state(
                         Some(&mut *cvode),
                         &mut problem,
-                        &settings,
+                        settings,
                         start,
                         end,
                         &mut y0,
                         steady,
                         Some(&mut events),
                         &desc.id,
+                        &mut scratch.steady_rates,
                     )?;
                 }
                 segments::integrate_events(
                     cvode,
                     &mut problem,
-                    &settings,
+                    settings,
                     start,
-                    &y0,
+                    &mut y0,
                     end,
                     output,
                     &mut recorder,
                     &mut events,
-                    &changes,
+                    changes,
+                    &mut scratch.segments,
                 )
             };
             let outcome = integrate();
@@ -755,25 +1104,26 @@ fn run(
                     steady::steady_state(
                         cvode.as_deref_mut(),
                         &mut problem,
-                        &settings,
+                        settings,
                         start,
                         end,
                         &mut y0,
                         steady,
                         None,
                         &desc.id,
+                        &mut scratch.steady_rates,
                     )?;
                 }
                 segments::integrate(
                     cvode.as_deref_mut(),
                     &mut problem,
-                    &settings,
+                    settings,
                     start,
-                    &y0,
+                    &mut y0,
                     end,
                     output,
                     &mut recorder,
-                    &changes,
+                    changes,
                 )
             };
             let outcome = integrate();
@@ -782,11 +1132,13 @@ fn run(
         }
     };
     *stats = cvode::stats(&problem.counts, &cvode_counts, probe_rhs);
+    scratch.p = problem.p;
+    scratch.jac_values = problem.jac_values;
+    scratch.y = y0;
     outcome?;
-    Ok(Recorded {
-        columns: names,
+    Ok(RecordedValues {
         n_rows: recorder.n_rows,
-        values: recorder.values,
+        values: std::mem::take(&mut recorder.values),
         prefix,
     })
 }
@@ -797,6 +1149,44 @@ mod tests {
 
     use super::*;
     use crate::model::Decay;
+
+    #[test]
+    fn repeated_runs_retain_the_initialization_and_recording_workspaces() {
+        let model = crate::model::Compartmental { k: 0.5 };
+        let mut engine = Engine::new(Box::new(model), model.description()).unwrap();
+        let req = SimulationRequest {
+            contract: SIMULATION_CONTRACT.into(),
+            start: 0.0,
+            end: 1.0,
+            output: Output::Uniform { steps: 4 },
+            preinit: vec![("[S]".into(), 2.0)],
+            changes: vec![],
+            steady_state: None,
+            selections: vec![],
+            settings: IntegratorSettings::default(),
+            seed: 0,
+        };
+        let plan = engine.prepare(&req, &["[S]".into()]).unwrap();
+        engine.simulate_prepared(&plan, &[2.0]).unwrap();
+        let pointers = |scratch: &Scratch| {
+            (
+                scratch.p.as_ptr(),
+                scratch.y.as_ptr(),
+                scratch.fixed.as_ptr(),
+                scratch.loaded_p.as_ptr(),
+                scratch.loaded_y.as_ptr(),
+                scratch.jac_values.as_ptr(),
+                scratch.selections.as_ptr(),
+                scratch.preinit.as_ptr(),
+            )
+        };
+        let before = pointers(&engine.scratch);
+        engine.simulate_prepared(&plan, &[5.0]).unwrap();
+        assert_eq!(before, pointers(&engine.scratch));
+        assert!(engine.simulate_prepared(&plan, &[f64::NAN]).is_err());
+        engine.simulate_prepared(&plan, &[2.0]).unwrap();
+        assert_eq!(before, pointers(&engine.scratch));
+    }
 
     /// A description of `n` states with a diagonal Jacobian pattern.
     fn diagonal(n: usize) -> ModelDescription {
@@ -834,7 +1224,9 @@ mod tests {
         let model = Decay { k: 0.5 };
         let mut desc = model.description();
         let columns = |desc: &ModelDescription, selections: &[&str]| {
-            columns_of(desc, &req(selections)).unwrap().1
+            columns_of(desc, &req(selections), &Metadata::new(desc).selections)
+                .unwrap()
+                .1
         };
         // without an entity time a later time is the time of the row
         assert!(matches!(

@@ -8,8 +8,8 @@
 //! them is a direct call from wasm to wasm, and loads the description of the model. An
 //! [`Instance`] simulates requests with it.
 //!
-//! The engine gets WASI preview1 without a file system, an environment or arguments, with
-//! stdout and stderr inherited; it calls none of it while it loads or simulates
+//! The engine gets a minimal WASI preview1 adapter with bounded local stdout and stderr
+//! capture and an empty environment. Other capabilities trap; it calls none while it loads or simulates
 //! ([`Instance::wasi_calls`] counts the calls). The exports of `engine.wasm` and the format of
 //! its output are documented in `crates/engine/src/exports.rs`.
 //!
@@ -20,23 +20,30 @@
 //! its allocator. Every `memory.grow` (and `table.grow`) is a call into the host for wasmtime's
 //! call hook; the limiter counts them, and [`Instance::wasi_calls`] leaves them out.
 
+use std::collections::BTreeMap;
+use std::sync::{Arc, Weak};
+
 use anyhow::{Context, anyhow, bail, ensure};
+pub use sbmlsim_abi::EngineError;
 use sbmlsim_abi::{
     ENGINE_OUTPUT_FORMAT, ENGINE_SECTION, MODEL_CONTRACT, ModelDescription, SimulationRequest,
     SimulationResult, SimulationStats, check_contract,
 };
-use sbmlsim_engine::EngineError;
 use serde::Deserialize;
 use wasmtime::wasmparser::{Parser, Payload};
 use wasmtime::{
     CallHook, Config, Engine, ExternType, FuncType, Linker, Memory, MemoryType, Module,
     ResourceLimiter, Store, TypedFunc,
 };
-use wasmtime_wasi::WasiCtxBuilder;
-use wasmtime_wasi::p1::{self, WasiP1Ctx};
 
+mod execution;
+#[cfg(feature = "native")]
 mod native;
+mod wasi;
 
+pub use execution::DEFAULT_EXECUTION_TIMEOUT;
+use execution::Execution;
+#[cfg(feature = "native")]
 pub use native::NativeInstance;
 
 /// `engine.wasm` of this build (`sbmlsim-engine` for `wasm32-wasip1`).
@@ -67,14 +74,17 @@ const ENGINE_EXPORTS: [&str; 7] = [
 
 /// The most bytes the memory of an instance grows to: 2 GiB, `32768` pages of 64 KiB, the
 /// `maximum` the JavaScript loader gives its memory (`js/loader.mjs`). The largest result
-/// ([`sbmlsim_engine::MAX_OUTPUT_VALUES`], 512 MiB) is recorded in place of its output, so it
+/// (64 million values, 512 MiB) is recorded in place of its output, so it
 /// fits, also while the steps of the integrator grow it by doubling.
 pub const MAX_MEMORY_BYTES: usize = 2 << 30;
+
+/// Maximum elements in a runtime table. Compiled model modules may not define tables.
+pub const MAX_TABLE_ELEMENTS: usize = 65_536;
 
 /// The data of a store: the WASI context of the engine, the number of its calls into the host
 /// and the limit of its memory.
 struct HostState {
-    wasi: WasiP1Ctx,
+    wasi: wasi::Output,
     host_calls: u64,
     memory: MemoryLimit,
 }
@@ -100,12 +110,12 @@ impl ResourceLimiter for MemoryLimit {
     fn table_growing(
         &mut self,
         _current: usize,
-        _desired: usize,
+        desired: usize,
         _maximum: Option<usize>,
     ) -> wasmtime::Result<bool> {
         // a `table.grow` is a call into the host for the call hook as a `memory.grow` is
         self.grows += 1;
-        Ok(true)
+        Ok(desired <= MAX_TABLE_ELEMENTS)
     }
 }
 
@@ -119,14 +129,10 @@ impl HostState {
 /// A store whose call hook counts the calls of wasm into the host, with a memory of at most
 /// `max_memory` bytes.
 fn store(engine: &Engine, max_memory: usize) -> Store<HostState> {
-    let wasi = WasiCtxBuilder::new()
-        .inherit_stdout()
-        .inherit_stderr()
-        .build_p1();
     let mut store = Store::new(
         engine,
         HostState {
-            wasi,
+            wasi: wasi::Output::default(),
             host_calls: 0,
             memory: MemoryLimit {
                 max_bytes: max_memory,
@@ -144,15 +150,16 @@ fn store(engine: &Engine, max_memory: usize) -> Store<HostState> {
     store
 }
 
-/// A linker with WASI preview1.
-/// A linker without WASI, of a store without data (the model of the native engine).
-fn linker_without_wasi(engine: &Engine) -> Linker<()> {
+/// A linker without WASI, with the native model's resource limiter.
+#[cfg(feature = "native")]
+fn linker_without_wasi(engine: &Engine) -> Linker<MemoryLimit> {
     Linker::new(engine)
 }
 
+/// A linker with the minimal WASI preview1 adapter.
 fn linker(engine: &Engine) -> anyhow::Result<Linker<HostState>> {
     let mut linker = Linker::new(engine);
-    p1::add_to_linker_sync(&mut linker, |state: &mut HostState| &mut state.wasi)?;
+    wasi::add_to_linker(&mut linker)?;
     Ok(linker)
 }
 
@@ -163,7 +170,9 @@ pub fn count_wasi_calls(wasm: &[u8], export: &str) -> anyhow::Result<u64> {
     let engine = Engine::default();
     let module = Module::new(&engine, wasm)?;
     let mut store = store(&engine, MAX_MEMORY_BYTES);
-    let instance = linker(&engine)?.instantiate(&mut store, &module)?;
+    let mut linker = linker(&engine)?;
+    wasi::reject_other_imports(&mut linker, &module)?;
+    let instance = linker.instantiate(&mut store, &module)?;
     store.data_mut().memory.grows = 0;
     let function = instance.get_typed_func::<(), i32>(&mut store, export)?;
     let before = store.data().wasi_calls();
@@ -178,6 +187,7 @@ pub struct Runtime {
     mathlib_module: Module,
     memory_type: MemoryType,
     max_memory: usize,
+    execution: Execution,
 }
 
 impl Runtime {
@@ -185,7 +195,18 @@ impl Runtime {
     /// version of the output of the engine (its custom section [`ENGINE_SECTION`]).
     pub fn new(engine_wasm: &[u8], mathlib_wasm: &[u8]) -> anyhow::Result<Runtime> {
         check_output_format(engine_wasm)?;
-        let engine = Engine::new(&Config::new())?;
+        // These modules use core wasm32 and fixed-width SIMD. Reject features which
+        // provide additional heaps, shared state or component resources outside our policy.
+        let engine = Engine::new(
+            Config::new()
+                .epoch_interruption(true)
+                .wasm_gc(false)
+                .wasm_memory64(false)
+                .wasm_multi_memory(false)
+                .wasm_relaxed_simd(false),
+        )?;
+        let execution =
+            Execution::new(&engine).context("cannot start the execution deadline clock")?;
         let engine_module = Module::new(&engine, engine_wasm)
             .map_err(anyhow::Error::from)
             .context("engine.wasm does not compile")?;
@@ -215,6 +236,7 @@ impl Runtime {
             );
         }
         Ok(Runtime {
+            execution,
             engine,
             engine_module,
             mathlib_module,
@@ -227,6 +249,14 @@ impl Runtime {
     /// [`MAX_MEMORY_BYTES`]).
     pub fn with_max_memory(mut self, bytes: usize) -> Runtime {
         self.max_memory = bytes;
+        self
+    }
+
+    /// Bounds each model initialization, simulation and direct function call. The default
+    /// is 30 seconds; `None` disables the deadline for trusted workloads. A timed-out
+    /// instance is discarded, just like any other trapped instance.
+    pub fn with_execution_timeout(mut self, timeout: Option<std::time::Duration>) -> Runtime {
+        self.execution.timeout = timeout;
         self
     }
 
@@ -271,6 +301,8 @@ impl Runtime {
         }
         ensure!(memory_imported, "model.wasm does not import env.memory");
         Ok(LoadedModel {
+            identity: Arc::new(()),
+            execution: self.execution.clone(),
             engine: self.engine.clone(),
             engine_module: self.engine_module.clone(),
             mathlib_module: self.mathlib_module.clone(),
@@ -310,8 +342,10 @@ fn link_model(
     model_module: &Module,
     memory_type: &MemoryType,
     max_memory: usize,
+    execution: &Execution,
 ) -> anyhow::Result<Linked> {
     let mut store = store(engine, max_memory);
+    execution.begin(&mut store);
     let memory = Memory::new(&mut store, memory_type.clone())?;
     let mut linker = linker(engine)?;
     linker.define(&store, "env", "memory", memory)?;
@@ -332,6 +366,7 @@ fn link_model(
 /// A model compiled once ([`Runtime::load`]), which makes any number of independent
 /// [`Instance`]s; it is `Send + Sync`, so threads share it and each makes its own instances.
 pub struct LoadedModel {
+    identity: Arc<()>,
     engine: Engine,
     engine_module: Module,
     mathlib_module: Module,
@@ -339,6 +374,7 @@ pub struct LoadedModel {
     memory_type: MemoryType,
     max_memory: usize,
     desc: ModelDescription,
+    execution: Execution,
 }
 
 impl LoadedModel {
@@ -363,8 +399,10 @@ impl LoadedModel {
             model_module,
             &self.memory_type,
             self.max_memory,
+            &self.execution,
         )?;
         linker.instance(&mut store, "model", model)?;
+        wasi::reject_other_imports(&mut linker, &self.engine_module)?;
         let engine = linker
             .instantiate(&mut store, &self.engine_module)
             .map_err(anyhow::Error::from)
@@ -378,6 +416,19 @@ impl LoadedModel {
         }
         let initialize_calls = store.data().wasi_calls() - before;
         let mut instance = Instance {
+            identity: self.identity.clone(),
+            prepared: BTreeMap::new(),
+            prepare_fn: engine.get_typed_func(&mut store, "engine_prepare").ok(),
+            simulate_prepared_fn: engine
+                .get_typed_func(&mut store, "engine_simulate_prepared")
+                .ok(),
+            release_prepared_fn: engine
+                .get_typed_func(&mut store, "engine_release_prepared")
+                .ok(),
+            input_ptr: 0,
+            input_capacity: 0,
+            input_bytes: Vec::new(),
+            execution: self.execution.clone(),
             alloc: engine.get_typed_func(&mut store, "engine_alloc")?,
             free: engine.get_typed_func(&mut store, "engine_free")?,
             load: engine.get_typed_func(&mut store, "engine_load")?,
@@ -433,6 +484,7 @@ impl LoadedModel {
             &self.model_module,
             &self.memory_type,
             self.max_memory,
+            &self.execution,
         )?;
         let defaults = model.get_typed_func::<(i32, i32), ()>(&mut store, sbmlsim_abi::DEFAULTS)?;
         let init =
@@ -506,10 +558,7 @@ impl Runtime {
         model_wasm: &[u8],
         desc: &ModelDescription,
     ) -> anyhow::Result<ModelFunctions> {
-        check_model_sections(model_wasm)?;
-        let module = Module::new(&self.engine, model_wasm)
-            .map_err(anyhow::Error::from)
-            .context("model.wasm does not compile")?;
+        let module = self.load(model_wasm, desc)?.model_module;
         let Linked {
             mut store,
             memory,
@@ -521,11 +570,14 @@ impl Runtime {
             &module,
             &self.memory_type,
             self.max_memory,
+            &self.execution,
         )?;
         let rhs = model.get_typed_func(&mut store, sbmlsim_abi::RHS)?;
         let jac = model.get_typed_func(&mut store, sbmlsim_abi::JAC)?;
         let assign = model.get_typed_func(&mut store, sbmlsim_abi::ASSIGN)?;
         Ok(ModelFunctions {
+            trapped: false,
+            execution: self.execution.clone(),
             store,
             memory,
             rhs,
@@ -542,6 +594,8 @@ impl Runtime {
 /// The right hand side and the Jacobian of a model instantiated without the engine
 /// ([`Runtime::model_functions`]).
 pub struct ModelFunctions {
+    trapped: bool,
+    execution: Execution,
     store: Store<HostState>,
     memory: Memory,
     rhs: TypedFunc<(f64, i32, i32, i32), ()>,
@@ -579,6 +633,10 @@ impl ModelFunctions {
         n_out: usize,
     ) -> anyhow::Result<Vec<f64>> {
         ensure!(
+            !self.trapped,
+            "the model instance trapped before and is not used again"
+        );
+        ensure!(
             y.len() == self.n && p.len() == self.n_params,
             "{} states and {} parameters for a model of {} and {}",
             y.len(),
@@ -586,32 +644,39 @@ impl ModelFunctions {
             self.n,
             self.n_params
         );
-        let bytes = |v: &[f64]| v.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>();
-        let (y_at, p_at) = (0usize, 8 * y.len());
-        let out_at = p_at + 8 * (p.len() + self.n_constants);
-        let end = out_at + 8 * n_out;
-        let size = self.memory.data_size(&self.store);
-        if end > size {
-            self.memory
-                .grow(&mut self.store, (end - size).div_ceil(65536) as u64)?;
+        self.execution.begin(&mut self.store);
+        let result = (|| {
+            let bytes = |v: &[f64]| v.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>();
+            let (y_at, p_at) = (0usize, 8 * y.len());
+            let out_at = p_at + 8 * (p.len() + self.n_constants);
+            let end = out_at + 8 * n_out;
+            let size = self.memory.data_size(&self.store);
+            if end > size {
+                self.memory
+                    .grow(&mut self.store, (end - size).div_ceil(65536) as u64)?;
+            }
+            self.memory.write(&mut self.store, y_at, &bytes(y))?;
+            self.memory.write(&mut self.store, p_at, &bytes(p))?;
+            let address = |a: usize| i32::try_from(a).context("the vectors do not fit the memory");
+            self.assign
+                .call(&mut self.store, (t, address(y_at)?, address(p_at)?))?;
+            function.call(
+                &mut self.store,
+                (t, address(y_at)?, address(p_at)?, address(out_at)?),
+            )?;
+            let mut out = vec![0u8; 8 * n_out];
+            self.memory.read(&self.store, out_at, &mut out)?;
+            Ok(out
+                .as_chunks::<8>()
+                .0
+                .iter()
+                .map(|b| f64::from_le_bytes(*b))
+                .collect())
+        })();
+        if result.is_err() {
+            self.trapped = true;
         }
-        self.memory.write(&mut self.store, y_at, &bytes(y))?;
-        self.memory.write(&mut self.store, p_at, &bytes(p))?;
-        let address = |a: usize| i32::try_from(a).context("the vectors do not fit the memory");
-        self.assign
-            .call(&mut self.store, (t, address(y_at)?, address(p_at)?))?;
-        function.call(
-            &mut self.store,
-            (t, address(y_at)?, address(p_at)?, address(out_at)?),
-        )?;
-        let mut out = vec![0u8; 8 * n_out];
-        self.memory.read(&self.store, out_at, &mut out)?;
-        Ok(out
-            .as_chunks::<8>()
-            .0
-            .iter()
-            .map(|b| f64::from_le_bytes(*b))
-            .collect())
+        result
     }
 }
 
@@ -626,6 +691,12 @@ fn check_model_sections(model_wasm: &[u8]) -> anyhow::Result<()> {
             Payload::StartSection { .. } => bail!("model.wasm has a start function"),
             Payload::MemorySection(section) if section.count() > 0 => {
                 bail!("model.wasm defines a memory, it imports env.memory")
+            }
+            Payload::TableSection(section) if section.count() > 0 => {
+                bail!("model.wasm defines a table, a model holds no state")
+            }
+            Payload::ElementSection(section) if section.count() > 0 => {
+                bail!("model.wasm has an element segment, a model holds no state")
             }
             Payload::GlobalSection(section) => {
                 for global in section {
@@ -699,6 +770,7 @@ struct ErrorField {
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 enum Header {
+    Prepared { prepared: u32, n_values: usize },
     Error { error: ErrorField },
     Table { columns: Vec<String>, n_rows: usize },
 }
@@ -706,6 +778,7 @@ enum Header {
 /// An output of the engine.
 #[derive(Debug)]
 enum Output {
+    Prepared { id: u32, n_values: usize },
     Error(ErrorField),
     Table(SimulationResult),
 }
@@ -728,6 +801,10 @@ fn read_output(bytes: &[u8]) -> Result<Output, EngineError> {
         .map_err(|e| internal(format!("the header of the output of the engine: {e}")))?;
     let start = (4 + length).next_multiple_of(8);
     match header {
+        Header::Prepared { prepared, n_values } => Ok(Output::Prepared {
+            id: prepared,
+            n_values,
+        }),
         Header::Error { error } => Ok(Output::Error(error)),
         Header::Table { columns, n_rows } => {
             let n = n_rows
@@ -778,8 +855,67 @@ fn engine_error(error: ErrorField) -> EngineError {
     }
 }
 
+/// An immutable validated request that can be shared by instances of one LoadedModel.
+#[derive(Clone)]
+pub struct PreparedSimulation {
+    inner: Arc<PreparedInner>,
+}
+
+struct PreparedInner {
+    model: Arc<()>,
+    input: Vec<u8>,
+    n_values: usize,
+}
+
+impl std::fmt::Debug for PreparedSimulation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PreparedSimulation")
+            .field("n_values", &self.n_values())
+            .finish_non_exhaustive()
+    }
+}
+
+impl PreparedSimulation {
+    /// Number of values supplied per point, in the order of the varying targets.
+    pub fn n_values(&self) -> usize {
+        self.inner.n_values
+    }
+}
+
+struct CachedPrepared {
+    owner: Weak<PreparedInner>,
+    id: u32,
+}
+
+#[derive(serde::Serialize)]
+struct PrepareInput<'a> {
+    request: &'a SimulationRequest,
+    varying: &'a [String],
+}
+
+impl LoadedModel {
+    /// Validates a reusable request once. Each worker lazily resolves its own guest plan;
+    /// subsequent points transfer only a numeric vector. Plans are bound to this loaded model.
+    pub fn prepare(
+        &self,
+        request: &SimulationRequest,
+        varying: &[String],
+    ) -> anyhow::Result<PreparedSimulation> {
+        Ok(self.instantiate()?.prepare(request, varying)?)
+    }
+}
+
 /// A model loaded into an engine, in a store of its own; one per model and thread.
 pub struct Instance {
+    identity: Arc<()>,
+    prepared: BTreeMap<usize, CachedPrepared>,
+    prepare_fn: Option<TypedFunc<(i32, i32), i32>>,
+    simulate_prepared_fn: Option<TypedFunc<(i32, i32, i32), i32>>,
+    release_prepared_fn: Option<TypedFunc<i32, ()>>,
+    input_ptr: i32,
+    input_capacity: usize,
+    input_bytes: Vec<u8>,
+    execution: Execution,
     store: Store<HostState>,
     memory: Memory,
     alloc: TypedFunc<i32, i32>,
@@ -801,9 +937,13 @@ impl Instance {
     /// (a panic of the engine, a trap of the model) or a failure of the host; an instance which
     /// trapped refuses every later request with [`EngineError::Internal`].
     pub fn simulate(&mut self, req: &SimulationRequest) -> Result<SimulationResult, EngineError> {
-        let input = serde_json::to_vec(req)
-            .map_err(|e| internal(format!("the request does not serialize: {e}")))?;
-        let code = self.call(self.simulate.clone(), &input)?;
+        let mut input = std::mem::take(&mut self.input_bytes);
+        input.clear();
+        let encoded = serde_json::to_writer(&mut input, req)
+            .map_err(|e| internal(format!("the request does not serialize: {e}")));
+        let code = encoded.and_then(|()| self.call(self.simulate.clone(), &input));
+        self.input_bytes = input;
+        let code = code?;
         match (code, self.output()?) {
             (0, Output::Table(result)) => Ok(result),
             (1, Output::Error(error)) => Err(engine_error(error)),
@@ -820,6 +960,7 @@ impl Instance {
                 "the instance trapped before and is not used again",
             ));
         }
+        self.execution.begin(&mut self.store);
         let ptr = self.guard(|this| this.stats_ptr.call(&mut this.store, ()))? as u32 as usize;
         let mut bytes = [0u8; 8 * SimulationStats::WORDS];
         self.memory
@@ -846,6 +987,7 @@ impl Instance {
     /// The address of the output of the last call in the memory, aligned to 8
     /// (`crates/engine/src/exports.rs`).
     pub fn output_address(&mut self) -> Result<usize, EngineError> {
+        self.execution.begin(&mut self.store);
         Ok(self.guard(Self::output_range)?.start)
     }
 
@@ -870,18 +1012,189 @@ impl Instance {
                 "the instance trapped before and is not used again",
             ));
         }
+        self.execution.begin(&mut self.store);
         let len =
             i32::try_from(input.len()).map_err(|_| internal("the input is larger than 2 GiB"))?;
-        let ptr = self.guard(|this| this.alloc.call(&mut this.store, len))?;
-        if ptr == 0 && len > 0 {
-            return Err(internal("engine_alloc found no memory for the input"));
-        }
+        let ptr = self.input_buffer(input.len())?;
         self.memory
             .write(&mut self.store, ptr as u32 as usize, input)
             .map_err(|e| internal(format!("the input does not fit into the memory: {e}")))?;
-        let code = self.guard(|this| function.call(&mut this.store, (ptr, len)))?;
-        self.guard(|this| this.free.call(&mut this.store, (ptr, len)))?;
-        Ok(code)
+        self.guard(|this| function.call(&mut this.store, (ptr, len)))
+    }
+
+    /// Validates and resolves a plan in this instance and returns a shareable model-bound handle.
+    pub fn prepare(
+        &mut self,
+        request: &SimulationRequest,
+        varying: &[String],
+    ) -> Result<PreparedSimulation, EngineError> {
+        self.clean_prepared()?;
+        let input = serde_json::to_vec(&PrepareInput { request, varying })
+            .map_err(|error| internal(format!("prepared request serialization failed: {error}")))?;
+        if input.len() > 16 * 1024 * 1024 {
+            return Err(EngineError::Request(
+                "the prepared request exceeds 16 MiB".into(),
+            ));
+        }
+        let (id, n_values) = self.prepare_guest(&input)?;
+        let prepared = PreparedSimulation {
+            inner: Arc::new(PreparedInner {
+                model: self.identity.clone(),
+                input,
+                n_values,
+            }),
+        };
+        self.prepared.insert(
+            Arc::as_ptr(&prepared.inner) as usize,
+            CachedPrepared {
+                owner: Arc::downgrade(&prepared.inner),
+                id,
+            },
+        );
+        Ok(prepared)
+    }
+
+    /// Executes a prepared plan with one value per varying target, avoiding JSON and name lookups.
+    pub fn simulate_prepared(
+        &mut self,
+        prepared: &PreparedSimulation,
+        values: &[f64],
+    ) -> Result<SimulationResult, EngineError> {
+        if !Arc::ptr_eq(&self.identity, &prepared.inner.model) {
+            return Err(EngineError::Request(
+                "prepared request belongs to a different loaded model".into(),
+            ));
+        }
+        if values.len() != prepared.n_values() || values.iter().any(|value| !value.is_finite()) {
+            return Err(EngineError::Request(format!(
+                "expected {} finite prepared values, received {}",
+                prepared.n_values(),
+                values.len()
+            )));
+        }
+        let function = self.simulate_prepared_fn.clone().ok_or_else(|| {
+            EngineError::Unsupported("engine.wasm does not support prepared requests".into())
+        })?;
+        self.clean_prepared()?;
+        let key = Arc::as_ptr(&prepared.inner) as usize;
+        let id = match self.prepared.get(&key) {
+            Some(cached) => cached.id,
+            None => {
+                let (id, n_values) = self.prepare_guest(&prepared.inner.input)?;
+                if n_values != prepared.n_values() {
+                    return Err(internal("prepared value count changed between instances"));
+                }
+                self.prepared.insert(
+                    key,
+                    CachedPrepared {
+                        owner: Arc::downgrade(&prepared.inner),
+                        id,
+                    },
+                );
+                id
+            }
+        };
+        if self.trapped {
+            return Err(internal(
+                "the instance trapped before and is not used again",
+            ));
+        }
+        self.execution.begin(&mut self.store);
+        let length = values
+            .len()
+            .checked_mul(8)
+            .filter(|n| *n <= i32::MAX as usize)
+            .ok_or_else(|| EngineError::Request("prepared values exceed the input limit".into()))?;
+        let ptr = self.input_buffer(length)?;
+        // Write directly into the aligned guest buffer; no temporary byte vector per point.
+        let data = self.memory.data_mut(&mut self.store);
+        let start = ptr as u32 as usize;
+        let destination = data
+            .get_mut(start..start + length)
+            .ok_or_else(|| internal("prepared input is outside memory"))?;
+        for (bytes, value) in destination.as_chunks_mut::<8>().0.iter_mut().zip(values) {
+            *bytes = value.to_le_bytes();
+        }
+        let code = self
+            .guard(|this| function.call(&mut this.store, (id as i32, ptr, values.len() as i32)))?;
+        match (code, self.output()?) {
+            (0, Output::Table(result)) => Ok(result),
+            (1, Output::Error(error)) => Err(engine_error(error)),
+            (code, output) => Err(internal(format!(
+                "prepared simulation returned {code} with {output:?}"
+            ))),
+        }
+    }
+
+    fn prepare_guest(&mut self, input: &[u8]) -> Result<(u32, usize), EngineError> {
+        if self.simulate_prepared_fn.is_none() || self.release_prepared_fn.is_none() {
+            return Err(EngineError::Unsupported(
+                "engine.wasm does not support prepared requests".into(),
+            ));
+        }
+        if self.prepared.len() >= sbmlsim_abi::MAX_PREPARED_REQUESTS {
+            return Err(EngineError::Request(
+                "the prepared request limit is reached; drop unused plans".into(),
+            ));
+        }
+        let function = self.prepare_fn.clone().ok_or_else(|| {
+            EngineError::Unsupported("engine.wasm does not support prepared requests".into())
+        })?;
+        let code = self.call(function, input)?;
+        match (code, self.output()?) {
+            (0, Output::Prepared { id, n_values }) => Ok((id, n_values)),
+            (1, Output::Error(error)) => Err(engine_error(error)),
+            (code, output) => Err(internal(format!(
+                "preparation returned {code} with {output:?}"
+            ))),
+        }
+    }
+
+    fn clean_prepared(&mut self) -> Result<(), EngineError> {
+        if self.trapped {
+            return Err(internal(
+                "the instance trapped before and is not used again",
+            ));
+        }
+        let expired: Vec<_> = self
+            .prepared
+            .iter()
+            .filter(|(_, entry)| entry.owner.strong_count() == 0)
+            .map(|(&key, entry)| (key, entry.id))
+            .collect();
+        if !expired.is_empty() {
+            self.execution.begin(&mut self.store);
+            let function = self
+                .release_prepared_fn
+                .clone()
+                .ok_or_else(|| internal("prepared release export is missing"))?;
+            for (key, id) in expired {
+                self.guard(|this| function.call(&mut this.store, id as i32))?;
+                self.prepared.remove(&key);
+            }
+        }
+        Ok(())
+    }
+
+    fn input_buffer(&mut self, length: usize) -> Result<i32, EngineError> {
+        let length_i32 = i32::try_from(length)
+            .map_err(|_| EngineError::Request("input exceeds 2 GiB".into()))?;
+        if length <= self.input_capacity {
+            return Ok(self.input_ptr);
+        }
+        if self.input_capacity > 0 {
+            let (ptr, capacity) = (self.input_ptr, self.input_capacity as i32);
+            self.guard(|this| this.free.call(&mut this.store, (ptr, capacity)))?;
+            self.input_capacity = 0;
+            self.input_ptr = 0;
+        }
+        let ptr = self.guard(|this| this.alloc.call(&mut this.store, length_i32))?;
+        if ptr == 0 && length > 0 {
+            return Err(internal("engine_alloc found no memory for the input"));
+        }
+        self.input_ptr = ptr;
+        self.input_capacity = length;
+        Ok(ptr)
     }
 
     /// Runs a call of the engine; a trap marks the instance and is an internal error, with the

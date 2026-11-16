@@ -1,6 +1,6 @@
 """Type stubs of the extension module `sbmlsim_core._core`."""
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from typing import Any
 
 import numpy
@@ -78,11 +78,23 @@ class SimulationOutput:
     def values(self) -> numpy.typing.NDArray[numpy.float64]:
         """The values, of the shape `(n_rows, len(columns))`, in C order."""
 
+class PreparedSimulation:
+    """A validated request bound to one loaded model, reusable across its instances."""
+
+    @property
+    def n_values(self) -> int:
+        """Number of ordered numeric inputs required for each point."""
+
 class Instance:
     """A model in an engine of its own; simulates one request after the other."""
 
     def simulate(self, request: dict[str, Any]) -> SimulationOutput:
         """Simulates a request of `simulation/1` and gives its table."""
+
+    def simulate_prepared(
+        self, prepared: PreparedSimulation, values: Sequence[float] = ...
+    ) -> SimulationOutput:
+        """Runs a prepared request with the ordered input values."""
 
     def stats(self) -> dict[str, int]:
         """The counters of the integrator of the last simulation."""
@@ -100,6 +112,14 @@ class LoadedModel:
     def instance(self) -> Instance:
         """A new instance of the model."""
 
+    def prepare(
+        self, request: dict[str, Any], *, varying: Sequence[str] = ...
+    ) -> PreparedSimulation:
+        """Validates the request and ordered varying input IDs once."""
+
+    def batch_executor(self, *, threads: int | None = None) -> BatchExecutor:
+        """Creates a reusable pool with lazy workers and retained instances."""
+
     def simulate_many(
         self,
         requests: Sequence[dict[str, Any]],
@@ -108,11 +128,32 @@ class LoadedModel:
     ) -> list[SimulationOutput | PointError]:
         """Simulates every request on `threads` threads, in the order of the requests."""
 
+class BatchExecutor:
+    """A reusable batch pool. Concurrent calls raise RuntimeError."""
+
+    def simulate_many(
+        self, requests: Iterable[dict[str, Any]]
+    ) -> list[SimulationOutput | PointError]:
+        """Simulates requests in order, retaining worker instances."""
+
+    def simulate_prepared(
+        self, prepared: PreparedSimulation, points: Iterable[Sequence[float]]
+    ) -> list[SimulationOutput | PointError]:
+        """Runs numeric rows in order, retaining workers and prepared plans."""
+
+    def close(self) -> None:
+        """Releases resources; further submissions raise RuntimeError."""
+
+    def __enter__(self) -> BatchExecutor: ...
+    def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> None: ...
+
 class Runtime:
     """`engine.wasm` and `mathlib.wasm`, compiled once, which load models."""
 
-    def __init__(self, max_memory_bytes: int | None = None) -> None:
-        """The memory of an instance grows to at most `max_memory_bytes`, if given."""
+    def __init__(
+        self, max_memory_bytes: int | None = None, *, timeout_ms: int = 30_000
+    ) -> None:
+        """Bounds instance memory and execution time; timeout_ms=0 disables deadlines."""
 
     def load(self, wasm: bytes, description: dict[str, Any]) -> LoadedModel:
         """Loads `model.wasm` with its description."""

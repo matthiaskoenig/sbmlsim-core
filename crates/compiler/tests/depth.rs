@@ -177,3 +177,115 @@ fn a_document_nested_far_deeper_is_refused_before_it_is_parsed() {
     );
     compile_on_a_small_stack(xml).unwrap();
 }
+
+#[test]
+fn shallow_alias_chains_are_refused_before_exhausting_the_stack() {
+    let functions = (0..10_000).map(|k| {
+        let body = if k == 9_999 { "<cn>1</cn>".into() }
+            else { format!("<apply><ci>f{}</ci></apply>", k + 1) };
+        format!(r#"<functionDefinition id="f{k}"><math {MATH}><lambda>{body}</lambda></math></functionDefinition>"#)
+    }).collect::<String>();
+    // Use the default thread stack, unlike the intentionally very deep MathML tests.
+    let xml = model("<apply><ci>f0</ci></apply>", &functions);
+    let result = std::thread::spawn(move || compile(&xml, &CompileOptions::default()))
+        .join()
+        .unwrap();
+    assert!(
+        matches!(result, Err(CompileError::Invalid(ref message)) if message.contains("function expansion depth limit")),
+        "{result:?}"
+    );
+}
+
+#[test]
+fn repeated_argument_substitution_has_a_construction_budget() {
+    let functions = format!(
+        r#"<functionDefinition id="dup"><math {MATH}><lambda><bvar><ci>a</ci></bvar><apply><plus/><ci>a</ci><ci>a</ci></apply></lambda></math></functionDefinition>"#
+    );
+    let body = format!(
+        "{}<ci>x</ci>{}",
+        "<apply><ci>dup</ci>".repeat(20),
+        "</apply>".repeat(20)
+    );
+    let result = compile_on_a_small_stack(model(&body, &functions));
+    assert!(
+        matches!(result, Err(CompileError::Invalid(ref message)) if message.contains("expansion budget")),
+        "{result:?}"
+    );
+}
+
+#[test]
+fn wide_xor_piecewise_compiles_with_linear_output_growth() {
+    let compile_xor = |n| {
+        let terms = (0..n)
+            .map(|k| format!("<apply><gt/><ci>x</ci><cn>{k}</cn></apply>"))
+            .collect::<String>();
+        let body = format!(
+            "<piecewise><piece><cn>1</cn><apply><xor/>{terms}</apply></piece><otherwise><cn>0</cn></otherwise></piecewise>"
+        );
+        let xml = model(&body, "");
+        for optimize in [false, true] {
+            let result = compile(
+                &xml,
+                &CompileOptions {
+                    optimize,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            assert!(result.wasm.len() < 100_000);
+        }
+        compile(&xml, &CompileOptions::default())
+            .unwrap()
+            .wasm
+            .len()
+    };
+    let small = compile_xor(32);
+    let large = compile_xor(128);
+    assert!(large < small * 5, "{small} -> {large}");
+}
+
+#[test]
+fn recursive_function_definitions_return_a_compile_error() {
+    let functions = format!(
+        r#"<functionDefinition id="f"><math {MATH}><lambda><apply><ci>g</ci></apply></lambda></math></functionDefinition><functionDefinition id="g"><math {MATH}><lambda><apply><ci>f</ci></apply></lambda></math></functionDefinition>"#
+    );
+    let result = compile(
+        &model("<apply><ci>f</ci></apply>", &functions),
+        &CompileOptions::default(),
+    );
+    assert!(
+        matches!(result, Err(CompileError::Invalid(ref message)) if message.contains("calls itself")),
+        "{result:?}"
+    );
+}
+
+#[test]
+fn quadratic_piecewise_root_expansion_is_refused_before_construction() {
+    let pieces = (0..500)
+        .map(|k| format!("<piece><cn>{k}</cn><apply><gt/><ci>x</ci><cn>{k}</cn></apply></piece>"))
+        .collect::<String>();
+    let body = format!("<piecewise>{pieces}<otherwise><cn>0</cn></otherwise></piecewise>");
+    let result = compile(&model(&body, ""), &CompileOptions::default());
+    assert!(
+        matches!(result, Err(CompileError::Invalid(ref message)) if message.contains("discontinuity root construction")),
+        "{result:?}"
+    );
+}
+
+#[test]
+fn nested_boolean_piecewise_sign_expansion_is_bounded() {
+    let mut condition = "<apply><gt/><ci>x</ci><cn>0</cn></apply>".to_string();
+    for _ in 0..30 {
+        condition = format!(
+            "<piecewise><piece><true/>{condition}</piece><otherwise><false/></otherwise></piecewise>"
+        );
+    }
+    let body = format!(
+        "<piecewise><piece><cn>1</cn>{condition}</piece><otherwise><cn>0</cn></otherwise></piecewise>"
+    );
+    let result = compile(&model(&body, ""), &CompileOptions::default());
+    assert!(
+        matches!(result, Err(CompileError::Invalid(ref message)) if message.contains("discontinuity root construction")),
+        "{result:?}"
+    );
+}

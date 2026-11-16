@@ -403,7 +403,8 @@ fn math_imports_are_functions_of_mathlib() {
         "{message}"
     );
     let message = refusal(&decay_with("(import \"math\" \"memory\" (memory 0))"));
-    assert!(message.contains("math.memory"), "{message}");
+    // The runtime disables multi-memory, so a second memory is rejected before linking.
+    assert!(message.contains("multiple memories"), "{message}");
     // a function of mathlib with another signature
     let message = refusal(&decay_with(
         "(import \"math\" \"math_pow\" (func (param f64) (result f64)))",

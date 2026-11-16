@@ -33,7 +33,7 @@
 use std::collections::HashSet;
 
 use crate::optimize::fold;
-use crate::{Expr, Model, Op, SelectionKind, Symbol, is_boolean_valued};
+use crate::{CompileError, Expr, Model, Op, SelectionKind, Symbol, is_boolean_valued};
 
 impl Model {
     /// The root functions of the discontinuities of the math (see the module documentation):
@@ -71,6 +71,27 @@ impl Model {
         out
     }
 
+    /// Builds discontinuity roots after checking a conservative bound on generated nodes.
+    pub fn try_discontinuity_roots(&self) -> Result<Vec<Expr>, CompileError> {
+        let mut remaining = crate::expr::MAX_EXPR_NODES;
+        let sources = self
+            .assignment_rules
+            .iter()
+            .map(|a| &a.expr)
+            .chain(&self.rates)
+            .chain(
+                self.selections
+                    .iter()
+                    .filter(|s| s.kind == SelectionKind::ReactionRate)
+                    .map(|s| &s.expr),
+            )
+            .chain(self.events.iter().map(|e| &e.trigger));
+        for source in sources {
+            check_branches(source, &mut remaining)?;
+        }
+        Ok(self.discontinuity_roots())
+    }
+
     /// Whether each parameter is the target of an assignment rule which depends on the time or
     /// a state, directly or through other rules.
     fn varying_parameters(&self) -> Vec<bool> {
@@ -93,6 +114,127 @@ fn has_piecewise(e: &Expr) -> bool {
         Expr::Apply { args, .. } => args.iter().any(has_piecewise),
         Expr::Piecewise { .. } => true,
     }
+}
+
+// Saturating preflight sizes bound allocation before any branch/sign tree is cloned.
+fn node_count(e: &Expr) -> usize {
+    match e {
+        Expr::Apply { args, .. } => args
+            .iter()
+            .fold(1usize, |n, a| n.saturating_add(node_count(a))),
+        Expr::Piecewise { pieces, otherwise } => pieces
+            .iter()
+            .fold(1usize, |n, (v, c)| {
+                n.saturating_add(node_count(v))
+                    .saturating_add(node_count(c))
+            })
+            .saturating_add(otherwise.as_deref().map_or(0, node_count)),
+        _ => 1,
+    }
+}
+
+fn sign_size(e: &Expr) -> usize {
+    match e {
+        Expr::Bool(_) => 1,
+        Expr::Apply { op, args } => match op {
+            Op::Gt | Op::Geq | Op::Lt | Op::Leq | Op::Eq | Op::Neq => {
+                args.windows(2).fold(1usize, |n, w| {
+                    n.saturating_add(3)
+                        .saturating_add(node_count(&w[0]))
+                        .saturating_add(node_count(&w[1]))
+                })
+            }
+            Op::And | Op::Or | Op::Xor | Op::Not | Op::Implies => args
+                .iter()
+                .fold(4usize, |n, a| n.saturating_add(sign_size(a))),
+            _ => node_count(e).saturating_add(1),
+        },
+        Expr::Piecewise { pieces, otherwise } if is_boolean_valued(e) => {
+            let mut size = 1usize;
+            let mut preceding = 0usize;
+            for (v, c) in pieces {
+                let condition = sign_size(c);
+                size = size
+                    .saturating_add(1)
+                    .saturating_add(sign_size(v))
+                    .saturating_add(condition)
+                    .saturating_add(preceding);
+                preceding = preceding.saturating_add(condition).saturating_add(1);
+            }
+            if let Some(o) = otherwise {
+                size = size
+                    .saturating_add(1)
+                    .saturating_add(sign_size(o))
+                    .saturating_add(preceding);
+            }
+            size
+        }
+        _ => node_count(e).saturating_add(1),
+    }
+}
+
+fn sign_depth(e: &Expr) -> usize {
+    match e {
+        Expr::Bool(_) => 1,
+        Expr::Apply { op, args } => match op {
+            Op::Eq | Op::Neq | Op::Gt | Op::Geq | Op::Lt | Op::Leq => {
+                args.iter().map(Expr::depth).max().unwrap_or(0) + 4
+            }
+            Op::And | Op::Or | Op::Xor | Op::Not => {
+                args.iter().map(sign_depth).max().unwrap_or(0) + 1
+            }
+            Op::Implies => args.iter().map(sign_depth).max().unwrap_or(0) + 2,
+            _ => e.depth() + 1,
+        },
+        Expr::Piecewise { pieces, otherwise } if is_boolean_valued(e) => {
+            pieces
+                .iter()
+                .map(|(v, c)| sign_depth(v).max(sign_depth(c) + 1))
+                .chain(otherwise.as_deref().map(sign_depth))
+                .max()
+                .unwrap_or(0)
+                + 2
+        }
+        _ => e.depth() + 1,
+    }
+}
+
+fn check_branches(e: &Expr, remaining: &mut usize) -> Result<(), CompileError> {
+    match e {
+        Expr::Apply { args, .. } => {
+            for a in args {
+                check_branches(a, remaining)?;
+            }
+        }
+        Expr::Piecewise { pieces, otherwise } => {
+            let mut preceding = 0usize;
+            for (value, condition) in pieces {
+                let size = sign_size(condition);
+                if sign_depth(condition) + 2 > crate::expr::MAX_EXPR_DEPTH {
+                    return Err(CompileError::Invalid(format!(
+                        "discontinuity root construction exceeds its {} depth budget",
+                        crate::expr::MAX_EXPR_DEPTH
+                    )));
+                }
+                *remaining = remaining
+                    .checked_sub(size.saturating_add(preceding).saturating_add(1))
+                    .ok_or_else(|| {
+                        CompileError::Invalid(format!(
+                            "discontinuity root construction exceeds its {} node budget",
+                            crate::expr::MAX_EXPR_NODES
+                        ))
+                    })?;
+                preceding = preceding.saturating_add(size).saturating_add(1);
+                check_branches(value, remaining)?;
+                check_branches(condition, remaining)?;
+            }
+            if let Some(o) = otherwise {
+                check_branches(o, remaining)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 /// Whether `e` reads the time, a state or a varying parameter.
@@ -139,7 +281,7 @@ fn branches(e: &Expr, out: &mut Vec<Expr>) {
 ///   libroadrunner's boolean is a different value only there); a chain the `min` of its
 ///   adjacent pairs;
 /// - `and`: `min`, `or`: `max` (of none `1` and `-1`), `not`: the negation, `xor`:
-///   `max(min(x, -y), min(-x, y))` folded from the left (of none `-1`), `implies`:
+///   `max(min(x, -y), min(-x, y))` folded from the left using temporaries (of none `-1`), `implies`:
 ///   `max(-x, y)`;
 /// - `true`: `1`, `false`: `-1`;
 /// - a `piecewise` whose values are booleans: the `max` over its branches of the `min` of the
@@ -162,16 +304,7 @@ pub(crate) fn sign_of(c: &Expr) -> Expr {
             Op::And => min(args.iter().map(sign_of).collect()),
             Op::Or => max(args.iter().map(sign_of).collect()),
             Op::Not => negate(sign_of(&args[0])),
-            Op::Xor => match args.split_first() {
-                None => Expr::Number(-1.0),
-                Some((first, rest)) => rest.iter().fold(sign_of(first), |x, a| {
-                    let y = sign_of(a);
-                    max(vec![
-                        min(vec![x.clone(), negate(y.clone())]),
-                        min(vec![negate(x), y]),
-                    ])
-                }),
-            },
+            Op::Xor => Expr::apply(Op::XorSign, args.iter().map(sign_of).collect()),
             Op::Implies => max(vec![negate(sign_of(&args[0])), sign_of(&args[1])]),
             _ => abs(c.clone()),
         },
@@ -223,5 +356,45 @@ fn max(mut terms: Vec<Expr>) -> Expr {
         0 => Expr::Number(-1.0),
         1 => terms.remove(0),
         _ => Expr::apply(Op::Max, terms),
+    }
+}
+
+#[cfg(test)]
+mod xor_tests {
+    use super::*;
+    use crate::eval::eval;
+
+    #[test]
+    fn signed_xor_preserves_the_ordered_fold_including_nonfinite_values() {
+        let values = [
+            f64::NEG_INFINITY,
+            -2.0,
+            -0.0,
+            0.0,
+            3.0,
+            f64::INFINITY,
+            f64::NAN,
+        ];
+        for a in values {
+            for b in values {
+                for c in values {
+                    let args = vec![Expr::Number(a), Expr::Number(b), Expr::Number(c)];
+                    let expected = args[1..].iter().fold(args[0].clone(), |x, y| {
+                        max(vec![
+                            min(vec![x.clone(), negate(y.clone())]),
+                            min(vec![negate(x), y.clone()]),
+                        ])
+                    });
+                    let actual = Expr::apply(Op::XorSign, args);
+                    let expected = eval(&expected, &|_| unreachable!());
+                    let actual = eval(&actual, &|_| unreachable!());
+                    assert!(
+                        actual.to_bits() == expected.to_bits()
+                            || actual.is_nan() && expected.is_nan(),
+                        "{a:?} {b:?} {c:?}: {actual:?} != {expected:?}"
+                    );
+                }
+            }
+        }
     }
 }

@@ -282,7 +282,7 @@ fn a_sliding_mode_ends_as_in_roadrunner() {
         .instantiate(&compiled.wasm, &compiled.description)
         .unwrap();
     match instance.simulate(&sliding_request(3.0, 1e-6, 1e-12)) {
-        Err(sbmlsim_engine::EngineError::Integration { flag, time, .. }) => {
+        Err(sbmlsim_abi::EngineError::Integration { flag, time, .. }) => {
             assert_eq!(flag, -1);
             assert!((time - 1.00000000157277).abs() < 1e-11, "{time}");
         }
@@ -474,3 +474,39 @@ fn well_separated_switches_do_not_share_the_budget_of_steps() {
 /// The steps between two roots of `well_separated_switches_do_not_share_the_budget_of_steps`
 /// are fewer, the steps of the whole interval more.
 const MAX_STEPS: u32 = 200;
+
+#[test]
+#[cfg(feature = "native")]
+fn a_wide_xor_preserves_root_crossings_in_native_and_wasm_engines() {
+    // Twelve sign changes must all stop the integrator. The integral of the alternating
+    // unit/zero rate at integer times is floor(t / 2), with half a unit at each midpoint.
+    let operands = (1..=12)
+        .map(|k| ap("gt", &[TIME, &cn(&k.to_string())]))
+        .collect::<Vec<_>>();
+    let condition = ap(
+        "xor",
+        &operands.iter().map(String::as_str).collect::<Vec<_>>(),
+    );
+    let compiled = model(&step(&condition), "");
+    assert_eq!(compiled.description.n_discontinuity_roots, 1);
+    let req = request(13.0, Output::Uniform { steps: 26 });
+    let (wasm, stats) = run(&compiled, &req);
+    assert_eq!(stats.integrations, 13, "{stats:?}");
+    let mut native = runtime()
+        .instantiate_native(&compiled.wasm, &compiled.description)
+        .unwrap();
+    let native_result = native.simulate(&req).unwrap();
+    assert_eq!(native.stats().integrations, 13);
+    for result in [&wasm, &native_result] {
+        for (t, x) in column(result, "time").into_iter().zip(column(result, "x")) {
+            let expected = (t / 2.0).floor() + (t % 2.0 - 1.0).max(0.0);
+            assert!(
+                (x - expected).abs() < 1e-7,
+                "t={t}, x={x}, expected={expected}"
+            );
+        }
+    }
+    for (a, b) in wasm.values.iter().zip(&native_result.values) {
+        assert!((a - b).abs() < 1e-7, "{a} != {b}");
+    }
+}

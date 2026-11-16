@@ -420,3 +420,84 @@ fn fixed_entities_keep_their_values_through_init() {
     let result = simulate(&model, &desc, &req).unwrap();
     assert_eq!(result.values[2], 2.0);
 }
+
+/// A fallible bridge whose selections export records an error instead of panicking.
+struct FailingSelections {
+    calls: std::rc::Rc<std::cell::Cell<usize>>,
+}
+
+impl sbmlsim_engine::ModelFns for FailingSelections {
+    fn check_error(&self) -> Result<(), EngineError> {
+        if self.calls.get() > 0 {
+            Err(EngineError::Internal("selections trapped".into()))
+        } else {
+            Ok(())
+        }
+    }
+    fn selections(&self, _t: f64, _y: &[f64], _p: &[f64], _mask: &[u8], _out: &mut [f64]) {
+        self.calls.set(self.calls.get() + 1);
+    }
+    fn defaults(&self, p: &mut [f64], y: &mut [f64]) {
+        sbmlsim_engine::ModelFns::defaults(&Decay { k: 0.5 }, p, y)
+    }
+    fn init(&self, t: f64, p: &mut [f64], y: &mut [f64], fixed: &[u8]) {
+        sbmlsim_engine::ModelFns::init(&Decay { k: 0.5 }, t, p, y, fixed)
+    }
+    fn rhs(&self, t: f64, y: &[f64], p: &[f64], out: &mut [f64]) {
+        sbmlsim_engine::ModelFns::rhs(&Decay { k: 0.5 }, t, y, p, out)
+    }
+    fn jac(&self, t: f64, y: &[f64], p: &[f64], out: &mut [f64]) {
+        sbmlsim_engine::ModelFns::jac(&Decay { k: 0.5 }, t, y, p, out)
+    }
+    fn roots(&self, t: f64, y: &[f64], p: &[f64], out: &mut [f64]) {
+        sbmlsim_engine::ModelFns::roots(&Decay { k: 0.5 }, t, y, p, out)
+    }
+    fn trigger(&self, i: u32, t: f64, y: &[f64], p: &[f64]) -> bool {
+        sbmlsim_engine::ModelFns::trigger(&Decay { k: 0.5 }, i, t, y, p)
+    }
+    fn priority(&self, i: u32, t: f64, y: &[f64], p: &[f64]) -> f64 {
+        sbmlsim_engine::ModelFns::priority(&Decay { k: 0.5 }, i, t, y, p)
+    }
+    fn delay(&self, i: u32, t: f64, y: &[f64], p: &[f64]) -> f64 {
+        sbmlsim_engine::ModelFns::delay(&Decay { k: 0.5 }, i, t, y, p)
+    }
+    fn event_values(&self, i: u32, t: f64, y: &[f64], p: &[f64], out: &mut [f64]) {
+        sbmlsim_engine::ModelFns::event_values(&Decay { k: 0.5 }, i, t, y, p, out)
+    }
+    fn event_apply(&self, i: u32, t: f64, values: &[f64], y: &mut [f64], p: &mut [f64]) {
+        sbmlsim_engine::ModelFns::event_apply(&Decay { k: 0.5 }, i, t, values, y, p)
+    }
+    fn assign(&self, t: f64, y: &mut [f64], p: &mut [f64]) {
+        sbmlsim_engine::ModelFns::assign(&Decay { k: 0.5 }, t, y, p)
+    }
+    fn sizes(&self) -> sbmlsim_abi::ModelSizes {
+        sbmlsim_engine::ModelFns::sizes(&Decay { k: 0.5 })
+    }
+}
+
+#[test]
+fn a_selection_failure_stops_a_large_output_request_at_the_first_row() {
+    let calls = std::rc::Rc::new(std::cell::Cell::new(0));
+    let model = FailingSelections {
+        calls: calls.clone(),
+    };
+    let mut engine = Engine::new(Box::new(model), Decay { k: 0.5 }.description()).unwrap();
+    let req = request(0.0, 1.0, Output::Uniform { steps: 1_000_000 });
+    assert!(
+        matches!(engine.simulate(&req), Err(EngineError::Internal(ref message)) if message == "selections trapped")
+    );
+    assert_eq!(
+        calls.get(),
+        1,
+        "a failed bridge must not be called for later output rows"
+    );
+    assert!(matches!(
+        engine.simulate(&req),
+        Err(EngineError::Internal(_))
+    ));
+    assert_eq!(
+        calls.get(),
+        1,
+        "a failed engine must not execute another request"
+    );
+}

@@ -20,9 +20,18 @@
 //!   [`ModelDescription`]; 0 on success, 1 with an error of the kind `load` in the output.
 //! - `engine_simulate(req_ptr, req_len) -> i32`: simulates the JSON of a [`SimulationRequest`];
 //!   0 with the table in the output, 1 with an error in the output.
+//! - `engine_prepare(ptr, len) -> i32`: validates JSON containing `request` and `varying`
+//!   (an array of pre-initialization target IDs). Returns 0 with header
+//!   `{"prepared":id,"n_values":n}`, or 1 with an error. At most 32 plans and 16 MiB of
+//!   input JSON per plan are accepted.
+//! - `engine_simulate_prepared(id, ptr, n_values) -> i32`: simulates a plan with aligned
+//!   little-endian f64 values, one finite value per varying target, in order. The result
+//!   and error formats match `engine_simulate`; no JSON request is parsed.
+//! - `engine_release_prepared(id)`: releases a plan; repeated release is harmless. Loading
+//!   a model releases all plans, and IDs are never reused within an instance.
 //! - `engine_output_ptr() -> ptr` and `engine_output_len() -> len`: the output of the last call,
-//!   valid until the next call of `engine_load` or `engine_simulate`.
-//! - `engine_stats_ptr() -> ptr`: the counters of the last call of `engine_simulate`
+//!   valid until the next load, preparation or simulation.
+//! - `engine_stats_ptr() -> ptr`: the counters of the last ordinary or prepared simulation
 //!   ([`SimulationStats`], `SimulationStats::WORDS` words of `u64`, little endian, in the order of
 //!   `SimulationStats::NAMES`, aligned to 8; all 0 before the first simulation, after a load and
 //!   for a request refused before its integration), valid until the next call.
@@ -49,12 +58,15 @@
 
 use std::alloc::{Layout, alloc, dealloc};
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::sync::Once;
 
-use sbmlsim_abi::{ModelDescription, ModelSizes, SimulationRequest, SimulationStats};
-use serde::Serialize;
+use sbmlsim_abi::{
+    MAX_PREPARED_REQUESTS, ModelDescription, ModelSizes, SimulationRequest, SimulationStats,
+};
+use serde::{Deserialize, Serialize};
 
-use crate::{Engine, EngineError, ModelFns, Recorded};
+use crate::{Engine, EngineError, ModelFns, PreparedRequest, Recorded};
 
 /// The functions of the contract `model/2`, imported from the module `model`; the names are the
 /// export names of `sbmlsim_abi` (`DEFAULTS`, `INIT`, ...). Every pointer is an offset into the
@@ -233,6 +245,8 @@ struct State {
     output: OutputBuffer,
     /// The counters of the last simulation (`engine_stats_ptr`).
     stats: [u64; SimulationStats::WORDS],
+    prepared: BTreeMap<u32, PreparedRequest>,
+    next_prepared: u32,
 }
 
 thread_local! {
@@ -248,6 +262,8 @@ thread_local! {
                 no_memory: false,
             },
             stats: [0; SimulationStats::WORDS],
+            prepared: BTreeMap::new(),
+            next_prepared: 1,
         })
     };
 }
@@ -455,6 +471,7 @@ pub unsafe extern "C" fn engine_load(desc_ptr: i32, desc_len: i32) -> i32 {
     };
     STATE.with_borrow_mut(|state| {
         state.engine = engine;
+        state.prepared.clear();
         state.output = out;
         state.stats = [0; SimulationStats::WORDS];
     });
@@ -503,6 +520,147 @@ pub unsafe extern "C" fn engine_simulate(req_ptr: i32, req_len: i32) -> i32 {
             1
         }
     }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PrepareInput {
+    request: SimulationRequest,
+    varying: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct PreparedHeader {
+    prepared: u32,
+    n_values: usize,
+}
+
+/// Prepares one immutable request and its varying pre-initialization targets.
+///
+/// # Safety
+/// As [`input`]. The JSON is `{ "request": simulation/1, "varying": [id, ...] }`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn engine_prepare(ptr: i32, len: i32) -> i32 {
+    install_panic_hook();
+    if STATE.with_borrow(|state| state.prepared.len() >= MAX_PREPARED_REQUESTS) {
+        set_output(error_output(
+            "request",
+            "the prepared request limit is reached",
+        ));
+        return 1;
+    }
+    if len < 0 || len as usize > 16 * 1024 * 1024 {
+        set_output(error_output(
+            "request",
+            "the prepared request exceeds 16 MiB",
+        ));
+        return 1;
+    }
+    let input = match serde_json::from_slice::<PrepareInput>(unsafe { input(ptr, len) }) {
+        Ok(input) => input,
+        Err(error) => {
+            set_output(error_output(
+                "request",
+                &format!("invalid prepared request: {error}"),
+            ));
+            return 1;
+        }
+    };
+    let Some(engine) = STATE.with_borrow_mut(|state| state.engine.take()) else {
+        set_output(error_output("request", "no model is loaded"));
+        return 1;
+    };
+    let result = engine.prepare(&input.request, &input.varying);
+    STATE.with_borrow_mut(|state| state.engine = Some(engine));
+    match result {
+        Ok(plan) => {
+            let n_values = plan.n_values();
+            let id = STATE.with_borrow_mut(|state| {
+                let id = state.next_prepared;
+                if id == 0 {
+                    return None;
+                }
+                state.next_prepared = id.checked_add(1).unwrap_or(0);
+                state.prepared.insert(id, plan);
+                Some(id)
+            });
+            match id {
+                Some(prepared) => {
+                    set_output(output(&PreparedHeader { prepared, n_values }));
+                    0
+                }
+                None => {
+                    set_output(error_output(
+                        "request",
+                        "prepared request identifiers are exhausted",
+                    ));
+                    1
+                }
+            }
+        }
+        Err(error) => {
+            set_output(engine_error_output(&error));
+            1
+        }
+    }
+}
+
+/// Runs a prepared request with aligned little-endian f64 values, without JSON parsing.
+///
+/// # Safety
+/// `ptr` points to `n_values` readable aligned f64s allocated in this instance and remains
+/// unchanged during the call. It may be zero when `n_values` is zero.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn engine_simulate_prepared(id: i32, ptr: i32, n_values: i32) -> i32 {
+    install_panic_hook();
+    STATE.with_borrow_mut(|state| state.stats = [0; SimulationStats::WORDS]);
+    if !(0..=i32::MAX / 8).contains(&n_values)
+        || (n_values > 0 && (ptr == 0 || !(ptr as usize).is_multiple_of(8)))
+    {
+        set_output(error_output("request", "invalid prepared value buffer"));
+        return 1;
+    }
+    let Some(plan) = STATE.with_borrow(|state| state.prepared.get(&(id as u32)).cloned()) else {
+        set_output(error_output(
+            "request",
+            "unknown or released prepared request",
+        ));
+        return 1;
+    };
+    let values = if n_values == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(ptr as usize as *const f64, n_values as usize) }
+    };
+    let Some(mut engine) = STATE.with_borrow_mut(|state| state.engine.take()) else {
+        set_output(error_output("request", "no model is loaded"));
+        return 1;
+    };
+    set_output(OutputBuffer::default());
+    let result = engine.simulate_prepared_with_prefix(&plan, values, &header_slots);
+    let stats = engine.stats().words().map(u64::to_le);
+    STATE.with_borrow_mut(|state| {
+        state.engine = Some(engine);
+        state.stats = stats;
+    });
+    match result {
+        Ok(recorded) => {
+            set_output(table_output(recorded));
+            0
+        }
+        Err(error) => {
+            set_output(engine_error_output(&error));
+            1
+        }
+    }
+}
+
+/// Releases a prepared plan. Repeated release is harmless; IDs are never reused.
+#[unsafe(no_mangle)]
+pub extern "C" fn engine_release_prepared(id: i32) {
+    STATE.with_borrow_mut(|state| {
+        state.prepared.remove(&(id as u32));
+    });
 }
 
 /// The pointer of the output of the last call, aligned to 8.

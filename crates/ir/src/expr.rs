@@ -42,6 +42,7 @@ pub enum Symbol {
 
 /// An operator, those of the MathML of SBML Level 3 Version 2 without the csymbols `delay` and
 /// `rateOf` and the calls of function definitions, which the construction resolves.
+/// `XorSign` is an internal operator for discontinuity roots.
 ///
 /// The arity is the one of the MathML: `Minus` has one argument (negation) or two, `Log` has
 /// `[x]` (base 10) or `[base, x]`, `Root` has `[x]` (degree 2) or `[degree, x]`, the n-ary
@@ -95,6 +96,8 @@ pub enum Op {
     And,
     Or,
     Xor,
+    /// Internal signed XOR root fold: max(min(x, -y), min(-x, y)).
+    XorSign,
     Not,
     Implies,
     Max,
@@ -234,6 +237,43 @@ fn unsupported(feature: &str, element: &str) -> CompileError {
 /// the reader's [`MAX_MATH_DEPTH`] (the passes of the compiler recurse over the expressions).
 pub const MAX_EXPR_DEPTH: usize = MAX_MATH_DEPTH;
 
+/// Maximum construction work in one math, including argument substitution copies.
+pub const MAX_EXPR_NODES: usize = 100_000;
+/// Maximum body-to-body function calls, including constant aliases.
+pub const MAX_INLINE_DEPTH: usize = 128;
+
+struct BuildBudget {
+    remaining: usize,
+    depth: usize,
+}
+impl BuildBudget {
+    fn charge(&mut self, element: &str) -> Result<(), CompileError> {
+        self.remaining = self.remaining.checked_sub(1).ok_or_else(|| {
+            CompileError::Invalid(format!(
+                "the math of {element} exceeds the expansion budget of {MAX_EXPR_NODES} nodes"
+            ))
+        })?;
+        Ok(())
+    }
+    fn copy(&mut self, expr: &Expr, element: &str) -> Result<Expr, CompileError> {
+        let mut pending = vec![expr];
+        while let Some(e) = pending.pop() {
+            self.charge(element)?;
+            match e {
+                Expr::Apply { args, .. } => pending.extend(args),
+                Expr::Piecewise { pieces, otherwise } => {
+                    for (value, condition) in pieces {
+                        pending.extend([value, condition]);
+                    }
+                    pending.extend(otherwise.as_deref());
+                }
+                _ => {}
+            }
+        }
+        Ok(expr.clone())
+    }
+}
+
 /// Refuses an expression deeper than [`MAX_EXPR_DEPTH`].
 fn check_depth(e: &Expr, element: &str) -> Result<(), CompileError> {
     if e.depth() > MAX_EXPR_DEPTH {
@@ -251,13 +291,44 @@ pub(crate) fn build(
     cx: &mut dyn Context,
     scope: &Scope,
 ) -> Result<Expr, CompileError> {
-    let e = build_node(node, cx, scope)?;
+    let e = build_node(
+        node,
+        cx,
+        scope,
+        &mut BuildBudget {
+            remaining: MAX_EXPR_NODES,
+            depth: 0,
+        },
+    )?;
     check_depth(&e, scope.element)?;
     Ok(e)
 }
 
 /// The expression of a math node in a scope (the recursion of [`build`]).
-fn build_node(node: &Node, cx: &mut dyn Context, scope: &Scope) -> Result<Expr, CompileError> {
+fn build_node(
+    node: &Node,
+    cx: &mut dyn Context,
+    scope: &Scope,
+    budget: &mut BuildBudget,
+) -> Result<Expr, CompileError> {
+    budget.charge(scope.element)?;
+    if budget.depth >= MAX_EXPR_DEPTH {
+        return Err(CompileError::Invalid(format!(
+            "the math of {} is nested deeper than {MAX_EXPR_DEPTH} build levels",
+            scope.element
+        )));
+    }
+    budget.depth += 1;
+    let result = build_node_inner(node, cx, scope, budget);
+    budget.depth -= 1;
+    result
+}
+fn build_node_inner(
+    node: &Node,
+    cx: &mut dyn Context,
+    scope: &Scope,
+    budget: &mut BuildBudget,
+) -> Result<Expr, CompileError> {
     Ok(match node {
         Node::Number(x) => Expr::Number(*x),
         Node::True => Expr::Bool(true),
@@ -279,7 +350,7 @@ fn build_node(node: &Node, cx: &mut dyn Context, scope: &Scope) -> Result<Expr, 
         }
         Node::Symbol(id) => {
             if let Some(e) = scope.bvars.and_then(|b| b.get(id)) {
-                e.clone()
+                budget.copy(e, scope.element)?
             } else if let Some(v) = scope.locals.and_then(|l| l.get(id)) {
                 Expr::Number(*v)
             } else {
@@ -297,14 +368,14 @@ fn build_node(node: &Node, cx: &mut dyn Context, scope: &Scope) -> Result<Expr, 
                 .iter()
                 .map(|(value, condition)| {
                     Ok((
-                        build_node(value, cx, scope)?,
-                        build_node(condition, cx, scope)?,
+                        build_node(value, cx, scope, budget)?,
+                        build_node(condition, cx, scope, budget)?,
                     ))
                 })
                 .collect::<Result<_, CompileError>>()?,
             otherwise: otherwise
                 .as_ref()
-                .map(|o| build_node(o, cx, scope).map(Box::new))
+                .map(|o| build_node(o, cx, scope, budget).map(Box::new))
                 .transpose()?,
         },
         Node::Apply { op, args } => match op {
@@ -331,12 +402,12 @@ fn build_node(node: &Node, cx: &mut dyn Context, scope: &Scope) -> Result<Expr, 
                     )));
                 }
             },
-            MathOp::Function(id) => inline(id, args, cx, scope)?,
+            MathOp::Function(id) => inline(id, args, cx, scope, budget)?,
             other => Expr::Apply {
                 op: operator(other),
                 args: args
                     .iter()
-                    .map(|a| build_node(a, cx, scope))
+                    .map(|a| build_node(a, cx, scope, budget))
                     .collect::<Result<_, _>>()?,
             },
         },
@@ -350,8 +421,14 @@ fn inline(
     args: &[Node],
     cx: &mut dyn Context,
     scope: &Scope,
+    budget: &mut BuildBudget,
 ) -> Result<Expr, CompileError> {
     let element = scope.element;
+    if scope.inlining.len() >= MAX_INLINE_DEPTH {
+        return Err(CompileError::Invalid(format!(
+            "the math of {element} exceeds the function expansion depth limit of {MAX_INLINE_DEPTH}"
+        )));
+    }
     let math = match cx.function(id) {
         None => {
             return Err(CompileError::Invalid(format!(
@@ -385,7 +462,7 @@ fn inline(
     }
     let mut bvars = HashMap::new();
     for (param, arg) in params.iter().zip(args) {
-        bvars.insert(param.clone(), build_node(arg, cx, scope)?);
+        bvars.insert(param.clone(), build_node(arg, cx, scope, budget)?);
     }
     let mut inlining = scope.inlining.to_vec();
     inlining.push(id.to_string());
@@ -400,6 +477,7 @@ fn inline(
             bvars: Some(&bvars),
             inlining: &inlining,
         },
+        budget,
     )?;
     check_depth(&e, element)?;
     Ok(e)

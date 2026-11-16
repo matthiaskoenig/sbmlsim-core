@@ -369,7 +369,9 @@ function product(axes) {
 
 /** The runs of the points of a model, shared by the requests of one state (see the module comment). */
 class Runs {
-  constructor(maxBytes) {
+  constructor(maxBytes, maxEntries, maxInflight) {
+    this.maxEntries = maxEntries;
+    this.maxInflight = maxInflight;
     this.maxBytes = maxBytes;
     this.bytes = 0;
     this.inflight = new Map();
@@ -391,6 +393,7 @@ class Runs {
     }
     let entry = this.inflight.get(key);
     if (!entry) {
+      if (this.inflight.size >= this.maxInflight) return Promise.reject(new Error("panel run limit reached"));
       const controller = new AbortController();
       entry = { controller, waiters: 0 };
       entry.promise = start(controller.signal).then(
@@ -439,12 +442,18 @@ class Runs {
 
   /** Keeps the results of a run, evicting the least recently used ones beyond the bound. */
   store(key, results) {
-    const bytes = results.reduce((sum, result) => sum + (result ? result.values.byteLength : 0), 0);
+    if (results.some((result) => result === null)) return;
+    const bytes = 256 + key.length * 2 + results.reduce((sum, result) => sum + 128 + result.values.byteLength + JSON.stringify(result.columns).length * 2, 0);
     if (bytes > this.maxBytes) return;
+    const previous = this.done.get(key);
+    if (previous) {
+      this.bytes -= previous.bytes;
+      this.done.delete(key);
+    }
     this.done.set(key, { results, bytes });
     this.bytes += bytes;
     for (const [old, entry] of this.done) {
-      if (this.bytes <= this.maxBytes) break;
+      if (this.bytes <= this.maxBytes && this.done.size <= this.maxEntries) break;
       this.done.delete(old);
       this.bytes -= entry.bytes;
     }
@@ -463,7 +472,9 @@ class Runs {
  * - `pool`: a pool of `createPool` to run on instead of one of its own (e.g. shared by the
  *   endpoints of several bundles), which `close()` leaves open.
  * - `fetch`: loads the files of the bundle and the runtime (`globalThis.fetch` without).
- * - `maxRunBytes`: the bound of the cache of the runs (`MAX_RUN_BYTES` without).
+ * - `maxRunBytes`: numeric buffers plus estimated metadata (`MAX_RUN_BYTES` without).
+ * - `maxRunEntries`: maximum cached successful runs (128); failed runs are not stored.
+ * - `maxInflightRuns`: maximum distinct runs in flight (32).
  *
  * The function has `close()`, which terminates the workers of its own pool.
  */
@@ -479,10 +490,15 @@ export function createPanelEndpoint(options) {
     pool: givenPool = null,
     fetch: load = (url) => globalThis.fetch(url),
     maxRunBytes = MAX_RUN_BYTES,
+    maxRunEntries = 128,
+    maxInflightRuns = 32,
   } = options;
   if (bundle === undefined || bundle === null) throw new Error("createPanelEndpoint needs the URL of a bundle");
   const bundleUrl = new URL(String(bundle), globalThis.location?.href);
-  const runs = new Runs(maxRunBytes);
+  for (const [name, value] of Object.entries({ maxRunBytes, maxRunEntries, maxInflightRuns })) {
+    if (!Number.isSafeInteger(value) || value < 1) throw new Error(`${name} must be a positive safe integer`);
+  }
+  const runs = new Runs(maxRunBytes, maxRunEntries, maxInflightRuns);
   const models = new Map();
   let loading = null;
   let ownPool = null;

@@ -42,6 +42,9 @@
 //! Note that an event keeps the amounts when it changes a compartment (as libroadrunner does,
 //! see `model_event_apply` of `sbmlsim_abi`): a change and an event differ there, as in sbmlsim.
 
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
+
 use sbmlsim_abi::{Change, EntityKind, ModelDescription};
 
 use crate::model::ModelFns;
@@ -92,37 +95,79 @@ pub(crate) struct Changes {
     changes: Vec<ResolvedChange>,
     /// The species a change of their compartment rescales (amounts of a concentration, not
     /// `hasOnlySubstanceUnits`, settable).
-    rescaled: Vec<Rescaled>,
+    rescaled: Arc<[Rescaled]>,
     /// The number of parameters (the states follow them in the positions).
     n_parameters: usize,
 }
 
 /// The position of the entity `id` (the parameters, then the states) and the entity.
-fn position<'d>(desc: &'d ModelDescription, id: &str) -> Option<(usize, &'d sbmlsim_abi::Entity)> {
-    desc.parameters
-        .iter()
-        .chain(&desc.states)
-        .enumerate()
-        .find(|(_, e)| e.id == id)
+#[derive(Clone, Copy)]
+struct EntityTarget {
+    index: usize,
+    settable: bool,
+    species: Option<Species>,
+}
+
+/// Immutable entity lookup and compartment relationships, built once per loaded engine.
+pub(crate) struct Metadata {
+    id: String,
+    entities: BTreeMap<String, EntityTarget>,
+    rescaled: Arc<[Rescaled]>,
+    n_parameters: usize,
 }
 
 /// The species of a species entity, `None` for another entity.
-fn species_of(
-    desc: &ModelDescription,
-    index: usize,
-    entity: &sbmlsim_abi::Entity,
-) -> Option<Species> {
-    match &entity.kind {
-        EntityKind::Species {
-            compartment,
-            stores_concentration,
-            ..
-        } => position(desc, compartment).map(|(c, _)| Species {
-            index,
-            compartment: c,
-            stores_concentration: *stores_concentration,
-        }),
-        _ => None,
+impl Metadata {
+    pub fn new(desc: &ModelDescription) -> Self {
+        let mut positions = BTreeMap::new();
+        for (i, entity) in desc.parameters.iter().chain(&desc.states).enumerate() {
+            positions.entry(entity.id.as_str()).or_insert(i);
+        }
+        let mut entities = BTreeMap::new();
+        let mut rescaled = Vec::new();
+        for (index, entity) in desc.parameters.iter().chain(&desc.states).enumerate() {
+            let species = match &entity.kind {
+                EntityKind::Species {
+                    compartment,
+                    stores_concentration,
+                    ..
+                } => positions
+                    .get(compartment.as_str())
+                    .map(|&compartment| Species {
+                        index,
+                        compartment,
+                        stores_concentration: *stores_concentration,
+                    }),
+                _ => None,
+            };
+            if entity.settable
+                && matches!(
+                    entity.kind,
+                    EntityKind::Species {
+                        has_only_substance_units: false,
+                        stores_concentration: false,
+                        ..
+                    }
+                )
+                && let Some(s) = species
+            {
+                rescaled.push(Rescaled {
+                    species: s.index,
+                    compartment: s.compartment,
+                });
+            }
+            entities.entry(entity.id.clone()).or_insert(EntityTarget {
+                index,
+                settable: entity.settable,
+                species,
+            });
+        }
+        Self {
+            id: desc.id.clone(),
+            entities,
+            rescaled: rescaled.into(),
+            n_parameters: desc.parameters.len(),
+        }
     }
 }
 
@@ -164,24 +209,26 @@ impl Target {
 /// settable, a target set twice and a value which is not finite are [`EngineError::Request`]
 /// naming the id.
 pub(crate) fn resolve_values(
-    desc: &ModelDescription,
+    metadata: &Metadata,
     values: &[(String, f64)],
     place: &str,
 ) -> Result<Vec<(Target, f64)>, EngineError> {
     let mut resolved: Vec<(Target, f64)> = Vec::with_capacity(values.len());
-    let mut seen: Vec<usize> = Vec::with_capacity(values.len());
+    let mut seen = BTreeSet::new();
     for (id, value) in values {
         let concentration = id.strip_prefix('[').and_then(|s| s.strip_suffix(']'));
         let name = concentration.unwrap_or(id);
-        let (index, entity) = position(desc, name)
-            .ok_or_else(|| request(format!("model {} has no entity {id}", desc.id)))?;
-        let species = species_of(desc, index, entity);
+        let entity = metadata
+            .entities
+            .get(name)
+            .ok_or_else(|| request(format!("model {} has no entity {id}", metadata.id)))?;
+        let (index, species) = (entity.index, entity.species);
         let target = match (concentration, species) {
             (Some(_), Some(species)) => Target::Concentration(species),
             (Some(_), None) => {
                 return Err(request(format!(
                     "{id} of model {} is no concentration: {name} is no species",
-                    desc.id
+                    metadata.id
                 )));
             }
             (None, Some(species)) => Target::Amount(species),
@@ -190,7 +237,7 @@ pub(crate) fn resolve_values(
         if !entity.settable {
             return Err(request(format!(
                 "{id} of model {} is not settable",
-                desc.id
+                metadata.id
             )));
         }
         if !value.is_finite() {
@@ -198,10 +245,9 @@ pub(crate) fn resolve_values(
                 "the value {value} of {id} {place} is not finite"
             )));
         }
-        if seen.contains(&index) {
+        if !seen.insert(index) {
             return Err(request(format!("{name} is set more than once {place}")));
         }
-        seen.push(index);
         resolved.push((target, *value));
     }
     Ok(resolved)
@@ -211,8 +257,18 @@ impl Changes {
     /// Resolves and checks the changes of a request: finite times in `[start, end]` in
     /// non-decreasing order, the values as [`resolve_values`] checks them. The changes of one
     /// time are one change, applied at once.
+    #[cfg(test)]
     pub fn new(
         desc: &ModelDescription,
+        changes: &[Change],
+        start: f64,
+        end: f64,
+    ) -> Result<Changes, EngineError> {
+        Self::with_metadata(&Metadata::new(desc), changes, start, end)
+    }
+
+    pub fn with_metadata(
+        metadata: &Metadata,
         changes: &[Change],
         start: f64,
         end: f64,
@@ -238,32 +294,14 @@ impl Changes {
             .map(|(time, values)| {
                 Ok(ResolvedChange {
                     time: *time,
-                    values: resolve_values(desc, values, &format!("at t = {time}"))?,
+                    values: resolve_values(metadata, values, &format!("at t = {time}"))?,
                 })
             })
             .collect::<Result<Vec<_>, EngineError>>()?;
-        let rescaled = desc
-            .parameters
-            .iter()
-            .chain(&desc.states)
-            .enumerate()
-            .filter_map(|(index, entity)| match &entity.kind {
-                EntityKind::Species {
-                    has_only_substance_units: false,
-                    stores_concentration: false,
-                    ..
-                } if entity.settable => species_of(desc, index, entity),
-                _ => None,
-            })
-            .map(|s| Rescaled {
-                species: s.index,
-                compartment: s.compartment,
-            })
-            .collect();
         Ok(Changes {
             changes: resolved,
-            rescaled,
-            n_parameters: desc.parameters.len(),
+            rescaled: metadata.rescaled.clone(),
+            n_parameters: metadata.n_parameters,
         })
     }
 
@@ -274,11 +312,18 @@ impl Changes {
 
     /// Applies change `k` at its time to the state `y` (the `m` values of the model) and the
     /// parameters `p`, then evaluates the assignment rules.
-    pub fn apply(&self, k: usize, model: &dyn ModelFns, y: &mut [f64], p: &mut [f64]) {
+    pub fn apply(
+        &self,
+        k: usize,
+        model: &dyn ModelFns,
+        y: &mut [f64],
+        p: &mut [f64],
+    ) -> Result<(), EngineError> {
         let change = &self.changes[k];
         // the values of the assignment rules at the time of the change, so the size of a
         // compartment of a rule which converts a value is the current one
         model.assign(change.time, y, p);
+        model.check_error()?;
         let np = self.n_parameters;
         let get = |y: &[f64], p: &[f64], i: usize| if i < np { p[i] } else { y[i - np] };
         let set = |y: &mut [f64], p: &mut [f64], i: usize, v: f64| {
@@ -317,5 +362,7 @@ impl Changes {
         }
         // the assignment rules, at the time of the change
         model.assign(change.time, y, p);
+        model.check_error()?;
+        Ok(())
     }
 }

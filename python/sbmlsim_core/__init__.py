@@ -3,6 +3,7 @@
 from sbmlsim_core._core import (
     MODEL_CONTRACT,
     SIMULATION_CONTRACT,
+    BatchExecutor,
     CompiledModel,
     CompileError,
     Instance,
@@ -11,6 +12,7 @@ from sbmlsim_core._core import (
     LoadedModel,
     LoadError,
     PointError,
+    PreparedSimulation,
     RequestError,
     Runtime,
     SbmlsimCoreError,
@@ -20,10 +22,12 @@ from sbmlsim_core._core import (
     __version__,
     compile_sbml,
 )
+from sbmlsim_core.batch import simulate_stream
 
 __all__ = [
     "MODEL_CONTRACT",
     "SIMULATION_CONTRACT",
+    "BatchExecutor",
     "CompileError",
     "CompiledModel",
     "Instance",
@@ -32,6 +36,7 @@ __all__ = [
     "LoadError",
     "LoadedModel",
     "PointError",
+    "PreparedSimulation",
     "RequestError",
     "Runtime",
     "SbmlsimCoreError",
@@ -40,4 +45,5 @@ __all__ = [
     "UnsupportedError",
     "__version__",
     "compile_sbml",
+    "simulate_stream",
 ]

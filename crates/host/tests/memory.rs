@@ -1,13 +1,14 @@
 //! The memory of an instance: a result is recorded in place of its output (no second copy), the
 //! output is aligned to 8, and a result which does not fit into the memory is an error of the
-//! request and not an abort of the allocator of the engine.
+//! request and not an abort of the allocator of the engine. Execution deadlines are disabled
+//! here so deliberately large runs exercise the memory policy independently.
 
 use std::path::Path;
 
+use sbmlsim_abi::EngineError;
 use sbmlsim_abi::{
     IntegratorSettings, ModelDescription, Output, SIMULATION_CONTRACT, SimulationRequest,
 };
-use sbmlsim_engine::EngineError;
 use sbmlsim_host::{Instance, MAX_MEMORY_BYTES, Runtime};
 
 /// The decay model `y' = -k y` (`crates/host/tests/decay-model`).
@@ -41,7 +42,7 @@ fn request(end: f64, output: Output) -> SimulationRequest {
 /// has grown by the result and its output times (half of it, 2 columns), not by a second copy.
 #[test]
 fn a_result_is_its_output_without_a_copy() {
-    let runtime = Runtime::embedded().unwrap();
+    let runtime = Runtime::embedded().unwrap().with_execution_timeout(None);
     let mut instance = decay(&runtime);
     instance
         .simulate(&request(1.0, Output::Uniform { steps: 10 }))
@@ -68,7 +69,7 @@ fn a_result_is_its_output_without_a_copy() {
 /// through a `Float64Array` without a copy.
 #[test]
 fn every_output_is_aligned_to_8() {
-    let runtime = Runtime::embedded().unwrap();
+    let runtime = Runtime::embedded().unwrap().with_execution_timeout(None);
     let mut instance = decay(&runtime);
     for (steps, selections) in [
         (1, vec!["time"]),
@@ -97,7 +98,10 @@ fn every_output_is_aligned_to_8() {
 /// request.
 #[test]
 fn a_result_without_memory_is_an_error_of_the_request() {
-    let runtime = Runtime::embedded().unwrap().with_max_memory(32 << 20);
+    let runtime = Runtime::embedded()
+        .unwrap()
+        .with_execution_timeout(None)
+        .with_max_memory(32 << 20);
     let mut instance = decay(&runtime);
     let small = request(1.0, Output::Uniform { steps: 10 });
     let first = instance.simulate(&small).unwrap();
@@ -135,7 +139,7 @@ fn a_result_without_memory_is_an_error_of_the_request() {
 /// growth by doubling of the result would ask for twice the limit while the old block is alive.
 #[test]
 fn the_steps_stop_at_the_limit_of_the_output() {
-    let runtime = Runtime::embedded().unwrap();
+    let runtime = Runtime::embedded().unwrap().with_execution_timeout(None);
     for selections in [vec!["time", "y"], vec!["time", "y", "t_half"]] {
         let mut instance = decay(&runtime);
         let mut steps = request(1e9, Output::IntegratorSteps);
@@ -144,7 +148,7 @@ fn the_steps_stop_at_the_limit_of_the_output() {
         steps.settings.maximum_num_steps = 1_000_000_000;
         match instance.simulate(&steps) {
             Err(EngineError::Integration { flag, .. }) => {
-                assert_eq!(flag, sbmlsim_engine::OUTPUT_LIMIT_FLAG, "{selections:?}")
+                assert_eq!(flag, -1000, "{selections:?}")
             }
             other => panic!("{selections:?}: {other:?}"),
         }

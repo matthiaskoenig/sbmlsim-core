@@ -527,3 +527,35 @@ fn function_locals(wasm: &[u8], index: usize) -> u32 {
         .map(|l| l.unwrap().0)
         .sum()
 }
+
+#[test]
+fn requested_difference_quotients_need_only_the_structural_pattern() {
+    // A long product has a quadratic expanded analytic derivative, despite its small
+    // structural pattern. Difference quotients must compile only the written product.
+    let product = format!("<apply><times/>{}</apply>", "<ci>x</ci>".repeat(4096));
+    let m = model(&format!(
+        r#"<listOfParameters><parameter id="x" constant="false" value="1"/></listOfParameters><listOfRules><rateRule variable="x"><math $>{product}</math></rateRule></listOfRules>"#
+    ));
+    let (wasm, description) = emit_with(&m, JacobianChoice::DifferenceQuotient).unwrap();
+    let JacobianKind::ColoredDifference {
+        pattern,
+        colors,
+        reason,
+    } = description.jacobian
+    else {
+        panic!("expected difference quotients")
+    };
+    assert_eq!(pattern, sbmlsim_ir::derive::pattern(&m));
+    assert_eq!(colors, vec![0]);
+    assert_eq!(reason, DIFFERENCE_REQUESTED);
+    assert!(wasm.len() < 100_000);
+    let (_, description) = emit_with(&m, JacobianChoice::Auto).unwrap();
+    assert!(
+        matches!(description.jacobian, JacobianKind::ColoredDifference { ref reason, .. } if reason.contains("construction exceeds"))
+    );
+    let error = emit_with(&m, JacobianChoice::Analytic).unwrap_err();
+    assert!(
+        matches!(error, CompileError::Unsupported { ref feature, .. } if feature.contains("construction exceeds")),
+        "{error:?}"
+    );
+}
