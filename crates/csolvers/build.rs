@@ -139,6 +139,9 @@ fn main() {
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     let target = env::var("TARGET").unwrap();
     let wasm = target == "wasm32-wasip1";
+    // windows has no POSIX timers: SUNDIALS profiles with the timers of windows and SuiteSparse
+    // without a timer (`NTIMER`), as their CMake builds configure it; no solver reads a timer
+    let windows = env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows");
 
     for source in SUNDIALS_SOURCES {
         require(&sundials.join("src").join(source));
@@ -207,7 +210,10 @@ fn main() {
         .cargo_warnings(true);
 
     let include = out.join("include");
-    write_config(&include, compiler_name, flags);
+    if windows {
+        build.define("NTIMER", None);
+    }
+    write_config(&include, compiler_name, flags, !windows);
     build
         .include(&include)
         .include(sundials.join("include"))
@@ -304,14 +310,15 @@ fn compiler_given() -> bool {
 /// The configuration is the one CMake writes for this build: double precision, `int32_t`
 /// indices, `long int` counters, KLU, no MPI, the logging level 0 (no logging: the logger of a
 /// context reads no environment variable and writes nothing, the engine records the errors with
-/// an error handler of its own), and the modules of [`SUNDIALS_SOURCES`].
+/// an error handler of its own), the POSIX timers of the profiler where the target has them
+/// (`posix_timers`, every target but windows), and the modules of [`SUNDIALS_SOURCES`].
 ///
 /// The indices are 32 bits, also natively, so every target computes with the same code: half
 /// the memory of the index arrays of KLU and of the sparse matrix, and no conversion of a 64 bit
 /// index into a 32 bit address in wasm32, which makes the KLU runs 3 to 6% faster in wasm (the
 /// results are bitwise those of 64 bit indices). The engine refuses a model whose matrix would
 /// not fit (`sbmlsim-engine`, `cvode::check_index_range`).
-fn write_config(include: &Path, compiler: &str, flags: &str) {
+fn write_config(include: &Path, compiler: &str, flags: &str, posix_timers: bool) {
     let dir = include.join("sundials");
     fs::create_dir_all(&dir).unwrap();
     let (major, minor, patch) = SUNDIALS_VERSION;
@@ -361,7 +368,6 @@ fn write_config(include: &Path, compiler: &str, flags: &str) {
         ("SUNDIALS_INT32_T", "1"),
         ("SUNDIALS_INDEX_TYPE", "int32_t"),
         ("SUNDIALS_COUNTER_TYPE", "long int"),
-        ("SUNDIALS_HAVE_POSIX_TIMERS", ""),
         ("SUNDIALS_LOGGING_LEVEL", "0"),
         ("SUN_C_COMPILER", &format!("\"{compiler}\"")),
         ("SUN_C_COMPILER_VERSION", "\"\""),
@@ -393,6 +399,9 @@ fn write_config(include: &Path, compiler: &str, flags: &str) {
     ];
     for (name, value) in defines {
         writeln!(config, "#define {name} {value}").unwrap();
+    }
+    if posix_timers {
+        writeln!(config, "#define SUNDIALS_HAVE_POSIX_TIMERS").unwrap();
     }
     writeln!(config, "#endif /* _SUNDIALS_CONFIG_H */").unwrap();
     write_if_changed(&dir.join("sundials_config.h"), &config);
