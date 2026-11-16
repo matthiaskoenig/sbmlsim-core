@@ -12,3 +12,4 @@ import "./model-policy.test.mjs";
 import "./prepared.test.mjs";
 import "./golden.test.mjs";
 import "./inline.test.mjs";
+import "./dosing.test.mjs";

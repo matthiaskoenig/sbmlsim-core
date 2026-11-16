@@ -1022,7 +1022,7 @@ dependencies = [
 
 [[package]]
 name = "sbmlsim-abi"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1031,7 +1031,7 @@ dependencies = [
 
 [[package]]
 name = "sbmlsim-cli"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1047,7 +1047,7 @@ dependencies = [
 
 [[package]]
 name = "sbmlsim-codegen"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "sbmlsim-abi",
  "sbmlsim-ir",
@@ -1059,7 +1059,7 @@ dependencies = [
 
 [[package]]
 name = "sbmlsim-compiler"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "sbmlsim-abi",
  "sbmlsim-codegen",
@@ -1069,14 +1069,14 @@ dependencies = [
 
 [[package]]
 name = "sbmlsim-csolvers"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "cc",
 ]
 
 [[package]]
 name = "sbmlsim-engine"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "rand_pcg",
  "sbmlsim-abi",
@@ -1088,7 +1088,7 @@ dependencies = [
 
 [[package]]
 name = "sbmlsim-host"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "sbmlsim-abi",
@@ -1102,7 +1102,7 @@ dependencies = [
 
 [[package]]
 name = "sbmlsim-ir"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "sbmlsim-abi",
  "sbmlsim-mathlib",
@@ -1112,7 +1112,7 @@ dependencies = [
 
 [[package]]
 name = "sbmlsim-mathlib"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "libm",
  "wasmparser 0.230.0",
@@ -1120,7 +1120,7 @@ dependencies = [
 
 [[package]]
 name = "sbmlsim-python"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "numpy",
  "pyo3",
@@ -1134,7 +1134,7 @@ dependencies = [
 
 [[package]]
 name = "sbmlsim-sbml"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "roxmltree",
  "thiserror",

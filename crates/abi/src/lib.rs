@@ -86,6 +86,9 @@
 //!
 //! Revisions of `simulation/1` before its first release: the `seed` of a request is 1 when it
 //! is absent ([`DEFAULT_SEED`]), set before the contracts were frozen (no version change).
+//! Additions of `simulation/1` since its release, which a request of a release before reads
+//! as it did: the `increments` of a [`Change`] (0.6.0), absent and empty by default, which an
+//! engine before 0.6.0 refuses as an unknown field.
 //!
 //! `engine.wasm` carries the custom section [`ENGINE_SECTION`] with the JSON
 //! `{"memory_minimum_pages":n,"output_format":k}`: the minimum of the memory it imports and
@@ -580,6 +583,7 @@ mod tests {
             changes: vec![Change {
                 time: 3.0,
                 values: vec![("dose".to_string(), 100.0), ("V".to_string(), 1.5)],
+                increments: Vec::new(),
             }],
             steady_state: Some(SteadyState {
                 preinit: vec![("x".to_string(), 1.0)],

@@ -51,6 +51,7 @@ fn prepared_runs_are_bit_identical_across_settings_and_changes() {
     req.changes = vec![Change {
         time: 1.5,
         values: vec![("y".into(), 4.0), ("k".into(), 0.7)],
+        increments: Vec::new(),
     }];
     for stiff in [true, false, true] {
         for jacobian in [JacobianChoice::Auto, JacobianChoice::DifferenceQuotient] {
@@ -90,6 +91,7 @@ fn concentration_overrides_keep_template_quantity_and_order() {
     req.changes = vec![Change {
         time: 1.5,
         values: vec![("C".into(), 5.0), ("[S]".into(), 1.0)],
+        increments: Vec::new(),
     }];
     // S overrides the entity's existing concentration slot without changing its quantity.
     let plan = engine

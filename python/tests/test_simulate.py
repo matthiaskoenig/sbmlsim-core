@@ -98,6 +98,16 @@ def test_simulate_gives_the_columns_and_an_array(decay):
     assert out.values[-1, y] == pytest.approx(math.exp(-5.0), rel=1e-4)
 
 
+def test_an_increment_of_a_change_adds_to_the_state_before_it(decay):
+    req = request(end=10.0, steps=2)
+    req["changes"] = [{"time": 5.0, "values": [], "increments": [["y", 1.0]]}]
+    out = decay.instance().simulate(req)
+    y = out.columns.index("y")
+    # the state before the change and after it, at its time
+    assert out.values[1, 0] == out.values[2, 0] == 5.0
+    assert out.values[2, y] == out.values[1, y] + 1.0
+
+
 def test_initial_values_are_the_model_as_loaded(decay):
     values = decay.initial_values()
     assert values["y"] == 1.0
