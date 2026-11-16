@@ -70,16 +70,20 @@ def apply(op: str, *args: str) -> str:
 
 def mm(vmax: str, km: str, s: str) -> str:
     """Michaelis-Menten `vmax * s / (km + s)`."""
-    return apply("divide", apply("times", ci(vmax), ci(s)), apply("plus", ci(km), ci(s)))
+    return apply(
+        "divide", apply("times", ci(vmax), ci(s)), apply("plus", ci(km), ci(s))
+    )
 
 
 def reaction(rid: str, reactants: list[str], products: list[str], law: str) -> str:
     """An irreversible reaction (or a reversible one when the law can be negative)."""
+
     def refs(tag: str, ids: list[str]) -> str:
         if not ids:
             return ""
         inner = "".join(
-            f'<speciesReference species="{s}" stoichiometry="1" constant="true"/>' for s in ids
+            f'<speciesReference species="{s}" stoichiometry="1" constant="true"/>'
+            for s in ids
         )
         return f"<{tag}>{inner}</{tag}>"
 
@@ -96,21 +100,66 @@ def chain(n_units: int) -> str:
     out.append(species("A_in", 1.0, boundary=True))
     out.append(species("D_in", 0.0, boundary=True))
     for i in range(n_units):
-        out += [species(f"A{i}", 0.0), species(f"B{i}", 0.0), species(f"C{i}", 1.0), species(f"D{i}", 0.0)]
+        out += [
+            species(f"A{i}", 0.0),
+            species(f"B{i}", 0.0),
+            species(f"C{i}", 1.0),
+            species(f"D{i}", 0.0),
+        ]
     out.append("    </listOfSpecies>\n    <listOfParameters>\n")
-    for pid, value in [("q", 0.2), ("Vf", 50.0), ("Vr", 20.0), ("Km", 0.5), ("k2", 5.0), ("V3", 0.5), ("K3", 0.2)]:
+    for pid, value in [
+        ("q", 0.2),
+        ("Vf", 50.0),
+        ("Vr", 20.0),
+        ("Km", 0.5),
+        ("k2", 5.0),
+        ("V3", 0.5),
+        ("K3", 0.2),
+    ]:
         out.append(parameter(pid, value))
     out.append("    </listOfParameters>\n    <listOfReactions>\n")
     for i in range(n_units):
         a_prev, d_prev = ("A_in", "D_in") if i == 0 else (f"A{i - 1}", f"D{i - 1}")
-        out.append(reaction(f"flowA{i}", [a_prev] if i else [], [f"A{i}"], apply("times", ci("q"), ci(a_prev))))
-        out.append(reaction(f"flowD{i}", [d_prev] if i else [], [f"D{i}"], apply("times", ci("q"), ci(d_prev))))
-        out.append(reaction(f"conv{i}", [f"A{i}"], [f"B{i}"], apply("minus", mm("Vf", "Km", f"A{i}"), mm("Vr", "Km", f"B{i}"))))
-        out.append(reaction(f"bind{i}", [f"B{i}", f"C{i}"], [f"D{i}"], apply("times", ci("k2"), ci(f"B{i}"), ci(f"C{i}"))))
+        out.append(
+            reaction(
+                f"flowA{i}",
+                [a_prev] if i else [],
+                [f"A{i}"],
+                apply("times", ci("q"), ci(a_prev)),
+            )
+        )
+        out.append(
+            reaction(
+                f"flowD{i}",
+                [d_prev] if i else [],
+                [f"D{i}"],
+                apply("times", ci("q"), ci(d_prev)),
+            )
+        )
+        out.append(
+            reaction(
+                f"conv{i}",
+                [f"A{i}"],
+                [f"B{i}"],
+                apply("minus", mm("Vf", "Km", f"A{i}"), mm("Vr", "Km", f"B{i}")),
+            )
+        )
+        out.append(
+            reaction(
+                f"bind{i}",
+                [f"B{i}", f"C{i}"],
+                [f"D{i}"],
+                apply("times", ci("k2"), ci(f"B{i}"), ci(f"C{i}")),
+            )
+        )
         out.append(reaction(f"regen{i}", [f"D{i}"], [f"C{i}"], mm("V3", "K3", f"D{i}")))
     last = n_units - 1
-    out.append(reaction("outA", [f"A{last}"], [], apply("times", ci("q"), ci(f"A{last}"))))
-    out.append(reaction("outD", [f"D{last}"], [], apply("times", ci("q"), ci(f"D{last}"))))
+    out.append(
+        reaction("outA", [f"A{last}"], [], apply("times", ci("q"), ci(f"A{last}")))
+    )
+    out.append(
+        reaction("outD", [f"D{last}"], [], apply("times", ci("q"), ci(f"D{last}")))
+    )
     out.append("    </listOfReactions>\n  </model>\n</sbml>\n")
     return "".join(out)
 
@@ -134,21 +183,53 @@ def star(n_organs: int) -> str:
             parameter(f"ke{i}", 0.2),
         ]
     out.append("    </listOfParameters>\n    <listOfReactions>\n")
-    out.append(reaction("lung", ["Cve"], ["Car"], apply("times", ci("Qlung"), apply("minus", ci("Cve"), ci("Car")))))
+    out.append(
+        reaction(
+            "lung",
+            ["Cve"],
+            ["Car"],
+            apply("times", ci("Qlung"), apply("minus", ci("Cve"), ci("Car"))),
+        )
+    )
     out.append(reaction("renal", ["Car"], [], apply("times", ci("CLr"), ci("Car"))))
     for i in range(n_organs):
-        out.append(reaction(f"in{i}", ["Car"], [f"Cb{i}"], apply("times", ci(f"Q{i}"), ci("Car"))))
-        out.append(reaction(f"out{i}", [f"Cb{i}"], ["Cve"], apply("times", ci(f"Q{i}"), ci(f"Cb{i}"))))
+        out.append(
+            reaction(
+                f"in{i}", ["Car"], [f"Cb{i}"], apply("times", ci(f"Q{i}"), ci("Car"))
+            )
+        )
+        out.append(
+            reaction(
+                f"out{i}",
+                [f"Cb{i}"],
+                ["Cve"],
+                apply("times", ci(f"Q{i}"), ci(f"Cb{i}")),
+            )
+        )
         out.append(
             reaction(
                 f"part{i}",
                 [f"Cb{i}"],
                 [f"Ct{i}"],
-                apply("times", ci(f"PS{i}"), apply("minus", ci(f"Cb{i}"), apply("divide", ci(f"Ct{i}"), ci(f"Kp{i}")))),
+                apply(
+                    "times",
+                    ci(f"PS{i}"),
+                    apply(
+                        "minus",
+                        ci(f"Cb{i}"),
+                        apply("divide", ci(f"Ct{i}"), ci(f"Kp{i}")),
+                    ),
+                ),
             )
         )
-        out.append(reaction(f"met{i}", [f"Ct{i}"], [f"M{i}"], mm(f"Vm{i}", f"Km{i}", f"Ct{i}")))
-        out.append(reaction(f"elim{i}", [f"M{i}"], [], apply("times", ci(f"ke{i}"), ci(f"M{i}"))))
+        out.append(
+            reaction(f"met{i}", [f"Ct{i}"], [f"M{i}"], mm(f"Vm{i}", f"Km{i}", f"Ct{i}"))
+        )
+        out.append(
+            reaction(
+                f"elim{i}", [f"M{i}"], [], apply("times", ci(f"ke{i}"), ci(f"M{i}"))
+            )
+        )
     out.append("    </listOfReactions>\n  </model>\n</sbml>\n")
     return "".join(out)
 

@@ -235,18 +235,14 @@ impl Runtime {
         Runtime::new(ENGINE_WASM, MATHLIB_WASM)
     }
 
-    /// Instantiates a model with its description and loads it into a new engine.
+    /// Compiles a model and checks it against its description, without instantiating it.
     ///
     /// Checks the contract of the description and the module of the model: it imports
     /// `env.memory` and otherwise only functions of mathlib (each of the type mathlib exports),
     /// and defines no memory, no mutable global, no data segment and no start function (a model
     /// holds no state and writes nothing into the memory of the engine but where it is told);
-    /// gives the error of `engine_load` for a description the engine refuses.
-    pub fn instantiate(
-        &self,
-        model_wasm: &[u8],
-        desc: &ModelDescription,
-    ) -> anyhow::Result<Instance> {
+    /// compiles `model.wasm` once, so that every [`LoadedModel::instantiate`] reuses the module.
+    pub fn load(&self, model_wasm: &[u8], desc: &ModelDescription) -> anyhow::Result<LoadedModel> {
         check_contract(&desc.contract, MODEL_CONTRACT)?;
         check_model_sections(model_wasm)?;
         let model_module = Module::new(&self.engine, model_wasm)
@@ -274,16 +270,100 @@ impl Runtime {
             }
         }
         ensure!(memory_imported, "model.wasm does not import env.memory");
-        let mut store = store(&self.engine, self.max_memory);
-        let memory = Memory::new(&mut store, self.memory_type.clone())?;
-        let mut linker = linker(&self.engine)?;
-        linker.define(&store, "env", "memory", memory)?;
-        let math = linker.instantiate(&mut store, &self.mathlib_module)?;
-        linker.instance(&mut store, "math", math)?;
-        let model = linker
-            .instantiate(&mut store, &model_module)
-            .map_err(anyhow::Error::from)
-            .context("model.wasm does not instantiate")?;
+        Ok(LoadedModel {
+            engine: self.engine.clone(),
+            engine_module: self.engine_module.clone(),
+            mathlib_module: self.mathlib_module.clone(),
+            model_module,
+            memory_type: self.memory_type.clone(),
+            max_memory: self.max_memory,
+            desc: desc.clone(),
+        })
+    }
+
+    /// Instantiates a model with its description and loads it into a new engine (`load`, then
+    /// [`LoadedModel::instantiate`]); gives the error of `engine_load` for a description the
+    /// engine refuses.
+    pub fn instantiate(
+        &self,
+        model_wasm: &[u8],
+        desc: &ModelDescription,
+    ) -> anyhow::Result<Instance> {
+        self.load(model_wasm, desc)?.instantiate()
+    }
+}
+
+/// What [`link_model`] makes: the store, the memory the model imports, the linker which has
+/// `env.memory` and `math`, and the instance of the model (not yet registered as `model`).
+struct Linked {
+    store: Store<HostState>,
+    memory: Memory,
+    linker: Linker<HostState>,
+    model: wasmtime::Instance,
+}
+
+/// Instantiates mathlib and the model in a new store with a memory of `memory_type`: defines
+/// `env.memory`, instantiates mathlib as `math` and the model against them.
+fn link_model(
+    engine: &Engine,
+    mathlib_module: &Module,
+    model_module: &Module,
+    memory_type: &MemoryType,
+    max_memory: usize,
+) -> anyhow::Result<Linked> {
+    let mut store = store(engine, max_memory);
+    let memory = Memory::new(&mut store, memory_type.clone())?;
+    let mut linker = linker(engine)?;
+    linker.define(&store, "env", "memory", memory)?;
+    let math = linker.instantiate(&mut store, mathlib_module)?;
+    linker.instance(&mut store, "math", math)?;
+    let model = linker
+        .instantiate(&mut store, model_module)
+        .map_err(anyhow::Error::from)
+        .context("model.wasm does not instantiate")?;
+    Ok(Linked {
+        store,
+        memory,
+        linker,
+        model,
+    })
+}
+
+/// A model compiled once ([`Runtime::load`]), which makes any number of independent
+/// [`Instance`]s; it is `Send + Sync`, so threads share it and each makes its own instances.
+pub struct LoadedModel {
+    engine: Engine,
+    engine_module: Module,
+    mathlib_module: Module,
+    model_module: Module,
+    memory_type: MemoryType,
+    max_memory: usize,
+    desc: ModelDescription,
+}
+
+impl LoadedModel {
+    /// The description the model was loaded with.
+    pub fn description(&self) -> &ModelDescription {
+        &self.desc
+    }
+
+    /// Instantiates the model in a new engine, which holds the description; gives the error of
+    /// `engine_load` for a description the engine refuses.
+    pub fn instantiate(&self) -> anyhow::Result<Instance> {
+        let desc = &self.desc;
+        let model_module = &self.model_module;
+        let Linked {
+            mut store,
+            memory,
+            mut linker,
+            model,
+        } = link_model(
+            &self.engine,
+            &self.mathlib_module,
+            model_module,
+            &self.memory_type,
+            self.max_memory,
+        )?;
         linker.instance(&mut store, "model", model)?;
         let engine = linker
             .instantiate(&mut store, &self.engine_module)
@@ -329,6 +409,95 @@ impl Runtime {
     }
 }
 
+impl LoadedModel {
+    /// The value of every selection of the description, in its order, for the model as loaded:
+    /// `model_defaults`, `model_init` at the time 0 with no fixed entity, `model_assign`, then
+    /// `model_selections` with every selection masked in. It links mathlib and the model in a
+    /// store of its own and never runs the engine, so no simulation is needed to read the initial
+    /// state. It refuses a model whose `model_sizes` differ from the description.
+    pub fn initial_selections(&self) -> anyhow::Result<Vec<f64>> {
+        let desc = &self.desc;
+        let (np, ns, nsel) = (
+            desc.parameters.len(),
+            desc.states.len(),
+            desc.selections.len(),
+        );
+        let Linked {
+            mut store,
+            memory,
+            model,
+            ..
+        } = link_model(
+            &self.engine,
+            &self.mathlib_module,
+            &self.model_module,
+            &self.memory_type,
+            self.max_memory,
+        )?;
+        let defaults = model.get_typed_func::<(i32, i32), ()>(&mut store, sbmlsim_abi::DEFAULTS)?;
+        let init =
+            model.get_typed_func::<(f64, i32, i32, i32), ()>(&mut store, sbmlsim_abi::INIT)?;
+        let assign =
+            model.get_typed_func::<(f64, i32, i32), ()>(&mut store, sbmlsim_abi::ASSIGN)?;
+        let selections = model
+            .get_typed_func::<(f64, i32, i32, i32, i32), ()>(&mut store, sbmlsim_abi::SELECTIONS)?;
+        let sizes = model.get_typed_func::<i32, ()>(&mut store, sbmlsim_abi::SIZES)?;
+        // the memory: p (the parameters, then the constants), y, the selections, the words of
+        // the sizes, then the bytes of fixed and of the mask
+        let p_at = 0usize;
+        let y_at = p_at + 8 * (np + desc.n_constants as usize);
+        let out_at = y_at + 8 * ns;
+        let words_at = out_at + 8 * nsel;
+        let fixed_at = words_at + 4 * sbmlsim_abi::ModelSizes::WORDS;
+        let mask_at = fixed_at + np + ns;
+        let end = mask_at + nsel;
+        let size = memory.data_size(&store);
+        if end > size {
+            memory.grow(&mut store, (end - size).div_ceil(65536) as u64)?;
+        }
+        let address = |a: usize| i32::try_from(a).context("the vectors do not fit the memory");
+        sizes.call(&mut store, address(words_at)?)?;
+        let mut words = [0u8; 4 * sbmlsim_abi::ModelSizes::WORDS];
+        memory.read(&store, words_at, &mut words)?;
+        let read: Vec<u32> = words
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|b| u32::from_le_bytes(*b))
+            .collect();
+        let expected = [
+            ns as u32,
+            np as u32,
+            nsel as u32,
+            desc.jacobian.pattern().row_idx.len() as u32,
+            desc.n_roots,
+            desc.n_constants,
+            desc.events.len() as u32,
+        ];
+        ensure!(
+            read == expected,
+            "model.wasm has the sizes {read:?} (states, parameters, selections, Jacobian entries, \
+             roots, constants, events), the description {expected:?}"
+        );
+        // the zeros of a fresh memory: no entity is fixed, every selection is in the mask
+        memory.write(&mut store, fixed_at, &vec![0u8; np + ns])?;
+        memory.write(&mut store, mask_at, &vec![1u8; nsel])?;
+        let (p, y) = (address(p_at)?, address(y_at)?);
+        defaults.call(&mut store, (p, y))?;
+        init.call(&mut store, (0.0, p, y, address(fixed_at)?))?;
+        assign.call(&mut store, (0.0, y, p))?;
+        selections.call(&mut store, (0.0, y, p, address(mask_at)?, address(out_at)?))?;
+        let mut out = vec![0u8; 8 * nsel];
+        memory.read(&store, out_at, &mut out)?;
+        Ok(out
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .map(|b| f64::from_le_bytes(*b))
+            .collect())
+    }
+}
+
 impl Runtime {
     /// Instantiates a model with mathlib alone, without the engine, to call its right hand side
     /// and its Jacobian directly (tests and diagnostics); `desc` gives the sizes.
@@ -341,16 +510,18 @@ impl Runtime {
         let module = Module::new(&self.engine, model_wasm)
             .map_err(anyhow::Error::from)
             .context("model.wasm does not compile")?;
-        let mut store = store(&self.engine, self.max_memory);
-        let memory = Memory::new(&mut store, self.memory_type.clone())?;
-        let mut linker = linker(&self.engine)?;
-        linker.define(&store, "env", "memory", memory)?;
-        let math = linker.instantiate(&mut store, &self.mathlib_module)?;
-        linker.instance(&mut store, "math", math)?;
-        let model = linker
-            .instantiate(&mut store, &module)
-            .map_err(anyhow::Error::from)
-            .context("model.wasm does not instantiate")?;
+        let Linked {
+            mut store,
+            memory,
+            model,
+            ..
+        } = link_model(
+            &self.engine,
+            &self.mathlib_module,
+            &module,
+            &self.memory_type,
+            self.max_memory,
+        )?;
         let rhs = model.get_typed_func(&mut store, sbmlsim_abi::RHS)?;
         let jac = model.get_typed_func(&mut store, sbmlsim_abi::JAC)?;
         let assign = model.get_typed_func(&mut store, sbmlsim_abi::ASSIGN)?;

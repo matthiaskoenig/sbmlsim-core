@@ -102,6 +102,47 @@ The host is published to npm as [`sbmlsim-core`](https://www.npmjs.com/package/s
 
 The tests (`node --test js/test`) build the command line (`SBMLSIM_CORE_CLI` names a built one) and compare every passing case of the prepared SBML Test Suite with the wasmtime host (`SBMLSIM_CORE_EXPORT` names the output of `sbmlsim-core testsuite <cases> --export <dir>`).
 
+## Python
+
+`sbmlsim-core` is also a python package (python 3.14 or newer, one abi3 wheel per platform, built with maturin; the extension embeds `engine.wasm` through `sbmlsim-host`, so the build needs `WASI_SDK_PATH` or `SBMLSIM_CORE_WASM_DIR` as above). It ships `py.typed` and a stub of the extension, `python/sbmlsim_core/_core.pyi`, which `ty check python/typecheck` holds against a file that uses the API as a caller does:
+
+```bash
+uv venv --python 3.14 && uv pip install -e . --group dev   # editable, with pytest and ty
+.venv/bin/pytest python/tests -q
+.venv/bin/ty check python/typecheck
+uv build --wheel --python 3.14 --out-dir dist              # the wheel, as the job `python-bindings` builds it
+```
+
+```python
+import sbmlsim_core
+
+compiled = sbmlsim_core.compile_sbml(sbml_text)  # optimize=True, jacobian="auto"
+compiled.wasm  # the bytes of model.wasm
+compiled.description  # the dict of model.json (model/2)
+
+# engine.wasm and mathlib.wasm, compiled once per runtime: share it
+runtime = sbmlsim_core.Runtime(max_memory_bytes=None)
+model = runtime.load(compiled.wasm, compiled.description)  # compiled once, shared
+model.initial_values()  # selection id -> value as loaded
+instance = model.instance()  # one per thread
+out = instance.simulate(request)  # request: a dict of simulation/1
+out.columns, out.values  # names, float64 array (rows, columns)
+instance.stats()  # the counters of the integrator
+# a batch on rayon threads, the results in the order of the requests
+results = model.simulate_many(requests, threads=None)
+```
+
+The nested enums of `simulation/1` are serde's externally tagged ones: an output is `{"uniform": {"steps": 100}}`, `{"times": [0.0, 1.0]}` or, a unit variant and so a bare string, `"integrator_steps"` (the steps of the integrator, whose number of rows differs by point, which is why `simulate_many` gives one table per point), and the absolute tolerance of the settings is `{"scalar": 1e-12}` or `{"per_state": [1e-12, 1e-10]}` with one value per state in the order of the state vector (a vector of another length is a `PointError` of that point in a batch):
+
+```python
+request["output"] = "integrator_steps"
+request["settings"]["absolute_tolerance"] = {"per_state": [1e-12] * n_states}
+```
+
+`description` and `initial_values()` of a model, `description` of a compiled model and `columns` of an output are computed anew by every access, so read them once. The parallelism of `simulate_many` is `min(threads, len(requests))`, and its pool and its per-thread instances live only for the duration of the call (an instance costs about 0.3 s to make for a model of 700 kB of description), so give it as many points as you can rather than many small batches: 320 points in one call on 20 threads took 2.09 s against 22.0 s serially.
+
+Errors derive from `SbmlsimCoreError`: `CompileError`, `LoadError` (a runtime which cannot start, a model which does not match its description, an instance or a pool which cannot be made) and `SimulationError` with `RequestError`, `IntegrationError` (`flag`, `time`), `UnsupportedError` and `InternalError`. A point of a batch which failed is a `PointError` (`kind`, `message`, `flag`, `time`) in its position of the result, so one failing request does not fail the batch.
+
 ## Test suite
 
 `sbmlsim-core testsuite testdata/cases` compiles and simulates the cases of the SBML Test Suite (prepared with `uv run scripts/prepare_testsuite.py --out testdata/cases`) and compares them with the baseline `testdata/testsuite_baseline.json`; `--write-baseline` writes the baseline from a run. In every mode (analytic and difference Jacobian, optimizer on and off) each passing case is simulated again to check that it repeats bitwise.
@@ -141,4 +182,4 @@ No model of the benchmark takes more than 2x the time of roadrunner native, dens
 
 ## License
 
-The code of sbmlsim-core is MIT licensed, see `LICENSE`. `engine.wasm` statically links SUNDIALS 7.9.0 (BSD-3-Clause) and, from SuiteSparse 7.14.1, KLU and BTF (LGPL-2.1-or-later) and AMD, COLAMD and SuiteSparse_config (BSD-3-Clause), built from the submodules in `third_party`. So `engine.wasm` and the packages which build or embed it (`sbmlsim-csolvers`, `sbmlsim-host`, `sbmlsim-cli` and the JavaScript package with its runtime) are under `MIT AND BSD-3-Clause AND LGPL-2.1-or-later`. `THIRD_PARTY.md` has the versions, the commits of the submodules, the license texts and how to rebuild `engine.wasm` with a modified KLU or BTF; `sbmlsim-core runtime -o DIR` writes it next to `engine.wasm` and `mathlib.wasm`, and `sbmlsim_host::THIRD_PARTY_NOTICES` is its text.
+The code of sbmlsim-core is MIT licensed, see `LICENSE`. `engine.wasm` statically links SUNDIALS 7.9.0 (BSD-3-Clause) and, from SuiteSparse 7.14.1, KLU and BTF (LGPL-2.1-or-later) and AMD, COLAMD and SuiteSparse_config (BSD-3-Clause), built from the submodules in `third_party`. So `engine.wasm` and the packages which build or embed it (`sbmlsim-csolvers`, `sbmlsim-host`, `sbmlsim-cli`, the python package and the JavaScript package with its runtime) are under `MIT AND BSD-3-Clause AND LGPL-2.1-or-later`. `THIRD_PARTY.md` has the versions, the commits of the submodules, the license texts and how to rebuild `engine.wasm` with a modified KLU or BTF; `sbmlsim-core runtime -o DIR` writes it next to `engine.wasm` and `mathlib.wasm`, and `sbmlsim_host::THIRD_PARTY_NOTICES` is its text.

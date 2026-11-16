@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The model of decay.wat in SBML Level 3 Version 1: y' = -k y, y(0) = 1, k = 0.5, t_half = ln(2) / k. -->
+<sbml xmlns="http://www.sbml.org/sbml/level3/version1/core" level="3" version="1">
+  <model id="decay">
+    <listOfParameters>
+      <parameter id="y" value="1" constant="false"/>
+      <parameter id="k" value="0.5" constant="true"/>
+      <parameter id="t_half" constant="false"/>
+    </listOfParameters>
+    <listOfRules>
+      <rateRule variable="y">
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+          <apply><times/><apply><minus/><ci>k</ci></apply><ci>y</ci></apply>
+        </math>
+      </rateRule>
+      <assignmentRule variable="t_half">
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+          <apply><divide/><apply><ln/><cn>2</cn></apply><ci>k</ci></apply>
+        </math>
+      </assignmentRule>
+    </listOfRules>
+  </model>
+</sbml>

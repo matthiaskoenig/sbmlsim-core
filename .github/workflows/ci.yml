@@ -177,3 +177,67 @@ jobs:
         run: test -f testdata/cases/00001/case.json
       # the tests of the runner and of the reader, the IR and the compiler over the cases
       - run: cargo test -p sbmlsim-cli -p sbmlsim-sbml -p sbmlsim-ir
+  python-bindings:
+    # the python package sbmlsim_core (crates/python, built with maturin): the tests and the type
+    # check of its stub on an editable install, then a wheel built, installed in a fresh
+    # environment and checked there, so the abi3 tag and the layout are proven as users get them
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Install the toolchain of rust-toolchain.toml
+        run: rustup show active-toolchain || rustup toolchain install
+      - name: Install wasi-sdk
+        run: |
+          mkdir -p "$HOME/tools" && cd "$HOME/tools"
+          sdk="wasi-sdk-${WASI_SDK_VERSION}-x86_64-linux"
+          curl -sSLO "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-${WASI_SDK_VERSION%%.*}/${sdk}.tar.gz"
+          echo "${WASI_SDK_SHA256}  ${sdk}.tar.gz" | sha256sum -c -
+          tar xzf "${sdk}.tar.gz"
+          echo "WASI_SDK_PATH=$HOME/tools/${sdk}" >> "$GITHUB_ENV"
+      - uses: Swatinem/rust-cache@v2
+      - uses: astral-sh/setup-uv@v5
+      - name: Editable install
+        run: |
+          uv venv --python 3.14 .venv
+          uv pip install --python .venv/bin/python -e . --group dev
+      - name: Lint and format of the python of the repository, markdown blocks included
+        run: |
+          .venv/bin/ruff check
+          .venv/bin/ruff format --check
+      - name: The tests
+        run: .venv/bin/pytest python/tests -q
+      - name: The type check of the stub and of a caller (python/typecheck)
+        # the stub is hand written: the drift test compares names only, this holds the signatures
+        run: .venv/bin/ty check python/typecheck
+      - name: Build the wheel
+        run: uv build --wheel --python 3.14 --out-dir dist
+      - name: The wheel is abi3 for python 3.14
+        run: |
+          ls dist
+          test -n "$(ls dist/sbmlsim_core-*-cp314-abi3-*.whl)"
+      - name: Install the wheel in a fresh environment
+        run: |
+          uv venv --python 3.14 "$RUNNER_TEMP/wheel-venv"
+          # the pins of the dev group, so the two environments cannot drift apart
+          uv pip install --python "$RUNNER_TEMP/wheel-venv/bin/python" dist/*.whl --group dev
+      - name: Import the installed wheel from outside the checkout
+        run: |
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/wheel-venv/bin/python" -I -c "import sbmlsim_core; print(sbmlsim_core.__file__, sbmlsim_core.__version__); assert 'site-packages' in sbmlsim_core.__file__"
+      - name: The tests and the type check against the installed wheel
+        run: |
+          "$RUNNER_TEMP/wheel-venv/bin/pytest" python/tests -q
+          # from a directory without the package: the checkout holds python/sbmlsim_core, which
+          # ty would resolve instead of the installed wheel
+          mkdir "$RUNNER_TEMP/typecheck" && cp python/typecheck/usage.py "$RUNNER_TEMP/typecheck/"
+          cd "$RUNNER_TEMP/typecheck"
+          "$RUNNER_TEMP/wheel-venv/bin/ty" check --error-on-warning --python "$RUNNER_TEMP/wheel-venv" usage.py
+      - name: The same wheel on python 3.15
+        # the wheel is cp314-abi3, so one build has to load on every later python
+        run: |
+          uv venv --python 3.15 "$RUNNER_TEMP/wheel-venv-315"
+          uv pip install --python "$RUNNER_TEMP/wheel-venv-315/bin/python" dist/*.whl --group dev
+          (cd "$RUNNER_TEMP" && "$RUNNER_TEMP/wheel-venv-315/bin/python" -I -c "import sbmlsim_core, sys; print(sys.version, sbmlsim_core.__file__); assert 'site-packages' in sbmlsim_core.__file__")
+          "$RUNNER_TEMP/wheel-venv-315/bin/pytest" python/tests -q

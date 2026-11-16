@@ -82,7 +82,9 @@ def worker(build: str, model: dict, warmups: int, reps: int) -> None:
     roadrunner.Logger.setLevel(roadrunner.Logger.LOG_ERROR)
     options = roadrunner.LoadSBMLOptions()
     options.setLLVMBackend(roadrunner.LoadSBMLOptions.LLJIT)
-    options.setLLJitOptimizationLevel(roadrunner.LoadSBMLOptions.DEFAULT)  # O2, as sbmlsim
+    options.setLLJitOptimizationLevel(
+        roadrunner.LoadSBMLOptions.DEFAULT
+    )  # O2, as sbmlsim
     t0 = time.perf_counter()
     r = roadrunner.RoadRunner(model["sbml"], options)
     load = time.perf_counter() - t0
@@ -104,7 +106,13 @@ def worker(build: str, model: dict, warmups: int, reps: int) -> None:
     else:
         configs = [("roadrunner dense", "dense", "difference_quotient")]
         if "linear_solver" in r.integrator.getSettings():
-            configs.append((f"roadrunner {roadrunner.__version__} KLU", "klu", "sparse_difference_quotient"))
+            configs.append(
+                (
+                    f"roadrunner {roadrunner.__version__} KLU",
+                    "klu",
+                    "sparse_difference_quotient",
+                )
+            )
     outputs = ["times", "steps"] if model.get("steps") else ["times"]
     rows = []
     for host, solver, jacobian in configs:
@@ -133,15 +141,24 @@ def worker(build: str, model: dict, warmups: int, reps: int) -> None:
             s = r.integrator.getStatistics()
             r.resetAll()
             initial = {sid: float(r.getValue(sid)) for sid in states}
-            assert list(r.timeCourseSelections) == ["time", *states] or result.shape[1] == len(states) + 1
+            assert (
+                list(r.timeCourseSelections) == ["time", *states]
+                or result.shape[1] == len(states) + 1
+            )
             if "linear_solver" in r.integrator.getSettings():
-                assert (r.integrator.getValue("linear_solver"), r.integrator.getValue("jacobian")) == (solver, jacobian)
+                assert (
+                    r.integrator.getValue("linear_solver"),
+                    r.integrator.getValue("jacobian"),
+                ) == (solver, jacobian)
             vector = r.integrator.getAbsoluteToleranceVector()
             atol_matches = None
             if atol_expected is not None:
                 atol_matches = bool(
-                    len(vector) == len(atol_expected)
-                    and all(atol_expected[sid] == float(v) for sid, v in zip(states, vector))
+                    len(states) == len(vector) == len(atol_expected)
+                    and all(
+                        atol_expected[sid] == float(v)
+                        for sid, v in zip(states, vector, strict=True)
+                    )
                 )
             rows.append(
                 {
@@ -162,7 +179,9 @@ def worker(build: str, model: dict, warmups: int, reps: int) -> None:
                         "jacobian_evals": s["num_jac_evals"],
                         "linear_setups": s["num_lin_solv_setups"],
                         "nonlinear_iterations": s["num_nonlin_solv_iters"],
-                        "nonlinear_convergence_failures": s["num_nonlin_solv_conv_fails"],
+                        "nonlinear_convergence_failures": s[
+                            "num_nonlin_solv_conv_fails"
+                        ],
                         "error_test_failures": s["num_err_test_fails"],
                         "reinits": s.get("num_reinits"),
                     },
@@ -187,7 +206,9 @@ def run_worker(build: str, name: str, args: argparse.Namespace) -> list[dict]:
     return json.loads(out.stdout.strip().splitlines()[-1])
 
 
-def initial_state_problems(name: str, configs: list[dict], args: argparse.Namespace) -> list[str]:
+def initial_state_problems(
+    name: str, configs: list[dict], args: argparse.Namespace
+) -> list[str]:
     """Compare the state at the start of roadrunner with the one of the engine.
 
     The engine simulates the request of the export (`sbmlsim-core bench --export`, the dense
@@ -201,10 +222,15 @@ def initial_state_problems(name: str, configs: list[dict], args: argparse.Namesp
     model_dir = args.export / name
     request = model_dir / "dense_analytic_times.json"
     if not request.exists() or not args.cli.exists():
-        return [f"{name}: no {request} or {args.cli} to check the initial state (--skip-initial-check)"]
+        return [
+            f"{name}: no {request} or {args.cli} to check the initial state (--skip-initial-check)"
+        ]
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / "out.csv"
-        subprocess.run([str(args.cli), "simulate", str(model_dir), str(request), "-o", str(out)], check=True)
+        subprocess.run(
+            [str(args.cli), "simulate", str(model_dir), str(request), "-o", str(out)],
+            check=True,
+        )
         header, first = out.read_text().splitlines()[:2]
     engine = dict(zip(header.split(","), map(float, first.split(",")), strict=True))
     problems = []
@@ -214,9 +240,14 @@ def initial_state_problems(name: str, configs: list[dict], args: argparse.Namesp
         for sid, value in config["initial"].items():
             other = engine.get(sid)
             if other is None or abs(other - value) > 1e-12 * abs(value) + 1e-300:
-                problems.append(f"{name}: {config['host']}: the state {sid} starts at {value!r}, the engine's at {other!r}")
+                problems.append(
+                    f"{name}: {config['host']}: the state {sid} starts at {value!r}, the engine's at {other!r}"
+                )
     if not problems:
-        print(f"{name}: roadrunner and the engine start from the same state", file=sys.stderr)
+        print(
+            f"{name}: roadrunner and the engine start from the same state",
+            file=sys.stderr,
+        )
     return problems
 
 
@@ -227,7 +258,10 @@ def measure(args: argparse.Namespace) -> int:
     sparse = args.sparse_build is not None and args.sparse_build.exists()
     builds = ["release", "sparsedq"] if sparse else ["release"]
     if args.sparse_build is not None and not sparse:
-        print(f"warning: no roadrunner-sparsedq build at {args.sparse_build}", file=sys.stderr)
+        print(
+            f"warning: no roadrunner-sparsedq build at {args.sparse_build}",
+            file=sys.stderr,
+        )
     import roadrunner
 
     results = {
@@ -250,7 +284,10 @@ def measure(args: argparse.Namespace) -> int:
                 rounds.setdefault((row["host"], row["output"]), []).append(row)
             print(
                 f"{name}: round {k + 1}/{args.rounds}: "
-                + ", ".join(f"{r['host']} {r['output']} {r['median_s'] * 1e3:.4g} ms" for r in batch),
+                + ", ".join(
+                    f"{r['host']} {r['output']} {r['median_s'] * 1e3:.4g} ms"
+                    for r in batch
+                ),
                 file=sys.stderr,
                 flush=True,
             )
@@ -266,7 +303,10 @@ def measure(args: argparse.Namespace) -> int:
         problems += initial_state_problems(name, configs, args)
         mismatch = [c["host"] for c in configs if c["atol_matches"] is False]
         if mismatch:
-            print(f"warning: {name}: the absolute tolerances differ from the file ({mismatch})", file=sys.stderr)
+            print(
+                f"warning: {name}: the absolute tolerances differ from the file ({mismatch})",
+                file=sys.stderr,
+            )
         results["models"].append({"name": name, "configs": configs})
     if args.json:
         args.json.parent.mkdir(parents=True, exist_ok=True)
@@ -299,7 +339,11 @@ def compare(args: argparse.Namespace) -> int:
     """
     reference = json.loads(args.compare[0].read_text())
     engines = [json.loads(p.read_text()) for p in args.compare[1:]]
-    rr = {(m["name"], c["host"], c["output"]): c for m in reference["models"] for c in m["configs"]}
+    rr = {
+        (m["name"], c["host"], c["output"]): c
+        for m in reference["models"]
+        for c in m["configs"]
+    }
 
     def baseline(name: str, solver: str, output: str) -> dict | None:
         if solver == "dense":
@@ -307,7 +351,12 @@ def compare(args: argparse.Namespace) -> int:
         found = rr.get((name, "roadrunner KLU", output))
         if found is None:
             found = next(
-                (c for (n, h, o), c in rr.items() if n == name and o == output and c["solver"] == "klu"), None
+                (
+                    c
+                    for (n, h, o), c in rr.items()
+                    if n == name and o == output and c["solver"] == "klu"
+                ),
+                None,
             )
         return found
 
@@ -332,7 +381,9 @@ def compare(args: argparse.Namespace) -> int:
                         (
                             c
                             for c in model["configs"]
-                            if c["solver"] == solver and c["jacobian"] == "analytic" and c["output"] == output
+                            if c["solver"] == solver
+                            and c["jacobian"] == "analytic"
+                            and c["output"] == output
                         ),
                         None,
                     )
@@ -340,16 +391,24 @@ def compare(args: argparse.Namespace) -> int:
                         cells += ["-", "-"]
                         continue
                     states = model["states"]
-                    ratio = config["median_s"] / ref["median_s"] if ref else float("nan")
+                    ratio = (
+                        config["median_s"] / ref["median_s"] if ref else float("nan")
+                    )
                     if not math.isfinite(ratio):
-                        errors.append(f"{name} {solver} {output} {e['host']}: no roadrunner reference")
+                        errors.append(
+                            f"{name} {solver} {output} {e['host']}: no roadrunner reference"
+                        )
                     elif ratio > 2:
                         worst.append((name, solver, output, e["host"], ratio))
                     cells += [fmt(config["median_s"]), f"{ratio:.2f}"]
                 if states is None:
                     continue
                 reference_ms = f"{fmt(ref['median_s'])} ({ref['host']})" if ref else "-"
-                print(f"| {name} | {states} | {solver} | {output} | {reference_ms} | " + " | ".join(cells) + " |")
+                print(
+                    f"| {name} | {states} | {solver} | {output} | {reference_ms} | "
+                    + " | ".join(cells)
+                    + " |"
+                )
     print()
     for name, solver, output, host, ratio in worst:
         print(f"above 2x: {name} {solver} {output} {host} {ratio:.2f}")
@@ -361,7 +420,9 @@ def compare(args: argparse.Namespace) -> int:
 def main() -> int:
     """Run the command line."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("models", type=Path, help="the benchmark file (bench/models.toml)")
+    parser.add_argument(
+        "models", type=Path, help="the benchmark file (bench/models.toml)"
+    )
     parser.add_argument("--json", type=Path, help="write the results as JSON")
     parser.add_argument("--only", help="only these models (comma separated)")
     parser.add_argument("--rounds", type=int, default=3)
@@ -375,7 +436,9 @@ def main() -> int:
         help="the site-packages of a roadrunner-sparsedq build (default $SBMLSIM_CORE_SPARSEDQ_BUILD); "
         "without one the KLU of the libroadrunner of this environment is the KLU baseline",
     )
-    parser.add_argument("--compare", type=Path, nargs="+", help="print the tables of results")
+    parser.add_argument(
+        "--compare", type=Path, nargs="+", help="print the tables of results"
+    )
     parser.add_argument(
         "--export",
         type=Path,
@@ -383,10 +446,16 @@ def main() -> int:
         help="the export of `sbmlsim-core bench --export`, whose initial states are checked",
     )
     parser.add_argument(
-        "--cli", type=Path, default=Path(__file__).resolve().parent.parent / "target/release/sbmlsim-core"
+        "--cli",
+        type=Path,
+        default=Path(__file__).resolve().parent.parent / "target/release/sbmlsim-core",
     )
-    parser.add_argument("--skip-initial-check", action="store_true", help=argparse.SUPPRESS)
-    parser.add_argument("--worker", nargs=2, metavar=("BUILD", "MODEL"), help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--skip-initial-check", action="store_true", help=argparse.SUPPRESS
+    )
+    parser.add_argument(
+        "--worker", nargs=2, metavar=("BUILD", "MODEL"), help=argparse.SUPPRESS
+    )
     args = parser.parse_args()
     if args.worker:
         build, name = args.worker

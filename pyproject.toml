@@ -1,0 +1,52 @@
+[build-system]
+requires = ["maturin>=1.16,<2"]
+build-backend = "maturin"
+
+[project]
+name = "sbmlsim-core"
+dynamic = ["version"]
+description = "Compile SBML models to WebAssembly and simulate them"
+readme = "README.md"
+license = "MIT AND BSD-3-Clause AND LGPL-2.1-or-later"
+# the extension embeds engine.wasm (SUNDIALS, KLU, BTF), whose notices THIRD_PARTY.md carries
+license-files = ["LICENSE", "THIRD_PARTY.md"]
+authors = [{ name = "Matthias König" }]
+requires-python = ">=3.14"
+# rust-numpy 0.30 recommends numpy >= 1.16.0; python 3.14 itself has wheels from numpy 2.3
+dependencies = ["numpy>=1.16.0"]
+
+[dependency-groups]
+dev = ["pytest>=9.2,<10", "ruff==0.17.4", "ty==0.0.104"]
+
+[tool.maturin]
+manifest-path = "crates/python/Cargo.toml"
+python-source = "python"
+module-name = "sbmlsim_core._core"
+
+[tool.ty.terminal]
+error-on-warning = true
+
+[tool.pytest.ini_options]
+testpaths = ["python/tests"]
+# a warning is a failure, so a deprecation of numpy or pyo3 shows up in the tests
+filterwarnings = ["error"]
+
+# the style of sbmlsim (.ruff.toml of its repository), over the python of this repository
+[tool.ruff]
+line-length = 88
+target-version = "py314"
+extend-exclude = ["spike", "third_party", "target"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "W", "I", "D", "UP", "B", "C4", "SIM", "RET", "PIE", "RUF"]
+# names such as `König` are german, not ambiguous unicode
+ignore = ["RUF001", "RUF002", "RUF003"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+# the tests are fixtures and scripts, a docstring on every one adds nothing
+"python/tests/**" = ["D"]
+# the type check file assigns what it reads to annotated names to hold their types
+"python/typecheck/**" = ["F841"]

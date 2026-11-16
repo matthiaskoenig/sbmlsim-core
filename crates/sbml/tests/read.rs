@@ -163,7 +163,7 @@ fn elements_keep_their_ids() {
 fn refuses_level_2() {
     assert_eq!(
         read(&data("level2.xml")).unwrap_err(),
-        ReadError::NotLevel3Version2 {
+        ReadError::NotLevel3 {
             level: 2,
             version: 4
         }

@@ -96,12 +96,17 @@ def source_file(source: str, work: Path) -> Path:
         toml = ROOT / "bench" / "models.toml"
         config = tomllib.loads(toml.read_text(encoding="utf-8"))
         source = config["models"][source.split(":", 1)[1]]["source"]
-        return resolve_source(source, toml.parent, config.get("checkouts", {}), work / "downloads")[0]
+        return resolve_source(
+            source, toml.parent, config.get("checkouts", {}), work / "downloads"
+        )[0]
     return resolve_source(source, ROOT, {}, work / "downloads")[0]
 
 
 # the linear solver of roadrunner and its Jacobian, as the engine's (dense, KLU)
-ROADRUNNER_SOLVERS = {"dense": "difference_quotient", "klu": "sparse_difference_quotient"}
+ROADRUNNER_SOLVERS = {
+    "dense": "difference_quotient",
+    "klu": "sparse_difference_quotient",
+}
 
 
 def reference(
@@ -128,9 +133,14 @@ def reference(
         r.integrator.setValue("jacobian", ROADRUNNER_SOLVERS[linear_solver])
         r.integrator.setValue("linear_solver", linear_solver)
     times = np.linspace(0.0, end, POINTS)
-    result = simulator.simulate(model, Simulation(end=end, preinit_changes=preinit, times=list(times)))
+    result = simulator.simulate(
+        model, Simulation(end=end, preinit_changes=preinit, times=list(times))
+    )
     if linear_solver is not None:
-        settings = (r.integrator.getValue("linear_solver"), r.integrator.getValue("jacobian"))
+        settings = (
+            r.integrator.getValue("linear_solver"),
+            r.integrator.getValue("jacobian"),
+        )
         assert settings == (linear_solver, ROADRUNNER_SOLVERS[linear_solver]), settings
     vector = r.integrator.getAbsoluteToleranceVector()
     atol = {r.model.getStateVectorId(i): float(vector[i]) for i in range(len(vector))}
@@ -151,7 +161,9 @@ def engine(
     """Simulate with sbmlsim-core: compile, then `simulate` with the request of the reference."""
     model_dir = work / "model"
     if not (model_dir / "model.json").exists():
-        subprocess.run([str(cli), "compile", str(sbml), "-o", str(model_dir)], check=True)
+        subprocess.run(
+            [str(cli), "compile", str(sbml), "-o", str(model_dir)], check=True
+        )
     desc = json.loads((model_dir / "model.json").read_text())
     vector = [atol[state["id"]] for state in desc["states"]]
     times = np.linspace(0.0, end, POINTS)
@@ -179,7 +191,10 @@ def engine(
     request_file = work / f"request_{linear_solver}_{rtol:g}.json"
     request_file.write_text(json.dumps(request))
     out = work / f"out_{linear_solver}_{rtol:g}.csv"
-    subprocess.run([str(cli), "simulate", str(model_dir), str(request_file), "-o", str(out)], check=True)
+    subprocess.run(
+        [str(cli), "simulate", str(model_dir), str(request_file), "-o", str(out)],
+        check=True,
+    )
     return pd.read_csv(out)
 
 
@@ -233,10 +248,14 @@ def compare(name: str, ref: pd.DataFrame, eng: pd.DataFrame) -> dict:
 def main() -> int:
     """Run the command line."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--cli", type=Path, default=ROOT / "target/release/sbmlsim-core")
+    parser.add_argument(
+        "--cli", type=Path, default=ROOT / "target/release/sbmlsim-core"
+    )
     parser.add_argument("--json", type=Path)
     parser.add_argument("--only", help="only these models (comma separated)")
-    parser.add_argument("--details", action="store_true", help="print the largest failing values")
+    parser.add_argument(
+        "--details", action="store_true", help="print the largest failing values"
+    )
     args = parser.parse_args()
     only = set(args.only.split(",")) if args.only else None
     results = []
@@ -248,7 +267,9 @@ def main() -> int:
             work.mkdir()
             try:
                 sbml = work / "model.xml"
-                sbml.write_text(prepare(source_file(source, Path(tmp))), encoding="utf-8")
+                sbml.write_text(
+                    prepare(source_file(source, Path(tmp))), encoding="utf-8"
+                )
             except PreparationError as error:
                 print(f"error: {name}: {error}", file=sys.stderr)
                 return 1
@@ -259,10 +280,15 @@ def main() -> int:
                 rr = compare("roadrunner", converged, loose)
                 eng = engine(args.cli, sbml, end, preinit, atol, work, solver)
                 c = compare(solver, converged, eng)
-                c["pass"] = c["pass"] or c["max_excess"] <= EXCESS_MARGIN * rr["max_excess"]
+                c["pass"] = (
+                    c["pass"] or c["max_excess"] <= EXCESS_MARGIN * rr["max_excess"]
+                )
                 # informative: the engine against roadrunner at the same tolerances
                 direct = compare("direct", loose, eng)
-                c["against_roadrunner_1e-10"] = {k: direct[k] for k in ("max_excess", "failing_values", "max_relative_resolved")}
+                c["against_roadrunner_1e-10"] = {
+                    k: direct[k]
+                    for k in ("max_excess", "failing_values", "max_relative_resolved")
+                }
                 rr.pop("worst_values")
                 result[solver] = {"roadrunner": rr, "engine": c, "pass": c["pass"]}
                 result["pass"] = result["pass"] and c["pass"]

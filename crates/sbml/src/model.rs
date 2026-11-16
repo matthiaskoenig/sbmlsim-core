@@ -1,11 +1,19 @@
-//! The data model of an SBML Level 3 Version 2 core document and its reader.
+//! The data model of an SBML Level 3 Version 1 or 2 core document and its reader.
 
 use crate::math::{self, Node};
 use crate::{Document, ReadError};
 use roxmltree::Node as X;
 
 /// The namespace of SBML Level 3 Version 2 core.
-pub const SBML_NS: &str = "http://www.sbml.org/sbml/level3/version2/core";
+pub const SBML_NS_L3V2: &str = "http://www.sbml.org/sbml/level3/version2/core";
+
+/// The namespace of SBML Level 3 Version 1 core.
+pub const SBML_NS_L3V1: &str = "http://www.sbml.org/sbml/level3/version1/core";
+
+/// Whether `ns` is the namespace of SBML Level 3 core, version 1 or 2.
+pub fn is_sbml_ns(ns: &str) -> bool {
+    ns == SBML_NS_L3V2 || ns == SBML_NS_L3V1
+}
 
 /// A unit definition as a unit expression, e.g. `0.001*mole*(60*second)**-1`.
 #[derive(Debug, Clone, PartialEq)]
@@ -282,7 +290,9 @@ fn err(message: String) -> ReadError {
 }
 
 fn is_core(n: &X, name: &str) -> bool {
-    n.is_element() && n.tag_name().name() == name && n.tag_name().namespace() == Some(SBML_NS)
+    n.is_element()
+        && n.tag_name().name() == name
+        && n.tag_name().namespace().is_some_and(is_sbml_ns)
 }
 
 fn child<'a, 'i>(n: X<'a, 'i>, name: &str) -> Option<X<'a, 'i>> {
@@ -627,8 +637,8 @@ pub(crate) fn read_document(sbml: &str) -> Result<Document, ReadError> {
             .map_err(|_| err(format!("<sbml> {name} is no integer")))
     };
     let (level, version) = (number("level")?, number("version")?);
-    if (level, version) != (3, 2) {
-        return Err(ReadError::NotLevel3Version2 { level, version });
+    if level != 3 || !matches!(version, 1 | 2) {
+        return Err(ReadError::NotLevel3 { level, version });
     }
     for a in root.attributes() {
         if a.name() == "required"
