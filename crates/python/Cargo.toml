@@ -21,6 +21,5 @@ pythonize = "0.30"
 rayon = "1.10"
 sbmlsim-abi = { path = "../abi" }
 sbmlsim-compiler = { path = "../compiler" }
-sbmlsim-engine = { path = "../engine" }
 sbmlsim-host = { path = "../host" }
 serde_path_to_error = "0.1.20"

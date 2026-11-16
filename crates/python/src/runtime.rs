@@ -8,7 +8,7 @@ use pyo3::prelude::*;
 use sbmlsim_abi::ModelDescription;
 
 use crate::errors::LoadError;
-use crate::simulate::{Instance, batch};
+use crate::simulate::{BatchExecutor, Instance, PreparedSimulation, batch, request_of};
 
 /// `engine.wasm` and `mathlib.wasm`, compiled once per runtime (a Cranelift compile of the
 /// engine in the constructor, so share one runtime), which load models.
@@ -21,15 +21,19 @@ pub(crate) struct Runtime {
 impl Runtime {
     /// The runtime of the embedded engine. `max_memory_bytes` bounds the memory an instance
     /// grows to (the default of the host without it); a result which does not fit is a
-    /// `RequestError`.
+    /// `RequestError`. `timeout_ms` bounds each host execution (30 seconds by default);
+    /// zero disables the deadline.
     #[new]
-    #[pyo3(signature = (max_memory_bytes=None))]
-    fn new(max_memory_bytes: Option<usize>) -> PyResult<Runtime> {
+    #[pyo3(signature = (max_memory_bytes=None, *, timeout_ms=30_000))]
+    fn new(max_memory_bytes: Option<usize>, timeout_ms: u64) -> PyResult<Runtime> {
         let mut runtime = sbmlsim_host::Runtime::embedded()
             .map_err(|error| LoadError::new_err(format!("{error:#}")))?;
         if let Some(bytes) = max_memory_bytes {
             runtime = runtime.with_max_memory(bytes);
         }
+        runtime = runtime.with_execution_timeout(
+            (timeout_ms != 0).then(|| std::time::Duration::from_millis(timeout_ms)),
+        );
         Ok(Runtime { runtime })
     }
 
@@ -92,6 +96,31 @@ impl LoadedModel {
             .detach(|| self.model.instantiate())
             .map_err(|error| LoadError::new_err(format!("{error:#}")))?;
         Ok(Instance::new(instance))
+    }
+
+    /// Validates a reusable request and ordered numeric input IDs.
+    #[pyo3(signature = (request, *, varying=None))]
+    fn prepare(
+        &self,
+        py: Python<'_>,
+        request: &Bound<'_, PyAny>,
+        varying: Option<Vec<String>>,
+    ) -> PyResult<PreparedSimulation> {
+        let request = request_of(request, "request")?;
+        let varying = varying.unwrap_or_default();
+        let prepared = py
+            .detach(|| self.model.prepare(&request, &varying))
+            .map_err(|error| PyValueError::new_err(format!("{error:#}")))?;
+        Ok(PreparedSimulation {
+            prepared,
+            model: self.model.clone(),
+        })
+    }
+
+    /// A persistent batch executor, with at most eight workers by default.
+    #[pyo3(signature = (*, threads=None))]
+    fn batch_executor(&self, threads: Option<i64>) -> PyResult<BatchExecutor> {
+        BatchExecutor::new(self.model.clone(), threads)
     }
 
     /// Simulates every request of `simulation/1` (dicts) on `threads` threads and gives one

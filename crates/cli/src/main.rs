@@ -67,6 +67,9 @@ enum Command {
         /// The CSV file to write (stdout without).
         #[arg(short, long)]
         output: Option<PathBuf>,
+        /// Execution deadline in milliseconds; 0 disables it for trusted long runs.
+        #[arg(long, default_value_t = 30_000)]
+        timeout_ms: u64,
     },
     /// Runs the prepared cases of the SBML Test Suite and compares them with the baseline.
     Testsuite(TestsuiteArgs),
@@ -92,7 +95,8 @@ fn main() -> ExitCode {
             model_dir,
             request,
             output,
-        } => simulate(&model_dir, &request, output.as_deref()).map(|()| true),
+            timeout_ms,
+        } => simulate(&model_dir, &request, output.as_deref(), timeout_ms).map(|()| true),
         Command::Testsuite(args) => testsuite::run(&args),
         Command::Bench(args) => bench::run(&args),
         Command::Runtime { output } => testsuite::write_runtime(&output).map(|()| true),
@@ -136,13 +140,22 @@ fn compile(model: &Path, output: &Path, optimize: bool) -> anyhow::Result<()> {
 }
 
 /// The command `simulate`.
-fn simulate(model_dir: &Path, request: &Path, output: Option<&Path>) -> anyhow::Result<()> {
+fn simulate(
+    model_dir: &Path,
+    request: &Path,
+    output: Option<&Path>,
+    timeout_ms: u64,
+) -> anyhow::Result<()> {
     let wasm_path = model_dir.join("model.wasm");
     let wasm =
         fs::read(&wasm_path).with_context(|| format!("cannot read {}", wasm_path.display()))?;
     let desc: ModelDescription = read_json(&model_dir.join("model.json"))?;
     let req: SimulationRequest = read_json(request)?;
-    let mut instance = Runtime::embedded()?.instantiate(&wasm, &desc)?;
+    let mut instance = Runtime::embedded()?
+        .with_execution_timeout(
+            (timeout_ms != 0).then(|| std::time::Duration::from_millis(timeout_ms)),
+        )
+        .instantiate(&wasm, &desc)?;
     let csv = to_csv(&instance.simulate(&req)?);
     match output {
         Some(path) => {

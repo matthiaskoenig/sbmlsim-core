@@ -1,6 +1,6 @@
 # Compiling a model
 
-The command line compiles an SBML Level 3 Version 2 file into a model directory: `model.wasm`, the compiled model, and `model.json`, its description (`model/2`, see [Simulating](simulating.md#the-description-model1)).
+The command line compiles an SBML Level 3 file (Version 1 or 2) into a model directory: `model.wasm`, the compiled model, and `model.json`, its description (`model/2`, see [Simulating](simulating.md#the-description-model2)).
 
 ```bash
 sbmlsim-core compile model.xml -o model-dir            # target/release/sbmlsim-core of a build
@@ -17,6 +17,8 @@ cargo run -p sbmlsim-cli -- compile crates/host/tests/decay.xml -o decay-model
 The reader (`crates/sbml`) takes SBML Level 3 Version 2 core. A package whose `required` attribute is `"true"` is refused (`the required package comp is not supported`); `comp` must be flattened before. A package with `required="false"` (layout, render, fbc annotations, ...) is ignored. Units pass through as text and nothing is computed with them: a unit definition becomes a unit expression which a unit registry such as pint parses (`mmol/min` as `0.001*mole*(60*second)**-1`), the field `units` of `model.json`.
 
 A feature the engine does not simulate as sbmlsim does is refused with its element (`algebraic rule is not supported (algebraicRule #0)`), and so is a model which is not valid SBML (an unknown identifier, a cycle of assignment rules). In the SBML Test Suite the refusals are the algebraic rules, the `delay` csymbol and the fast reactions (see [Test suite and benchmark](testsuite.md)). Missing math is handled as libroadrunner 2.11 handles it: a rule or an initial assignment without math is ignored, an event without a trigger is ignored, a delay or a priority without math is none; a kinetic law without math, a call of a function definition without math and an empty `<math>` are refused.
+
+Compilation also bounds function expansion, generated discontinuity roots and analytic derivatives before large intermediate expressions are constructed. Deep alias chains and expanding function substitutions return a compile error. Wide XOR conditions use sequential temporaries instead of duplicating the accumulated expression. If analytic differentiation exceeds its construction budget, `auto` uses the colored difference quotient and records the reason; an explicitly requested analytic Jacobian is refused. An explicitly requested difference quotient skips analytic derivative construction.
 
 ## What the compiler writes
 

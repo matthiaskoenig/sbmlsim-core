@@ -1,6 +1,13 @@
 # Installation
 
-sbmlsim-core is built from source. The crates are not published, and the JavaScript package (`js/`) is private: a page uses the files of `js/` and the `engine.wasm` and `mathlib.wasm` of a build.
+The releases of sbmlsim-core are two packages of the same name, built from the same tag with the same `engine.wasm` and `mathlib.wasm`:
+
+```bash
+pip install sbmlsim-core   # the compiler and the engine for python 3.14 or newer, see Python
+npm install sbmlsim-core   # the JavaScript host for browsers and Node, see JavaScript
+```
+
+The crates are not published. The rest of this page builds sbmlsim-core from a checkout: the command line, the runtime and the python package of the sources.
 
 ## Toolchain
 
@@ -26,6 +33,8 @@ Node 20 or newer runs the JavaScript host and its tests (CI uses Node 24). [uv](
 
 ## Building
 
+On windows the native C solvers (`sbmlsim-csolvers`, which the command line and the python package link) are compiled with the `clang` of [LLVM](https://releases.llvm.org/) on the path, unless `CC` names another compiler; `cl` of MSVC cannot compile them.
+
 `cargo build` builds `engine.wasm` (wasm32-wasip1, the C solvers compiled with the clang of wasi-sdk, `WASI_SDK_PATH`) and `mathlib.wasm` (wasm32-unknown-unknown) in the build script of `sbmlsim-host`, which embeds them; `SBMLSIM_CORE_WASM_DIR` names a directory with prebuilt ones instead.
 
 ```bash
@@ -40,17 +49,22 @@ cargo build --release -p sbmlsim-cli          # the command line target/release/
 
 `engine.wasm` uses fixed-width SIMD (WebAssembly SIMD, the C solvers are compiled with `-msimd128`). The results do not depend on it, they are the same bits as without, but a host without SIMD cannot instantiate `engine.wasm`. wasmtime, Node and the current browsers (Chrome 91, Firefox 89, Safari 16.4 and later) support it. The memory of an instance grows to at most 2 GiB.
 
+The default Rust host and CLI use a minimal Wasmtime build and do not link the native C solvers. The embedded WebAssembly engine still contains its solvers. Its WASI adapter captures stdout and stderr locally (up to 1 MiB each), exposes an empty environment, and rejects process exit, clocks, randomness, filesystem and socket operations.
+
+Build with `cargo build -p sbmlsim-cli --features native` to enable `bench --host native`. Native comparison tests run with `cargo test -p sbmlsim-host --features native`. `EngineError` is defined in `sbmlsim-abi` and reexported by the engine and host.
+
 ## Checks
 
 clippy runs with `-D warnings` and the default lints.
 
 ```bash
 cargo fmt --check
-cargo clippy --all-targets -- -D warnings
+cargo check -p sbmlsim-host -p sbmlsim-cli --no-default-features
+cargo clippy --all-targets --all-features -- -D warnings
 cargo clippy -p sbmlsim-csolvers --all-targets --target wasm32-wasip1 -- -D warnings
 cargo clippy -p sbmlsim-engine --all-targets --target wasm32-wasip1 -- -D warnings
 cargo clippy -p sbmlsim-engine --lib --features exports --target wasm32-wasip1 -- -D warnings
-cargo test
+cargo test --all-features
 cargo build -p sbmlsim-compiler --target wasm32-unknown-unknown
 node --test js/test
 ```

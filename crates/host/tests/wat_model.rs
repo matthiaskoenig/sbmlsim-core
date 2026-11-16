@@ -126,6 +126,7 @@ fn the_counters_are_the_ones_of_the_native_engine() {
     req.changes = vec![Change {
         time: 5.0,
         values: vec![("y".to_string(), 2.0)],
+        increments: Vec::new(),
     }];
     let mut sweep = vec![];
     for solver in [
@@ -243,6 +244,7 @@ fn errors_of_the_engine_come_back() {
     req.changes = vec![Change {
         time: 5.0,
         values: vec![("k".to_string(), 1.0)],
+        increments: Vec::new(),
     }];
     assert_close(
         &instance.simulate(&req).unwrap(),
@@ -403,7 +405,8 @@ fn math_imports_are_functions_of_mathlib() {
         "{message}"
     );
     let message = refusal(&decay_with("(import \"math\" \"memory\" (memory 0))"));
-    assert!(message.contains("math.memory"), "{message}");
+    // The runtime disables multi-memory, so a second memory is rejected before linking.
+    assert!(message.contains("multiple memories"), "{message}");
     // a function of mathlib with another signature
     let message = refusal(&decay_with(
         "(import \"math\" \"math_pow\" (func (param f64) (result f64)))",

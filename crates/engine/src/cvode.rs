@@ -171,12 +171,14 @@ pub(crate) struct Problem<'a> {
     pub analytic: bool,
     /// The sparse difference quotient: the Jacobian, or the fallback of the analytic one; `None`
     /// without a pattern.
-    pub difference: Option<Difference>,
+    pub difference: Option<&'a mut Difference>,
     /// The CVODE memory of the running integration, set by [`Cvode::integrate`] (the sparse
     /// difference quotient reads its error weights and step size).
     pub mem: *mut c_void,
     /// The calls of the model the callbacks of CVODE and the engine made.
     pub counts: Counts,
+    /// The first native callback failure, returned after control leaves C.
+    pub callback_error: Option<EngineError>,
 }
 
 /// The calls of the model during a simulation, counted where they are made (the counters of
@@ -297,19 +299,46 @@ unsafe fn problem<'a>(data: *mut c_void) -> &'a mut Problem<'a> {
     unsafe { &mut *(data as *mut Problem<'a>) }
 }
 
+/// Contains native implementation panics before they can cross the C ABI.
+#[cfg(not(target_arch = "wasm32"))]
+fn callback(problem: &mut Problem<'_>, call: impl FnOnce(&mut Problem<'_>) -> c_int) -> c_int {
+    if problem.callback_error.is_some() {
+        return -1;
+    }
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let code = call(problem);
+        problem.model.check_error().map(|()| code)
+    }))
+    .unwrap_or_else(|error| Err(EngineError::Internal(crate::panic_message(&*error))));
+    match outcome {
+        Ok(code) => code,
+        Err(error) => {
+            problem.callback_error = Some(error);
+            -1
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn callback(problem: &mut Problem<'_>, call: impl FnOnce(&mut Problem<'_>) -> c_int) -> c_int {
+    call(problem)
+}
+
 unsafe extern "C" fn rhs(t: sunrealtype, y: N_Vector, ydot: N_Vector, data: *mut c_void) -> c_int {
     // SAFETY: CVODE passes the vectors of the problem and the user data set before the call.
     unsafe {
         let problem = problem(data);
-        problem.counts.rhs += 1;
-        let (n, m) = (problem.n, problem.n_model);
-        let ydot = values(ydot, n);
-        problem
-            .model
-            .rhs(t, &values(y, n)[..m], &problem.p, &mut ydot[..m]);
-        ydot[m..].fill(0.0);
+        callback(problem, |problem| {
+            problem.counts.rhs += 1;
+            let (n, m) = (problem.n, problem.n_model);
+            let ydot = values(ydot, n);
+            problem
+                .model
+                .rhs(t, &values(y, n)[..m], &problem.p, &mut ydot[..m]);
+            ydot[m..].fill(0.0);
+            0
+        })
     }
-    0
 }
 
 unsafe extern "C" fn roots(
@@ -322,12 +351,14 @@ unsafe extern "C" fn roots(
     // the user data set before the call.
     unsafe {
         let problem = problem(data);
-        problem.counts.roots += 1;
-        let (n, m) = (problem.n, problem.n_model);
-        let g = std::slice::from_raw_parts_mut(g, problem.n_roots);
-        problem.model.roots(t, &values(y, n)[..m], &problem.p, g);
+        callback(problem, |problem| {
+            problem.counts.roots += 1;
+            let (n, m) = (problem.n, problem.n_model);
+            let g = std::slice::from_raw_parts_mut(g, problem.n_roots);
+            problem.model.roots(t, &values(y, n)[..m], &problem.p, g);
+            0
+        })
     }
-    0
 }
 
 /// The values of the Jacobian at `(t, y)` into `problem.jac_values`: the analytic one of the
@@ -424,24 +455,26 @@ unsafe extern "C" fn jac_dense(
     // vector of `n` values CVODE lends to the callback.
     unsafe {
         let problem = problem(data);
-        let Some(pattern) = problem.pattern else {
-            return -1;
-        };
-        let code = jacobian_values(problem, pattern, t, y, fy, tmp1);
-        if code != 0 {
-            return code;
-        }
-        let n = pattern.n as usize;
-        let matrix = std::slice::from_raw_parts_mut(SUNDenseMatrix_Data(jac), n * n);
-        matrix.fill(0.0);
-        for j in 0..n {
-            let (start, end) = (pattern.col_ptr[j] as usize, pattern.col_ptr[j + 1] as usize);
-            for k in start..end {
-                matrix[j * n + pattern.row_idx[k] as usize] = problem.jac_values[k];
+        callback(problem, |problem| {
+            let Some(pattern) = problem.pattern else {
+                return -1;
+            };
+            let code = jacobian_values(problem, pattern, t, y, fy, tmp1);
+            if code != 0 {
+                return code;
             }
-        }
+            let n = pattern.n as usize;
+            let matrix = std::slice::from_raw_parts_mut(SUNDenseMatrix_Data(jac), n * n);
+            matrix.fill(0.0);
+            for j in 0..n {
+                let (start, end) = (pattern.col_ptr[j] as usize, pattern.col_ptr[j + 1] as usize);
+                for k in start..end {
+                    matrix[j * n + pattern.row_idx[k] as usize] = problem.jac_values[k];
+                }
+            }
+            0
+        })
     }
-    0
 }
 
 unsafe extern "C" fn jac_sparse(
@@ -459,32 +492,34 @@ unsafe extern "C" fn jac_sparse(
     // pattern which lacks it), and the index arrays are written from the pattern every call.
     unsafe {
         let problem = problem(data);
-        let Some(pattern) = problem.pattern else {
-            return -1;
-        };
-        let n = pattern.n as usize;
-        let nnz = pattern.row_idx.len();
-        let capacity = SUNSparseMatrix_NNZ(jac);
-        if capacity < 0 || (capacity as usize) < nnz {
-            return -1;
-        }
-        let code = jacobian_values(problem, pattern, t, y, fy, tmp1);
-        if code != 0 {
-            return code;
-        }
-        let capacity = capacity as usize;
-        let data = std::slice::from_raw_parts_mut(SUNSparseMatrix_Data(jac), capacity);
-        let rows = std::slice::from_raw_parts_mut(SUNSparseMatrix_IndexValues(jac), capacity);
-        let cols = std::slice::from_raw_parts_mut(SUNSparseMatrix_IndexPointers(jac), n + 1);
-        for (c, p) in cols.iter_mut().zip(&pattern.col_ptr) {
-            *c = *p as sunindextype;
-        }
-        for (r, i) in rows.iter_mut().zip(&pattern.row_idx) {
-            *r = *i as sunindextype;
-        }
-        data[..nnz].copy_from_slice(&problem.jac_values);
+        callback(problem, |problem| {
+            let Some(pattern) = problem.pattern else {
+                return -1;
+            };
+            let n = pattern.n as usize;
+            let nnz = pattern.row_idx.len();
+            let capacity = SUNSparseMatrix_NNZ(jac);
+            if capacity < 0 || (capacity as usize) < nnz {
+                return -1;
+            }
+            let code = jacobian_values(problem, pattern, t, y, fy, tmp1);
+            if code != 0 {
+                return code;
+            }
+            let capacity = capacity as usize;
+            let data = std::slice::from_raw_parts_mut(SUNSparseMatrix_Data(jac), capacity);
+            let rows = std::slice::from_raw_parts_mut(SUNSparseMatrix_IndexValues(jac), capacity);
+            let cols = std::slice::from_raw_parts_mut(SUNSparseMatrix_IndexPointers(jac), n + 1);
+            for (c, p) in cols.iter_mut().zip(&pattern.col_ptr) {
+                *c = *p as sunindextype;
+            }
+            for (r, i) in rows.iter_mut().zip(&pattern.row_idx) {
+                *r = *i as sunindextype;
+            }
+            data[..nnz].copy_from_slice(&problem.jac_values);
+            0
+        })
     }
-    0
 }
 
 /// Checks a return code of a SUNDIALS function which creates or sets up the context.
@@ -894,6 +929,9 @@ impl Cvode {
             let data = problem as *mut Problem<'_> as *mut c_void;
             self.flag(CVodeSetUserData(self.mem, data), tout)?;
             let flag = CVode(self.mem, tout, self.y, &mut tret, itask);
+            if let Some(error) = problem.callback_error.take() {
+                return Err(error);
+            }
             self.flag(flag, tret)?;
             Ok((tret, flag))
         }
@@ -922,7 +960,7 @@ mod tests {
 
     /// Integrates Robertson with a configuration to `4e10`, returns the state at the outputs
     /// `0.4 * 10^i` and the number of steps.
-    fn robertson(linear: Linear, difference: Option<Difference>) -> (Vec<f64>, c_long) {
+    fn robertson(linear: Linear, mut difference: Option<Difference>) -> (Vec<f64>, c_long) {
         let analytic = matches!(
             linear,
             Linear::Dense {
@@ -957,9 +995,10 @@ mod tests {
             pattern: Some(desc.jacobian.pattern()),
             jac_values: vec![0.0; desc.jacobian.pattern().nnz()],
             analytic,
-            difference,
+            difference: difference.as_mut(),
             mem: ptr::null_mut(),
             counts: Counts::default(),
+            callback_error: None,
         };
         let mut out = Vec::new();
         for i in 0..11 {
@@ -1033,7 +1072,7 @@ mod tests {
 
     /// Integrates the chain to `t = 10` with a configuration; the state at `0.01 * 10^i` and the
     /// number of steps.
-    fn chain(linear: Linear, difference: Option<Difference>) -> (Vec<f64>, c_long) {
+    fn chain(linear: Linear, mut difference: Option<Difference>) -> (Vec<f64>, c_long) {
         let pattern = chain_pattern();
         let mut cvode = Cvode::new(Config {
             n: N,
@@ -1056,9 +1095,10 @@ mod tests {
             pattern: Some(&pattern),
             jac_values: vec![0.0; pattern.nnz()],
             analytic: false,
-            difference,
+            difference: difference.as_mut(),
             mem: ptr::null_mut(),
             counts: Counts::default(),
+            callback_error: None,
         };
         let mut out = Vec::new();
         for i in 0..4 {
@@ -1123,6 +1163,7 @@ mod tests {
             difference: None,
             mem: ptr::null_mut(),
             counts: Counts::default(),
+            callback_error: None,
         };
         let (mut out, mut steps, mut t) = (Vec::new(), Vec::new(), 0.0);
         for i in 0..11 {

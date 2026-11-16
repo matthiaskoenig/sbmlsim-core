@@ -7,6 +7,7 @@ mod runtime;
 mod simulate;
 
 use pyo3::prelude::*;
+use pyo3::types::{PyBytes, PyDict};
 use sbmlsim_abi::{MODEL_CONTRACT, SIMULATION_CONTRACT};
 
 use compile::{CompiledModel, compile_sbml};
@@ -27,6 +28,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("MODEL_CONTRACT", MODEL_CONTRACT)?;
     m.add("SIMULATION_CONTRACT", SIMULATION_CONTRACT)?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
+    m.add("THIRD_PARTY", sbmlsim_host::THIRD_PARTY_NOTICES)?;
     m.add("SbmlsimCoreError", m.py().get_type::<SbmlsimCoreError>())?;
     m.add("CompileError", m.py().get_type::<CompileError>())?;
     m.add("LoadError", m.py().get_type::<LoadError>())?;
@@ -38,9 +40,23 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<CompiledModel>()?;
     m.add_class::<Runtime>()?;
     m.add_class::<LoadedModel>()?;
+    m.add_class::<simulate::BatchExecutor>()?;
+    m.add_class::<simulate::PreparedSimulation>()?;
     m.add_class::<Instance>()?;
     m.add_class::<PointError>()?;
     m.add_class::<SimulationOutput>()?;
     m.add_function(wrap_pyfunction!(compile_sbml, m)?)?;
+    m.add_function(wrap_pyfunction!(runtime_wasm, m)?)?;
     Ok(())
+}
+
+/// The bytes of the runtime this extension embeds, `engine.wasm` and `mathlib.wasm` (the ones of
+/// `sbmlsim-core runtime` and of the npm package of the release), by the keys `engine` and
+/// `mathlib`: what a page which simulates the models compiled here runs them with.
+#[pyfunction]
+fn runtime_wasm(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
+    let files = PyDict::new(py);
+    files.set_item("engine", PyBytes::new(py, sbmlsim_host::ENGINE_WASM))?;
+    files.set_item("mathlib", PyBytes::new(py, sbmlsim_host::MATHLIB_WASM))?;
+    Ok(files)
 }

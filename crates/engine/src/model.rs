@@ -9,6 +9,12 @@ use sbmlsim_abi::ModelSizes;
 
 /// The functions of a compiled model, one per export of the contract `model/2`.
 pub trait ModelFns {
+    /// A failure recorded by a fallible model bridge. Implementations may retain the first
+    /// error; an engine with an internal failure is not used again.
+    fn check_error(&self) -> Result<(), crate::EngineError> {
+        Ok(())
+    }
+
     /// Writes the SBML values of the parameters and states.
     fn defaults(&self, p: &mut [f64], y: &mut [f64]);
     /// Evaluates the initial assignments and the initial values of the assignment rules in their

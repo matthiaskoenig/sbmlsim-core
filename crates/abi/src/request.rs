@@ -74,13 +74,21 @@ pub enum Output {
 /// at its time (two rows: in the steps of the integrator always, in an output of times when
 /// its time is one of them). The events a change triggers execute with it; an event at its
 /// time executes after it.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+///
+/// An increment adds its value to the value of its id in the state before the change (`S` the
+/// amount, `[S]` the concentration, as a value reads them), simultaneously with the values: a
+/// repeated dose (`PODOSE + d`), as sbmlsim's formula `"PODOSE + d"` of a change, which reads
+/// the state before the change. An id is either set or incremented by one change.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Change {
     /// The absolute time of the change.
     pub time: f64,
     /// The `(id, value)` pairs, set simultaneously.
     pub values: Vec<(String, f64)>,
+    /// The `(id, increment)` pairs, added to the values before the change; none by default.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub increments: Vec<(String, f64)>,
 }
 
 /// A steady state which is reached before the start, as sbmlsim's `SteadyState`.

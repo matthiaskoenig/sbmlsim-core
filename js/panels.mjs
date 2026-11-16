@@ -58,7 +58,7 @@ import { EngineError } from "./loader.mjs";
 import { createPool, defaultWorkers } from "./pool.mjs";
 
 /** The version of sbmlsim-core (`js/package.json`), which the provenance of a run names. */
-export const CORE_VERSION = "0.2.0";
+export const CORE_VERSION = "0.6.0";
 
 /** The engine a provenance names. */
 export const ENGINE = `sbmlsim-core ${CORE_VERSION}`;
@@ -369,7 +369,9 @@ function product(axes) {
 
 /** The runs of the points of a model, shared by the requests of one state (see the module comment). */
 class Runs {
-  constructor(maxBytes) {
+  constructor(maxBytes, maxEntries, maxInflight) {
+    this.maxEntries = maxEntries;
+    this.maxInflight = maxInflight;
     this.maxBytes = maxBytes;
     this.bytes = 0;
     this.inflight = new Map();
@@ -391,6 +393,7 @@ class Runs {
     }
     let entry = this.inflight.get(key);
     if (!entry) {
+      if (this.inflight.size >= this.maxInflight) return Promise.reject(new Error("panel run limit reached"));
       const controller = new AbortController();
       entry = { controller, waiters: 0 };
       entry.promise = start(controller.signal).then(
@@ -439,16 +442,76 @@ class Runs {
 
   /** Keeps the results of a run, evicting the least recently used ones beyond the bound. */
   store(key, results) {
-    const bytes = results.reduce((sum, result) => sum + (result ? result.values.byteLength : 0), 0);
+    if (results.some((result) => result === null)) return;
+    const bytes = 256 + key.length * 2 + results.reduce((sum, result) => sum + 128 + result.values.byteLength + JSON.stringify(result.columns).length * 2, 0);
     if (bytes > this.maxBytes) return;
+    const previous = this.done.get(key);
+    if (previous) {
+      this.bytes -= previous.bytes;
+      this.done.delete(key);
+    }
     this.done.set(key, { results, bytes });
     this.bytes += bytes;
     for (const [old, entry] of this.done) {
-      if (this.bytes <= this.maxBytes) break;
+      if (this.bytes <= this.maxBytes && this.done.size <= this.maxEntries) break;
       this.done.delete(old);
       this.bytes -= entry.bytes;
     }
   }
+}
+
+/** The most doses of a dosing protocol after its first one, `MAX_DOSES` of sbmlsim. */
+export const MAX_DOSES = 1000;
+
+/**
+ * The times of the doses of a dosing protocol after its first one, as `dose_times` of
+ * `sbmlsim.panel`: `k * interval` for `k = 1, 2, ...` while before the duration (the end without)
+ * and the end, at most `MAX_DOSES`; none for an interval which is not positive.
+ */
+export function doseTimes(interval, duration, end) {
+  if (!(interval > 0)) return [];
+  const until = duration === null || duration === undefined ? end : Math.min(duration, end);
+  const times = [];
+  for (let k = 1; k <= MAX_DOSES; k += 1) {
+    const time = k * interval;
+    if (!(time < until)) break;
+    times.push(time);
+  }
+  return times;
+}
+
+/**
+ * The changes of the doses of the dosing protocols of a run at a state of its knobs: per dose
+ * the increment of its target by the dose of its knob in the unit of the target, in the order of
+ * the times (the changes of one time are one change of the engine).
+ */
+function doseChanges(run, state) {
+  const changes = [];
+  for (const dosing of run.dosing ?? []) {
+    const dose = state[dosing.dose] * run.knobs[dosing.dose].factor;
+    const interval = state[dosing.interval] * dosing.interval_factor;
+    const duration = dosing.duration === null || dosing.duration === undefined ? null : state[dosing.duration] * dosing.duration_factor;
+    for (const time of doseTimes(interval, duration, run.end)) {
+      changes.push({ time, values: [], increments: [[dosing.target, dose]] });
+    }
+  }
+  return changes.sort((a, b) => a.time - b.time);
+}
+
+/**
+ * The rows of a result which are its output times: of two rows of one time (a change at an
+ * output time, the state before it and after it) the one after it.
+ */
+function outputRows(result) {
+  if (result.columns[0] !== "time") throw new Error(`a result has the first column ${result.columns[0]}, not time`);
+  const width = result.columns.length;
+  const time = (r) => result.values[r * width];
+  const rows = [];
+  for (let r = 0; r < result.nRows; r += 1) {
+    if (r + 1 < result.nRows && time(r + 1) === time(r)) continue;
+    rows.push(r);
+  }
+  return rows;
 }
 
 /**
@@ -463,7 +526,9 @@ class Runs {
  * - `pool`: a pool of `createPool` to run on instead of one of its own (e.g. shared by the
  *   endpoints of several bundles), which `close()` leaves open.
  * - `fetch`: loads the files of the bundle and the runtime (`globalThis.fetch` without).
- * - `maxRunBytes`: the bound of the cache of the runs (`MAX_RUN_BYTES` without).
+ * - `maxRunBytes`: numeric buffers plus estimated metadata (`MAX_RUN_BYTES` without).
+ * - `maxRunEntries`: maximum cached successful runs (128); failed runs are not stored.
+ * - `maxInflightRuns`: maximum distinct runs in flight (32).
  *
  * The function has `close()`, which terminates the workers of its own pool.
  */
@@ -479,10 +544,15 @@ export function createPanelEndpoint(options) {
     pool: givenPool = null,
     fetch: load = (url) => globalThis.fetch(url),
     maxRunBytes = MAX_RUN_BYTES,
+    maxRunEntries = 128,
+    maxInflightRuns = 32,
   } = options;
   if (bundle === undefined || bundle === null) throw new Error("createPanelEndpoint needs the URL of a bundle");
   const bundleUrl = new URL(String(bundle), globalThis.location?.href);
-  const runs = new Runs(maxRunBytes);
+  for (const [name, value] of Object.entries({ maxRunBytes, maxRunEntries, maxInflightRuns })) {
+    if (!Number.isSafeInteger(value) || value < 1) throw new Error(`${name} must be a positive safe integer`);
+  }
+  const runs = new Runs(maxRunBytes, maxRunEntries, maxInflightRuns);
   const models = new Map();
   let loading = null;
   let ownPool = null;
@@ -629,20 +699,23 @@ export function createPanelEndpoint(options) {
         if (spec.target !== null && spec.target !== undefined) preinit.set(spec.target, state[knob.id] * spec.factor);
         if (spec.parameter !== null && spec.parameter !== undefined) preinit.set(spec.parameter, state[knob.id]);
       }
-      return [...preinit].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+      return {
+        preinit: [...preinit].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+        changes: doseChanges(run, state),
+      };
     });
 
     const runKey = JSON.stringify([run.model, run.start, run.end, run.points, points]);
     const results = await runs.get(
       runKey,
       async (runSignal) => {
-        const requests = points.map((preinit) => ({
+        const requests = points.map(({ preinit, changes }) => ({
           contract: "simulation/1",
           start: run.start,
           end: run.end,
           output: { uniform: { steps: run.points } },
           preinit,
-          changes: [],
+          changes,
           steady_state: null,
           selections: info.selections,
           settings: info.settings,
@@ -665,8 +738,11 @@ export function createPanelEndpoint(options) {
     for (const curve of declaration.curves ?? []) curves[curve.id] = [];
     results.forEach((result, index) => {
       if (result === null) failed.push(index);
-      if (result !== null && result.nRows !== run.x.length) {
-        throw new Error(`the run of the panel ${panel} has ${result.nRows} rows, its x ${run.x.length}`);
+      // a dose at an output time is two rows of that time, the state before it and after it;
+      // the curve is the state after it, as the service interpolates onto its times
+      const rows = result === null ? [] : outputRows(result);
+      if (result !== null && rows.length !== run.x.length) {
+        throw new Error(`the run of the panel ${panel} has ${rows.length} rows, its x ${run.x.length}`);
       }
       for (const curve of declaration.curves ?? []) {
         const spec = run.curves?.[curve.id];
@@ -678,11 +754,11 @@ export function createPanelEndpoint(options) {
         const width = result.columns.length;
         const column = result.columns.indexOf(spec.selection);
         if (column < 0) throw new Error(`the model ${run.model} does not select ${spec.selection}`);
-        const row = new Array(result.nRows);
-        for (let r = 0; r < result.nRows; r += 1) {
+        const row = new Array(rows.length);
+        rows.forEach((r, i) => {
           const value = result.values[r * width + column] * spec.factor;
-          row[r] = Number.isFinite(value) ? value : null;
-        }
+          row[i] = Number.isFinite(value) ? value : null;
+        });
         curves[curve.id].push(row);
       }
     });

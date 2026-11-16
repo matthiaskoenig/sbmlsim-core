@@ -55,6 +55,12 @@ test("same_bits_as_wasmtime", async (t) => {
     const instance = await runtime.instantiate(read("model.wasm"), read("model.json").toString());
     const result = instance.simulate(read("request.json").toString());
     if (toCsv(result) !== read("wasmtime.csv").toString()) differ.push(`${id}: the result`);
+    const plan = instance.prepare(read("request.json").toString());
+    const prepared = instance.simulatePrepared(plan);
+    if (toCsv(prepared) !== toCsv(result) || !Buffer.from(prepared.values.buffer).equals(Buffer.from(result.values.buffer))) {
+      differ.push(`${id}: the prepared simulation`);
+    }
+    plan.close();
     // the raw values: NaNs of other payloads are reported, not failed
     const raw = read("wasmtime.f64");
     const theirs = new BigUint64Array(raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength));
@@ -75,6 +81,11 @@ test("same_bits_as_wasmtime", async (t) => {
       if (toCsv(fresh.simulate(read("steady.json").toString())) !== read("steady.csv").toString()) {
         differ.push(`${id}: the steady state`);
       }
+      const steadyPlan = fresh.prepare(read("steady.json").toString());
+      if (toCsv(fresh.simulatePrepared(steadyPlan)) !== read("steady.csv").toString()) {
+        differ.push(`${id}: the prepared steady state`);
+      }
+      steadyPlan.close();
       wasiCalls += fresh.wasiCalls();
     }
     wasiCalls += instance.wasiCalls();

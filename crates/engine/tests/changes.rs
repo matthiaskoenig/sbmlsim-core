@@ -34,6 +34,7 @@ fn change(time: f64, values: &[(&str, f64)]) -> Change {
     Change {
         time,
         values: values.iter().map(|(id, v)| (id.to_string(), *v)).collect(),
+        increments: Vec::new(),
     }
 }
 
@@ -175,6 +176,64 @@ fn changes_are_simultaneous() {
     let c = compartmental(&req);
     assert_eq!(a, c);
     assert_eq!(c.n_rows, 4);
+}
+
+fn incremented(time: f64, increments: &[(&str, f64)]) -> Change {
+    Change {
+        time,
+        values: Vec::new(),
+        increments: increments
+            .iter()
+            .map(|(id, v)| (id.to_string(), *v))
+            .collect(),
+    }
+}
+
+#[test]
+fn an_increment_adds_to_the_value_before_the_change() {
+    // a repeated dose: the state before the change plus the increment, the row before the
+    // change and the row after it at its time
+    let mut req = request(0.0, 10.0, Output::Uniform { steps: 2 });
+    req.changes = vec![incremented(5.0, &[("y", 1.0)])];
+    let result = decay(&req);
+    let y = column(&result, "y");
+    assert_eq!(result.n_rows, 4);
+    assert_eq!(y[2], y[1] + 1.0);
+    // a set and an incremented value of one change are simultaneous: the compartment is set,
+    // the amount incremented from the one before the change and not rescaled
+    let mut req = request(0.0, 10.0, Output::Uniform { steps: 2 });
+    req.changes = vec![Change {
+        time: 5.0,
+        values: vec![("C".to_string(), 2.0)],
+        increments: vec![("S".to_string(), 0.5), ("[R]".to_string(), 0.25)],
+    }];
+    let result = compartmental(&req);
+    assert_eq!(column(&result, "S")[2], 1.5);
+    assert_eq!(column(&result, "C")[2], 2.0);
+    // [R] is the concentration before the change plus the increment, in the new compartment
+    assert_eq!(column(&result, "[R]")[2], 1.25);
+    // the increments of two changes of one time are one change
+    let mut req = request(0.0, 10.0, Output::Uniform { steps: 2 });
+    req.changes = vec![incremented(5.0, &[("S", 0.5)]), change(5.0, &[("H", 2.0)])];
+    let result = compartmental(&req);
+    assert_eq!(column(&result, "S")[2], 1.5);
+    assert_eq!(column(&result, "H")[2], 2.0);
+}
+
+#[test]
+fn an_id_is_set_or_incremented_once_by_a_change() {
+    let mut req = request(0.0, 10.0, Output::Uniform { steps: 2 });
+    req.changes = vec![Change {
+        time: 5.0,
+        values: vec![("S".to_string(), 2.0)],
+        increments: vec![("S".to_string(), 0.5)],
+    }];
+    let model = Compartmental { k: 0.0 };
+    let error = simulate(&model, &model.description(), &req).unwrap_err();
+    assert!(error.to_string().contains("set more than once"), "{error}");
+    req.changes = vec![incremented(5.0, &[("S", f64::NAN)])];
+    let error = simulate(&model, &model.description(), &req).unwrap_err();
+    assert!(error.to_string().contains("not finite"), "{error}");
 }
 
 #[test]

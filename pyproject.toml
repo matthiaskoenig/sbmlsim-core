@@ -6,7 +6,7 @@ build-backend = "maturin"
 name = "sbmlsim-core"
 dynamic = ["version"]
 description = "Compile SBML models to WebAssembly and simulate them"
-readme = "README.md"
+readme = "python/README.md"
 license = "MIT AND BSD-3-Clause AND LGPL-2.1-or-later"
 # the extension embeds engine.wasm (SUNDIALS, KLU, BTF), whose notices THIRD_PARTY.md carries
 license-files = ["LICENSE", "THIRD_PARTY.md"]
@@ -14,6 +14,26 @@ authors = [{ name = "Matthias König" }]
 requires-python = ">=3.14"
 # rust-numpy 0.30 recommends numpy >= 1.16.0; python 3.14 itself has wheels from numpy 2.3
 dependencies = ["numpy>=1.16.0"]
+keywords = ["SBML", "WebAssembly", "simulation", "systems biology", "CVODE"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Science/Research",
+  "Operating System :: MacOS",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: 3.15",
+  "Programming Language :: Rust",
+  "Topic :: Scientific/Engineering :: Bio-Informatics",
+  "Typing :: Typed",
+]
+
+[project.urls]
+Documentation = "https://matthiaskoenig.github.io/sbmlsim-core/"
+Repository = "https://github.com/matthiaskoenig/sbmlsim-core"
+"Release notes" = "https://github.com/matthiaskoenig/sbmlsim-core/tree/develop/release-notes"
 
 [dependency-groups]
 dev = ["pytest>=9.2,<10", "ruff==0.17.4", "ty==0.0.104"]

@@ -86,6 +86,9 @@
 //!
 //! Revisions of `simulation/1` before its first release: the `seed` of a request is 1 when it
 //! is absent ([`DEFAULT_SEED`]), set before the contracts were frozen (no version change).
+//! Additions of `simulation/1` since its release, which a request of a release before reads
+//! as it did: the `increments` of a [`Change`] (0.6.0), absent and empty by default, which an
+//! engine before 0.6.0 refuses as an unknown field.
 //!
 //! `engine.wasm` carries the custom section [`ENGINE_SECTION`] with the JSON
 //! `{"memory_minimum_pages":n,"output_format":k}`: the minimum of the memory it imports and
@@ -143,6 +146,9 @@ pub const ASSIGN: &str = "model_assign";
 pub const SIZES: &str = "model_sizes";
 /// Export name of `model_event_sizes`.
 pub const EVENT_SIZES: &str = "model_event_sizes";
+
+/// Maximum live prepared plans retained by one engine instance.
+pub const MAX_PREPARED_REQUESTS: usize = 32;
 
 /// A contract version which is not the expected one.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -577,6 +583,7 @@ mod tests {
             changes: vec![Change {
                 time: 3.0,
                 values: vec![("dose".to_string(), 100.0), ("V".to_string(), 1.5)],
+                increments: Vec::new(),
             }],
             steady_state: Some(SteadyState {
                 preinit: vec![("x".to_string(), 1.0)],
@@ -729,4 +736,30 @@ mod tests {
             serde_json::from_str(&serde_json::to_string(&d).unwrap()).unwrap();
         assert_eq!(d, back);
     }
+}
+
+/// The error of a simulation.
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+pub enum EngineError {
+    /// The request or the description is invalid.
+    #[error("invalid request: {0}")]
+    Request(String),
+    /// CVODE failed: its return flag, the time it reached and the message of its last error.
+    #[error("integration failed at t = {time} (flag {flag}): {message}")]
+    Integration {
+        /// The return flag of CVODE.
+        flag: i32,
+        /// The time CVODE reached.
+        time: f64,
+        /// The message of the last error SUNDIALS reported.
+        message: String,
+    },
+    /// The engine does not simulate this yet.
+    #[error("unsupported: {0}")]
+    Unsupported(String),
+    /// The engine failed in itself: a panic of `engine.wasm`, a trap of its instance (also one
+    /// of the model it calls) or a failure of the host around it. The host does not use such an
+    /// instance again. Native callback failures are contained and reported here too.
+    #[error("internal error of the engine: {0}")]
+    Internal(String),
 }

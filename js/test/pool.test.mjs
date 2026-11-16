@@ -134,3 +134,238 @@ test("a pool takes at least one worker", async () => {
   await assert.rejects(createPool({ ...runtime.modules, workers: 0, createWorker: nodeWorker }), /at least one worker/);
   assert.ok(defaultWorkers() >= 1 && defaultWorkers() <= 8);
 });
+
+test("structured clone failures release the slot and queued jobs recover", async () => {
+  const p = await pool({ workers: 1 });
+  await p.addModel("toy", model.module, model.json);
+  const bad = p.simulate("toy", { ...toyRequest(1), bad: () => {} });
+  const good = p.simulate("toy", toyRequest(1));
+  await assert.rejects(bad, /cloned/);
+  assert.equal((await good).nRows, 31);
+});
+
+test("normal Node worker exits reject once and replacement runs", async () => {
+  const { Worker } = await import("node:worker_threads");
+  let count = 0;
+  const p = await pool({ workers: 1, createWorker: (url) => count++ === 0
+    ? new Worker("process.exit(0)", { eval: true }) : nodeWorker(url) });
+  await p.addModel("toy", model.module, model.json);
+  const bad = p.simulate("toy", toyRequest(1));
+  const good = p.simulate("toy", toyRequest(1));
+  await assert.rejects(bad, /exited \(0\)/);
+  assert.equal((await good).nRows, 31);
+});
+
+test("deadline terminates a busy worker and replacement runs", async () => {
+  const { Worker } = await import("node:worker_threads");
+  let count = 0;
+  const p = await pool({ workers: 1, createWorker: (url) => count++ === 0
+    ? new Worker("while (true) {}", { eval: true }) : nodeWorker(url) });
+  await p.addModel("toy", model.module, model.json);
+  const bad = p.simulate("toy", toyRequest(1), { deadlineMs: 50 });
+  const good = p.simulate("toy", toyRequest(1));
+  await assert.rejects(bad, { name: "TimeoutError" });
+  assert.equal((await good).nRows, 31);
+});
+
+test("soft and hard abort reject falsy reasons and later work runs", async () => {
+  for (const hardAbort of [false, true]) for (const reason of [null, false, 0, ""]) {
+    const p = await pool({ workers: 1 });
+    await p.addModel("toy", model.module, model.json);
+    const ac = new AbortController();
+    const bad = p.simulate("toy", toyRequest(1), { signal: ac.signal, hardAbort });
+    ac.abort(reason);
+    const outcome = await bad.then(() => ({ ok: true }), (error) => ({ error }));
+    assert.deepEqual(outcome, { error: reason });
+    assert.equal((await p.simulate("toy", toyRequest(1))).nRows, 31);
+  }
+});
+
+test("worker creation and synchronous sends reject without wedging", async () => {
+  for (const failingType of ["create", "init", "model", "simulate"]) {
+    let count = 0;
+    const p = await pool({ workers: 1, createWorker: (url) => {
+      if (count++ !== 0) return nodeWorker(url);
+      if (failingType === "create") throw new Error("injected send failure");
+      const worker = nodeWorker(url);
+      const send = worker.postMessage.bind(worker);
+      worker.postMessage = (message, ...args) => {
+        if (message.type === failingType) throw new Error("injected send failure");
+        return send(message, ...args);
+      };
+      return worker;
+    } });
+    await p.addModel("toy", model.module, model.json);
+    await assert.rejects(p.simulate("toy", toyRequest(1)), /injected send failure/);
+    assert.equal((await p.simulate("toy", toyRequest(1))).nRows, 31);
+  }
+});
+
+test("model caps, eviction, removal and queue backpressure", async () => {
+  const p = await pool({ workers: 1, maxModels: 2, maxWorkerModels: 1 });
+  await p.addModel("a", model.module, model.json);
+  await p.addModel("b", model.module, model.json);
+  await assert.rejects(p.addModel("c", model.module, model.json), /model limit/);
+  for (const key of ["a", "b", "a"]) assert.equal((await p.simulate(key, toyRequest(1))).nRows, 31);
+  assert.equal(p.removeModel("a"), true);
+  assert.equal(p.removeModel("a"), false);
+  await assert.rejects(p.simulate("a", toyRequest(1)), /no model/);
+  await p.addModel("a", model.module, model.json);
+  assert.equal((await p.simulate("a", toyRequest(1))).nRows, 31);
+  const busy = await pool({ workers: 1, maxQueuedJobs: 1, createWorker: () => ({ on() {}, postMessage() {}, terminate() {} }) });
+  await busy.addModel("toy", model.module, model.json);
+  const first = busy.simulate("toy", toyRequest(1));
+  const second = busy.simulate("toy", toyRequest(1));
+  assert.throws(() => busy.removeModel("toy"), /in use/);
+  await assert.rejects(busy.simulate("toy", toyRequest(1)), /queue limit/);
+  const settled = Promise.allSettled([first, second]);
+  busy.close();
+  assert.ok((await settled).every((outcome) => outcome.status === "rejected"));
+  await assert.rejects(pool({ workers: 33 }), /maxWorkers/);
+});
+
+test("an infinite WASM RHS is interrupted by the dispatch deadline", async () => {
+  const { readFileSync } = await import("node:fs");
+  const bytes = new Uint8Array(readFileSync(new URL("../../crates/host/tests/decay-model/model.wasm", import.meta.url)));
+  const json = readFileSync(new URL("../../crates/host/tests/decay-model/model.json", import.meta.url), "utf8");
+  let pos = 8;
+  const leb = () => {
+    let n = 0, shift = 0, byte;
+    do { byte = bytes[pos++]; n += (byte & 127) * 2 ** shift; shift += 7; } while (byte & 128);
+    return n;
+  };
+  const encode = (n) => {
+    const out = [];
+    do { const byte = n & 127; n >>>= 7; out.push(byte | (n ? 128 : 0)); } while (n);
+    return out;
+  };
+  const imported = WebAssembly.Module.imports(new WebAssembly.Module(bytes)).filter((item) => item.kind === "function").length;
+  let rhs;
+  const output = [...bytes.subarray(0, 8)];
+  while (pos < bytes.length) {
+    const start = pos;
+    const id = bytes[pos++];
+    const length = leb();
+    const end = pos + length;
+    if (id === 7) {
+      const count = leb();
+      for (let i = 0; i < count; i++) {
+        const size = leb();
+        const name = new TextDecoder().decode(bytes.subarray(pos, pos + size));
+        pos += size + 1; // name and export kind
+        const index = leb();
+        if (name === "model_rhs") rhs = index - imported;
+      }
+    }
+    if (id === 10) {
+      const count = leb();
+      assert.ok(Number.isInteger(rhs));
+      const body = [...encode(count)];
+      for (let i = 0; i < count; i++) {
+        const size = leb();
+        // An empty-stack infinite loop is valid at every function signature.
+        const code = i === rhs ? [0, 3, 0x40, 0x0c, 0, 0x0b, 0x0b] : bytes.subarray(pos, pos + size);
+        body.push(...encode(code.length), ...code);
+        pos += size;
+      }
+      output.push(id, ...encode(body.length), ...body);
+    } else output.push(...bytes.subarray(start, end));
+    pos = end;
+  }
+  const looping = Uint8Array.from(output);
+  assert.ok(WebAssembly.validate(looping));
+  const p = await pool({ workers: 1 });
+  await p.addModel("loop", looping, json);
+  await p.addModel("toy", model.module, model.json);
+  const bad = p.simulate("loop", request(), { deadlineMs: 250 });
+  const good = p.simulate("toy", toyRequest(1));
+  await assert.rejects(bad, { name: "TimeoutError" });
+  assert.equal((await good).nRows, 31);
+});
+
+test("the pool forwards its per-instance memory limit to workers", async () => {
+  let forwarded;
+  const p = await pool({ workers: 1, maxMemoryPages: 512, createWorker: (url) => {
+    const worker = nodeWorker(url);
+    const send = worker.postMessage.bind(worker);
+    worker.postMessage = (message, ...args) => {
+      if (message.type === "init") forwarded = message.maxMemoryPages;
+      return send(message, ...args);
+    };
+    return worker;
+  } });
+  await p.addModel("toy", model.module, model.json);
+  assert.equal((await p.simulate("toy", toyRequest(1))).nRows, 31);
+  assert.equal(forwarded, 512);
+  await assert.rejects(pool({ maxMemoryPages: 0 }), /maxMemoryPages/);
+});
+
+test("the aggregate linear-memory budget derives and validates per-instance limits", async () => {
+  const defaults = await pool({ workers: 8 });
+  assert.equal(defaults.maxTotalMemoryBytes, 2 ** 31);
+  assert.equal(defaults.maxMemoryPages, 512); // 32 MiB each, 8 workers * 8 models
+  const oneModel = await pool({ workers: 8, maxModels: 1 });
+  assert.equal(oneModel.maxMemoryPages, 4096);
+  await assert.rejects(pool({ workers: 8, maxMemoryPages: 1024 }), /exceeds maxTotalMemoryBytes/);
+  await assert.rejects(pool({ workers: 8, maxTotalMemoryBytes: 65536 }), /engine minimum/);
+  const larger = await pool({ workers: 8, maxMemoryPages: 1024, maxTotalMemoryBytes: 2 ** 32 });
+  assert.equal(larger.maxMemoryPages, 1024);
+  const derivedLarger = await pool({ workers: 8, maxTotalMemoryBytes: 2 ** 32 });
+  assert.equal(derivedLarger.maxMemoryPages, 1024);
+});
+
+test("module, description and request byte limits reject before retaining jobs", async () => {
+  const capped = await pool({ workers: 1, maxModuleBytes: model.wasm.byteLength - 1 });
+  await assert.rejects(capped.addModel("toy", model.wasm, model.json), /maxModuleBytes/);
+  assert.equal(capped.hasModel("toy"), false);
+  const short = await pool({ workers: 1, maxDescriptionBytes: 4 });
+  await assert.rejects(short.addModel("toy", model.module, "€€"), /description.*byte limit/);
+  const req = toyRequest(1);
+  const text = JSON.stringify(req);
+  const bounded = await pool({ workers: 1, maxRequestBytes: Buffer.byteLength(text) });
+  await bounded.addModel("toy", model.module, model.json);
+  await assert.rejects(bounded.simulate("toy", `${text}€`), /request.*byte limit/);
+  await assert.rejects(bounded.simulate("toy", { ...req, extra: "€" }), /request.*byte limit/);
+  assert.equal((await bounded.simulate("toy", req)).nRows, 31);
+  assert.equal((await bounded.simulate("toy", text)).nRows, 31);
+  await assert.rejects(createPool({ ...runtimeBytes(), maxModuleBytes: 1 }), /maxModuleBytes/);
+});
+
+test("aggregate queued bytes recover after dequeue and abort", async () => {
+  const req = toyRequest(1);
+  const bytes = Buffer.byteLength(JSON.stringify(req));
+  const p = await pool({ workers: 1, maxQueuedBytes: bytes });
+  await p.addModel("toy", model.module, model.json);
+  const first = p.simulate("toy", req);
+  const ac = new AbortController();
+  const aborted = p.simulate("toy", req, { signal: ac.signal });
+  await assert.rejects(p.simulate("toy", req), /maxQueuedBytes/);
+  ac.abort();
+  await assert.rejects(aborted, { name: "AbortError" });
+  const queued = p.simulate("toy", req);
+  assert.equal((await first).nRows, 31);
+  assert.equal((await queued).nRows, 31);
+  assert.equal((await p.simulate("toy", req)).nRows, 31);
+});
+
+test("aggregate model bytes include descriptions and concurrent registration rechecks", async () => {
+  const bytes = model.wasm.byteLength + Buffer.byteLength(model.json);
+  const p = await pool({ maxModelBytes: bytes });
+  await assert.rejects(p.addModel("invalid", {}, model.json), /WASM binary/);
+  const results = await Promise.allSettled([
+    p.addModel("a", model.wasm, model.json),
+    p.addModel("b", model.wasm, model.json),
+  ]);
+  assert.equal(results.filter((item) => item.status === "fulfilled").length, 1);
+  const failed = results.find((item) => item.status === "rejected");
+  assert.match(failed.reason.message, /maxModelBytes/);
+  const key = p.hasModel("a") ? "a" : "b";
+  assert.equal(p.removeModel(key), true);
+  await p.addModel("c", model.wasm, model.json);
+  assert.equal(p.hasModel("c"), true);
+  const trusted = await pool({ maxModelBytes: Buffer.byteLength(model.json) });
+  await trusted.addModel("a", model.module, model.json);
+  await assert.rejects(trusted.addModel("b", model.module, model.json), /maxModelBytes/);
+  trusted.removeModel("a");
+  await trusted.addModel("b", model.module, model.json);
+});

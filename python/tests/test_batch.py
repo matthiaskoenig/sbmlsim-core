@@ -199,7 +199,8 @@ def test_threads_below_one_is_refused(decay):
         decay.simulate_many([], threads=0)
 
 
-def test_a_long_batch_is_interrupted(decay):
+@pytest.mark.parametrize("persistent", [False, True])
+def test_a_long_batch_is_interrupted(decay, persistent):
     # The interrupt has to reach the batch while it runs, which only the check between two
     # slices sees: an interrupt which is pending before the call is raised by the interpreter
     # at the call itself (CPython 3.14), and one which arrives after the batch returned says
@@ -213,13 +214,22 @@ def test_a_long_batch_is_interrupted(decay):
     # never checks the signals returns, and the interrupt which is pending then is raised
     # inside `__exit__`, where it ends the session instead of failing the test.
     requests = [slow_request() for _ in range(160)]
+    # Calibrate one slice on this runner. An absolute threshold is unreliable when
+    # other test processes compete for CPU; a batch without signal checks runs ten slices.
+    calibrated = time.perf_counter()
+    decay.simulate_many(requests[:16], threads=2)
+    slice_seconds = time.perf_counter() - calibrated
     interrupt = threading.Timer(0.02, _thread.interrupt_main)
     switch = sys.getswitchinterval()
     sys.setswitchinterval(1000.0)
     started = time.perf_counter()
     try:
         interrupt.start()
-        decay.simulate_many(requests, threads=2)
+        if persistent:
+            with decay.batch_executor(threads=2) as executor:
+                executor.simulate_many(requests)
+        else:
+            decay.simulate_many(requests, threads=2)
         # the batch ran to its end, so the interrupt is pending now: a backward jump of the
         # interpreter raises it, which happens here and not in the assertions below
         for _ in range(1000):
@@ -232,9 +242,240 @@ def test_a_long_batch_is_interrupted(decay):
         sys.setswitchinterval(switch)
     elapsed = time.perf_counter() - started
     assert interrupted, "the batch was never interrupted"
-    # a slice of 16 of these requests on two threads takes about 0.6 s and the whole batch
-    # about 6 s, so the elapsed time says the batch ran a slice and not all ten: the
-    # interrupt is the one of the check between two slices. The bound is 3.5 s: healthy is
-    # 0.6 s and the batch without the check 6.2 s, so any bound from about 2.5 to 5.5 s keeps
-    # the whole margin of the mutation and 3.5 s tolerates a runner 5 times slower
-    assert 0.15 < elapsed < 3.5
+    # Leave a five-slice margin for scheduling variation while still rejecting the
+    # ten-slice mutation that only delivers the interrupt after returning to Python.
+    assert elapsed < 5 * slice_seconds
+
+
+def test_executor_repeated_calls_and_failures_recover(decay):
+    good = request(end=10.0, steps=10)
+    fresh = decay.instance().simulate(good).values.tobytes()
+    bad = request(end=1e9, steps=10, maximum_num_steps=1)
+    with decay.batch_executor(threads=1) as executor:
+        assert executor.simulate_many([]) == []
+        for _ in range(3):
+            outputs = executor.simulate_many([good, bad, good])
+            assert isinstance(outputs[1], sbmlsim_core.PointError)
+            assert outputs[0].values.tobytes() == fresh
+            assert outputs[2].values.tobytes() == fresh
+        with pytest.raises(ValueError, match=r"requests\[1\]"):
+            executor.simulate_many([good, {"invalid": True}])
+        assert executor.simulate_many([good])[0].values.tobytes() == fresh
+    executor.close()
+    with pytest.raises(RuntimeError, match="closed"):
+        executor.simulate_many([])
+    with pytest.raises(RuntimeError, match="closed"):
+        executor.__enter__()
+
+
+def test_executor_growth_and_parallel_parity(decay):
+    requests = [
+        request(end=10.0, steps=10, preinit=[("y", float(n))]) for n in range(1, 10)
+    ]
+    expected = decay.simulate_many(requests, threads=1)
+    with decay.batch_executor(threads=4) as executor:
+        executor.simulate_many(requests[:1])
+        for _ in range(3):
+            actual = executor.simulate_many(requests)
+            assert [out.values.tobytes() for out in actual] == [
+                out.values.tobytes() for out in expected
+            ]
+
+
+@pytest.mark.parametrize("prepared_mode", [False, True])
+def test_executor_rejects_concurrent_and_reentrant_calls(decay, prepared_mode):
+    entered, release = threading.Event(), threading.Event()
+    errors = []
+    prepared = decay.prepare(request(end=1.0, steps=1))
+    with decay.batch_executor(threads=1) as executor:
+
+        def requests():
+            entered.set()
+            assert release.wait(5)
+            yield [] if prepared_mode else request(end=1.0, steps=1)
+
+        def run():
+            try:
+                if prepared_mode:
+                    executor.simulate_prepared(prepared, requests())
+                else:
+                    executor.simulate_many(requests())
+            except BaseException as error:
+                errors.append(error)
+
+        worker = threading.Thread(target=run)
+        worker.start()
+        try:
+            assert entered.wait(5)
+            with pytest.raises(RuntimeError, match="busy"):
+                executor.simulate_many([])
+            with pytest.raises(RuntimeError, match="busy"):
+                executor.simulate_prepared(prepared, [])
+            with pytest.raises(RuntimeError, match="busy"):
+                executor.close()
+        finally:
+            release.set()
+            worker.join(5)
+        assert not worker.is_alive() and not errors
+
+        def reentrant():
+            with pytest.raises(RuntimeError, match="busy"):
+                executor.simulate_many([])
+            yield request(end=1.0, steps=1)
+
+        assert len(executor.simulate_many(reentrant())) == 1
+
+
+def test_stream_consumes_bounded_chunks(decay):
+    consumed = []
+
+    def requests():
+        for n in range(11):
+            consumed.append(n)
+            yield request(end=1.0, steps=1)
+
+    with decay.batch_executor(threads=2) as executor:
+        results = sbmlsim_core.simulate_stream(executor, requests(), batch_size=3)
+        next(results)
+        assert len(consumed) == 3
+        assert len(list(results)) == 10
+        with pytest.raises(ValueError, match="batch_size"):
+            list(sbmlsim_core.simulate_stream(executor, [], batch_size=0))
+
+
+def test_executor_context_closes_on_error(decay):
+    with pytest.raises(LookupError), decay.batch_executor() as executor:
+        raise LookupError("stop")
+    with pytest.raises(RuntimeError, match="closed"):
+        executor.simulate_many([])
+    for threads in (0, -1, 1025):
+        with pytest.raises(ValueError, match="threads"):
+            decay.batch_executor(threads=threads)
+
+
+def test_prepared_numeric_rows_match_requests_and_reuse_workers(decay):
+    import numpy as np
+
+    base = request(end=10.0, steps=10, preinit=[("y", 2.0)])
+    prepared = decay.prepare(base, varying=["k", "y"])
+    assert prepared.n_values == 2
+    rows = np.array([[0.2, 3.0], [0.5, 1.0], [0.8, 4.0]])
+    expected = [
+        decay.instance().simulate(
+            base | {"preinit": [("k", float(k)), ("y", float(y))]}
+        )
+        for k, y in rows
+    ]
+    with decay.batch_executor(threads=3) as executor:
+        executor.simulate_prepared(prepared, rows[:1])
+        for _ in range(2):
+            results = executor.simulate_prepared(prepared, rows)
+            for result, reference in zip(results, expected, strict=True):
+                assert result.columns == reference.columns
+                assert result.values.tobytes() == reference.values.tobytes()
+        assert executor.simulate_many([base])[0].values.tobytes() == (
+            decay.instance().simulate(base).values.tobytes()
+        )
+    with pytest.raises(RuntimeError, match="closed"):
+        executor.simulate_prepared(prepared, [])
+
+
+def test_prepared_points_isolate_invalid_values(decay):
+    prepared = decay.prepare(request(end=1.0, steps=1), varying=["k"])
+    with decay.batch_executor(threads=1) as executor:
+        results = executor.simulate_prepared(
+            prepared, [[0.2], [], [float("nan")], [float("inf")], [0.2]]
+        )
+        assert results[0].values.tobytes() == results[-1].values.tobytes()
+        assert all(
+            isinstance(result, sbmlsim_core.PointError) for result in results[1:4]
+        )
+        with pytest.raises(ValueError, match=r"points\[1\]"):
+            executor.simulate_prepared(prepared, [[0.2], ["invalid"]])
+        assert isinstance(
+            executor.simulate_prepared(prepared, [[0.2]])[0],
+            sbmlsim_core.SimulationOutput,
+        )
+    with pytest.raises(sbmlsim_core.RequestError):
+        decay.instance().simulate_prepared(prepared, [])
+
+
+def test_prepared_default_values_and_model_identity(decay):
+    base = request(end=1.0, steps=1)
+    prepared = decay.prepare(base)
+    assert prepared.n_values == 0
+    assert decay.instance().simulate_prepared(prepared).values.tobytes() == (
+        decay.instance().simulate(base).values.tobytes()
+    )
+    compiled = sbmlsim_core.compile_sbml(
+        (ROOT / "crates/host/tests/decay.xml").read_text(encoding="utf-8")
+    )
+    other = sbmlsim_core.Runtime().load(compiled.wasm, compiled.description)
+    with pytest.raises(sbmlsim_core.RequestError):
+        other.instance().simulate_prepared(prepared)
+    with (
+        other.batch_executor(threads=1) as executor,
+        pytest.raises(ValueError, match="another model"),
+    ):
+        executor.simulate_prepared(prepared, [[]])
+    with pytest.raises(ValueError):
+        decay.prepare(base, varying=["missing"])
+    with pytest.raises(ValueError):
+        decay.prepare(base, varying=["k", "k"])
+
+
+def test_prepared_executor_reentrant_submissions_are_busy(decay):
+    prepared = decay.prepare(request(end=1.0, steps=1), varying=["k"])
+    with decay.batch_executor(threads=1) as executor:
+
+        def rows():
+            with pytest.raises(RuntimeError, match="busy"):
+                executor.simulate_many([])
+            with pytest.raises(RuntimeError, match="busy"):
+                executor.simulate_prepared(prepared, [])
+            with pytest.raises(RuntimeError, match="busy"):
+                executor.close()
+            yield [0.5]
+
+        assert len(executor.simulate_prepared(prepared, rows())) == 1
+
+
+@pytest.mark.parametrize("steady", [False, True])
+def test_prepared_fixed_changes_and_steady_state_match_requests(decay, steady):
+    base = request(end=10.0, steps=10)
+    base["changes"] = [{"time": 5.0, "values": [("y", 2.0)]}]
+    if steady:
+        base["steady_state"] = {
+            "preinit": [],
+            "absolute_tolerance": 1e-8,
+            "relative_tolerance": 1e-6,
+            "max_time": 1e4,
+        }
+    prepared = decay.prepare(base, varying=["k"])
+    with decay.batch_executor(threads=2) as executor:
+        outputs = executor.simulate_prepared(prepared, [[0.2], [0.8]])
+    for k, actual in zip([0.2, 0.8], outputs, strict=True):
+        expected = decay.instance().simulate(base | {"preinit": [("k", k)]})
+        assert actual.values.tobytes() == expected.values.tobytes()
+
+
+def test_prepared_concentration_values_follow_preinit_semantics():
+    compiled = sbmlsim_core.compile_sbml("""
+    <sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2">
+      <model id="concentration">
+        <listOfCompartments><compartment id="C" size="2" constant="true"/></listOfCompartments>
+        <listOfSpecies><species id="S" compartment="C" initialConcentration="1"
+          hasOnlySubstanceUnits="false" boundaryCondition="false" constant="false"/></listOfSpecies>
+      </model>
+    </sbml>""")
+    model = sbmlsim_core.Runtime().load(compiled.wasm, compiled.description)
+    base = request(end=1.0, steps=1) | {"selections": ["S", "[S]", "C"]}
+    prepared = model.prepare(base, varying=["C", "[S]"])
+    rows = [[3.0, 4.0], [5.0, 2.0]]
+    with model.batch_executor(threads=2) as executor:
+        outputs = executor.simulate_prepared(prepared, rows)
+    for (volume, concentration), actual in zip(rows, outputs, strict=True):
+        expected = model.instance().simulate(
+            base | {"preinit": [("C", volume), ("[S]", concentration)]}
+        )
+        assert actual.values.tobytes() == expected.values.tobytes()

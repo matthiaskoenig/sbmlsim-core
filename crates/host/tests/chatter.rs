@@ -6,12 +6,12 @@
 use std::sync::mpsc;
 use std::time::Duration;
 
+use sbmlsim_abi::EngineError;
 use sbmlsim_abi::{
     IntegratorSettings, Output, SIMULATION_CONTRACT, SimulationRequest, SimulationResult,
     SimulationStats, Tolerance,
 };
 use sbmlsim_compiler::{CompileOptions, CompiledModel, compile};
-use sbmlsim_engine::EngineError;
 use sbmlsim_host::Runtime;
 
 /// CVODE's flag of too many steps.

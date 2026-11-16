@@ -217,12 +217,83 @@ fn pattern_of(model: &Model, rules: &Rules) -> SparsityPattern {
     }
 }
 
+/// Total visited, copied and generated expression nodes allowed for an analytic Jacobian.
+const MAX_DERIVATIVE_NODES: usize = 10_000_000;
+const MAX_DERIVATIVE_ENTRY_NODES: usize = 100_000;
+
+struct DerivativeBudget {
+    remaining: std::cell::Cell<usize>,
+    entry: std::cell::Cell<usize>,
+}
+impl DerivativeBudget {
+    fn charge(&self) -> Result<(), DeriveError> {
+        self.remaining.set(
+            self.remaining
+                .get()
+                .checked_sub(1)
+                .ok_or(DeriveError::Limit)?,
+        );
+        self.entry
+            .set(self.entry.get().checked_sub(1).ok_or(DeriveError::Limit)?);
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+enum DeriveError {
+    Operator(Op),
+    Limit,
+}
+impl From<Op> for DeriveError {
+    fn from(op: Op) -> Self {
+        Self::Operator(op)
+    }
+}
+impl DeriveError {
+    fn reason(self, element: &str) -> String {
+        match self {
+            Self::Operator(op) => no_derivative(op, element),
+            Self::Limit => format!(
+                "analytic derivative construction exceeds its node/depth budget ({MAX_DERIVATIVE_ENTRY_NODES} nodes per entry, {MAX_DERIVATIVE_NODES} total, {element})"
+            ),
+        }
+    }
+}
+
+fn charge_expression(e: &Expr, budget: Option<&DerivativeBudget>) -> Result<(), DeriveError> {
+    let Some(budget) = budget else {
+        return Ok(());
+    };
+    let mut pending = vec![(e, 1)];
+    while let Some((e, depth)) = pending.pop() {
+        if depth > crate::expr::MAX_EXPR_DEPTH {
+            return Err(DeriveError::Limit);
+        }
+        budget.charge()?;
+        match e {
+            Expr::Apply { args, .. } => pending.extend(args.iter().map(|e| (e, depth + 1))),
+            Expr::Piecewise { pieces, otherwise } => {
+                for (v, c) in pieces {
+                    pending.extend([(v, depth + 1), (c, depth + 1)]);
+                }
+                pending.extend(otherwise.as_deref().map(|e| (e, depth + 1)));
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 /// The derivatives of the rules and the entries of the analytic Jacobian, or why there is none.
 fn analytic(
     model: &Model,
     rules: &Rules,
     pattern: &SparsityPattern,
 ) -> Result<(Vec<Expr>, Vec<Expr>), String> {
+    let budget = DerivativeBudget {
+        remaining: std::cell::Cell::new(MAX_DERIVATIVE_NODES),
+        entry: std::cell::Cell::new(MAX_DERIVATIVE_ENTRY_NODES),
+    };
     // the rules a rate reads, directly or through other rules
     let mut needed = vec![false; model.assignment_rules.len()];
     let mark = |e: &Expr, needed: &mut Vec<bool>| {
@@ -250,11 +321,12 @@ fn analytic(
         }
         for &j in &rules.deps[r] {
             let wrt = |s: Symbol| symbol_derivative(s, j, rules, &known);
-            let d = derivative(&a.expr, &wrt).map_err(|op| {
-                no_derivative(
-                    op,
-                    &format!("the assignment rule of {}", model.entity(a.target).id),
-                )
+            budget.entry.set(MAX_DERIVATIVE_ENTRY_NODES);
+            let d = derivative_bounded(&a.expr, &wrt, Some(&budget)).map_err(|error| {
+                error.reason(&format!(
+                    "the assignment rule of {}",
+                    model.entity(a.target).id
+                ))
             })?;
             let Some(d) = d else { continue };
             let d = match d {
@@ -274,9 +346,10 @@ fn analytic(
         let state = index(j);
         for &i in pattern.rows(j) {
             let wrt = |s: Symbol| symbol_derivative(s, state, rules, &known);
-            let d = derivative(&model.rates[i as usize], &wrt).map_err(|op| {
-                no_derivative(op, &format!("the rate of {}", model.states[i as usize].id))
-            })?;
+            budget.entry.set(MAX_DERIVATIVE_ENTRY_NODES);
+            let d = derivative_bounded(&model.rates[i as usize], &wrt, Some(&budget)).map_err(
+                |error| error.reason(&format!("the rate of {}", model.states[i as usize].id)),
+            )?;
             entries.push(d.unwrap_or(Expr::Number(0.0)));
         }
     }
@@ -356,8 +429,22 @@ fn sqrt(x: Expr) -> Expr {
 /// The derivative of `e`, `None` where it is structurally zero; `wrt` gives the derivative of a
 /// symbol. The error is the operator without a derivative.
 pub fn derivative(e: &Expr, wrt: &dyn Fn(Symbol) -> Option<Expr>) -> Result<Option<Expr>, Op> {
-    let d = |e: &Expr| derivative(e, wrt);
-    Ok(match e {
+    derivative_bounded(e, wrt, None).map_err(|error| match error {
+        DeriveError::Operator(op) => op,
+        DeriveError::Limit => unreachable!("unbounded derivatives have no construction limits"),
+    })
+}
+
+fn derivative_bounded(
+    e: &Expr,
+    wrt: &dyn Fn(Symbol) -> Option<Expr>,
+    budget: Option<&DerivativeBudget>,
+) -> Result<Option<Expr>, DeriveError> {
+    if let Some(budget) = budget {
+        budget.charge()?;
+    }
+    let d = |e: &Expr| derivative_bounded(e, wrt, budget);
+    let result = match e {
         Expr::Number(_) | Expr::Bool(_) => None,
         Expr::Symbol(s) => wrt(*s),
         Expr::Piecewise { pieces, otherwise } => {
@@ -377,8 +464,12 @@ pub fn derivative(e: &Expr, wrt: &dyn Fn(Symbol) -> Option<Expr>) -> Result<Opti
                 })
             }
         }
-        Expr::Apply { op, args } => apply(*op, args, e, wrt)?,
-    })
+        Expr::Apply { op, args } => apply(*op, args, e, wrt, budget)?,
+    };
+    if let Some(e) = &result {
+        charge_expression(e, budget)?;
+    }
+    Ok(result)
 }
 
 /// The derivative of an operator applied to its arguments, `e` the application.
@@ -387,10 +478,11 @@ fn apply(
     args: &[Expr],
     e: &Expr,
     wrt: &dyn Fn(Symbol) -> Option<Expr>,
-) -> Result<Option<Expr>, Op> {
-    let d = |e: &Expr| derivative(e, wrt);
+    budget: Option<&DerivativeBudget>,
+) -> Result<Option<Expr>, DeriveError> {
+    let d = |e: &Expr| derivative_bounded(e, wrt, budget);
     // a function of one argument: f'(u) * u', none where u' is none
-    let chain = |f: &dyn Fn(&Expr, Expr) -> Expr| -> Result<Option<Expr>, Op> {
+    let chain = |f: &dyn Fn(&Expr, Expr) -> Expr| -> Result<Option<Expr>, DeriveError> {
         let u = &args[0];
         Ok(d(u)?.map(|du| f(u, du)))
     };
@@ -423,8 +515,10 @@ fn apply(
                 let mut factors: Vec<Expr> = Vec::with_capacity(args.len());
                 for (m, b) in args.iter().enumerate() {
                     if m != k {
+                        charge_expression(b, budget)?;
                         factors.push(b.clone());
                     } else if !matches!(da, Expr::Number(x) if x == 1.0) {
+                        charge_expression(&da, budget)?;
                         factors.push(da.clone());
                     }
                 }
@@ -476,7 +570,7 @@ fn apply(
                 [n, x] => Expr::apply(Op::Power, vec![x.clone(), div(num(1.0), n.clone())]),
                 _ => unreachable!("root has one or two arguments"),
             };
-            derivative(&power, wrt)?
+            derivative_bounded(&power, wrt, budget)?
         }
         Op::Log => {
             let (base, x) = match args {
@@ -485,7 +579,7 @@ fn apply(
                 _ => unreachable!("log has one or two arguments"),
             };
             let quotient = div(call(Op::Ln, x), call(Op::Ln, &base));
-            derivative(&quotient, wrt)?
+            derivative_bounded(&quotient, wrt, budget)?
         }
         Op::Abs => chain(&|u, du| Expr::Piecewise {
             pieces: vec![(
@@ -512,7 +606,7 @@ fn apply(
         }
         Op::Factorial => match d(&args[0])? {
             None => None,
-            Some(_) => return Err(Op::Factorial),
+            Some(_) => return Err(Op::Factorial.into()),
         },
         Op::Sin => chain(&|u, du| times(call(Op::Cos, u), du))?,
         Op::Cos => chain(&|u, du| neg(times(call(Op::Sin, u), du)))?,
@@ -575,6 +669,9 @@ fn apply(
             ))
         })?,
         Op::Max | Op::Min => {
+            if args.len() > crate::expr::MAX_EXPR_DEPTH && budget.is_some() {
+                return Err(DeriveError::Limit);
+            }
             let Some((first, rest)) = args.split_first() else {
                 return Ok(None);
             };
@@ -589,6 +686,9 @@ fn apply(
                 let so_far = if k == 0 {
                     first.clone()
                 } else {
+                    for a in &args[..=k] {
+                        charge_expression(a, budget)?;
+                    }
                     Expr::apply(op, args[..=k].to_vec())
                 };
                 current = Some(Expr::Piecewise {
@@ -611,6 +711,7 @@ fn apply(
         | Op::Or
         | Op::Xor
         | Op::Not
-        | Op::Implies => None,
+        | Op::Implies
+        | Op::XorSign => None,
     })
 }

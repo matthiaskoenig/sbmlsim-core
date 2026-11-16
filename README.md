@@ -53,11 +53,12 @@ clippy runs with `-D warnings` and the default lints; the pedantic lints (`clipp
 
 ```bash
 cargo fmt --check
-cargo clippy --all-targets -- -D warnings
+cargo check -p sbmlsim-host -p sbmlsim-cli --no-default-features
+cargo clippy --all-targets --all-features -- -D warnings
 cargo clippy -p sbmlsim-csolvers --all-targets --target wasm32-wasip1 -- -D warnings
 cargo clippy -p sbmlsim-engine --all-targets --target wasm32-wasip1 -- -D warnings
 cargo clippy -p sbmlsim-engine --lib --features exports --target wasm32-wasip1 -- -D warnings
-cargo test
+cargo test --all-features
 cargo build -p sbmlsim-compiler --target wasm32-unknown-unknown
 node --test js/test
 ```
@@ -104,7 +105,7 @@ The tests (`node --test js/test`) build the command line (`SBMLSIM_CORE_CLI` nam
 
 ## Python
 
-`sbmlsim-core` is also a python package (python 3.14 or newer, one abi3 wheel per platform, built with maturin; the extension embeds `engine.wasm` through `sbmlsim-host`, so the build needs `WASI_SDK_PATH` or `SBMLSIM_CORE_WASM_DIR` as above). It ships `py.typed` and a stub of the extension, `python/sbmlsim_core/_core.pyi`, which `ty check python/typecheck` holds against a file that uses the API as a caller does:
+`sbmlsim-core` is also a python package on PyPI, `pip install sbmlsim-core` (python 3.14 or newer, one abi3 wheel per platform, built with maturin by `.github/workflows/wheels.yml` and published with the npm package by `publish.yml`, see [Python](https://matthiaskoenig.github.io/sbmlsim-core/python/); the extension embeds `engine.wasm` through `sbmlsim-host`, so the build needs `WASI_SDK_PATH` or `SBMLSIM_CORE_WASM_DIR` as above). It ships `py.typed` and a stub of the extension, `python/sbmlsim_core/_core.pyi`, which `ty check python/typecheck` holds against a file that uses the API as a caller does:
 
 ```bash
 uv venv --python 3.14 && uv pip install -e . --group dev   # editable, with pytest and ty
@@ -121,7 +122,7 @@ compiled.wasm  # the bytes of model.wasm
 compiled.description  # the dict of model.json (model/2)
 
 # engine.wasm and mathlib.wasm, compiled once per runtime: share it
-runtime = sbmlsim_core.Runtime(max_memory_bytes=None)
+runtime = sbmlsim_core.Runtime(max_memory_bytes=None, timeout_ms=30_000)
 model = runtime.load(compiled.wasm, compiled.description)  # compiled once, shared
 model.initial_values()  # selection id -> value as loaded
 instance = model.instance()  # one per thread
@@ -130,6 +131,13 @@ out.columns, out.values  # names, float64 array (rows, columns)
 instance.stats()  # the counters of the integrator
 # a batch on rayon threads, the results in the order of the requests
 results = model.simulate_many(requests, threads=None)
+# Retain workers and their instances across successive batches.
+with model.batch_executor(threads=4) as executor:
+    results = executor.simulate_many(requests)
+# Resolve a parameter sweep once; subsequent calls supply only numeric values.
+prepared = model.prepare(request, varying=["k", "y"])
+with model.batch_executor(threads=4) as executor:
+    results = executor.simulate_prepared(prepared, [[0.2, 1.0], [0.5, 2.0]])
 ```
 
 The nested enums of `simulation/1` are serde's externally tagged ones: an output is `{"uniform": {"steps": 100}}`, `{"times": [0.0, 1.0]}` or, a unit variant and so a bare string, `"integrator_steps"` (the steps of the integrator, whose number of rows differs by point, which is why `simulate_many` gives one table per point), and the absolute tolerance of the settings is `{"scalar": 1e-12}` or `{"per_state": [1e-12, 1e-10]}` with one value per state in the order of the state vector (a vector of another length is a `PointError` of that point in a batch):
@@ -139,7 +147,9 @@ request["output"] = "integrator_steps"
 request["settings"]["absolute_tolerance"] = {"per_state": [1e-12] * n_states}
 ```
 
-`description` and `initial_values()` of a model, `description` of a compiled model and `columns` of an output are computed anew by every access, so read them once. The parallelism of `simulate_many` is `min(threads, len(requests))`, and its pool and its per-thread instances live only for the duration of the call (an instance costs about 0.3 s to make for a model of 700 kB of description), so give it as many points as you can rather than many small batches: 320 points in one call on 20 threads took 2.09 s against 22.0 s serially.
+`description` and `initial_values()` of a model, `description` of a compiled model and `columns` of an output are computed anew by every access, so read them once. Reuse an instance for serial work and `model.batch_executor()` for repeated batches. The executor starts workers lazily, retains their instances, checks signals between slices, and closes through a context manager or `close()`. Its default maximum is eight workers; `threads` overrides that limit. One submission can be active at a time. `sbmlsim_core.simulate_stream(executor, requests, batch_size=32)` consumes an iterable in bounded chunks and yields ordered results. The existing `model.simulate_many` remains available for a single batch and releases its pool afterward.
+
+The Wasmtime host and worker pool apply a 30-second execution deadline by default. Set `Runtime(timeout_ms=0)` in Python, `Runtime::with_execution_timeout(None)` in Rust, or `deadlineMs: 0` on a JavaScript pool to disable it for trusted workloads. A timed-out instance is discarded. JavaScript pool memory, queue, model and input budgets are configurable; see [JavaScript](docs/javascript.md). Engine metadata, including entity/selection lookups and finite-difference coloring/workspace, is retained across simulations. Delayed events are bounded independently of the integrator settings (65,536 pending executions and 1,048,576 retained assignment values by default); exceeding that policy returns an integration error with flag `-1005`.
 
 Errors derive from `SbmlsimCoreError`: `CompileError`, `LoadError` (a runtime which cannot start, a model which does not match its description, an instance or a pool which cannot be made) and `SimulationError` with `RequestError`, `IntegrationError` (`flag`, `time`), `UnsupportedError` and `InternalError`. A point of a batch which failed is a `PointError` (`kind`, `message`, `flag`, `time`) in its position of the result, so one failing request does not fail the batch.
 

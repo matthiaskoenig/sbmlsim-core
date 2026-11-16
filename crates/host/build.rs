@@ -53,12 +53,26 @@ fn main() {
     let workspace = manifest.join("../..");
     for crate_dir in ["abi", "engine", "csolvers", "mathlib"] {
         let dir = workspace.join("crates").join(crate_dir);
-        for part in ["src", "Cargo.toml", "build.rs"] {
+        for part in ["src", "csrc", "Cargo.toml", "build.rs"] {
             if dir.join(part).exists() {
                 println!("cargo:rerun-if-changed={}", dir.join(part).display());
             }
         }
     }
+    // The outer build must notice C/header changes too, otherwise the nested build is
+    // never invoked and the host can embed an older solver than its native dependency.
+    println!(
+        "cargo:rerun-if-changed={}",
+        workspace.join("third_party").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        workspace.join("Cargo.toml").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        workspace.join("rust-toolchain.toml").display()
+    );
     println!(
         "cargo:rerun-if-changed={}",
         workspace.join("Cargo.lock").display()
