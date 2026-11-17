@@ -101,7 +101,7 @@ print(json.dumps([str(runtime.cache_dir), model.initial_values()]))
     assert any((cache / "modules").rglob("*"))
     second = subprocess.check_output(command, text=True, timeout=60)
     assert json.loads(first) == json.loads(second)
-    assert Path(json.loads(first)[0]) == cache.resolve()
+    assert Path(json.loads(first)[0]).samefile(cache)
 
 
 def test_unavailable_compilation_cache_falls_back_to_compilation(tmp_path):
