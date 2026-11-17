@@ -14,7 +14,9 @@
 //! tolerances of the integration). The math of the model is `mathlib.wasm` in both.
 
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::rc::Rc;
+use std::sync::{Arc, Weak};
 
 use anyhow::Context;
 use sbmlsim_abi::{
@@ -25,18 +27,86 @@ use wasmtime::{Memory, MemoryType, Store, TypedFunc};
 
 use crate::{MemoryLimit, Runtime, linker_without_wasi};
 
-/// A model loaded into the native engine ([`Runtime::instantiate_native`]).
+/// A model loaded into the native engine ([`Runtime::instantiate_native`],
+/// [`crate::LoadedModel::instantiate_native`]).
 pub struct NativeInstance {
     engine: sbmlsim_engine::Engine,
     inner: Rc<RefCell<Inner>>,
     execution: crate::Execution,
+    /// The loaded model this instance is of, which a prepared request is checked against.
+    identity: Arc<()>,
+    /// The plan of every prepared request this instance resolved, see
+    /// [`NativeInstance::simulate_prepared`].
+    prepared: BTreeMap<usize, CachedPrepared>,
 }
+
+/// The plan of a prepared request in one native engine, with a weak handle to the request it
+/// belongs to, so that the plan of a request which was dropped is dropped with it.
+struct CachedPrepared {
+    owner: Weak<crate::PreparedInner>,
+    plan: sbmlsim_engine::PreparedRequest,
+}
+
+// SAFETY: an instance owns its whole graph. The two handles of the `Rc` are the field `inner`
+// and the one of the `WasmModel` which `engine` owns as its `ModelFns`; `instantiate_native`
+// creates both and hands out neither, and nothing clones the `Rc` afterwards, so every handle
+// of the count moves with the instance and no two threads ever touch the count at once. What
+// the `Rc` holds is a wasmtime `Store`, which is `Send`, and the engine is the C memory of
+// CVODE and KLU, which one thread at a time may use and which a move does not touch. `Sync` is
+// not implied: an instance simulates one request after the other, and a caller which shares one
+// between threads puts it behind a lock, as `Instance` of the python bindings does.
+unsafe impl Send for NativeInstance {}
 
 impl NativeInstance {
     /// Simulates the model; the result does not depend on the simulations before.
     pub fn simulate(&mut self, req: &SimulationRequest) -> Result<SimulationResult, EngineError> {
         self.execution.begin(&mut self.inner.borrow_mut().store);
         self.engine.simulate(req)
+    }
+
+    /// Simulates a prepared request with one finite value per varying target, in their order.
+    ///
+    /// The engine resolves the request into a plan of its own the first time this instance
+    /// runs it and keeps it for the runs after it, as an instance of `engine.wasm` keeps the
+    /// plan of its guest, so a point of a batch transfers only its numbers.
+    pub fn simulate_prepared(
+        &mut self,
+        prepared: &crate::PreparedSimulation,
+        values: &[f64],
+    ) -> Result<SimulationResult, EngineError> {
+        let plan = self.plan_of(prepared)?;
+        self.execution.begin(&mut self.inner.borrow_mut().store);
+        self.engine.simulate_prepared(&plan, values)
+    }
+
+    /// The plan of a prepared request in this engine, resolved once per instance.
+    fn plan_of(
+        &mut self,
+        prepared: &crate::PreparedSimulation,
+    ) -> Result<sbmlsim_engine::PreparedRequest, EngineError> {
+        if !Arc::ptr_eq(&self.identity, prepared.model()) {
+            return Err(EngineError::Request(
+                "prepared request belongs to a different loaded model".into(),
+            ));
+        }
+        let (key, owner) = prepared.cache_entry();
+        // the plans of the requests which were dropped since the last one go with them
+        self.prepared
+            .retain(|_, cached| cached.owner.strong_count() > 0);
+        if let Some(cached) = self.prepared.get(&key) {
+            return Ok(cached.plan.clone());
+        }
+        let plan = self
+            .engine
+            .prepare(prepared.request(), prepared.varying())?;
+        self.prepared.insert(
+            key,
+            CachedPrepared {
+                owner,
+                plan: plan.clone(),
+            },
+        );
+        Ok(plan)
     }
 
     /// The counters of the integrator of the last simulation.
@@ -54,88 +124,124 @@ impl Runtime {
         model_wasm: &[u8],
         desc: &ModelDescription,
     ) -> anyhow::Result<NativeInstance> {
-        let module = self.load(model_wasm, desc)?.model_module;
-        let mut store = Store::new(
-            &self.engine,
-            MemoryLimit {
-                max_bytes: self.max_memory,
-                grows: 0,
-            },
-        );
-        store.limiter(|limit| limit);
-        self.execution.begin(&mut store);
-        let layout = Layout::of(desc);
-        anyhow::ensure!(
-            layout.end <= self.max_memory && layout.end <= i32::MAX as usize,
-            "the model vectors do not fit into the runtime memory limit"
-        );
-        let pages = layout.end.div_ceil(PAGE) as u64;
-        let memory = Memory::new(&mut store, MemoryType::new(pages as u32, None))?;
-        let mut linker = linker_without_wasi(&self.engine);
-        linker.define(&store, "env", "memory", memory)?;
-        let math = linker.instantiate(&mut store, &self.mathlib_module)?;
-        linker.instance(&mut store, "math", math)?;
-        let instance = linker
-            .instantiate(&mut store, &module)
-            .map_err(anyhow::Error::from)
-            .context("model.wasm does not instantiate")?;
-        let mut get = |name: &str| {
-            instance
-                .get_func(&mut store, name)
-                .with_context(|| format!("model.wasm does not export {name}"))
-        };
-        let (defaults, init, rhs, jac, roots) = (
-            get(abi::DEFAULTS)?,
-            get(abi::INIT)?,
-            get(abi::RHS)?,
-            get(abi::JAC)?,
-            get(abi::ROOTS)?,
-        );
-        let (trigger, priority, delay, event_values, event_apply) = (
-            get(abi::TRIGGER)?,
-            get(abi::PRIORITY)?,
-            get(abi::DELAY)?,
-            get(abi::EVENT_VALUES)?,
-            get(abi::EVENT_APPLY)?,
-        );
-        let (selections, assign, sizes, event_sizes) = (
-            get(abi::SELECTIONS)?,
-            get(abi::ASSIGN)?,
-            get(abi::SIZES)?,
-            get(abi::EVENT_SIZES)?,
-        );
-        let functions = Functions {
-            defaults: defaults.typed(&store)?,
-            init: init.typed(&store)?,
-            rhs: rhs.typed(&store)?,
-            jac: jac.typed(&store)?,
-            roots: roots.typed(&store)?,
-            trigger: trigger.typed(&store)?,
-            priority: priority.typed(&store)?,
-            delay: delay.typed(&store)?,
-            event_values: event_values.typed(&store)?,
-            event_apply: event_apply.typed(&store)?,
-            selections: selections.typed(&store)?,
-            assign: assign.typed(&store)?,
-            sizes: sizes.typed(&store)?,
-            event_sizes: event_sizes.typed(&store)?,
-        };
-        let inner = Rc::new(RefCell::new(Inner { store, memory }));
-        let model = WasmModel {
-            inner: inner.clone(),
-            functions,
-            layout,
-            events: desc.events.len(),
-            error: RefCell::new(None),
-        };
-        let engine = sbmlsim_engine::Engine::new(Box::new(model), desc.clone())
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
-        Ok(NativeInstance {
-            engine,
-            inner,
-            execution: self.execution.clone(),
-        })
+        let loaded = self.load(model_wasm, desc)?;
+        loaded.instantiate_native()
     }
+}
+
+impl crate::LoadedModel {
+    /// Loads the model into the native engine, which reuses the `model.wasm` this model
+    /// compiled, see [`Runtime::instantiate_native`]. Every instance is independent, and the
+    /// result of a simulation does not depend on the ones before it.
+    pub fn instantiate_native(&self) -> anyhow::Result<NativeInstance> {
+        native_instance(
+            self.wasmtime_engine(),
+            self.mathlib(),
+            self.model_module(),
+            self.description(),
+            self.max_memory(),
+            self.execution(),
+            self.identity(),
+        )
+    }
+}
+
+/// Instantiates `model_wasm` into the native engine, see [`Runtime::instantiate_native`].
+fn native_instance(
+    wasmtime_engine: &wasmtime::Engine,
+    mathlib_module: &wasmtime::Module,
+    module: &wasmtime::Module,
+    desc: &ModelDescription,
+    max_memory: usize,
+    execution: &crate::Execution,
+    identity: &Arc<()>,
+) -> anyhow::Result<NativeInstance> {
+    let mut store = Store::new(
+        wasmtime_engine,
+        MemoryLimit {
+            max_bytes: max_memory,
+            grows: 0,
+        },
+    );
+    store.limiter(|limit| limit);
+    execution.begin(&mut store);
+    let layout = Layout::of(desc);
+    anyhow::ensure!(
+        layout.end <= max_memory && layout.end <= i32::MAX as usize,
+        "the model vectors do not fit into the runtime memory limit"
+    );
+    let pages = layout.end.div_ceil(PAGE) as u64;
+    let memory = Memory::new(&mut store, MemoryType::new(pages as u32, None))?;
+    let mut linker = linker_without_wasi(wasmtime_engine);
+    linker.define(&store, "env", "memory", memory)?;
+    let math = linker.instantiate(&mut store, mathlib_module)?;
+    linker.instance(&mut store, "math", math)?;
+    let instance = linker
+        .instantiate(&mut store, module)
+        .map_err(anyhow::Error::from)
+        .context("model.wasm does not instantiate")?;
+    let mut get = |name: &str| {
+        instance
+            .get_func(&mut store, name)
+            .with_context(|| format!("model.wasm does not export {name}"))
+    };
+    let (defaults, init, rhs, jac, roots) = (
+        get(abi::DEFAULTS)?,
+        get(abi::INIT)?,
+        get(abi::RHS)?,
+        get(abi::JAC)?,
+        get(abi::ROOTS)?,
+    );
+    let (trigger, priority, delay, event_values, event_apply) = (
+        get(abi::TRIGGER)?,
+        get(abi::PRIORITY)?,
+        get(abi::DELAY)?,
+        get(abi::EVENT_VALUES)?,
+        get(abi::EVENT_APPLY)?,
+    );
+    let (selections, assign, sizes, event_sizes) = (
+        get(abi::SELECTIONS)?,
+        get(abi::ASSIGN)?,
+        get(abi::SIZES)?,
+        get(abi::EVENT_SIZES)?,
+    );
+    let functions = Functions {
+        defaults: defaults.typed(&store)?,
+        init: init.typed(&store)?,
+        rhs: rhs.typed(&store)?,
+        jac: jac.typed(&store)?,
+        roots: roots.typed(&store)?,
+        trigger: trigger.typed(&store)?,
+        priority: priority.typed(&store)?,
+        delay: delay.typed(&store)?,
+        event_values: event_values.typed(&store)?,
+        event_apply: event_apply.typed(&store)?,
+        selections: selections.typed(&store)?,
+        assign: assign.typed(&store)?,
+        sizes: sizes.typed(&store)?,
+        event_sizes: event_sizes.typed(&store)?,
+    };
+    let inner = Rc::new(RefCell::new(Inner { store, memory }));
+    let model = WasmModel {
+        inner: inner.clone(),
+        functions,
+        layout,
+        events: desc.events.len(),
+        error: RefCell::new(None),
+    };
+    // an instance of `engine.wasm` is bounded by the memory of its guest, which bounds its
+    // result with it; the native engine allocates its result in the memory of the host, so the
+    // limit of the instance is given to it as the values a result may hold
+    let engine = sbmlsim_engine::Engine::new(Box::new(model), desc.clone())
+        .map_err(|e| anyhow::anyhow!("{e}"))?
+        .with_max_output_values(max_memory / size_of::<f64>());
+    Ok(NativeInstance {
+        engine,
+        inner,
+        identity: identity.clone(),
+        prepared: BTreeMap::new(),
+        execution: execution.clone(),
+    })
 }
 
 /// The bytes of a page of wasm.

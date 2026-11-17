@@ -52,3 +52,69 @@ fn the_native_engine_agrees_with_engine_wasm() {
         assert!(native.stats().steps > 0);
     }
 }
+
+/// A native instance is `Send`, which the python bindings need: a batch moves one into each
+/// worker of its pool and keeps it there for the points after the first.
+#[test]
+fn a_native_instance_moves_between_threads() {
+    let compiled = compile(&golden("model.xml"), &CompileOptions::default()).unwrap();
+    let runtime = Runtime::embedded().unwrap();
+    let loaded = runtime.load(&compiled.wasm, &compiled.description).unwrap();
+    let request: SimulationRequest = serde_json::from_str(&golden("request.json")).unwrap();
+    let mut instance = loaded.instantiate_native().unwrap();
+    let first = instance.simulate(&request).unwrap();
+    // the instance is moved into a thread of its own, simulates there and comes back
+    let moved = request.clone();
+    let (mut instance, second) = std::thread::spawn(move || {
+        let result = instance.simulate(&moved).unwrap();
+        (instance, result)
+    })
+    .join()
+    .unwrap();
+    let third = instance.simulate(&request).unwrap();
+    assert_eq!(first.values, second.values);
+    assert_eq!(first.values, third.values);
+}
+
+/// A loaded model makes native instances which reuse its compiled `model.wasm`, and each one is
+/// independent of the others.
+#[test]
+fn a_loaded_model_makes_independent_native_instances() {
+    let compiled = compile(&golden("model.xml"), &CompileOptions::default()).unwrap();
+    let runtime = Runtime::embedded().unwrap();
+    let loaded = runtime.load(&compiled.wasm, &compiled.description).unwrap();
+    let request: SimulationRequest = serde_json::from_str(&golden("request.json")).unwrap();
+    let one = loaded
+        .instantiate_native()
+        .unwrap()
+        .simulate(&request)
+        .unwrap();
+    let other = loaded
+        .instantiate_native()
+        .unwrap()
+        .simulate(&request)
+        .unwrap();
+    assert_eq!(one.values, other.values);
+}
+
+/// The memory limit of a runtime bounds the result of a native instance, as the memory of its
+/// guest bounds the result of an instance of `engine.wasm`.
+#[test]
+fn the_memory_limit_bounds_a_native_result() {
+    let compiled = compile(&golden("model.xml"), &CompileOptions::default()).unwrap();
+    let runtime = Runtime::embedded()
+        .unwrap()
+        .with_max_memory(32 * 1024 * 1024);
+    let loaded = runtime.load(&compiled.wasm, &compiled.description).unwrap();
+    let mut instance = loaded.instantiate_native().unwrap();
+    let base: SimulationRequest = serde_json::from_str(&golden("request.json")).unwrap();
+    let mut huge = base.clone();
+    huge.output = sbmlsim_abi::Output::Uniform { steps: 3_000_000 };
+    let error = instance.simulate(&huge).unwrap_err();
+    assert!(
+        format!("{error}").contains("does not fit into the memory"),
+        "{error}"
+    );
+    // the instance answers the request after it
+    assert!(instance.simulate(&base).is_ok());
+}

@@ -416,6 +416,44 @@ impl LoadedModel {
         &self.desc
     }
 
+    /// The wasmtime engine the modules of this model were compiled with, for
+    /// [`LoadedModel::instantiate_native`].
+    #[cfg(feature = "native")]
+    pub(crate) fn wasmtime_engine(&self) -> &Engine {
+        &self.engine
+    }
+
+    /// `mathlib.wasm` of this model, for [`LoadedModel::instantiate_native`].
+    #[cfg(feature = "native")]
+    pub(crate) fn mathlib(&self) -> &Module {
+        &self.mathlib_module
+    }
+
+    /// `model.wasm` of this model, compiled once, for [`LoadedModel::instantiate_native`].
+    #[cfg(feature = "native")]
+    pub(crate) fn model_module(&self) -> &Module {
+        &self.model_module
+    }
+
+    /// The memory an instance of this model may use, for [`LoadedModel::instantiate_native`].
+    #[cfg(feature = "native")]
+    pub(crate) fn max_memory(&self) -> usize {
+        self.max_memory
+    }
+
+    /// The execution limits of this model, for [`LoadedModel::instantiate_native`].
+    #[cfg(feature = "native")]
+    pub(crate) fn execution(&self) -> &Execution {
+        &self.execution
+    }
+
+    /// What a prepared request of this model is checked against, for
+    /// [`LoadedModel::instantiate_native`].
+    #[cfg(feature = "native")]
+    pub(crate) fn identity(&self) -> &Arc<()> {
+        &self.identity
+    }
+
     /// Instantiates the model in a new engine, which holds the description; gives the error of
     /// `engine_load` for a description the engine refuses.
     pub fn instantiate(&self) -> anyhow::Result<Instance> {
@@ -894,10 +932,17 @@ pub struct PreparedSimulation {
     inner: Arc<PreparedInner>,
 }
 
-struct PreparedInner {
+pub(crate) struct PreparedInner {
     model: Arc<()>,
     input: Vec<u8>,
     n_values: usize,
+    /// The request and its varying targets as given, which the native engine resolves into a
+    /// plan of its own ([`crate::NativeInstance::simulate_prepared`]); `input` is the same two
+    /// as the JSON `engine.wasm` parses.
+    #[cfg(feature = "native")]
+    request: SimulationRequest,
+    #[cfg(feature = "native")]
+    varying: Vec<String>,
 }
 
 impl std::fmt::Debug for PreparedSimulation {
@@ -924,6 +969,33 @@ struct CachedPrepared {
 struct PrepareInput<'a> {
     request: &'a SimulationRequest,
     varying: &'a [String],
+}
+
+#[cfg(feature = "native")]
+impl PreparedSimulation {
+    /// The loaded model this request was prepared for.
+    pub(crate) fn model(&self) -> &Arc<()> {
+        &self.inner.model
+    }
+
+    /// The request as given, see [`PreparedInner`].
+    pub(crate) fn request(&self) -> &SimulationRequest {
+        &self.inner.request
+    }
+
+    /// The varying targets as given, see [`PreparedInner`].
+    pub(crate) fn varying(&self) -> &[String] {
+        &self.inner.varying
+    }
+
+    /// The key a native instance caches the plan of this request under, the address of its
+    /// shared part, with a weak handle which says whether the request is still alive.
+    pub(crate) fn cache_entry(&self) -> (usize, Weak<PreparedInner>) {
+        (
+            Arc::as_ptr(&self.inner) as usize,
+            Arc::downgrade(&self.inner),
+        )
+    }
 }
 
 impl LoadedModel {
@@ -1075,6 +1147,10 @@ impl Instance {
                 model: self.identity.clone(),
                 input,
                 n_values,
+                #[cfg(feature = "native")]
+                request: request.clone(),
+                #[cfg(feature = "native")]
+                varying: varying.to_vec(),
             }),
         };
         self.prepared.insert(
