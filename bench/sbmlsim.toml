@@ -54,3 +54,21 @@ points = 101
 preinit = [["PODOSE_hctz", 25.0]]
 relative_tolerance = 1e-6
 absolute_tolerance = 1e-10
+
+[models.perfusion]
+# the liver of a normothermic machine perfusion, flat, 839 species and 1007 reactions in 2.6 MB;
+# an hour of the perfusion. The large model of sbmlsim's benchmark, which is in its repository
+# and not in its package (`benchmarks/models`), so it comes from a checkout and not from
+# `sbmlsim:`; one simulation of it is tens of seconds in COPASI.
+source = "sbmlsim_repo:benchmarks/models/machine_perfusion_liver_flat.xml"
+sbml = "../target/bench-models/sbmlsim-perfusion.xml"
+end = 60.0
+points = 101
+preinit = []
+relative_tolerance = 1e-6
+absolute_tolerance = 1e-10
+
+[checkouts]
+# a checkout of github.com/matthiaskoenig/sbmlsim next to this repository, for the one model of
+# its benchmark which its package does not carry; SBMLSIM_CORE_CHECKOUT_SBMLSIM_REPO overrides it
+sbmlsim_repo = "../../sbmlsim"
