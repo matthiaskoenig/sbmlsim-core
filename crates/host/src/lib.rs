@@ -1,6 +1,7 @@
 //! The wasmtime host of sbmlsim-core: links mathlib, a compiled model and the engine.
 //!
-//! A [`Runtime`] compiles `engine.wasm` and `mathlib.wasm` once (the embedded [`ENGINE_WASM`]
+//! A [`Runtime`] loads `engine.wasm` and `mathlib.wasm` from Wasmtime's persistent compilation
+//! cache, or compiles them on a miss (the embedded [`ENGINE_WASM`]
 //! and [`MATHLIB_WASM`], or others); [`Runtime::instantiate`] instantiates, in a store of their
 //! own, a memory of the type the engine imports, mathlib, the model (which imports that memory
 //! as `env.memory` and the functions of mathlib as `math.*`) and the engine (which imports the
@@ -21,6 +22,7 @@
 //! call hook; the limiter counts them, and [`Instance::wasi_calls`] leaves them out.
 
 use std::collections::BTreeMap;
+use std::path::Path;
 use std::sync::{Arc, Weak};
 
 use anyhow::{Context, anyhow, bail, ensure};
@@ -36,11 +38,13 @@ use wasmtime::{
     ResourceLimiter, Store, TypedFunc,
 };
 
+mod cache;
 mod execution;
 #[cfg(feature = "native")]
 mod native;
 mod wasi;
 
+pub use cache::ModuleCache;
 pub use execution::DEFAULT_EXECUTION_TIMEOUT;
 use execution::Execution;
 #[cfg(feature = "native")]
@@ -180,7 +184,8 @@ pub fn count_wasi_calls(wasm: &[u8], export: &str) -> anyhow::Result<u64> {
     Ok(store.data().wasi_calls() - before)
 }
 
-/// `engine.wasm` and `mathlib.wasm`, compiled once; instantiates models.
+/// `engine.wasm` and `mathlib.wasm`, compiled once or read from the persistent cache;
+/// instantiates models.
 pub struct Runtime {
     engine: Engine,
     engine_module: Module,
@@ -188,13 +193,28 @@ pub struct Runtime {
     memory_type: MemoryType,
     max_memory: usize,
     execution: Execution,
+    cache: Option<wasmtime::Cache>,
 }
 
 impl Runtime {
     /// Compiles `engine.wasm` and `mathlib.wasm` and checks their imports and exports and the
-    /// version of the output of the engine (its custom section [`ENGINE_SECTION`]).
+    /// version of the output of the engine (its custom section [`ENGINE_SECTION`]). Uses
+    /// the platform compilation cache when available, falling back to compilation on a miss.
     pub fn new(engine_wasm: &[u8], mathlib_wasm: &[u8]) -> anyhow::Result<Runtime> {
+        Self::new_with_cache(engine_wasm, mathlib_wasm, ModuleCache::Default)
+    }
+
+    /// As [`Runtime::new`], with a chosen persistent compilation cache. Cache failures fall
+    /// back to compilation. Wasmtime keys entries by the module bytes, compiler version,
+    /// target CPU features and compilation settings; no instances or simulation state are
+    /// shared. Cache hits still undergo the same module and description validation.
+    pub fn new_with_cache(
+        engine_wasm: &[u8],
+        mathlib_wasm: &[u8],
+        cache: ModuleCache,
+    ) -> anyhow::Result<Runtime> {
         check_output_format(engine_wasm)?;
+        let cache = cache.open();
         // These modules use core wasm32 and fixed-width SIMD. Reject features which
         // provide additional heaps, shared state or component resources outside our policy.
         let engine = Engine::new(
@@ -203,7 +223,8 @@ impl Runtime {
                 .wasm_gc(false)
                 .wasm_memory64(false)
                 .wasm_multi_memory(false)
-                .wasm_relaxed_simd(false),
+                .wasm_relaxed_simd(false)
+                .cache(cache.clone()),
         )?;
         let execution =
             Execution::new(&engine).context("cannot start the execution deadline clock")?;
@@ -236,6 +257,7 @@ impl Runtime {
             );
         }
         Ok(Runtime {
+            cache,
             execution,
             engine,
             engine_module,
@@ -263,6 +285,17 @@ impl Runtime {
     /// The runtime of the embedded [`ENGINE_WASM`] and [`MATHLIB_WASM`].
     pub fn embedded() -> anyhow::Result<Runtime> {
         Runtime::new(ENGINE_WASM, MATHLIB_WASM)
+    }
+
+    /// The embedded runtime with a chosen persistent compilation cache.
+    pub fn embedded_with_cache(cache: ModuleCache) -> anyhow::Result<Runtime> {
+        Runtime::new_with_cache(ENGINE_WASM, MATHLIB_WASM, cache)
+    }
+
+    /// The active cache directory, or `None` if disabled or unavailable. Cache entries may
+    /// still miss or fail to be written (for example, when a disk becomes full).
+    pub fn cache_directory(&self) -> Option<&Path> {
+        self.cache.as_ref().map(|cache| cache.directory().as_path())
     }
 
     /// Compiles a model and checks it against its description, without instantiating it.

@@ -24,7 +24,7 @@ serde.workspace = true
 serde_json.workspace = true
 # the call hook counts the calls of the engine into the host (its WASI imports), wasmparser
 # checks the sections of a model
-wasmtime = { version = "50.0.1", default-features = false, features = ["anyhow", "std", "runtime", "cranelift", "call-hook", "demangle", "reexport-wasmparser"] }
+wasmtime = { version = "50.0.1", default-features = false, features = ["anyhow", "std", "runtime", "cranelift", "cache", "call-hook", "demangle", "reexport-wasmparser"] }
 
 [build-dependencies]
 # the name of the custom section of `engine.wasm` and the version of its output
@@ -34,6 +34,7 @@ sbmlsim-abi = { path = "../abi" }
 # compiled models, whose description is compared with what their module computes
 sbmlsim-compiler = { path = "../compiler" }
 serde_json.workspace = true
+tempfile = "3"
 wat = "1"
 
 [[test]]

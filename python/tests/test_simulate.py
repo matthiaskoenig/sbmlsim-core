@@ -1,6 +1,9 @@
 """Tests of `Runtime`, `LoadedModel` and `Instance.simulate`."""
 
+import json
 import math
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -71,6 +74,51 @@ def loaded(runtime: sbmlsim_core.Runtime, sbml: str) -> sbmlsim_core.LoadedModel
     """Compiles and loads an SBML model."""
     compiled = sbmlsim_core.compile_sbml(sbml)
     return runtime.load(compiled.wasm, compiled.description)
+
+
+def test_compilation_cache_is_reused_by_fresh_python_processes(tmp_path):
+    cache = tmp_path / "compilation-cache"
+    script = """
+import json
+import sys
+from pathlib import Path
+import sbmlsim_core
+
+runtime = sbmlsim_core.Runtime(cache_dir=Path(sys.argv[1]))
+compiled = sbmlsim_core.compile_sbml(Path(sys.argv[2]).read_text())
+model = runtime.load(compiled.wasm, compiled.description)
+print(json.dumps([str(runtime.cache_dir), model.initial_values()]))
+"""
+    command = [
+        sys.executable,
+        "-c",
+        script,
+        str(cache),
+        str(ROOT / "crates/host/tests/decay.xml"),
+    ]
+    first = subprocess.check_output(command, text=True, timeout=60)
+    assert cache.is_dir()
+    assert any((cache / "modules").rglob("*"))
+    second = subprocess.check_output(command, text=True, timeout=60)
+    assert json.loads(first) == json.loads(second)
+    assert Path(json.loads(first)[0]).samefile(cache)
+
+
+def test_unavailable_compilation_cache_falls_back_to_compilation(tmp_path):
+    blocked = tmp_path / "a-file"
+    blocked.write_text("not a directory")
+    runtime = sbmlsim_core.Runtime(cache_dir=blocked / "cache")
+    assert runtime.cache_dir is None
+    sbml = (ROOT / "crates/host/tests/decay.xml").read_text(encoding="utf-8")
+    assert loaded(runtime, sbml).initial_values()["y"] == 1.0
+    uncached = sbmlsim_core.Runtime(cache=False)
+    assert uncached.cache_dir is None
+    assert loaded(uncached, sbml).initial_values()["y"] == 1.0
+
+
+def test_cache_directory_requires_caching_to_be_enabled(tmp_path):
+    with pytest.raises(ValueError, match="cache_dir requires cache=True"):
+        sbmlsim_core.Runtime(cache=False, cache_dir=tmp_path)
 
 
 @pytest.fixture(scope="module")

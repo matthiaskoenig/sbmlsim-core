@@ -10,6 +10,7 @@ type checker, and `jacobian` is a plain `str` in the stub, so an invalid value i
 Those are held by the tests of `python/tests`.
 """
 
+from pathlib import Path
 from typing import Any
 
 import numpy
@@ -47,6 +48,10 @@ def use(sbml: str, request: dict[str, Any]) -> None:
     runtime: Runtime = Runtime()
     Runtime(max_memory_bytes=1 << 30)
     Runtime(None)
+    Runtime(cache=False)
+    Runtime(cache_dir=Path("wasmtime-cache"))
+    Runtime(cache_dir="wasmtime-cache")
+    cache_dir: Path | None = runtime.cache_dir
     model: LoadedModel = runtime.load(wasm, description)
     loaded: dict[str, Any] = model.description
     values: dict[str, float] = model.initial_values()
@@ -77,7 +82,9 @@ def use(sbml: str, request: dict[str, Any]) -> None:
         else:
             rows: list[str] = result.columns
 
-    print(contract, version, simulation, loaded, values, columns, table, stats)
+    print(
+        contract, version, simulation, loaded, values, columns, table, stats, cache_dir
+    )
 
 
 def errors(request: dict[str, Any], instance: Instance) -> None:

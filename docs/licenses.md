@@ -21,6 +21,8 @@ Also compiled into the modules, under permissive licenses whose texts are in the
 
 The extension module of the python package links one library more, which no wasm module and no other package contains: mimalloc 3.3.2 (MIT, through the crate `libmimalloc-sys`), the allocator of the extension. Its text is in `THIRD_PARTY.md` as well, which the wheel carries.
 
+The native Wasmtime hosts also link Zstandard 1.5.7 and its Rust wrappers (`zstd`, `zstd-safe`, `zstd-sys`, BSD-3-Clause) for persistent compilation caching. Their notices are in `THIRD_PARTY.md`; they are in no Wasm module or JavaScript package.
+
 ## Third-party notices
 
 `THIRD_PARTY.md` in the root of the repository has the versions, the commits of the submodules, the complete license texts and how to rebuild `engine.wasm` with a modified KLU or BTF. `sbmlsim-core runtime -o DIR` writes it next to `engine.wasm` and `mathlib.wasm`, so a page which serves the runtime can serve its notices next to it, and `sbmlsim_host::THIRD_PARTY_NOTICES` is its text.
