@@ -293,6 +293,83 @@ A precompiled `WebAssembly.Module` is a **trusted input**: JavaScript reflection
 
 A simulation is one synchronous call of the engine. `pool.mjs` runs them in a pool of workers, each with a runtime of its own, so a page stays responsive and the points of a scan run in parallel:
 
+<svg class="core-diagram" viewBox="0 10 840 300" xmlns="http://www.w3.org/2000/svg" role="img"
+     aria-label="The page calls pool.simulate, which queues requests and hands each to a free worker. Every worker is a module Web Worker with a runtime of its own, holding an instance of the engine, mathlib and the model it was given, so a simulation is one synchronous call inside the worker and the page stays responsive. The results come back to the page as Promises. The pool has as many workers as defaultWorkers gives: the logical processors but one, between 1 and 8.">
+  <defs>
+    <marker id="pl-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <text class="cd-title" x="92" y="30">the page</text>
+  <g class="cd-step cd-active">
+    <rect x="16" y="40" width="152" height="60" rx="6"/>
+    <text x="92" y="64">pool.simulate</text>
+    <text class="cd-sub" x="92" y="82">a Promise per point</text>
+  </g>
+  <line x1="92" y1="106" x2="92" y2="140" marker-end="url(#pl-arrow)"/>
+  <g class="cd-step">
+    <rect x="16" y="146" width="152" height="52" rx="6"/>
+    <text x="92" y="167">the queue</text>
+    <text class="cd-sub" x="92" y="185">one point per worker</text>
+  </g>
+  <line x1="174" y1="172" x2="236" y2="118" marker-end="url(#pl-arrow)"/>
+  <line x1="174" y1="172" x2="236" y2="172" marker-end="url(#pl-arrow)"/>
+  <line x1="174" y1="172" x2="236" y2="252" marker-end="url(#pl-arrow)"/>
+  <text class="cd-title" x="536" y="30">a module Web Worker each, with a runtime of its own</text>
+  <g class="cd-instance">
+    <rect x="242" y="78" width="420" height="56" rx="6"/>
+  </g>
+  <text class="cd-sub" x="302" y="112">worker 1</text>
+  <g class="cd-module">
+    <rect x="360" y="90" width="92" height="32" rx="4"/>
+    <text class="cd-sub" x="406" y="110">engine</text>
+    <rect x="460" y="90" width="92" height="32" rx="4"/>
+    <text class="cd-sub" x="506" y="110">mathlib</text>
+    <rect x="560" y="90" width="92" height="32" rx="4"/>
+    <text class="cd-sub" x="606" y="110">model</text>
+  </g>
+  <g class="cd-instance">
+    <rect x="242" y="144" width="420" height="56" rx="6"/>
+  </g>
+  <text class="cd-sub" x="302" y="178">worker 2</text>
+  <g class="cd-module">
+    <rect x="360" y="156" width="92" height="32" rx="4"/>
+    <text class="cd-sub" x="406" y="176">engine</text>
+    <rect x="460" y="156" width="92" height="32" rx="4"/>
+    <text class="cd-sub" x="506" y="176">mathlib</text>
+    <rect x="560" y="156" width="92" height="32" rx="4"/>
+    <text class="cd-sub" x="606" y="176">model</text>
+  </g>
+  <text class="cd-sub" x="452" y="222">...</text>
+  <g class="cd-instance">
+    <rect x="242" y="236" width="420" height="56" rx="6"/>
+  </g>
+  <text class="cd-sub" x="302" y="270">worker n</text>
+  <g class="cd-module">
+    <rect x="360" y="248" width="92" height="32" rx="4"/>
+    <text class="cd-sub" x="406" y="268">engine</text>
+    <rect x="460" y="248" width="92" height="32" rx="4"/>
+    <text class="cd-sub" x="506" y="268">mathlib</text>
+    <rect x="560" y="248" width="92" height="32" rx="4"/>
+    <text class="cd-sub" x="606" y="268">model</text>
+  </g>
+  <line x1="668" y1="106" x2="712" y2="106" marker-end="url(#pl-arrow)"/>
+  <line x1="668" y1="172" x2="712" y2="172" marker-end="url(#pl-arrow)"/>
+  <line x1="668" y1="264" x2="712" y2="264" marker-end="url(#pl-arrow)"/>
+  <g class="cd-artifact">
+    <rect x="718" y="88" width="106" height="36" rx="4"/>
+    <text class="cd-sub" x="771" y="110">rows</text>
+    <rect x="718" y="154" width="106" height="36" rx="4"/>
+    <text class="cd-sub" x="771" y="176">rows</text>
+    <rect x="718" y="246" width="106" height="36" rx="4"/>
+    <text class="cd-sub" x="771" y="268">rows</text>
+  </g>
+  <text class="cd-note" x="771" y="218">back to the page</text>
+  <text class="cd-label" x="16" y="226">n is defaultWorkers():</text>
+  <text class="cd-label" x="16" y="244">the logical processors</text>
+  <text class="cd-label" x="16" y="262">but one, 1 to 8</text>
+</svg>
+
 ```js
 import { createPool } from "./js/pool.mjs";
 

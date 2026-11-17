@@ -12,6 +12,62 @@ cargo run -p sbmlsim-cli -- compile crates/host/tests/decay.xml -o decay-model
 | `-o`, `--output <DIR>` | the directory to write `model.wasm` and `model.json` into |
 | `--no-optimize` | without the optimizer: the same results, a larger and slower module |
 
+<svg class="core-diagram" viewBox="0 12 840 304" xmlns="http://www.w3.org/2000/svg" role="img"
+     aria-label="A model of any SBML level is prepared with prepare_model.py when it is not Level 3 Version 2 core or carries comp. The compiler takes Level 3 Version 2 core, reading the distrib package as annotation only, and writes model.wasm, which imports the memory of the engine and the functions of mathlib and exports the contract model/2, and model.json, which describes the states and selections, the units as text and the Jacobian with the reason when it is not analytic. A required package, the delay csymbol, a fast reaction, an unknown identifier, a cycle of assignment rules and a draw of distrib are refused, each named with the element which caused it.">
+  <defs>
+    <marker id="cp-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <g class="cd-step">
+    <rect x="16" y="48" width="132" height="46" rx="6"/>
+    <text x="82" y="70">any SBML</text>
+    <text class="cd-sub" x="82" y="86">L1, L2, comp</text>
+  </g>
+  <line x1="154" y1="71" x2="186" y2="71" marker-end="url(#cp-arrow)"/>
+  <g class="cd-step">
+    <rect x="192" y="48" width="150" height="46" rx="6"/>
+    <text x="267" y="70">prepare_model.py</text>
+    <text class="cd-sub" x="267" y="86">libsbml, when needed</text>
+  </g>
+  <line x1="348" y1="71" x2="380" y2="71" marker-end="url(#cp-arrow)"/>
+  <g class="cd-step">
+    <rect x="386" y="48" width="132" height="46" rx="6"/>
+    <text x="452" y="70">L3V2 core</text>
+    <text class="cd-sub" x="452" y="86">distrib annotates</text>
+  </g>
+  <line x1="524" y1="71" x2="556" y2="71" marker-end="url(#cp-arrow)"/>
+  <g class="cd-step cd-active">
+    <rect x="562" y="48" width="150" height="46" rx="6"/>
+    <text x="637" y="70">compiler</text>
+    <text class="cd-sub" x="637" y="86">crates/sbml</text>
+  </g>
+  <line x1="637" y1="100" x2="637" y2="148" marker-end="url(#cp-arrow)"/>
+  <line x1="365" y1="124" x2="637" y2="124"/>
+  <line x1="365" y1="124" x2="365" y2="148" marker-end="url(#cp-arrow)"/>
+  <text class="cd-contract" x="652" y="118">model/2</text>
+  <g class="cd-step">
+    <rect x="240" y="154" width="250" height="88" rx="6"/>
+    <text x="365" y="176">model.wasm</text>
+    <text class="cd-sub" x="365" y="198">imports env.memory</text>
+    <text class="cd-sub" x="365" y="216">imports math.*</text>
+    <text class="cd-sub" x="365" y="234">exports model/2</text>
+  </g>
+  <g class="cd-step">
+    <rect x="512" y="154" width="250" height="88" rx="6"/>
+    <text x="637" y="176">model.json</text>
+    <text class="cd-sub" x="637" y="198">states, selections</text>
+    <text class="cd-sub" x="637" y="216">units as text</text>
+    <text class="cd-sub" x="637" y="234">Jacobian, with a reason</text>
+  </g>
+  <text class="cd-label" x="16" y="258">refused, each with the element which caused it</text>
+  <g class="cd-step">
+    <rect x="16" y="266" width="808" height="42" rx="6"/>
+    <text class="cd-sub" x="420" y="284">a required package (comp) &#183; the delay csymbol &#183; a fast reaction</text>
+    <text class="cd-sub" x="420" y="300">an unknown identifier &#183; a cycle of assignment rules &#183; a draw of distrib</text>
+  </g>
+</svg>
+
 ## Algebraic rules
 
 Models with algebraic rules use SUNDIALS IDA. The compiler matches each equation to
