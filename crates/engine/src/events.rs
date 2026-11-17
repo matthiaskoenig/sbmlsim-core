@@ -128,6 +128,13 @@ struct Pending {
     held: bool,
 }
 
+/// The state used for the output row immediately before the first event at a stop.
+#[derive(Default)]
+pub(crate) struct BeforeEvent {
+    pub y: Vec<f64>,
+    pub p: Vec<f64>,
+}
+
 /// Reusable event storage. Every execution resets logical state before use.
 #[derive(Default)]
 pub(crate) struct Scratch {
@@ -402,9 +409,25 @@ impl<'a, const DAE: bool> Events<'a, DAE> {
         p: &mut [f64],
         at_end: bool,
     ) -> Result<bool, EngineError> {
-        let at = self.execute_at(t, y, p, Probe::Exact)?;
         let after = if at_end { Probe::End } else { Probe::After };
-        let after = self.execute_at(t, y, p, after)?;
+        self.execute_stop(t, y, p, Some(after), None)
+    }
+
+    /// Execute the exact trigger round and the optional probe. Snapshot once, only
+    /// when an event actually executes, including an event found by the probe.
+    pub fn execute_stop(
+        &mut self,
+        t: f64,
+        y: &mut [f64],
+        p: &mut [f64],
+        after: Option<Probe>,
+        mut before: Option<&mut BeforeEvent>,
+    ) -> Result<bool, EngineError> {
+        let at = self.execute_rounds(t, y, p, Probe::Exact, &mut before)?;
+        let Some(probe) = after else {
+            return Ok(at);
+        };
+        let after = self.execute_rounds(t, y, p, probe, &mut before)?;
         Ok(at || after)
     }
 
@@ -419,6 +442,17 @@ impl<'a, const DAE: bool> Events<'a, DAE> {
         p: &mut [f64],
         probe: Probe,
     ) -> Result<bool, EngineError> {
+        self.execute_rounds(t, y, p, probe, &mut None)
+    }
+
+    fn execute_rounds(
+        &mut self,
+        t: f64,
+        y: &mut [f64],
+        p: &mut [f64],
+        probe: Probe,
+        before: &mut Option<&mut BeforeEvent>,
+    ) -> Result<bool, EngineError> {
         if t != self.executions_at {
             self.executions.fill(0);
             self.executions_at = t;
@@ -428,7 +462,7 @@ impl<'a, const DAE: bool> Events<'a, DAE> {
                 e.held = true;
             }
         }
-        let result = self.rounds(t, y, p, probe);
+        let result = self.rounds(t, y, p, probe, before);
         for e in &mut self.pending {
             e.held = false;
         }
@@ -442,6 +476,7 @@ impl<'a, const DAE: bool> Events<'a, DAE> {
         y: &mut [f64],
         p: &mut [f64],
         probe: Probe,
+        before: &mut Option<&mut BeforeEvent>,
     ) -> Result<bool, EngineError> {
         let model = self.model;
         let mut executed = false;
@@ -556,6 +591,14 @@ impl<'a, const DAE: bool> Events<'a, DAE> {
                 Some(values) => values,
                 None => self.snapshot(i, t, y, p)?,
             };
+            if let Some(before) = before.take() {
+                // Selections compute their own assignment rules. Refreshing the
+                // rule targets earlier in this round leaves the pre-event row intact.
+                before.y.clear();
+                before.y.extend_from_slice(y);
+                before.p.clear();
+                before.p.extend_from_slice(p);
+            }
             model.event_apply(i as u32, t, &values, y, p);
             model.check_error()?;
             if DAE && let Some(constraints) = &mut self.constraints {
@@ -637,5 +680,55 @@ impl<'a, const DAE: bool> Events<'a, DAE> {
                 Some(best[r])
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{EventModel, Target, TestEvent};
+
+    #[test]
+    fn step_snapshot_is_lazy_and_keeps_the_state_before_the_first_execution() {
+        let mut exact = TestEvent::new("exact", |t, _, _| t >= 1.0, vec![]);
+        exact.assignments = vec![(Target::State(0), |_, _, _| 4.0)];
+        let mut strict = TestEvent::new("strict", |t, _, _| t > 1.0, vec![]);
+        strict.assignments = vec![(Target::Param(0), |_, y, _| y[0] + 1.0)];
+        let model = EventModel {
+            states: vec![("x", 2.0)],
+            parameters: vec![("p", 3.0)],
+            rhs: |_, _, _, rates| rates.fill(0.0),
+            events: vec![exact, strict],
+            discontinuities: vec![],
+        };
+        let desc = model.description();
+        let mut scratch = Scratch::default();
+        let mut events = Events::<false>::with_scratch(
+            &model,
+            &desc,
+            0,
+            0.0,
+            2.0,
+            EventLimits::default(),
+            &mut scratch,
+        );
+        let mut before = BeforeEvent::default();
+        let (mut y, mut p) = ([2.0], [3.0]);
+        assert!(
+            !events
+                .execute_stop(0.5, &mut y, &mut p, None, Some(&mut before))
+                .unwrap()
+        );
+        assert_eq!((before.y.capacity(), before.p.capacity()), (0, 0));
+        assert!(
+            events
+                .execute_stop(1.0, &mut y, &mut p, Some(Probe::After), Some(&mut before))
+                .unwrap()
+        );
+        assert_eq!(
+            (before.y.as_slice(), before.p.as_slice()),
+            (&[2.0][..], &[3.0][..])
+        );
+        assert_eq!((y, p), ([4.0], [5.0]));
     }
 }

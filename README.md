@@ -164,7 +164,7 @@ Errors derive from `SbmlsimCoreError`: `CompileError`, `LoadError` (a runtime wh
 
 `sbmlsim-core testsuite testdata/cases` compiles and simulates the cases of the SBML Test Suite (prepared with `uv run scripts/prepare_testsuite.py --out testdata/cases`) and compares them with the baseline `testdata/testsuite_baseline.json`; `--write-baseline` writes the baseline from a run. In every mode (analytic and difference Jacobian, optimizer on and off) each passing case is simulated again to check that it repeats bitwise.
 
-Measured in this repository: 1701 of 1789 cases pass, including 120 algebraic-rule cases integrated with IDA. The 88 expected failures are all refused at compilation (`not_compiled`) with a reason in the baseline:
+Measured in this repository: 1701 of 1789 cases pass, including 120 algebraic-rule cases integrated with IDA. The baseline records the 88 expected failures as `not_compiled`, with reasons from preparation or compilation.
 
 | reason | cases |
 |---|---:|

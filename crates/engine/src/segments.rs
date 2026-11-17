@@ -348,11 +348,7 @@ enum StopKind {
     },
 }
 
-#[derive(Default)]
-pub(crate) struct Scratch {
-    before: Vec<f64>,
-    p_before: Vec<f64>,
-}
+pub(crate) use crate::events::BeforeEvent as Scratch;
 
 /// The outputs of a run with events and where they stand.
 struct Outputs<'t> {
@@ -420,21 +416,25 @@ impl Outputs<'_> {
         let m = self.m;
         let at_end = t >= self.end || too_close(t, self.end);
         if self.steps {
-            self.scratch.before.clear();
-            self.scratch.before.extend_from_slice(&y[..m]);
-            self.scratch.p_before.clear();
-            self.scratch.p_before.extend_from_slice(p);
-            let executed = if kind == StopKind::Step && !at_end {
-                events.execute_at(t, &mut y[..m], p, Probe::Exact)?
+            let after = if at_end {
+                Some(Probe::End)
+            } else if kind == StopKind::Step {
+                None
             } else {
-                events.execute(t, &mut y[..m], p, at_end)?
+                Some(Probe::After)
             };
+            let executed = events.execute_stop(t, &mut y[..m], p, after, Some(self.scratch))?;
             let discontinuity = kind
                 == (StopKind::Root {
                     discontinuity: true,
                 });
             if executed || (discontinuity && !at_end) {
-                recorder.row(t, &self.scratch.before, &self.scratch.p_before)?;
+                let (before, p_before) = if executed {
+                    (self.scratch.y.as_slice(), self.scratch.p.as_slice())
+                } else {
+                    (&y[..m], &p[..])
+                };
+                recorder.row(t, before, p_before)?;
                 recorder.row(t, &y[..m], p)?;
             } else if !matches!(kind, StopKind::Root { .. }) || at_end {
                 recorder.row(t, &y[..m], p)?;

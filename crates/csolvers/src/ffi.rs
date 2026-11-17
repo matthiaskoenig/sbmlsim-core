@@ -166,6 +166,8 @@ unsafe extern "C" {
     pub fn N_VNew_Serial(vec_length: sunindextype, sunctx: SUNContext) -> N_Vector;
     pub fn N_VDestroy(v: N_Vector);
     pub fn N_VGetArrayPointer(v: N_Vector) -> *mut sunrealtype;
+    /// Data of a serial vector created by `N_VNew_Serial` or cloned from one.
+    pub fn N_VGetArrayPointer_Serial(v: N_Vector) -> *mut sunrealtype;
     /// The weighted root mean square norm `sqrt(sum((x_i * w_i)^2) / n)`.
     pub fn N_VWrmsNorm(x: N_Vector, w: N_Vector) -> sunrealtype;
 

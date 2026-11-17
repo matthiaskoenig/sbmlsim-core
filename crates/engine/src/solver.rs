@@ -348,7 +348,7 @@ unsafe extern "C" fn record_error(
 /// # Safety
 /// `v` is a serial vector of at least `n` values which outlives the slice and is not aliased.
 unsafe fn values<'a>(v: N_Vector, n: usize) -> &'a mut [f64] {
-    unsafe { std::slice::from_raw_parts_mut(N_VGetArrayPointer(v), n) }
+    unsafe { std::slice::from_raw_parts_mut(N_VGetArrayPointer_Serial(v), n) }
 }
 
 /// The problem behind the user data of CVODE.
@@ -828,7 +828,7 @@ impl<const DAE: bool> Integrator<DAE> {
     pub fn state(&self) -> &[f64] {
         // SAFETY: `y` is a serial vector of `n` values owned by this memory, which CVODE writes
         // only during a call of `&mut self`.
-        unsafe { std::slice::from_raw_parts(N_VGetArrayPointer(self.y), self.config.n) }
+        unsafe { std::slice::from_raw_parts(N_VGetArrayPointer_Serial(self.y), self.config.n) }
     }
 
     /// Starts a segment at `t0` with the state `y0` and the settings of the integrator; with

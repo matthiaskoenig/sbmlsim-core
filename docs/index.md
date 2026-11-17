@@ -126,6 +126,6 @@ Both are documented on [Simulating](simulating.md) and defined in `crates/abi`.
 
 ## What it is measured against
 
-- The SBML Test Suite: 1701 of 1789 cases pass, including 120 algebraic-rule cases. The 88 remaining cases are refused at compilation with a reason. See [Test suite](testsuite.md).
+- The SBML Test Suite: 1701 of 1789 cases pass, including 120 algebraic-rule cases. The remaining 88 cases are refused during preparation or compilation. See [Test suite](testsuite.md).
 - roadrunner: no model of the benchmark takes more than 1.4x the time of roadrunner native, dense or with KLU, in wasmtime, Node or Chrome (the PBPK models 0.57 to 0.83 of it, Chen with KLU 0.16 to 0.19), and every model agrees with roadrunner at tight tolerances.
 - sbmlsim: the known differences to roadrunner and to sbmlsim are listed on [Semantics](semantics.md).

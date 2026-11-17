@@ -62,7 +62,7 @@ The settings of the integrator:
 |---|---|---|
 | `relative_tolerance` | `1e-6` | the relative tolerance |
 | `absolute_tolerance` | `{"scalar": 1e-12}` | `{"scalar": x}` one tolerance for every state, `{"per_state": [x, ...]}` one per state in the order of the state vector (the `states` of `model.json`) |
-| `maximum_num_steps` | `20000` | the most steps of one call of the integrator; in an output of times (and in a horizon of a steady state) the steps towards one output time, summed over the returns of CVODE at roots without an execution of an event and its restarts at the roots of discontinuities |
+| `maximum_num_steps` | `20000` | the most steps of one call of the integrator; in an output of times (and in a horizon of a steady state) the steps towards one output time, including returns at roots without an event execution and restarts at discontinuity roots |
 | `maximum_time_step` | `0.0` | the largest step in time, `0.0` for none |
 | `initial_time_step` | `0.0` | the first step in time, `0.0` for the integrator's choice |
 | `stiff` | `true` | CVODE BDF (`true`) or Adams (`false`); models with algebraic rules always use IDA BDF |

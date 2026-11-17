@@ -35,14 +35,19 @@ end-to-end result.
 
 ## Acceptance
 
-- Exercise all 123 cases currently refused for algebraic rules. Three cases also
-  use the separately unsupported MathML `delay` csymbol; the expected improvement
-  is 120 newly passing cases and an unchanged delay diagnostic for those three.
+- Exercise all 123 cases refused for algebraic rules by the baseline. Three also
+  use the separately unsupported MathML `delay` csymbol. The expected improvement
+  is 120 newly passing cases, with the delay diagnostic for those three.
 - Run the complete prepared SBML Test Suite with optimization on and off and with
   the difference Jacobian, including repeatability checks.
 - Verify native, WASM and JavaScript execution, prepared requests, initial
   selections, changes, initial events, cascades and pure algebraic systems.
 - Run formatting, clippy, relevant Rust tests, WASM builds, and JavaScript tests.
+- Preserve warmed ODE performance. Compare the final release builds in paired
+  baseline/feature blocks in both orders, with matching result bits and all 13
+  counters. Cover dense and KLU, analytic and difference Jacobians, Adams,
+  ordinary and prepared requests, and zero-duration output. Report engine size
+  and uncached startup separately.
 - Cover initialization dependencies and concentration conversion involving an
   algebraic compartment, which the prepared algebraic suite does not cover.
 
@@ -63,3 +68,9 @@ rejection for a changing algebraic value.
 Rust unit, integration and documentation tests, the 57 Python tests, all 62
 JavaScript checks, workspace Clippy, native/WASI solver Clippy, formatting, the
 compiler WASM build, and the host/CLI build without default features pass.
+
+### ODE performance
+
+The merge gate requires final release measurements. Earlier paired comparisons
+are retained for diagnosis. A reproduced slowdown in the restored-order KLU
+measurements keeps the gate open while the final fast path is evaluated.

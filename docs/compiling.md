@@ -17,7 +17,9 @@ cargo run -p sbmlsim-cli -- compile crates/host/tests/decay.xml -o decay-model
 Models with algebraic rules use SUNDIALS IDA. The compiler matches each equation to
 an eligible nonconstant variable and appends these unknowns to the state vector.
 Variables determined by assignment rules, rate rules or reactions retain their
-existing roles. An overdetermined algebraic system is a compilation error.
+existing roles. An overdetermined algebraic system is a compilation error. IDA integrates
+regular index-1 systems, whose algebraic equations have a nonsingular Jacobian
+with respect to the matched unknowns along the solution.
 
 Algebraic variables are determined by their constraints. Their SBML initial values
 are guesses for the consistency solve; changes and pre-initialization target the

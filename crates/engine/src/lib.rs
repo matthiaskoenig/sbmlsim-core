@@ -1077,6 +1077,36 @@ fn run(
     }
 }
 
+fn record_point(
+    model: &dyn ModelFns,
+    plan: &Plan,
+    scratch: &mut Scratch,
+    max_output_values: usize,
+    prefix: usize,
+) -> Result<RecordedValues, EngineError> {
+    if let Some(config) = &plan.config {
+        solver::check_index_range(config)?;
+    }
+    let mut recorder = Recorder::with_scratch(
+        model,
+        &plan.columns,
+        &plan.mask,
+        &mut scratch.selections,
+        max_output_values,
+        prefix,
+    )?;
+    let times = if plan.req.steps {
+        std::slice::from_ref(&plan.req.start)
+    } else {
+        recorder.reserve(plan.times.len())?;
+        &plan.times
+    };
+    for &time in times {
+        recorder.row(time, &scratch.y, &scratch.p)?;
+    }
+    Ok(RecordedValues::from_recorder(recorder, prefix))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_model<const DAE: bool>(
     model: &dyn ModelFns,
@@ -1115,19 +1145,6 @@ fn run_model<const DAE: bool>(
 
     let with_events = !desc.events.is_empty() || desc.n_roots > 0;
 
-    let prefix = prefix(names);
-    let mut recorder = Recorder::with_scratch(
-        model,
-        columns,
-        &plan.mask,
-        &mut scratch.selections,
-        metadata.max_output_values,
-        prefix,
-    )?;
-    if !req.steps {
-        recorder.reserve(times.len())?;
-    }
-
     // At a single time without events, changes or a steady-state calculation, the
     // requested rows read only the initialized ODE state.
     if !DAE
@@ -1136,18 +1153,13 @@ fn run_model<const DAE: bool>(
         && req.steady_state.is_none()
         && changes.time(0).is_none()
     {
-        if let Some(config) = &plan.config {
-            solver::check_index_range(config)?;
-        }
-        let output_times = if req.steps {
-            std::slice::from_ref(&start)
-        } else {
-            times
-        };
-        for &time in output_times {
-            recorder.row(time, &scratch.y, &scratch.p)?;
-        }
-        return Ok(RecordedValues::from_recorder(recorder, prefix));
+        return record_point(
+            model,
+            plan,
+            scratch,
+            metadata.max_output_values,
+            prefix(names),
+        );
     }
 
     // a model without states but with events integrates one state of the rate 0, so CVODE
@@ -1193,6 +1205,19 @@ fn run_model<const DAE: bool>(
         }
     };
     let settings = &req.settings;
+    let prefix = prefix(names);
+    let mut recorder = Recorder::with_scratch(
+        model,
+        columns,
+        &plan.mask,
+        &mut scratch.selections,
+        metadata.max_output_values,
+        prefix,
+    )?;
+    if !req.steps {
+        recorder.reserve(times.len())?;
+    }
+
     scratch.jac_values.clear();
     scratch
         .jac_values
