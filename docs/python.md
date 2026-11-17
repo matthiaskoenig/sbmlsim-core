@@ -17,7 +17,7 @@ compiled = sbmlsim_core.compile_sbml(sbml_text)  # optimize=True, jacobian="auto
 compiled.wasm  # the bytes of model.wasm
 compiled.description  # the dict of model.json (model/2)
 
-# engine.wasm and mathlib.wasm, compiled once per runtime: share it
+# engine.wasm and mathlib.wasm, loaded from the compilation cache or compiled on a miss
 runtime = sbmlsim_core.Runtime(max_memory_bytes=None)
 model = runtime.load(compiled.wasm, compiled.description)  # compiled once, shared
 model.initial_values()  # selection id -> value as loaded
@@ -38,7 +38,24 @@ request["settings"]["absolute_tolerance"] = {"per_state": [1e-12] * n_states}
 
 `description` and `initial_values()` of a model, `description` of a compiled model and `columns` of an output are computed anew by every access, so read them once. The parallelism of `simulate_many` is `min(threads, len(requests))`, and its pool and its per-thread instances live only for the duration of the call (an instance costs about 0.3 s to make for a model of 700 kB of description), so give it as many points as you can rather than many small batches: 320 points in one call on 20 threads took 2.09 s against 22.0 s serially.
 
-The allocator of the extension is mimalloc, which is in the wheel and needs nothing of the machine that installs it. A simulation allocates inside the linear memory of the engine and is unchanged by it; the compiler of a model and Cranelift do allocate, so `compile_sbml` of a model of 919 states takes 21 % less time (124.6 to 98.4 ms), a PBPK model 17 % less, `load` of the large model 7 % less and `Runtime()` 5 % less, and the peak resident set size of such a process falls by 23 %. The startup is what dominates a short run: a process which simulates a PBPK model spends about 560 ms in `Runtime()` (Cranelift on `engine.wasm`, once per process, so share one runtime), 3 ms in `compile_sbml`, 10 ms in `load` and 0.74 ms in a simulation of 201 points, and a scan of 512 of them takes 445 ms on one thread and 67 ms on eight. So give a scan to one `simulate_many` of one runtime rather than to a process per point ([bench/RESULTS.md](https://github.com/matthiaskoenig/sbmlsim-core/blob/develop/bench/RESULTS.md) has the numbers).
+The allocator of the extension is mimalloc, which is in the wheel and needs nothing of the machine that installs it. A simulation allocates inside the linear memory of the engine and is unchanged by it; the compiler of a model and Cranelift do allocate, so `compile_sbml` of a model of 919 states takes 21 % less time (124.6 to 98.4 ms), a PBPK model 17 % less, `load` of the large model 7 % less and an uncached `Runtime()` 5 % less, and the peak resident set size of such a process falls by 23 %. A cold start of a PBPK model spends about 560 ms in `Runtime()`, 3 ms in `compile_sbml`, 10 ms in `load` and 0.74 ms in a simulation of 201 points, and a scan of 512 of them takes 445 ms on one thread and 67 ms on eight ([bench/RESULTS.md](https://github.com/matthiaskoenig/sbmlsim-core/blob/develop/bench/RESULTS.md) has the numbers).
+
+## Compilation cache
+
+`Runtime()` enables Wasmtime's persistent compilation cache for `engine.wasm`, `mathlib.wasm` and every model passed to `load`. Later runtimes, including those in another process, reuse the compiled machine code. The SBML-to-Wasm compiler (`compile_sbml`) still runs when called. Keep sharing a runtime and loaded models within a process to avoid repeated setup.
+
+```python
+from pathlib import Path
+
+runtime = sbmlsim_core.Runtime()  # Wasmtime's platform cache directory
+runtime = sbmlsim_core.Runtime(cache_dir=Path(".cache/sbmlsim-core"))
+runtime.cache_dir  # resolved pathlib.Path, or None if disabled or unavailable
+uncached = sbmlsim_core.Runtime(cache=False)
+```
+
+The default directory is Wasmtime's platform cache location, for example `$XDG_CACHE_HOME/wasmtime` or `~/.cache/wasmtime` on Linux. `cache_dir` accepts a string or a path; relative paths are resolved against the current directory. Passing it with `cache=False` raises `ValueError`. The constructor releases the GIL during cache initialization and compilation.
+
+Wasmtime keys entries by the Wasm bytes, its compiler version, CPU features and compilation settings. A changed module or incompatible configuration is compiled again. Missing, unreadable or corrupt entries are treated as misses; an unavailable cache directory also falls back to compilation. Cache files can be deleted to reclaim disk space, and Wasmtime applies its default size and age cleanup policy. The cache contains executable machine code, so choose a local directory writable only by trusted users. It does not contain simulation results or share mutable model state. Memory limits and execution deadlines apply to each instance as before, and the wheels remain portable.
 
 ## A page of one file
 

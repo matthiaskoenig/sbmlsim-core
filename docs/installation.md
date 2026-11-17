@@ -1,5 +1,10 @@
 # Installation
 
+The native Rust, command-line and Python hosts cache compiled Wasmtime modules in the
+platform cache directory. Cache failures fall back to compilation. Python can select a
+directory or disable caching with `Runtime(cache_dir=...)` or `Runtime(cache=False)`;
+see [Compilation cache](python.md#compilation-cache). The JavaScript host is unchanged.
+
 The releases of sbmlsim-core are two packages of the same name, built from the same tag with the same `engine.wasm` and `mathlib.wasm`:
 
 ```bash

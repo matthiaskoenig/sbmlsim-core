@@ -1,6 +1,7 @@
 //! The runtime which loads models, and the loaded model which makes instances.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use pyo3::exceptions::PyValueError;
@@ -10,8 +11,8 @@ use sbmlsim_abi::ModelDescription;
 use crate::errors::LoadError;
 use crate::simulate::{BatchExecutor, Instance, PreparedSimulation, batch, request_of};
 
-/// `engine.wasm` and `mathlib.wasm`, compiled once per runtime (a Cranelift compile of the
-/// engine in the constructor, so share one runtime), which load models.
+/// `engine.wasm` and `mathlib.wasm`, compiled once per runtime or loaded from the persistent
+/// Wasmtime compilation cache, which load models.
 #[pyclass(frozen, module = "sbmlsim_core")]
 pub(crate) struct Runtime {
     runtime: sbmlsim_host::Runtime,
@@ -22,11 +23,30 @@ impl Runtime {
     /// The runtime of the embedded engine. `max_memory_bytes` bounds the memory an instance
     /// grows to (the default of the host without it); a result which does not fit is a
     /// `RequestError`. `timeout_ms` bounds each host execution (30 seconds by default);
-    /// zero disables the deadline.
+    /// zero disables the deadline. `cache` enables persistent Wasmtime compilation caching;
+    /// `cache_dir` selects a directory instead of the platform default. Cache failures fall
+    /// back to compilation. The constructor releases the GIL.
     #[new]
-    #[pyo3(signature = (max_memory_bytes=None, *, timeout_ms=30_000))]
-    fn new(max_memory_bytes: Option<usize>, timeout_ms: u64) -> PyResult<Runtime> {
-        let mut runtime = sbmlsim_host::Runtime::embedded()
+    #[pyo3(signature = (max_memory_bytes=None, *, timeout_ms=30_000, cache=true, cache_dir=None))]
+    fn new(
+        py: Python<'_>,
+        max_memory_bytes: Option<usize>,
+        timeout_ms: u64,
+        cache: bool,
+        cache_dir: Option<PathBuf>,
+    ) -> PyResult<Runtime> {
+        if !cache && cache_dir.is_some() {
+            return Err(PyValueError::new_err("cache_dir requires cache=True"));
+        }
+        let cache = if !cache {
+            sbmlsim_host::ModuleCache::Disabled
+        } else if let Some(path) = cache_dir {
+            sbmlsim_host::ModuleCache::Directory(path)
+        } else {
+            sbmlsim_host::ModuleCache::Default
+        };
+        let mut runtime = py
+            .detach(|| sbmlsim_host::Runtime::embedded_with_cache(cache))
             .map_err(|error| LoadError::new_err(format!("{error:#}")))?;
         if let Some(bytes) = max_memory_bytes {
             runtime = runtime.with_max_memory(bytes);
@@ -35,6 +55,12 @@ impl Runtime {
             (timeout_ms != 0).then(|| std::time::Duration::from_millis(timeout_ms)),
         );
         Ok(Runtime { runtime })
+    }
+
+    /// The active cache directory as a pathlib.Path, or None if disabled or unavailable.
+    #[getter]
+    fn cache_dir(&self) -> Option<PathBuf> {
+        self.runtime.cache_directory().map(PathBuf::from)
     }
 
     /// Loads `model.wasm` with its description (`model/2`), as `CompiledModel.wasm` and

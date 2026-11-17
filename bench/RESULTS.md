@@ -203,7 +203,7 @@ of this measurement hold 242 uses of a `ymm` register and no `vfmadd`.
 
 ### The startup, which is where the time of a small simulation goes
 
-Cranelift compiles `engine.wasm` once per process. The cost of that compilation against the cost
+Without a compilation cache, each `Runtime` compiles `engine.wasm`. The cost of that compilation against the cost
 of deserializing the same module compiled ahead of time (wasmtime 50.0.1, the configuration of
 `Runtime::new`, the median of 5):
 
@@ -216,12 +216,34 @@ of deserializing the same module compiled ahead of time (wasmtime 50.0.1, the co
 | chen `model.wasm` | 240133 | 197.4 ms | 0.14 ms | 487 KiB |
 | mp_flat `model.wasm` | 549195 | 374.1 ms | 0.29 ms | 1163 KiB |
 
-In the python package, a process which simulates hctz spends 564 ms in `Runtime()`, 2.9 ms in
+In the python package without a compilation cache, a process which simulates hctz spends 564 ms in `Runtime()`, 2.9 ms in
 `compile_sbml`, about 10 ms in `load` and 0.74 ms in a simulation of 201 points, and a scan of
 512 such simulations takes 445 ms on one thread and 67 ms on eight. The startup is most of such
 a run, so a cache of the compiled modules (`Config::cache`, which keeps one portable wheel
 because the cache is written on the machine that runs it) is worth far more than any choice of
 an instruction set.
+
+### Persistent compilation cache
+
+The native host now enables Wasmtime's persistent compilation cache for the runtime and model
+modules. Python uses it by default (`Runtime(cache_dir=path)` selects a directory,
+`Runtime(cache=False)` disables it). Unavailable or corrupt entries fall back to compilation;
+the constructor releases the GIL. Each runtime retains its own engine and epoch clock, and
+each instance its own memory and deadline policy.
+
+Measured through the release Python extension, Python 3.14, hctz, CPU 4: populate one empty
+cache, then alternate five uncached and five warm-cache fresh processes. Report the median
+of each mode. Imports and `compile_sbml` occur before the measurements. The machine carried
+other work; these are paired measurements, not a comparison with earlier startup tables.
+
+| operation | cache disabled | warm persistent cache |
+|---|---:|---:|
+| `Runtime()` | 754.7 ms | 7.49 ms |
+| `runtime.load` hctz | 12.88 ms | 0.545 ms |
+
+The initial population still compiled both runtime modules (1261 ms in that process).
+Every process subsequently simulated 201 points with the same output bits. This cache holds
+machine code compiled for the local CPU, not simulation state; the wheel remains portable.
 
 ### mimalloc as the allocator of the extension
 

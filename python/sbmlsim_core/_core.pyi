@@ -1,6 +1,8 @@
 """Type stubs of the extension module `sbmlsim_core._core`."""
 
 from collections.abc import Iterable, Sequence
+from os import PathLike
+from pathlib import Path
 from typing import Any
 
 import numpy
@@ -149,12 +151,21 @@ class BatchExecutor:
     def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> None: ...
 
 class Runtime:
-    """`engine.wasm` and `mathlib.wasm`, compiled once, which load models."""
+    """Runtime and model modules use a persistent Wasmtime compilation cache."""
 
     def __init__(
-        self, max_memory_bytes: int | None = None, *, timeout_ms: int = 30_000
+        self,
+        max_memory_bytes: int | None = None,
+        *,
+        timeout_ms: int = 30_000,
+        cache: bool = True,
+        cache_dir: str | PathLike[str] | None = None,
     ) -> None:
         """Bounds instance memory and execution time; timeout_ms=0 disables deadlines."""
+
+    @property
+    def cache_dir(self) -> Path | None:
+        """The active cache directory, or None if disabled or unavailable."""
 
     def load(self, wasm: bytes, description: dict[str, Any]) -> LoadedModel:
         """Loads `model.wasm` with its description."""
