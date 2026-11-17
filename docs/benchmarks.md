@@ -8,40 +8,40 @@ The models are the ones of `bench/sbmlsim.toml`, which is sbmlsim's own benchmar
 
 ### Milliseconds per simulation
 
-| model (states) | solver | roadrunner | native | wasmtime | node | chrome |
+| model (states) | solver | **native** | node | chrome | wasmtime | roadrunner |
 |---|---|---:|---:|---:|---:|---:|
-| repressilator&nbsp;(6) | dense | 0.278 | 0.139 | 0.294 | 0.199 | 0.185 |
-| repressilator&nbsp;(6) | klu | 0.274 | 0.138 | 0.305 | 0.207 | 0.2 |
-| demo&nbsp;(6) | dense | 0.115 | 0.00971 | 0.0201 | 0.021 | 0.025 |
-| demo&nbsp;(6) | klu | 0.116 | 0.0108 | 0.023 | 0.0236 | 0.025 |
-| midazolam&nbsp;(38) | dense | 0.565 | 0.375 | 0.741 | 0.462 | 0.453 |
-| midazolam&nbsp;(38) | klu | 0.402 | 0.226 | 0.522 | 0.321 | 0.315 |
-| hctz&nbsp;(28) | dense | 0.837 | 0.443 | 0.845 | 0.507 | 0.5 |
-| hctz&nbsp;(28) | klu | 0.662 | 0.321 | 0.691 | 0.408 | 0.405 |
-| perfusion&nbsp;(919) | klu | 50.3 | 37.1 | 68.7 | 41.8 | 42.2 |
+| repressilator&nbsp;(6) | dense | **0.139** | 0.199 | 0.185 | 0.294 | 0.278 |
+| repressilator&nbsp;(6) | klu | **0.138** | 0.207 | 0.2 | 0.305 | 0.274 |
+| demo&nbsp;(6) | dense | **0.00971** | 0.021 | 0.025 | 0.0201 | 0.115 |
+| demo&nbsp;(6) | klu | **0.0108** | 0.0236 | 0.025 | 0.023 | 0.116 |
+| midazolam&nbsp;(38) | dense | **0.375** | 0.462 | 0.453 | 0.741 | 0.565 |
+| midazolam&nbsp;(38) | klu | **0.226** | 0.321 | 0.315 | 0.522 | 0.402 |
+| hctz&nbsp;(28) | dense | **0.443** | 0.507 | 0.5 | 0.845 | 0.837 |
+| hctz&nbsp;(28) | klu | **0.321** | 0.408 | 0.405 | 0.691 | 0.662 |
+| perfusion&nbsp;(919) | klu | **37.1** | 41.8 | 42.2 | 68.7 | 50.3 |
 
 ### The ratio against roadrunner with the same solver
 
-| model (states) | solver | native | wasmtime | node | chrome |
+| model (states) | solver | **native** | node | chrome | wasmtime |
 |---|---|---:|---:|---:|---:|
-| repressilator&nbsp;(6) | dense | 0.50 | 1.06 | 0.72 | 0.67 |
-| repressilator&nbsp;(6) | klu | 0.50 | 1.11 | 0.76 | 0.73 |
-| demo&nbsp;(6) | dense | 0.08 | 0.18 | 0.18 | 0.22 |
-| demo&nbsp;(6) | klu | 0.09 | 0.20 | 0.20 | 0.21 |
-| midazolam&nbsp;(38) | dense | 0.66 | 1.31 | 0.82 | 0.80 |
-| midazolam&nbsp;(38) | klu | 0.56 | 1.30 | 0.80 | 0.78 |
-| hctz&nbsp;(28) | dense | 0.53 | 1.01 | 0.61 | 0.60 |
-| hctz&nbsp;(28) | klu | 0.48 | 1.04 | 0.62 | 0.61 |
-| perfusion&nbsp;(919) | klu | 0.74 | 1.37 | 0.83 | 0.84 |
+| repressilator&nbsp;(6) | dense | **0.50** | 0.72 | 0.67 | 1.06 |
+| repressilator&nbsp;(6) | klu | **0.50** | 0.76 | 0.73 | 1.11 |
+| demo&nbsp;(6) | dense | **0.08** | 0.18 | 0.22 | 0.18 |
+| demo&nbsp;(6) | klu | **0.09** | 0.20 | 0.21 | 0.20 |
+| midazolam&nbsp;(38) | dense | **0.66** | 0.82 | 0.80 | 1.31 |
+| midazolam&nbsp;(38) | klu | **0.56** | 0.80 | 0.78 | 1.30 |
+| hctz&nbsp;(28) | dense | **0.53** | 0.61 | 0.60 | 1.01 |
+| hctz&nbsp;(28) | klu | **0.48** | 0.62 | 0.61 | 1.04 |
+| perfusion&nbsp;(919) | klu | **0.74** | 0.83 | 0.84 | 1.37 |
 
 ![One simulation of each model on each host](images/benchmark-hosts-light.png#only-light)
 ![One simulation of each model on each host](images/benchmark-hosts-dark.png#only-dark)
 
-Every row of panels is one model, every row inside a panel one engine and the axis is logarithmic. The two columns are the two measures: the left is the time of one simulation and the right the ratio against roadrunner with the same solver, which puts roadrunner itself on the line at 1, so a mark left of that line is faster than roadrunner. A colour is an engine, the same colour in every panel, and a mark is a solver: a disc is dense and a diamond is KLU. The engine of a row is named on its axis as well, so nothing of the figure is read by colour alone.
+Every row of panels is one model, every row inside a panel one engine and the axis is logarithmic. The two columns are the two measures: the left is the time of one simulation and the right the ratio against roadrunner with the same solver, which puts roadrunner itself on the line at 1, so a mark left of that line is faster than roadrunner. A colour is an engine, the same colour in every panel, and a mark is a solver: a disc is dense and a diamond is KLU. The engine of a row is named on its axis as well, so nothing of the figure is read by colour alone. The whisker of a mark is the smallest and the largest of the round medians the cell is the median of, which is the spread of three rounds and not a confidence interval. The hosts are ordered as the engine runs them, fastest first, and the reference last; `native` is the engine of the wheel and is the row the figure and the tables mark.
 
 The host decides the comparison with roadrunner. Natively the engine is faster on every model, by 1.4 to 12 times, and under V8 it is faster on every model as well, by 1.2 to 5 times (Node and Chrome). In wasmtime it is slower than roadrunner on every model but `demo` (1.01 to 1.37), because the code Cranelift produces is 25 to 75 % slower than V8's on the same `engine.wasm`: the wheel and the browser therefore both run the engine faster than the host this repository builds with. `demo` is the other extreme, five integration steps of a model of six states, where roadrunner's fixed cost per call dominates and the engine is 5 to 12 times faster on every host.
 
-Node and Chrome agree within 2 % on the three models whose simulation is longer than 0.3 ms. They do not on the two shortest, `demo` (0.021 against 0.025 ms) and the repressilator (0.199 against 0.185 ms), where Chrome's clock quantizes a value of that size rather than the engines differing.
+The two V8 hosts are not measured as sharply as the others, which the whiskers show: on the models whose simulation is under 0.25 ms the rounds of Node spread by 4 to 20 % of the median and those of Chrome by up to 30 %, against 0.3 to 2 % for the native engine and for wasmtime at every size. On those two models a difference between Node and Chrome is therefore inside the spread of each and is not a difference the benchmark resolves; from midazolam upwards both settle below 4 % and the ordering there is real. Chrome's clock also quantizes a value of that size, which is why some of its cells repeat exactly (0.025 ms, 0.4 ms) and their whiskers collapse.
 
 The hosts integrate alike and not only in their answers: every one of the eighteen configurations of a model, a solver and a Jacobian above has the same counters of the integrator in the native engine, in wasmtime and under Node (steps, right hand side evaluations, Jacobian evaluations, nonlinear iterations, error test failures), so the times of a row are the same work done at different speeds, and the native engine of the wheel changes nothing of these results although it can differ from `engine.wasm` in the last bits (see [Python](python.md#the-engine-of-the-wheel)).
 

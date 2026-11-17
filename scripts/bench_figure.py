@@ -41,12 +41,15 @@ from matplotlib.ticker import FuncFormatter, LogLocator, NullLocator
 
 #: The engines of the tables and of the figure, in order, by the suffix of their file.
 ENGINES: tuple[tuple[str, str], ...] = (
-    ("roadrunner", "roadrunner"),
     ("native", "native"),
-    ("wasmtime", "wasmtime"),
     ("node", "node"),
     ("chrome", "chrome"),
+    ("wasmtime", "wasmtime"),
+    ("roadrunner", "roadrunner"),
 )
+
+# the engine of the wheel, which the tables and the figure mark
+HIGHLIGHT: str = "native"
 
 #: The solvers of a model, in the order they are drawn and tabulated.
 SOLVERS: tuple[str, ...] = ("dense", "klu")
@@ -57,18 +60,18 @@ SOLVERS: tuple[str, ...] = ("dense", "klu")
 # ties one engine across the panels
 COLORS: dict[str, dict[str, str]] = {
     "light": {
-        "roadrunner": "#2a78d6",
-        "native": "#eb6834",
-        "wasmtime": "#1baf7a",
-        "node": "#eda100",
-        "chrome": "#e87ba4",
+        "native": "#2a78d6",
+        "node": "#eb6834",
+        "chrome": "#1baf7a",
+        "wasmtime": "#eda100",
+        "roadrunner": "#e87ba4",
     },
     "dark": {
-        "roadrunner": "#3987e5",
-        "native": "#d95926",
-        "wasmtime": "#199e70",
-        "node": "#c98500",
-        "chrome": "#d55181",
+        "native": "#3987e5",
+        "node": "#d95926",
+        "chrome": "#199e70",
+        "wasmtime": "#c98500",
+        "roadrunner": "#d55181",
     },
 }
 
@@ -80,12 +83,14 @@ INK: dict[str, dict[str, str]] = {
         "primary": "#0b0b0b",
         "secondary": "#52514e",
         "grid": "#dededc",
+        "highlight": "#f1f4f9",
     },
     "dark": {
         "surface": "#1a1a19",
         "primary": "#f0efec",
         "secondary": "#c3c2b7",
         "grid": "#3a3a38",
+        "highlight": "#232529",
     },
 }
 
@@ -113,6 +118,8 @@ class Cell(NamedTuple):
     solver: str
     ms: float
     states: int
+    low: float
+    high: float
 
 
 def read_cells(prefix: Path) -> tuple[list[Cell], list[str]]:
@@ -140,13 +147,17 @@ def read_cells(prefix: Path) -> tuple[list[Cell], list[str]]:
             for config in model["configs"]:
                 if config["solver"] not in SOLVERS:
                     continue
+                rounds = [value * 1e3 for value in config.get("round_medians_s") or []]
+                median = config["median_s"] * 1e3
                 cells.append(
                     Cell(
                         model=model["name"],
                         engine=engine,
                         solver=config["solver"],
-                        ms=config["median_s"] * 1e3,
+                        ms=median,
                         states=config.get("states") or model.get("states") or 0,
+                        low=min(rounds) if rounds else median,
+                        high=max(rounds) if rounds else median,
                     )
                 )
     return cells, models
@@ -198,7 +209,12 @@ def tables(cells: list[Cell], models: list[str]) -> str:
             else "### The ratio against roadrunner with the same solver"
         )
         out.append("")
-        out.append("| model (states) | solver | " + " | ".join(shown) + " |")
+        # the engine of the wheel is the one a reader of the page runs
+        out.append(
+            "| model (states) | solver | "
+            + " | ".join(f"**{e}**" if e == HIGHLIGHT else e for e in shown)
+            + " |"
+        )
         out.append("|---|---|" + "---:|" * len(shown))
         for model in models:
             for solver in measured_solvers(by, model, engines):
@@ -209,10 +225,13 @@ def tables(cells: list[Cell], models: list[str]) -> str:
                     cell = by.get((model, engine, solver))
                     if cell is None:
                         row.append("")
-                    elif measure == "ms":
-                        row.append(f"{cell.ms:.3g}")
                     else:
-                        row.append(f"{cell.ms / reference.ms:.2f}")
+                        text = (
+                            f"{cell.ms:.3g}"
+                            if measure == "ms"
+                            else f"{cell.ms / reference.ms:.2f}"
+                        )
+                        row.append(f"**{text}**" if engine == HIGHLIGHT else text)
                 out.append("| " + " | ".join(row) + " |")
         out.append("")
     return "\n".join(out).strip()
@@ -296,6 +315,10 @@ def figure(cells: list[Cell], models: list[str], mode: str) -> Figure:
                 fontsize=7.5,
                 color=ink["primary"],
             )
+            if column == 0:
+                for label in ax.get_yticklabels():
+                    if label.get_text() == HIGHLIGHT:
+                        label.set_fontweight("bold")
             ax.tick_params(axis="y", length=0 if column else 3)
             solvers = measured_solvers(by, model, engines)
             if measure == "ratio":
@@ -306,27 +329,45 @@ def figure(cells: list[Cell], models: list[str], mode: str) -> Figure:
                     for s in solvers
                 ]
                 ax.set_xlim(min(values) / 1.35, max(values) * 1.35)
+            if HIGHLIGHT in engines:
+                # the engine of the wheel, behind the grid and the marks
+                ax.axhspan(
+                    engines.index(HIGHLIGHT) - 0.42,
+                    engines.index(HIGHLIGHT) + 0.42,
+                    color=ink["highlight"],
+                    linewidth=0,
+                    zorder=0,
+                )
             for position, engine in enumerate(engines):
                 for solver in solvers:
                     cell = by.get((model, engine, solver))
                     reference = by.get((model, "roadrunner", solver))
                     if cell is None or reference is None:
                         continue
-                    value = cell.ms if measure == "ms" else cell.ms / reference.ms
+                    scale = 1.0 if measure == "ms" else 1.0 / reference.ms
+                    value = cell.ms * scale
                     # a model measured with one solver has its dot on the row of its engine
                     offset = (
                         0.0
                         if len(solvers) == 1
                         else (-0.16 if solver == "dense" else 0.16)
                     )
-                    ax.plot(
+                    ax.errorbar(
                         value,
                         position + offset,
+                        xerr=[
+                            [max(value - cell.low * scale, 0.0)],
+                            [max(cell.high * scale - value, 0.0)],
+                        ],
                         marker=MARKERS[solver],
                         markersize=5.5,
                         markerfacecolor=color[engine],
                         markeredgecolor=ink["surface"],
                         markeredgewidth=1.2,
+                        ecolor=color[engine],
+                        elinewidth=1.2,
+                        capsize=2.5,
+                        capthick=1.2,
                         linestyle="none",
                         zorder=3,
                     )
