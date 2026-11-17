@@ -21,12 +21,12 @@ use crate::errors::{InternalError, LoadError, PointError, poisoned, simulation_e
 pub(crate) struct Instance {
     // a store is Send and not Sync, which a python object must be; the lock is taken without
     // the GIL, so a second thread which simulates on the instance waits without holding it
-    instance: Mutex<sbmlsim_host::Instance>,
+    instance: Mutex<sbmlsim_host::NativeInstance>,
 }
 
 impl Instance {
     /// Wraps an instance of the host.
-    pub(crate) fn new(instance: sbmlsim_host::Instance) -> Instance {
+    pub(crate) fn new(instance: sbmlsim_host::NativeInstance) -> Instance {
         Instance {
             instance: Mutex::new(instance),
         }
@@ -69,8 +69,12 @@ impl Instance {
 
     /// The counters of the integrator of the last simulation, by name.
     fn stats(&self, py: Python<'_>) -> PyResult<HashMap<&'static str, u64>> {
+        // the native engine answers with the counters themselves and not with a result, since
+        // reading them needs no call into a guest
         let stats = py
-            .detach(|| self.instance.lock().map_err(poisoned)?.stats())
+            .detach(|| -> Result<SimulationStats, EngineError> {
+                Ok(self.instance.lock().map_err(poisoned)?.stats())
+            })
             .map_err(simulation_error)?;
         Ok(SimulationStats::NAMES
             .into_iter()
@@ -151,7 +155,7 @@ const SLICE_PER_THREAD: usize = 8;
 const MAX_THREADS: usize = 1024;
 
 /// The instance a thread of the pool simulates on, taken out of its slot while it simulates.
-type Slot = Mutex<Option<sbmlsim_host::Instance>>;
+type Slot = Mutex<Option<sbmlsim_host::NativeInstance>>;
 
 /// One point of a batch: the table of its simulation, or the error which failed it.
 enum Point {
@@ -207,7 +211,7 @@ fn point(model: &sbmlsim_host::LoadedModel, slots: &[Slot], request: &Simulation
 fn simulate_point(
     model: &sbmlsim_host::LoadedModel,
     slots: &[Slot],
-    simulate: impl FnOnce(&mut sbmlsim_host::Instance) -> Result<SimulationResult, EngineError>,
+    simulate: impl FnOnce(&mut sbmlsim_host::NativeInstance) -> Result<SimulationResult, EngineError>,
 ) -> Point {
     // the slot of the thread which runs the point, which no other thread reads, so that its
     // lock is never contended; a point outside of the pool, which rayon does not run, and one
@@ -216,7 +220,7 @@ fn simulate_point(
     let mut slot = slot.map(|slot| slot.lock().unwrap_or_else(PoisonError::into_inner));
     let mut instance = match slot.as_mut().and_then(|slot| slot.take()) {
         Some(instance) => instance,
-        None => match model.instantiate() {
+        None => match model.instantiate_native() {
             Ok(instance) => instance,
             Err(error) => {
                 return Point::Failed(PointError::internal(format!(

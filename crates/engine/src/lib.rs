@@ -230,6 +230,8 @@ struct Metadata {
     selections: BTreeMap<String, usize>,
     difference: Option<Difference>,
     event_limits: EventLimits,
+    /// The most values a result may hold, see [`Engine::with_max_output_values`].
+    max_output_values: usize,
 }
 
 impl Metadata {
@@ -245,6 +247,7 @@ impl Metadata {
             selections,
             difference: None,
             event_limits: EventLimits::default(),
+            max_output_values: MAX_OUTPUT_VALUES,
         }
     }
 }
@@ -284,6 +287,19 @@ impl Engine {
     /// mean unlimited. The WASM engine uses the bounded default policy.
     pub fn with_event_limits(mut self, limits: EventLimits) -> Self {
         self.metadata.event_limits = limits;
+        self
+    }
+
+    /// Bounds the values of a result below [`MAX_OUTPUT_VALUES`], which is the bound of an
+    /// engine which is not told another one.
+    ///
+    /// A result above the bound is the [`EngineError::Request`] of a result which does not fit
+    /// into the memory of the engine, raised before the values are allocated. It is how a host
+    /// which runs this engine natively gives a result the memory limit of an instance, which
+    /// the memory of a guest gives an instance of `engine.wasm`
+    /// ([`crate::MAX_OUTPUT_VALUES`] is the bound of the largest guest).
+    pub fn with_max_output_values(mut self, values: usize) -> Self {
+        self.metadata.max_output_values = values.min(MAX_OUTPUT_VALUES);
         self
     }
 
@@ -644,20 +660,23 @@ fn check_settings(settings: &IntegratorSettings, n: usize) -> Result<(), EngineE
 }
 
 /// The times of an output of times or of uniform steps from `start` to `end`; the result of
-/// `n_columns` columns must not exceed [`MAX_OUTPUT_VALUES`] (checked before any allocation).
+/// `n_columns` columns must not exceed `max_values`, the bound of the engine
+/// ([`Engine::with_max_output_values`], [`MAX_OUTPUT_VALUES`] without another one), checked
+/// before any allocation.
 fn output_times(
     output: &Output,
     start: f64,
     end: f64,
     n_columns: usize,
+    max_values: usize,
 ) -> Result<Vec<f64>, EngineError> {
     let too_large = |rows: u128| {
         request(format!(
             "an output of {rows} rows of {n_columns} columns exceeds the limit of \
-             {MAX_OUTPUT_VALUES} values"
+             {max_values} values and does not fit into the memory of the engine"
         ))
     };
-    let exceeds = |rows: u128| rows * n_columns as u128 > MAX_OUTPUT_VALUES as u128;
+    let exceeds = |rows: u128| rows * n_columns as u128 > max_values as u128;
     let no_memory = |rows: usize| {
         request(format!(
             "{rows} output times do not fit into the memory of the engine"
@@ -856,7 +875,13 @@ fn prepare(
     let n = desc.states.len();
     check_settings(&req.settings, n)?;
     let (names, columns) = columns_of(desc, req, &metadata.selections)?;
-    let times = output_times(&req.output, start, end, names.len())?;
+    let times = output_times(
+        &req.output,
+        start,
+        end,
+        names.len(),
+        metadata.max_output_values,
+    )?;
     let changes = Changes::with_metadata(&metadata.changes, &req.changes, start, end)?;
     // the model is initialized once, with the pre-initialization values of the request and of
     // its steady state together (sbmlsim refuses a target in both)
@@ -1035,7 +1060,7 @@ fn run(
         columns,
         &plan.mask,
         &mut scratch.selections,
-        MAX_OUTPUT_VALUES,
+        metadata.max_output_values,
         prefix,
     )?;
     if !req.steps {

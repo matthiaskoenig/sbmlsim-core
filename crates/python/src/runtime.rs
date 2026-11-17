@@ -119,7 +119,7 @@ impl LoadedModel {
     /// the other. The result of a simulation does not depend on the ones before it.
     fn instance(&self, py: Python<'_>) -> PyResult<Instance> {
         let instance = py
-            .detach(|| self.model.instantiate())
+            .detach(|| self.model.instantiate_native())
             .map_err(|error| LoadError::new_err(format!("{error:#}")))?;
         Ok(Instance::new(instance))
     }
