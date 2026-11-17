@@ -13,3 +13,29 @@
 [data-md-color-scheme="slate"] img[src$="#only-light"] {
   display: none;
 }
+
+/* Explanatory diagrams (`.core-diagram`), inline SVG drawn with the tokens of
+   the theme so one diagram reads in both colour schemes. The overview, the
+   compiler page, the simulation page and the JavaScript page all use it. */
+.core-diagram { width: 100%; height: auto; margin: .2rem 0 0;
+  --cd-ink: var(--md-default-fg-color, #1a1a19);
+  --cd-soft: var(--md-default-fg-color--light, #6b6b68);
+  --cd-line: var(--md-default-fg-color--lighter, #c3c3c0);
+  --cd-accent: #2a78d6;
+  color: var(--cd-line); }
+[data-md-color-scheme="slate"] .core-diagram { --cd-accent: #3987e5; }
+.core-diagram text { fill: var(--cd-ink); font-size: 13px; text-anchor: middle;
+  font-family: var(--md-text-font-family, system-ui), sans-serif; }
+.core-diagram .cd-sub { fill: var(--cd-soft); font-size: 10.5px; }
+.core-diagram .cd-note { fill: var(--cd-soft); font-size: 11px; font-style: italic; }
+.core-diagram .cd-title { fill: var(--cd-soft); font-size: 11.5px; letter-spacing: .02em; }
+.core-diagram .cd-label { fill: var(--cd-soft); font-size: 11.5px; text-anchor: start; }
+.core-diagram .cd-contract { fill: var(--cd-accent); font-size: 11.5px; text-anchor: start; font-weight: 600; }
+.core-diagram rect { fill: none; stroke: var(--cd-line); stroke-width: 1.5; }
+.core-diagram .cd-active rect { stroke: var(--cd-accent); stroke-width: 2; }
+.core-diagram .cd-artifact rect { stroke-dasharray: 4 3; }
+.core-diagram .cd-instance rect { stroke: var(--cd-soft); stroke-dasharray: 6 4; }
+.core-diagram .cd-module rect { fill: color-mix(in srgb, var(--cd-accent) 7%, transparent); }
+.core-diagram .cd-host rect { fill: color-mix(in srgb, var(--cd-ink) 5%, transparent); stroke: none; }
+.core-diagram line { stroke: currentColor; stroke-width: 1.5; }
+.core-diagram .cd-call { stroke: var(--cd-accent); stroke-width: 2; }
