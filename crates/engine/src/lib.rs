@@ -481,6 +481,14 @@ struct RecordedValues {
 }
 
 impl RecordedValues {
+    fn from_recorder(mut recorder: Recorder<'_>, prefix: usize) -> Self {
+        Self {
+            n_rows: recorder.n_rows,
+            values: std::mem::take(&mut recorder.values),
+            prefix,
+        }
+    }
+
     fn with_columns(self, columns: Vec<String>) -> Recorded {
         Recorded {
             columns,
@@ -1107,6 +1115,41 @@ fn run_model<const DAE: bool>(
 
     let with_events = !desc.events.is_empty() || desc.n_roots > 0;
 
+    let prefix = prefix(names);
+    let mut recorder = Recorder::with_scratch(
+        model,
+        columns,
+        &plan.mask,
+        &mut scratch.selections,
+        metadata.max_output_values,
+        prefix,
+    )?;
+    if !req.steps {
+        recorder.reserve(times.len())?;
+    }
+
+    // At a single time without events, changes or a steady-state calculation, the
+    // requested rows read only the initialized ODE state.
+    if !DAE
+        && start == end
+        && !with_events
+        && req.steady_state.is_none()
+        && changes.time(0).is_none()
+    {
+        if let Some(config) = &plan.config {
+            solver::check_index_range(config)?;
+        }
+        let output_times = if req.steps {
+            std::slice::from_ref(&start)
+        } else {
+            times
+        };
+        for &time in output_times {
+            recorder.row(time, &scratch.y, &scratch.p)?;
+        }
+        return Ok(RecordedValues::from_recorder(recorder, prefix));
+    }
+
     // a model without states but with events integrates one state of the rate 0, so CVODE
     // locates the zeros of its root functions
     let n_cvode = if with_events { n.max(1) } else { n };
@@ -1150,18 +1193,6 @@ fn run_model<const DAE: bool>(
         }
     };
     let settings = &req.settings;
-    let prefix = prefix(names);
-    let mut recorder = Recorder::with_scratch(
-        model,
-        columns,
-        &plan.mask,
-        &mut scratch.selections,
-        metadata.max_output_values,
-        prefix,
-    )?;
-    if !req.steps {
-        recorder.reserve(times.len())?;
-    }
     scratch.jac_values.clear();
     scratch
         .jac_values
@@ -1305,11 +1336,7 @@ fn run_model<const DAE: bool>(
     scratch.jac_values = problem.jac_values;
     scratch.y = y0;
     outcome?;
-    Ok(RecordedValues {
-        n_rows: recorder.n_rows,
-        values: std::mem::take(&mut recorder.values),
-        prefix,
-    })
+    Ok(RecordedValues::from_recorder(recorder, prefix))
 }
 
 #[cfg(test)]

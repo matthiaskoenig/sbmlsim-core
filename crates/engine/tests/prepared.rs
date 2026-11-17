@@ -83,6 +83,57 @@ fn prepared_runs_are_bit_identical_across_settings_and_changes() {
 }
 
 #[test]
+fn a_point_request_records_each_requested_row_from_the_initialized_ode() {
+    let mut engine = decay();
+    let trajectory = request();
+    let original = engine.simulate(&trajectory).unwrap();
+    let trajectory_stats = engine.stats();
+    assert!(trajectory_stats.steps > 0);
+
+    let mut req = request();
+    req.start = 5.0;
+    req.end = 5.0;
+    req.selections = vec!["y".into()];
+    for (output, rows) in [
+        (Output::Times(vec![]), 0),
+        (Output::Times(vec![5.0, 5.0]), 2),
+        (Output::Uniform { steps: 3 }, 4),
+        (Output::IntegratorSteps, 1),
+    ] {
+        req.output = output;
+        req.preinit = vec![("y".into(), 3.0)];
+        let ordinary = engine.simulate(&req).unwrap();
+        assert_eq!(ordinary.n_rows, rows);
+        assert_eq!(ordinary.values, [5.0, 3.0].repeat(rows));
+        assert_eq!(engine.stats(), SimulationStats::default());
+        let prepared = engine.prepare(&req, &["y".into()]).unwrap();
+        for value in [7.0, 3.0] {
+            let result = engine.simulate_prepared(&prepared, &[value]).unwrap();
+            assert_eq!(result.columns, ordinary.columns);
+            assert_eq!(result.n_rows, rows);
+            assert_eq!(result.values, [5.0, value].repeat(rows));
+            assert_eq!(engine.stats(), SimulationStats::default());
+        }
+    }
+
+    assert!(matches!(
+        decay().with_max_output_values(1).simulate(&req),
+        Err(EngineError::Integration {
+            flag: sbmlsim_engine::OUTPUT_LIMIT_FLAG,
+            ..
+        })
+    ));
+    req.changes = vec![Change {
+        time: req.start,
+        values: vec![("y".into(), 11.0)],
+        increments: vec![],
+    }];
+    assert_eq!(engine.simulate(&req).unwrap().values, [5.0, 11.0]);
+    equal(&engine.simulate(&trajectory).unwrap(), &original);
+    assert_eq!(engine.stats(), trajectory_stats);
+}
+
+#[test]
 fn concentration_overrides_keep_template_quantity_and_order() {
     let model = Compartmental { k: 0.5 };
     let mut engine = Engine::new(Box::new(model), model.description()).unwrap();
