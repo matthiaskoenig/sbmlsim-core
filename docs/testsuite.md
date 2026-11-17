@@ -1,8 +1,22 @@
-# SBML Test Suite and benchmark
+# Test suite
 
-## SBML Test Suite
+`sbmlsim-core testsuite testdata/cases` compiles and simulates the semantic cases of the SBML Test Suite and compares them with the baseline `testdata/testsuite_baseline.json`. Every case of the suite is one cell below: hover it, or walk the grid with the arrow keys, for its identifier, its outcome and either the largest difference from the expected results or the reason the engine does not compile it.
 
-`sbmlsim-core testsuite testdata/cases` compiles and simulates the semantic cases of the SBML Test Suite and compares them with the baseline `testdata/testsuite_baseline.json`. The cases are prepared first (uv, libsbml):
+<div class="suite" data-src="../data/testsuite.json">
+  <p class="suite-fallback">The grid of the cases needs JavaScript; the counts and the reasons are in the tables below.</p>
+</div>
+
+The engine compiles and passes every case the compiler accepts. Nothing in the suite fails: the 208 cases which are not green are the ones it refuses at compilation, each for a feature which is out of scope, and they are the cases [sbmlsim](https://github.com/matthiaskoenig/sbmlsim) does not pass with roadrunner either.
+
+| reason | cases |
+|---|---:|
+| algebraic rule is not supported | 123 |
+| delay csymbol is not supported | 50 |
+| not converted: fast reaction (libsbml conversion refuses a fast reaction) | 35 |
+
+## Running the suite
+
+The cases are prepared first (uv, libsbml):
 
 ```bash
 uv run scripts/prepare_testsuite.py --out testdata/cases
@@ -14,36 +28,150 @@ sbmlsim-core testsuite testdata/cases --write-baseline         # the baseline fr
 
 `--cases 00001-00100` runs some cases, `--jobs` sets the threads, `--json` writes the result of every case and `--export DIR` writes every passing case for the JavaScript tests, which compare the CSV of Node with the one of wasmtime byte for byte. In every mode each passing case is simulated again to check that it repeats bitwise; a case which passes or fails otherwise than the baseline says fails the run.
 
-1581 of 1789 cases pass, every case which sbmlsim passes among them (the 208 failures are the cases sbmlsim does not pass either). The 208 expected failures are all refused at compilation (`not_compiled`) with a reason in the baseline:
-
-| reason | cases |
-|---|---:|
-| algebraic rule is not supported | 123 |
-| delay csymbol is not supported | 50 |
-| not converted: fast reaction (libsbml conversion refuses a fast reaction) | 35 |
-
 CI runs the whole suite in the three modes (the job `testsuite-parity`) and the parity of Node with wasmtime over every passing case (`same_bits_as_wasmtime`).
 
-## Benchmark
-
-`bench/models.toml` lists the models of the benchmark against roadrunner; `bench/RESULTS.md` has the method and the results. `bench/sbmlsim.toml` is a second list, the five models of the benchmark of [sbmlsim](https://github.com/matthiaskoenig/sbmlsim) as it simulates them, measured on [Benchmarks](benchmarks.md), with which `bench/SBMLSIM.md` reads the raw speed of the engine against the speed sbmlsim measures through python; the two lists carry different tolerances and output grids and are not comparable with each other. A model with `comp`, `distrib` or of another level is prepared first (`scripts/prepare_model.py`, see [Compiling a model](compiling.md#preparing-a-model)):
+The grid above is written from a run and committed, it is not built from a live run of the documentation:
 
 ```bash
-uv run scripts/prepare_model.py --bench bench/models.toml        # into target/bench-models/
-taskset -c 2 sbmlsim-core bench bench/models.toml --json target/bench/engine.json --export target/bench/export
-taskset -c 2 sbmlsim-core bench bench/models.toml --host native --json target/bench/native.json
-taskset -c 2 node js/bench.mjs target/bench/export --json target/bench/node.json
-node bench/web/serve.mjs target/bench/chrome.json &                # then open http://127.0.0.1:8765/bench/web/index.html
-uv run scripts/roadrunner_reference.py bench/models.toml --json target/bench/roadrunner.json
-uv run scripts/agreement.py                                        # the engine at rtol 1e-10 against roadrunner at 1e-12 (dense, KLU)
+sbmlsim-core testsuite testdata/cases --json target/suite.json
+uv run scripts/testsuite_data.py target/suite.json      # into docs/data/testsuite.json
 ```
 
-The models: two PBPK models of sbmlsim (hctz, 28 states; midazolam, 38), an event model (repeated_dose, an oral dose every 8 h), two machine perfusion models of the liver (mp_core, 43 states; mp_flat, 919) and Chen 2009 of the PEtab benchmark collection (500 states).
+<style>
+.suite { margin: 1.2rem 0 1.6rem; }
+.suite-legend { display: flex; flex-wrap: wrap; gap: 1.1rem; margin-bottom: .6rem; font-size: .76rem; }
+.suite-legend span { display: flex; align-items: center; gap: .36rem; }
+.suite-key { width: .72rem; height: .72rem; border-radius: 2px; flex: none; }
+.suite-key.pass { background: #0ca30c; }
+.suite-key.unsupported { background: var(--suite-grey, #c3c3c0); }
+.suite-key.fail { background: #d03b3b; }
+.suite-grid { display: flex; flex-wrap: wrap; gap: 2px; }
+.suite-grid:focus { outline: none; }
+.suite-cell { width: 11px; height: 11px; border-radius: 2px; background: #0ca30c; cursor: default; }
+.suite-cell.unsupported { background: var(--suite-grey, #c3c3c0); }
+.suite-cell.fail { background: repeating-linear-gradient(135deg, #d03b3b 0 3px, #ffffff 3px 4px); }
+.suite-cell.is-active { outline: 2px solid var(--md-default-fg-color, #000); outline-offset: 1px; }
+.suite-tip { position: fixed; z-index: 20; max-width: 24rem; padding: .42rem .6rem; border-radius: 4px;
+  background: var(--md-default-fg-color, #1a1a19); color: var(--md-default-bg-color, #fff);
+  font-size: .74rem; line-height: 1.35; pointer-events: none; opacity: 0; transition: opacity .08s; }
+.suite-tip.is-shown { opacity: 1; }
+.suite-tip b { font-variant-numeric: tabular-nums; }
+.suite-note { margin-top: .5rem; font-size: .74rem; color: var(--md-default-fg-color--light, #666); }
+[data-md-color-scheme="slate"] .suite { --suite-grey: #4a4a47; }
+@media (prefers-color-scheme: dark) { :root:not([data-md-color-scheme="default"]) .suite { --suite-grey: #4a4a47; } }
+</style>
 
-- The threshold of the project is at most 2x the simulation time of roadrunner native (LLJIT `O2`), dense and with KLU. No ratio is above it: the largest is 1.38 (the event model, dense, an output of 201 times, wasmtime); the PBPK models take 0.57 to 0.83 of roadrunner's time in wasmtime, Node and Chrome (0.45 to 0.61 natively), Chen and mp_flat 0.16 to 0.97 with KLU and 1.10 to 1.31 dense.
-- The native engine (`--host native`: the engine compiled for the machine, the model in wasmtime) is the bound of the integrator without WebAssembly; Node and Chrome agree within a few percent and take 1.0 to 1.3 of its time, wasmtime 1.2 to 1.5.
-- The counters of the integrator are the same in wasmtime, Node and Chrome for every configuration (one `engine.wasm`, the same bits), and every timed simulation repeated the bits of the first.
-- `KLU_THRESHOLD` is 12: KLU (in the ordering AMD) with the analytic Jacobian is as fast as the dense solver at 11 to 12 states and faster above (0.6 of the dense time at 64 states).
-- Agreement: the engine at rtol 1e-10 against roadrunner at rtol 1e-12, within `1e-12 + 1e-7 |c|`, or its largest excess at most 1 % above the one of roadrunner at rtol 1e-10 with the same linear solver. Every model passes with the dense solver and with KLU.
+<script>
+(() => {
+  const KINDS = { pass: "passes", unsupported: "not supported", fail: "fails" };
+  const root = document.querySelector(".suite");
+  if (!root) return;
+  fetch(root.dataset.src).then((r) => r.json()).then((data) => {
+    const counts = data.counts;
+    root.innerHTML = "";
 
-`js/bench.mjs` reads `engine.wasm` from `SBMLSIM_CORE_RUNTIME`, else `js/runtime`. The KLU baseline of roadrunner is a `roadrunner-sparsedq` build (libroadrunner with KLU and its colored sparse difference quotient) when `SBMLSIM_CORE_SPARSEDQ_BUILD` names its `site-packages` directory (or `--sparse-build`); without it `roadrunner_reference.py` takes the KLU of the libroadrunner 2.12 of its environment.
+    const legend = document.createElement("div");
+    legend.className = "suite-legend";
+    for (const kind of ["pass", "unsupported", "fail"]) {
+      const item = document.createElement("span");
+      const key = document.createElement("i");
+      key.className = "suite-key " + kind;
+      item.appendChild(key);
+      item.appendChild(document.createTextNode(
+        counts[kind] + " " + KINDS[kind]
+      ));
+      legend.appendChild(item);
+    }
+    root.appendChild(legend);
+
+    const grid = document.createElement("div");
+    grid.className = "suite-grid";
+    grid.setAttribute("role", "list");
+    grid.setAttribute("aria-label",
+      data.n_cases + " cases of the SBML Test Suite at commit " + data.suite_commit.slice(0, 7));
+    const describe = (c) => {
+      let text = "Case " + c.id + ", " + KINDS[c.kind];
+      if (c.reason) text += ": " + c.reason;
+      else if (c.difference !== undefined) text += ", largest difference " + c.difference;
+      return text;
+    };
+    data.cases.forEach((c, i) => {
+      const cell = document.createElement("div");
+      cell.className = "suite-cell " + c.kind;
+      cell.setAttribute("role", "listitem");
+      cell.tabIndex = i === 0 ? 0 : -1;
+      cell.title = describe(c);
+      cell.dataset.index = String(i);
+      grid.appendChild(cell);
+    });
+    root.appendChild(grid);
+
+    const note = document.createElement("p");
+    note.className = "suite-note";
+    note.textContent = "Suite commit " + data.suite_commit.slice(0, 7)
+      + ", " + data.n_cases + " semantic cases, in the order of their identifier.";
+    root.appendChild(note);
+
+    const tip = document.createElement("div");
+    tip.className = "suite-tip";
+    tip.setAttribute("role", "status");
+    document.body.appendChild(tip);
+
+    let active = null;
+    const show = (cell, x, y) => {
+      const c = data.cases[Number(cell.dataset.index)];
+      let html = "<b>" + c.id + "</b> &middot; " + KINDS[c.kind];
+      if (c.reason) html += "<br>" + c.reason.replace(/[<>&]/g, (ch) =>
+        ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" })[ch]);
+      else if (c.difference !== undefined) html += "<br>largest difference " + c.difference;
+      tip.innerHTML = html;
+      tip.classList.add("is-shown");
+      const box = tip.getBoundingClientRect();
+      const left = Math.min(Math.max(8, x + 12), window.innerWidth - box.width - 8);
+      // below the anchor, which keeps the legend clear, unless the window ends first
+      const below = y + 18;
+      const top = below + box.height < window.innerHeight - 8 ? below : y - box.height - 12;
+      tip.style.left = left + "px";
+      tip.style.top = top + "px";
+      if (active && active !== cell) active.classList.remove("is-active");
+      active = cell;
+    };
+    const hide = () => {
+      tip.classList.remove("is-shown");
+      if (active) active.classList.remove("is-active");
+      active = null;
+    };
+
+    grid.addEventListener("mousemove", (e) => {
+      const cell = e.target.closest(".suite-cell");
+      if (cell) show(cell, e.clientX, e.clientY); else hide();
+    });
+    grid.addEventListener("mouseleave", hide);
+    grid.addEventListener("focusin", (e) => {
+      const cell = e.target.closest(".suite-cell");
+      if (!cell) return;
+      cell.classList.add("is-active");
+      const box = cell.getBoundingClientRect();
+      show(cell, box.left, box.bottom);
+    });
+    grid.addEventListener("focusout", hide);
+    grid.addEventListener("keydown", (e) => {
+      const cell = e.target.closest(".suite-cell");
+      if (!cell) return;
+      const cells = grid.children;
+      const perRow = Math.max(1, Math.round(grid.clientWidth / 13));
+      const i = Number(cell.dataset.index);
+      const step = { ArrowRight: 1, ArrowLeft: -1, ArrowDown: perRow, ArrowUp: -perRow }[e.key];
+      if (step === undefined) return;
+      const next = cells[Math.min(cells.length - 1, Math.max(0, i + step))];
+      if (!next) return;
+      e.preventDefault();
+      cell.tabIndex = -1;
+      next.tabIndex = 0;
+      next.focus();
+    });
+  }).catch(() => {
+    root.textContent = "The grid of the cases could not be loaded; the counts are in the tables below.";
+  });
+})();
+</script>

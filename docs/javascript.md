@@ -19,6 +19,35 @@ A page imports the modules from its own files or from a CDN (`https://cdn.jsdeli
 
 ## The loader
 
+## A first simulation
+
+```js
+import { readFile } from "node:fs/promises";
+import { createRuntime } from "sbmlsim-core";
+
+const runtime = await createRuntime({
+  engine: await readFile("js/runtime/engine.wasm"),
+  mathlib: await readFile("js/runtime/mathlib.wasm"),
+});
+const instance = await runtime.instantiate(
+  await readFile("model.wasm"),
+  await readFile("model.json", "utf8"),
+);
+
+const { columns, nRows, values } = instance.simulate({
+  contract: "simulation/1",
+  start: 0,
+  end: 10,
+  output: { uniform: { steps: 100 } },
+  selections: ["time", "[S]"],
+});
+console.log(columns, nRows, values); // values: a Float64Array, row major
+```
+
+`model.wasm` and `model.json` are what `sbmlsim-core compile` writes, or what the [Python](python.md) binding compiles; the request is the one every host takes, see [Rust](rust.md). The rest of this page is the API in detail.
+
+## The loader
+
 ```js
 import { createRuntime } from "./js/loader.mjs";
 

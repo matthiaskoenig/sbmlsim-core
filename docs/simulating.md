@@ -1,4 +1,4 @@
-# Simulating
+# Simulation
 
 A compiled model (`model.wasm` and `model.json`) is simulated with a request of the contract `simulation/1`. The engine answers with a table: the column `time` and the selections of the request, row major.
 

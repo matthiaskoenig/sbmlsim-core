@@ -10,12 +10,104 @@ See it run in the [glimepiride app](https://matthiaskoenig.github.io/sbmlsim-web
 
 A model passes through three parts, joined by two contracts which are defined in the crate `sbmlsim-abi` (`crates/abi`):
 
-```text
-model.xml  --compiler-->  model.wasm + model.json   (model/2)
-                                 |
-                                 v
-request    --engine.wasm + mathlib.wasm in a host-->  result   (simulation/1)
-```
+<svg class="core-diagram" viewBox="0 16 840 350" xmlns="http://www.w3.org/2000/svg" role="img"
+     aria-label="A model passes the compiler into model.wasm and model.json, the contract model/2. A host links mathlib.wasm, model.wasm and engine.wasm into one WebAssembly instance, where the engine calls the model and the model calls mathlib without leaving WebAssembly. A request of the contract simulation/1 goes in and a result comes out. The hosts are wasmtime with the command line, Node, a browser, and the native engine of the python wheel.">
+  <defs>
+    <marker id="cd-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+    </marker>
+    <marker id="cd-arrow-accent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--cd-accent)"/>
+    </marker>
+  </defs>
+  <!-- the compiler -->
+  <g class="cd-step">
+    <rect x="16" y="30" width="128" height="46" rx="6"/>
+    <text x="80" y="58">model.xml</text>
+  </g>
+  <line x1="150" y1="53" x2="196" y2="53" marker-end="url(#cd-arrow)"/>
+  <g class="cd-step cd-active">
+    <rect x="202" y="30" width="138" height="46" rx="6"/>
+    <text x="271" y="58">compiler</text>
+  </g>
+  <line x1="346" y1="53" x2="392" y2="53" marker-end="url(#cd-arrow)"/>
+  <g class="cd-artifact">
+    <rect x="398" y="24" width="156" height="26" rx="4"/>
+    <text x="476" y="42">model.wasm</text>
+    <rect x="398" y="56" width="156" height="26" rx="4"/>
+    <text x="476" y="74">model.json</text>
+  </g>
+  <text class="cd-contract" x="572" y="58">model/2</text>
+  <!-- the request and the result -->
+  <g class="cd-step">
+    <rect x="16" y="196" width="128" height="46" rx="6"/>
+    <text x="80" y="217">request</text>
+    <text class="cd-sub" x="80" y="233">simulation/1</text>
+  </g>
+  <line x1="150" y1="219" x2="196" y2="219" marker-end="url(#cd-arrow)"/>
+  <line x1="694" y1="219" x2="740" y2="219" marker-end="url(#cd-arrow)"/>
+  <g class="cd-step">
+    <rect x="746" y="196" width="80" height="46" rx="6"/>
+    <text x="786" y="217">result</text>
+    <text class="cd-sub" x="786" y="233">simulation/1</text>
+  </g>
+  <!-- the instance -->
+  <g class="cd-instance">
+    <rect x="202" y="140" width="488" height="158" rx="10"/>
+    <text class="cd-title" x="446" y="162">one WebAssembly instance, one linear memory</text>
+  </g>
+  <g class="cd-module">
+    <rect x="226" y="186" width="136" height="54" rx="6"/>
+    <text x="294" y="211">engine.wasm</text>
+    <text class="cd-sub" x="294" y="227">CVODE, KLU</text>
+    <rect x="394" y="186" width="136" height="54" rx="6"/>
+    <text x="462" y="211">model.wasm</text>
+    <text class="cd-sub" x="462" y="227">rhs, Jacobian</text>
+    <rect x="546" y="186" width="124" height="54" rx="6"/>
+    <text x="608" y="211">mathlib.wasm</text>
+    <text class="cd-sub" x="608" y="227">exp, pow, ...</text>
+  </g>
+  <line class="cd-call" x1="368" y1="213" x2="388" y2="213" marker-end="url(#cd-arrow-accent)"/>
+  <line class="cd-call" x1="536" y1="213" x2="540" y2="213" marker-end="url(#cd-arrow-accent)"/>
+  <text class="cd-note" x="446" y="276">every call wasm to wasm, the host is not entered</text>
+  <!-- the hosts -->
+  <text class="cd-label" x="16" y="344">hosts</text>
+  <g class="cd-host">
+    <rect x="76" y="326" width="152" height="30" rx="15"/>
+    <text x="152" y="346">wasmtime, the CLI</text>
+    <rect x="240" y="326" width="80" height="30" rx="15"/>
+    <text x="280" y="346">Node</text>
+    <rect x="332" y="326" width="100" height="30" rx="15"/>
+    <text x="382" y="346">browser</text>
+    <rect x="444" y="326" width="196" height="30" rx="15"/>
+    <text x="542" y="346">native, the python wheel</text>
+  </g>
+  <line x1="446" y1="310" x2="446" y2="322" marker-end="url(#cd-arrow)"/>
+</svg>
+<style>
+.core-diagram { width: 100%; height: auto; margin: .2rem 0 0;
+  --cd-ink: var(--md-default-fg-color, #1a1a19);
+  --cd-soft: var(--md-default-fg-color--light, #6b6b68);
+  --cd-line: var(--md-default-fg-color--lighter, #c3c3c0);
+  --cd-accent: #2a78d6;
+  color: var(--cd-line); }
+[data-md-color-scheme="slate"] .core-diagram { --cd-accent: #3987e5; }
+.core-diagram text { fill: var(--cd-ink); font-size: 13px; text-anchor: middle;
+  font-family: var(--md-text-font-family, system-ui), sans-serif; }
+.core-diagram .cd-sub { fill: var(--cd-soft); font-size: 10.5px; }
+.core-diagram .cd-note { fill: var(--cd-soft); font-size: 11px; font-style: italic; }
+.core-diagram .cd-title { fill: var(--cd-soft); font-size: 11.5px; letter-spacing: .02em; }
+.core-diagram .cd-label { fill: var(--cd-soft); font-size: 11.5px; text-anchor: start; }
+.core-diagram .cd-contract { fill: var(--cd-accent); font-size: 11.5px; text-anchor: start; font-weight: 600; }
+.core-diagram rect { fill: none; stroke: var(--cd-line); stroke-width: 1.5; }
+.core-diagram .cd-active rect { stroke: var(--cd-accent); stroke-width: 2; }
+.core-diagram .cd-artifact rect { stroke-dasharray: 4 3; }
+.core-diagram .cd-instance rect { stroke: var(--cd-soft); stroke-dasharray: 6 4; }
+.core-diagram .cd-module rect { fill: color-mix(in srgb, var(--cd-accent) 7%, transparent); }
+.core-diagram .cd-host rect { fill: color-mix(in srgb, var(--cd-ink) 5%, transparent); stroke: none; }
+.core-diagram line { stroke: currentColor; stroke-width: 1.5; }
+.core-diagram .cd-call { stroke: var(--cd-accent); stroke-width: 2; }
+</style>
 
 **The compiler.** `crates/compiler`, built on `sbml` (the reader of SBML L3V2 core and its MathML), `ir` (the model representation: the states and parameters in the order of libroadrunner's vectors, the rules in their order of dependency, the events, the analytic Jacobian) and `codegen` (the WebAssembly module). It turns an SBML file into `model.wasm`, with an analytic sparse Jacobian, and `model.json`, its description (`model/1`). The compiler does no file system or OS access, so it also builds for `wasm32-unknown-unknown` and can run in a browser. See [Compiling a model](compiling.md).
 
@@ -32,6 +124,6 @@ Both are documented on [Simulating](simulating.md) and defined in `crates/abi`.
 
 ## What it is measured against
 
-- The SBML Test Suite: 1581 of 1789 cases pass, every case which sbmlsim passes among them; the 208 failures are refused at compilation with a reason. See [Test suite and benchmark](testsuite.md).
+- The SBML Test Suite: 1581 of 1789 cases pass, every case which sbmlsim passes among them; the 208 failures are refused at compilation with a reason. See [Test suite](testsuite.md).
 - roadrunner: no model of the benchmark takes more than 1.4x the time of roadrunner native, dense or with KLU, in wasmtime, Node or Chrome (the PBPK models 0.57 to 0.83 of it, Chen with KLU 0.16 to 0.19), and every model agrees with roadrunner at tight tolerances.
 - sbmlsim: the known differences to roadrunner and to sbmlsim are listed on [Semantics](semantics.md).
