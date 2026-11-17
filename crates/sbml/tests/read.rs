@@ -325,6 +325,44 @@ fn refuses_a_draw_on_a_parameter() {
 }
 
 #[test]
+fn refuses_a_draw_of_an_optional_distrib() {
+    // `required="false"` is the claim that the package changes no mathematics: a draw in such a
+    // document is refused as well, because it changes the mathematics whatever the document
+    // claims, and the elements of the package are read for their annotations either way
+    let xml = format!(
+        r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" xmlns:distrib="{DISTRIB_NS}" level="3" version="2" distrib:required="false"><model id="m">
+<listOfParameters><parameter id="p" value="1" constant="true">
+        {DRAW}
+      </parameter></listOfParameters>
+</model></sbml>"#
+    );
+    let message = refusal(&xml);
+    assert!(message.contains("drawFromDistribution"), "{message}");
+    assert!(message.contains(DISTRIB_NS), "{message}");
+}
+
+#[test]
+fn refuses_a_draw_in_an_event() {
+    // a draw which no reader of an element reaches: the walk over the document is the only
+    // thing which sees it, here on the event assignment of an event
+    let xml = format!(
+        r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" xmlns:distrib="{DISTRIB_NS}" level="3" version="2" distrib:required="true"><model id="m">
+<listOfParameters><parameter id="b" constant="false" value="0"/></listOfParameters>
+<listOfEvents><event id="e">
+        <trigger><math xmlns="http://www.w3.org/1998/Math/MathML"><apply><gt/><csymbol encoding="text" definitionURL="http://www.sbml.org/sbml/symbols/time">time</csymbol><cn>1</cn></apply></math></trigger>
+        <listOfEventAssignments><eventAssignment variable="b">
+          {DRAW}
+          <math xmlns="http://www.w3.org/1998/Math/MathML"><cn>1</cn></math>
+        </eventAssignment></listOfEventAssignments>
+      </event></listOfEvents>
+</model></sbml>"#
+    );
+    let message = refusal(&xml);
+    assert!(message.contains("drawFromDistribution"), "{message}");
+    assert!(message.contains(DISTRIB_NS), "{message}");
+}
+
+#[test]
 fn refuses_a_distrib_draw_in_a_rule() {
     // an uncertainty annotates, a draw computes: a csymbol of a distribution of distrib in the
     // math of the model is refused and the message names it, although distrib is read
