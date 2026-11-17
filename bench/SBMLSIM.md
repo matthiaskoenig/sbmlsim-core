@@ -33,7 +33,9 @@ The method is the one of `bench/RESULTS.md`: the median of 20 runs after 3 warm 
 | hctz | 28 | dense | times | 0.877 | 0.446 | 0.51 | 0.859 | 0.98 | 0.506 | 0.58 | 0.500 | 0.57 |
 | hctz | 28 | klu | times | 0.677 | 0.339 | 0.50 | 0.710 | 1.05 | 0.406 | 0.60 | 0.400 | 0.59 |
 
-The engine is faster than roadrunner on every model and every host but wasmtime on the two models whose integration is short (repressilator 1.02 to 1.09, hctz 0.98 to 1.05), where Cranelift's code is 25 to 75 % slower than V8's on the same `engine.wasm`: Node and Chrome agree within 2 % everywhere and are the hosts a browser uses. `demo` is the extreme case, five integration steps of a model of six states, where roadrunner's fixed cost per call dominates and the engine is 10 to 25 times faster.
+The engine is faster than roadrunner on every model and every host but wasmtime on the two models whose integration is short (repressilator 1.02 to 1.09, hctz 0.98 to 1.05), where Cranelift's code is 25 to 75 % slower than V8's on the same `engine.wasm`: Node and Chrome agree within 2 % everywhere and are the hosts a browser uses.
+
+The hosts integrate alike and not only in their answers: every one of the sixteen configurations of a model, a solver and a Jacobian above has the same counters of the integrator in the native engine, in wasmtime and under Node (steps, right hand side evaluations, Jacobian evaluations, nonlinear iterations, error test failures), so the times of a row are the same work done at different speeds. It is also why the native engine of the wheel changes nothing of these results, although it can differ from `engine.wasm` in the last bits where a model exercises the C library more (`docs/python.md`). `demo` is the extreme case, five integration steps of a model of six states, where roadrunner's fixed cost per call dominates and the engine is 10 to 25 times faster.
 
 ## The two layers between sbmlsim and the integrator
 

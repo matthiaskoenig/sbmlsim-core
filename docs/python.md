@@ -17,6 +17,8 @@ What this costs is the last bits. CVODE calls the `pow` and `sqrt` of the C libr
 - a result of a wheel is **not** bitwise a result of `engine.wasm`, i.e. not bitwise a result of the same model in the browser or under `node`;
 - a result of a wheel is not guaranteed bitwise across platforms either, since the C library is the platform's.
 
+How large those differences are, measured: on the four packaged models of sbmlsim the integrator took the **identical path** in the native engine, in wasmtime and under Node, all sixteen configurations of a model, a solver and a Jacobian agreeing on every counter (steps, right hand side evaluations, Jacobian evaluations, nonlinear iterations, error test failures), so nothing of those results moved. On the golden model of `crates/host/tests/native.rs`, which has events, root functions and a steady state in its request, 3 of 30 values differ and the largest relative difference is 1.0e-14, against an integration at a relative tolerance of 1e-6. So the two engines can differ, and where they do it is near the last bits of a double and far below the error of the integration.
+
 Within one platform and one wheel a result is reproducible as before: the C sources are compiled with `-O3 -DNDEBUG -ffp-contract=off -fno-fast-math`, so no fused multiply-add and no fast math enter a result, every instance of a model integrates the same way, and a batch gives the results of a serial run bitwise whatever its threads. The differences are those of an integration at the given tolerances, which is what [Simulating](simulating.md) compares engines at; `sbmlsim-core bench --host wasmtime` and the [JavaScript host](javascript.md) are the way to a result of `engine.wasm`.
 
 ## Compile and simulate
