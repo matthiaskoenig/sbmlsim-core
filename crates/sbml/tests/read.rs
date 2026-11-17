@@ -257,6 +257,14 @@ fn reads_distrib_when_it_is_not_required() {
 }
 
 #[test]
+fn refuses_a_required_package_of_the_prefix_of_a_read_one() {
+    // a package is its namespace URI, the prefix of a document is any text: a required package
+    // of another namespace is refused although it is declared under the prefix `distrib`
+    let xml = r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" xmlns:distrib="urn:x-other-package" level="3" version="2" distrib:required="true"><model id="m"/></sbml>"#;
+    assert_eq!(read(xml).unwrap_err(), ReadError::Package("distrib".into()));
+}
+
+#[test]
 fn refuses_a_distrib_draw_in_a_rule() {
     // an uncertainty annotates, a draw computes: a csymbol of a distribution of distrib in the
     // math of the model is refused and the message names it, although distrib is read
