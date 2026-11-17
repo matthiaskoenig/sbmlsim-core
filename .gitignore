@@ -10,3 +10,6 @@ __pycache__/
 *.pyd
 /dist/
 /js/node_modules/
+
+# the lock of the python tooling of the scripts, which is not part of the package
+uv.lock
