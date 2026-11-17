@@ -612,6 +612,18 @@ fn read_model(m: X) -> Result<Model, ReadError> {
     })
 }
 
+/// The packages which are read although they are required: their elements annotate the model
+/// and define none of its mathematics, so a model without them is the model the document means.
+///
+/// `distrib` carries the uncertainty of a parameter (`<distrib:uncertainty>` of a parameter,
+/// which the models of pkdb_models write for every fitted parameter: the confidence interval
+/// of the profile likelihood, the standard error of the Fisher information and the
+/// distribution of the draws). The one distrib construct which reaches the mathematics is a
+/// draw, a `<csymbol>` of a distribution (`http://www.sbml.org/sbml/symbols/distrib/normal`),
+/// which [`math`](crate::math) refuses as an unknown csymbol wherever a math of the model
+/// stands; the `<math>` of an uncertainty is no child of the parameter and is never read.
+const READ_REQUIRED_PACKAGES: [&str; 1] = ["distrib"];
+
 /// The package of a namespace URI such as `.../level3/version1/comp/version1`.
 fn package_name(uri: &str, prefix: Option<&str>) -> String {
     let parts: Vec<&str> = uri.trim_end_matches('/').split('/').collect();
@@ -645,7 +657,10 @@ pub(crate) fn read_document(sbml: &str) -> Result<Document, ReadError> {
             && let Some(ns) = a.namespace()
             && a.value() == "true"
         {
-            return Err(ReadError::Package(package_name(ns, root.lookup_prefix(ns))));
+            let package = package_name(ns, root.lookup_prefix(ns));
+            if !READ_REQUIRED_PACKAGES.contains(&package.as_str()) {
+                return Err(ReadError::Package(package));
+            }
         }
     }
     let model = child(root, "model").ok_or_else(|| err("<sbml> without a <model>".into()))?;

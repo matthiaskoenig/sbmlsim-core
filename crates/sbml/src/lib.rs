@@ -9,8 +9,14 @@
 //!
 //! Packages: a package whose `required` attribute on `<sbml>` is `"true"` is refused with
 //! [`ReadError::Package`] (the package name is read from its namespace URI, e.g. `comp`; comp
-//! must be flattened before); a package with `required="false"` (layout, render, fbc
-//! annotations, ...) is ignored.
+//! must be flattened before, a model read without its submodels is another model); a package
+//! with `required="false"` (layout, render, fbc annotations, ...) is ignored. A required
+//! package which annotates and computes nothing is read as well and its elements are ignored,
+//! so far `distrib`: a `<distrib:uncertainty>` of a parameter is the uncertainty of the fit
+//! which gave its value, and the mathematics of the model is the same without it. The
+//! mathematics a package defines is refused as any math the reader does not understand: a
+//! draw, the `<csymbol>` of a distribution of `distrib` in a math of the model, is an unknown
+//! csymbol whatever `required` says.
 //!
 //! Units pass through as text and nothing is computed with them. A unit definition becomes a unit expression a unit registry such as pint parses, the units joined by `*`; a unit is `(multiplier * 10^scale * kind)^exponent`, written as `kind`, `factor*kind`, `kind**e` or `(factor*kind)**e` where the factor is the double of the text `{multiplier}e{scale}`, e.g. `mmol/min` as `0.001*mole*(60*second)**-1`.
 
