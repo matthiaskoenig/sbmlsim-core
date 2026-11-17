@@ -15,6 +15,11 @@ name = "sbmlsim_core"
 crate-type = ["cdylib"]
 
 [dependencies]
+# The allocator of the extension module (`src/lib.rs`, where the measurement is). It builds
+# mimalloc's C sources through `cc`, which adds no requirement a build of this cdylib did not
+# already have, and it travels inside the wheel: unlike an instruction set it depends on nothing
+# about the machine which installs it, and no allocator can change a result.
+mimalloc = "0.1"
 numpy = "0.30"
 pyo3 = { version = "0.30", features = ["extension-module", "abi3-py314"] }
 pythonize = "0.30"

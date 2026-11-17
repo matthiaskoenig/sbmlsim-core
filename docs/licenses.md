@@ -19,6 +19,8 @@ KLU and BTF are under the GNU Lesser General Public License 2.1 or later and are
 
 Also compiled into the modules, under permissive licenses whose texts are in their sources: the Rust standard library (MIT OR Apache-2.0); in `engine.wasm` the crates serde, serde_json, itoa, rand_core, rand_pcg and thiserror (MIT OR Apache-2.0), memchr (Unlicense OR MIT) and zmij (MIT), and wasi-libc (Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT, with parts of musl under MIT); in `mathlib.wasm` the crate libm (MIT). `model.wasm` contains no third-party code.
 
+The extension module of the python package links one library more, which no wasm module and no other package contains: mimalloc 3.3.2 (MIT, through the crate `libmimalloc-sys`), the allocator of the extension. Its text is in `THIRD_PARTY.md` as well, which the wheel carries.
+
 ## Third-party notices
 
 `THIRD_PARTY.md` in the root of the repository has the versions, the commits of the submodules, the complete license texts and how to rebuild `engine.wasm` with a modified KLU or BTF. `sbmlsim-core runtime -o DIR` writes it next to `engine.wasm` and `mathlib.wasm`, so a page which serves the runtime can serve its notices next to it, and `sbmlsim_host::THIRD_PARTY_NOTICES` is its text.
