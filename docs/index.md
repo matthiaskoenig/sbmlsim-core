@@ -1,5 +1,12 @@
 # sbmlsim-core
 
+[![ci](https://github.com/matthiaskoenig/sbmlsim-core/actions/workflows/ci.yml/badge.svg)](https://github.com/matthiaskoenig/sbmlsim-core/actions/workflows/ci.yml)
+[![docs](https://github.com/matthiaskoenig/sbmlsim-core/actions/workflows/docs.yml/badge.svg)](https://matthiaskoenig.github.io/sbmlsim-core/)
+[![PyPI](https://img.shields.io/pypi/v/sbmlsim-core.svg?logo=pypi&logoColor=white&label=PyPI)](https://pypi.org/project/sbmlsim-core/)
+[![npm](https://img.shields.io/npm/v/sbmlsim-core.svg?logo=npm&logoColor=white&label=npm)](https://www.npmjs.com/package/sbmlsim-core)
+[![python](https://img.shields.io/pypi/pyversions/sbmlsim-core.svg?logo=python&logoColor=white&label=python)](https://pypi.org/project/sbmlsim-core/)
+[![license](https://img.shields.io/badge/license-MIT%20AND%20BSD--3--Clause%20AND%20LGPL--2.1--or--later-blue.svg)](licenses.md)
+
 sbmlsim-core is an SBML to WebAssembly compiler and a CVODE/KLU simulation engine, written in Rust. It compiles an SBML Level 3 Version 2 core model into a WebAssembly module and simulates it with the same `engine.wasm` in wasmtime, in Node and in browsers, with bitwise identical results on every host.
 
 It is the simulation core of the web apps of [sbmlsim](https://matthiaskoenig.github.io/sbmlsim/): the semantics of a simulation are those of sbmlsim (PEtab v2), the integrator and the linear solvers those of libroadrunner (CVODE of SUNDIALS, KLU of SuiteSparse).
@@ -86,31 +93,6 @@ A model passes through three parts, joined by two contracts which are defined in
   </g>
   <line x1="446" y1="310" x2="446" y2="322" marker-end="url(#cd-arrow)"/>
 </svg>
-<style>
-.core-diagram { width: 100%; height: auto; margin: .2rem 0 0;
-  --cd-ink: var(--md-default-fg-color, #1a1a19);
-  --cd-soft: var(--md-default-fg-color--light, #6b6b68);
-  --cd-line: var(--md-default-fg-color--lighter, #c3c3c0);
-  --cd-accent: #2a78d6;
-  color: var(--cd-line); }
-[data-md-color-scheme="slate"] .core-diagram { --cd-accent: #3987e5; }
-.core-diagram text { fill: var(--cd-ink); font-size: 13px; text-anchor: middle;
-  font-family: var(--md-text-font-family, system-ui), sans-serif; }
-.core-diagram .cd-sub { fill: var(--cd-soft); font-size: 10.5px; }
-.core-diagram .cd-note { fill: var(--cd-soft); font-size: 11px; font-style: italic; }
-.core-diagram .cd-title { fill: var(--cd-soft); font-size: 11.5px; letter-spacing: .02em; }
-.core-diagram .cd-label { fill: var(--cd-soft); font-size: 11.5px; text-anchor: start; }
-.core-diagram .cd-contract { fill: var(--cd-accent); font-size: 11.5px; text-anchor: start; font-weight: 600; }
-.core-diagram rect { fill: none; stroke: var(--cd-line); stroke-width: 1.5; }
-.core-diagram .cd-active rect { stroke: var(--cd-accent); stroke-width: 2; }
-.core-diagram .cd-artifact rect { stroke-dasharray: 4 3; }
-.core-diagram .cd-instance rect { stroke: var(--cd-soft); stroke-dasharray: 6 4; }
-.core-diagram .cd-module rect { fill: color-mix(in srgb, var(--cd-accent) 7%, transparent); }
-.core-diagram .cd-host rect { fill: color-mix(in srgb, var(--cd-ink) 5%, transparent); stroke: none; }
-.core-diagram line { stroke: currentColor; stroke-width: 1.5; }
-.core-diagram .cd-call { stroke: var(--cd-accent); stroke-width: 2; }
-</style>
-
 **The compiler.** `crates/compiler`, built on `sbml` (the reader of SBML L3V2 core and its MathML), `ir` (the model representation: the states and parameters in the order of libroadrunner's vectors, the rules in their order of dependency, the events, the analytic Jacobian) and `codegen` (the WebAssembly module). It turns an SBML file into `model.wasm`, with an analytic sparse Jacobian, and `model.json`, its description (`model/1`). The compiler does no file system or OS access, so it also builds for `wasm32-unknown-unknown` and can run in a browser. See [Compiling a model](compiling.md).
 
 **The engine.** `crates/engine`, built into `engine.wasm` (wasm32-wasip1): Rust with CVODE 7.9 and KLU (`crates/csolvers`). It runs a request of `simulation/1` on a compiled model: the pre-initialization, changes at times, events, a steady state before the start, and the dense or the KLU linear solver (KLU from 16 states, `KLU_THRESHOLD`). `mathlib.wasm` (`crates/mathlib`) is the one implementation of every math function a model calls, so a result does not depend on the math of a host. See [Simulating](simulating.md).

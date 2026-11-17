@@ -17,6 +17,64 @@ interrupted by this deadline.
 
 The CSV has the names of the columns in its first line, then one line per row; a number is written as the shortest decimal which reads back as the same double, without an exponent, and `NaN`, `inf` and `-inf`. `node js/simulate.mjs` writes the same CSV byte for byte in Node (see [JavaScript](javascript.md)).
 
+<svg class="core-diagram" viewBox="0 14 840 290" xmlns="http://www.w3.org/2000/svg" role="img"
+     aria-label="One request of the contract simulation/1 is simulated in three stages and nothing is kept between requests. The values of preinit are set before the initialization, which the initial assignments see. The integrator runs a steady state first, from time zero, then one segment per change, firing the events a change makes true. The output is the given times, uniform steps or the steps of the integrator, with two rows at a change after the start. The result carries the columns, the number of rows and the values. Below, the segments of the integrator run from the start to the end, each ending in the state the next one starts from, with a change between them.">
+  <defs>
+    <marker id="sm-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <text class="cd-title" x="420" y="34">one request, three stages, nothing kept between them</text>
+  <g class="cd-step">
+    <rect x="16" y="78" width="100" height="48" rx="6"/>
+    <text x="66" y="99">request</text>
+    <text class="cd-sub" x="66" y="115">simulation/1</text>
+  </g>
+  <line x1="122" y1="102" x2="148" y2="102" marker-end="url(#sm-arrow)"/>
+  <g class="cd-step">
+    <rect x="154" y="48" width="146" height="108" rx="6"/>
+    <text x="227" y="72">preinit</text>
+    <text class="cd-sub" x="227" y="98">values set before</text>
+    <text class="cd-sub" x="227" y="118">the initialization</text>
+    <text class="cd-sub" x="227" y="138">assignments see them</text>
+  </g>
+  <line x1="306" y1="102" x2="332" y2="102" marker-end="url(#sm-arrow)"/>
+  <g class="cd-step cd-active">
+    <rect x="338" y="48" width="168" height="108" rx="6"/>
+    <text x="422" y="72">integrate</text>
+    <text class="cd-sub" x="422" y="98">a steady state first,</text>
+    <text class="cd-sub" x="422" y="118">then a segment per change,</text>
+    <text class="cd-sub" x="422" y="138">firing the events it makes true</text>
+  </g>
+  <line x1="512" y1="102" x2="538" y2="102" marker-end="url(#sm-arrow)"/>
+  <g class="cd-step">
+    <rect x="544" y="48" width="146" height="108" rx="6"/>
+    <text x="617" y="72">output</text>
+    <text class="cd-sub" x="617" y="98">times, uniform steps</text>
+    <text class="cd-sub" x="617" y="118">or the integrator&#8217;s</text>
+    <text class="cd-sub" x="617" y="138">two rows at a change</text>
+  </g>
+  <line x1="696" y1="102" x2="722" y2="102" marker-end="url(#sm-arrow)"/>
+  <g class="cd-artifact">
+    <rect x="728" y="78" width="96" height="48" rx="4"/>
+    <text x="776" y="99">result</text>
+    <text class="cd-sub" x="776" y="115">columns, rows</text>
+  </g>
+  <text class="cd-label" x="16" y="196">the segments of the integrator, each ending in the state the next one starts from</text>
+  <line x1="120" y1="240" x2="760" y2="240"/>
+  <line x1="120" y1="233" x2="120" y2="247"/>
+  <line x1="760" y1="233" x2="760" y2="247"/>
+  <text class="cd-sub" x="120" y="266">start</text>
+  <text class="cd-sub" x="760" y="266">end</text>
+  <line class="cd-call" x1="333" y1="222" x2="333" y2="258"/>
+  <text class="cd-contract" x="305" y="284">change</text>
+  <line class="cd-call" x1="547" y1="222" x2="547" y2="258"/>
+  <text class="cd-contract" x="519" y="284">change</text>
+  <text class="cd-sub" x="226" y="218">segment</text>
+  <text class="cd-sub" x="440" y="218">segment</text>
+  <text class="cd-sub" x="653" y="218">segment</text>
+</svg>
+
 ## The request, `simulation/1`
 
 ```json
