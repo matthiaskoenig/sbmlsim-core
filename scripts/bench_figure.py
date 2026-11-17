@@ -52,12 +52,28 @@ ENGINES: tuple[tuple[str, str], ...] = (
 SOLVERS: tuple[str, ...] = ("dense", "klu")
 
 #: The colours of the solvers: the categorical slots 1 and 2, light and dark.
+# the first five slots of the categorical theme, which validate on the adjacent
+# pairlist in both modes; identity is the row label and its position, the colour
+# ties one engine across the panels
 COLORS: dict[str, dict[str, str]] = {
-    "light": {"dense": "#2a78d6", "klu": "#eb6834"},
-    "dark": {"dense": "#3987e5", "klu": "#d95926"},
+    "light": {
+        "roadrunner": "#2a78d6",
+        "native": "#eb6834",
+        "wasmtime": "#1baf7a",
+        "node": "#eda100",
+        "chrome": "#e87ba4",
+    },
+    "dark": {
+        "roadrunner": "#3987e5",
+        "native": "#d95926",
+        "wasmtime": "#199e70",
+        "node": "#c98500",
+        "chrome": "#d55181",
+    },
 }
 
-#: The surface, the ink and the recessive ink of each mode of the documentation.
+MARKERS: dict[str, str] = {"dense": "o", "klu": "D"}
+
 INK: dict[str, dict[str, str]] = {
     "light": {
         "surface": "#ffffff",
@@ -202,8 +218,35 @@ def tables(cells: list[Cell], models: list[str]) -> str:
     return "\n".join(out).strip()
 
 
+def _thin_ticks(fig: Figure) -> None:
+    """Hide the tick labels of an axis which would overlap their neighbour.
+
+    A logarithmic axis of less than a decade gets more ticks from matplotlib
+    than its width carries, so the labels are thinned after the layout, when
+    their drawn width is known.
+
+    Args:
+        fig: The figure, drawn.
+    """
+    renderer = fig.canvas.get_renderer()
+    for ax in fig.get_axes():
+        kept: float | None = None
+        for label in ax.xaxis.get_ticklabels():
+            if not label.get_text():
+                continue
+            box = label.get_window_extent(renderer=renderer)
+            if kept is not None and box.x0 < kept + 3.0:
+                label.set_visible(False)
+                continue
+            kept = box.x1
+
+
 def figure(cells: list[Cell], models: list[str], mode: str) -> Figure:
     """Draw the figure of one mode of the documentation.
+
+    The two measures are two subfigures with a gap between them, each with its
+    own heading and an axis label under every panel, so a time is never read as
+    a ratio. A colour is an engine and a marker is a solver.
 
     Args:
         cells: The measured configurations.
@@ -216,18 +259,23 @@ def figure(cells: list[Cell], models: list[str], mode: str) -> Figure:
     ink, color = INK[mode], COLORS[mode]
     by = {(c.model, c.engine, c.solver): c for c in cells}
     engines = [e for e, _ in ENGINES]
+    headings = {"ms": "Milliseconds per simulation", "ratio": "Ratio to roadrunner"}
 
-    fig, axes = plt.subplots(
-        len(models),
-        2,
-        figsize=(7.0, 1.55 * len(models) + 0.55),
-        facecolor=ink["surface"],
-    )
-    for row, model in enumerate(models):
-        last = row == len(models) - 1
-        for column, measure in enumerate(("ms", "ratio")):
-            ax = axes[row][column]
-            shown = engines
+    fig = plt.figure(figsize=(7.6, 1.5 * len(models) + 0.8), facecolor=ink["surface"])
+    columns = fig.subfigures(1, 2, wspace=0.14)
+    for column, measure in enumerate(("ms", "ratio")):
+        panel = columns[column]
+        panel.set_facecolor(ink["surface"])
+        panel.suptitle(
+            headings[measure],
+            fontsize=9.5,
+            color=ink["primary"],
+            y=0.995,
+            fontweight="medium",
+        )
+        axes = panel.subplots(len(models), 1)
+        for row, model in enumerate(models):
+            ax = axes[row]
             ax.set_facecolor(ink["surface"])
             for spine in ("top", "right", "left"):
                 ax.spines[spine].set_visible(False)
@@ -241,10 +289,10 @@ def figure(cells: list[Cell], models: list[str], mode: str) -> Figure:
             )
             ax.xaxis.set_minor_locator(NullLocator())
             ax.xaxis.set_major_formatter(FuncFormatter(_plain))
-            ax.set_ylim(len(shown) - 0.5, -0.5)
-            ax.set_yticks(range(len(shown)))
+            ax.set_ylim(len(engines) - 0.5, -0.5)
+            ax.set_yticks(range(len(engines)))
             ax.set_yticklabels(
-                shown if column == 0 else [""] * len(shown),
+                engines if column == 0 else [""] * len(engines),
                 fontsize=7.5,
                 color=ink["primary"],
             )
@@ -254,12 +302,11 @@ def figure(cells: list[Cell], models: list[str], mode: str) -> Figure:
                 ax.axvline(1.0, color=ink["secondary"], linewidth=1.0, zorder=1)
                 values = [
                     by[(model, e, s)].ms / by[(model, "roadrunner", s)].ms
-                    for e in shown
+                    for e in engines
                     for s in solvers
                 ]
-                low, high = min(values), max(values)
-                ax.set_xlim(low / 1.35, high * 1.35)
-            for position, engine in enumerate(shown):
+                ax.set_xlim(min(values) / 1.35, max(values) * 1.35)
+            for position, engine in enumerate(engines):
                 for solver in solvers:
                     cell = by.get((model, engine, solver))
                     reference = by.get((model, "roadrunner", solver))
@@ -275,9 +322,9 @@ def figure(cells: list[Cell], models: list[str], mode: str) -> Figure:
                     ax.plot(
                         value,
                         position + offset,
-                        marker="o" if solver == "dense" else "D",
+                        marker=MARKERS[solver],
                         markersize=5.5,
-                        markerfacecolor=color[solver],
+                        markerfacecolor=color[engine],
                         markeredgecolor=ink["surface"],
                         markeredgewidth=1.2,
                         linestyle="none",
@@ -294,23 +341,31 @@ def figure(cells: list[Cell], models: list[str], mode: str) -> Figure:
                     linespacing=1.4,
                     labelpad=10,
                 )
-            if last:
-                ax.set_xlabel(
-                    "ms per simulation" if measure == "ms" else "ratio to roadrunner",
-                    fontsize=8,
-                    color=ink["secondary"],
-                )
+            ax.set_xlabel(
+                "ms per simulation" if measure == "ms" else "ratio to roadrunner",
+                fontsize=7.5,
+                color=ink["secondary"],
+                labelpad=2,
+            )
+        # the left column carries the engine names and the model heading
+        panel.subplots_adjust(
+            left=0.34 if column == 0 else 0.07,
+            right=0.98,
+            hspace=0.85,
+            top=0.94,
+            bottom=0.09,
+        )
     handles = [
         Line2D(
             [],
             [],
-            marker="o" if solver == "dense" else "D",
+            marker=MARKERS[solver],
             markersize=5.5,
-            markerfacecolor=color[solver],
+            markerfacecolor=ink["secondary"],
             markeredgecolor=ink["surface"],
             markeredgewidth=1.2,
             linestyle="none",
-            label=solver,
+            label=f"{solver} solver",
         )
         for solver in SOLVERS
     ]
@@ -321,10 +376,11 @@ def figure(cells: list[Cell], models: list[str], mode: str) -> Figure:
         frameon=False,
         fontsize=8,
         labelcolor=ink["primary"],
-        bbox_to_anchor=(0.5, -0.004),
+        bbox_to_anchor=(0.5, 0.0),
     )
     legend.set_zorder(5)
-    fig.tight_layout(rect=(0, 0.035, 1, 1))
+    fig.canvas.draw()
+    _thin_ticks(fig)
     return fig
 
 
