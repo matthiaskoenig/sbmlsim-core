@@ -16,13 +16,14 @@ runtime = sbmlsim_core.Runtime()
 model = runtime.load(compiled.wasm, compiled.description)
 instance = model.instance()
 
-out = instance.simulate({
+request = {
     "contract": "simulation/1",
     "start": 0.0,
     "end": 10.0,
     "output": {"uniform": {"steps": 100}},
     "selections": ["time", "[S]"],
-})
+}
+out = instance.simulate(request)
 
 print(out.columns)
 print(out.values)  # a float64 array, (rows, columns)
