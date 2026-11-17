@@ -264,6 +264,66 @@ fn refuses_a_required_package_of_the_prefix_of_a_read_one() {
     assert_eq!(read(xml).unwrap_err(), ReadError::Package("distrib".into()));
 }
 
+/// The namespace of the distrib package.
+const DISTRIB_NS: &str = "http://www.sbml.org/sbml/level3/version1/distrib/version1";
+
+/// A draw of the drafts of distrib, which is an element and no csymbol.
+const DRAW: &str = r#"<distrib:drawFromDistribution>
+          <distrib:listOfDistribInputs>
+            <distrib:distribInput distrib:id="mu" distrib:index="0"/>
+          </distrib:listOfDistribInputs>
+          <distrib:uncertML>
+            <NormalDistribution xmlns="http://www.uncertml.org/3.0" definition="http://www.uncertml.org/distributions/normal">
+              <mean><var varId="mu"/></mean>
+              <stddev><cn>1</cn></stddev>
+            </NormalDistribution>
+          </distrib:uncertML>
+        </distrib:drawFromDistribution>"#;
+
+/// The message of a document the reader refuses as the document it is.
+fn refusal(xml: &str) -> String {
+    match read(xml).unwrap_err() {
+        ReadError::Xml(m) => m,
+        other => panic!("refused with a message of its own: {other}"),
+    }
+}
+
+#[test]
+fn refuses_a_draw_on_a_function_definition() {
+    // a draw of distrib on a function definition which carries a lambda as well: the reader
+    // ignores every element which is not core, so the definition would be read as its lambda
+    // alone and the model simulated as if the draw were not there. an element of a read package
+    // which is no uncertainty is refused, and the message names the element and the namespace
+    let xml = format!(
+        r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" xmlns:distrib="{DISTRIB_NS}" level="3" version="2" distrib:required="true"><model id="m">
+<listOfFunctionDefinitions><functionDefinition id="draw">
+        {DRAW}
+        <math xmlns="http://www.w3.org/1998/Math/MathML"><lambda><bvar><ci>x</ci></bvar><ci>x</ci></lambda></math>
+      </functionDefinition></listOfFunctionDefinitions>
+<listOfParameters><parameter id="mu" value="1" constant="true"/><parameter id="b" constant="false"/></listOfParameters>
+<listOfRules><assignmentRule variable="b"><math xmlns="http://www.w3.org/1998/Math/MathML"><apply><ci>draw</ci><ci>mu</ci></apply></math></assignmentRule></listOfRules>
+</model></sbml>"#
+    );
+    let message = refusal(&xml);
+    assert!(message.contains("drawFromDistribution"), "{message}");
+    assert!(message.contains(DISTRIB_NS), "{message}");
+}
+
+#[test]
+fn refuses_a_draw_on_a_parameter() {
+    // the same element on another core element, in a document whose math is core throughout
+    let xml = format!(
+        r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" xmlns:distrib="{DISTRIB_NS}" level="3" version="2" distrib:required="true"><model id="m">
+<listOfParameters><parameter id="p" value="1" constant="true">
+        {DRAW}
+      </parameter></listOfParameters>
+</model></sbml>"#
+    );
+    let message = refusal(&xml);
+    assert!(message.contains("drawFromDistribution"), "{message}");
+    assert!(message.contains(DISTRIB_NS), "{message}");
+}
+
 #[test]
 fn refuses_a_distrib_draw_in_a_rule() {
     // an uncertainty annotates, a draw computes: a csymbol of a distribution of distrib in the
