@@ -20,6 +20,7 @@ nav = [
   { "JavaScript" = "javascript.md" },
   { "Semantics" = "semantics.md" },
   { "Test suite and benchmark" = "testsuite.md" },
+  { "Benchmarks" = "benchmarks.md" },
   { "Contributing" = "development.md" },
   { "Licenses" = "licenses.md" },
 ]
