@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The decay model with the required distrib package: the uncertainty of the fit which gave
+     `k`, in the shape the models of pkdb_models write (a span, a standard error and the
+     distribution of the draws as the `<math>` of an uncertainty parameter). -->
+<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" xmlns:distrib="http://www.sbml.org/sbml/level3/version1/distrib/version1" level="3" version="2" distrib:required="true">
+  <model id="decay">
+    <listOfParameters>
+      <parameter id="y" value="1" constant="false"/>
+      <parameter metaid="meta_k" id="k" value="0.5" constant="true">
+        <distrib:listOfUncertainties>
+          <distrib:uncertainty distrib:name="fit PK_20261028_003811__eb362">
+            <notes>
+              <body xmlns="http://www.w3.org/1999/xhtml">
+                <p>The value of <code>k</code> is the result of the fit <code>PK_20261028_003811__eb362</code>, its uncertainty is the profile likelihood of the fit.</p>
+              </body>
+            </notes>
+            <distrib:uncertSpan distrib:name="95 % confidence interval (profile likelihood)" distrib:units="dimensionless" distrib:type="confidenceInterval" distrib:valueLower="0.449782163912786" distrib:valueUpper="0.557640733722810"/>
+            <distrib:uncertParameter distrib:name="standard error (Fisher information)" distrib:value="0.029663600785681" distrib:units="dimensionless" distrib:type="standardError"/>
+            <distrib:uncertParameter distrib:name="distribution of the draws" distrib:type="distribution">
+              <math xmlns="http://www.w3.org/1998/Math/MathML">
+                <apply>
+                  <csymbol encoding="text" definitionURL="http://www.sbml.org/sbml/symbols/distrib/lognormal"> lognormal </csymbol>
+                  <cn> -0.693147180559945 </cn>
+                  <cn> 0.059327201571362 </cn>
+                  <cn> 0.1 </cn>
+                  <cn> 10 </cn>
+                </apply>
+              </math>
+            </distrib:uncertParameter>
+          </distrib:uncertainty>
+        </distrib:listOfUncertainties>
+      </parameter>
+      <parameter id="t_half" constant="false"/>
+    </listOfParameters>
+    <listOfRules>
+      <rateRule variable="y">
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+          <apply><times/><apply><minus/><ci>k</ci></apply><ci>y</ci></apply>
+        </math>
+      </rateRule>
+      <assignmentRule variable="t_half">
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+          <apply><divide/><apply><ln/><cn>2</cn></apply><ci>k</ci></apply>
+        </math>
+      </assignmentRule>
+    </listOfRules>
+  </model>
+</sbml>

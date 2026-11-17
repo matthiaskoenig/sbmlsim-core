@@ -179,9 +179,114 @@ fn refuses_comp_model() {
 }
 
 #[test]
+fn refuses_comp_beside_a_read_package() {
+    // comp must be flattened before, whatever else the document declares: a composed model of
+    // pkdb_models declares `comp:required="true" distrib:required="true"`, and in either order
+    // of the declarations the message names comp
+    for required in [
+        r#"comp:required="true" distrib:required="true""#,
+        r#"distrib:required="true" comp:required="true""#,
+    ] {
+        let xml = format!(
+            r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" xmlns:comp="http://www.sbml.org/sbml/level3/version1/comp/version1" xmlns:distrib="http://www.sbml.org/sbml/level3/version1/distrib/version1" level="3" version="2" {required}><model id="m"/></sbml>"#
+        );
+        assert_eq!(
+            read(&xml).unwrap_err(),
+            ReadError::Package("comp".into()),
+            "{required}"
+        );
+    }
+}
+
+#[test]
 fn ignores_optional_package() {
     let doc = read(&data("ignored_package.xml")).unwrap();
     assert_eq!(doc.model.parameters[0].id, "p");
+}
+
+/// The math of the rate rule `y' = -k y` of `distrib.xml`.
+fn decay_rate_rule() -> Node {
+    Node::Apply {
+        op: Op::Times,
+        args: vec![
+            Node::Apply {
+                op: Op::Minus,
+                args: vec![Node::Symbol("k".into())],
+            },
+            Node::Symbol("y".into()),
+        ],
+    }
+}
+
+#[test]
+fn reads_a_required_distrib_document() {
+    // the uncertainty of a fitted parameter annotates the parameter and defines no mathematics,
+    // so the document is read with its distrib elements ignored, the `<math>` of the
+    // distribution of the draws among them (no child of the parameter, never read)
+    let doc = read(&data("distrib.xml")).unwrap();
+    let m = &doc.model;
+    assert_eq!(m.id.as_deref(), Some("decay"));
+    assert_eq!(
+        m.parameters.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(),
+        ["y", "k", "t_half"]
+    );
+    assert_eq!(m.parameters[1].value, Some(0.5));
+    assert!(m.parameters[1].constant);
+    assert_eq!(m.rules.len(), 2);
+    assert_eq!(
+        m.rules[0],
+        Rule::Rate {
+            id: None,
+            variable: "y".into(),
+            math: Some(decay_rate_rule()),
+        }
+    );
+}
+
+#[test]
+fn reads_distrib_when_it_is_not_required() {
+    // the same document is read as a document of an optional package was always read
+    let xml = data("distrib.xml").replace(
+        r#"distrib:required="true""#,
+        r#"distrib:required="false""#,
+    );
+    let doc = read(&xml).unwrap();
+    assert_eq!(doc.model.rules[0].math(), Some(&decay_rate_rule()));
+    assert_eq!(doc.model.parameters[1].value, Some(0.5));
+}
+
+#[test]
+fn refuses_a_distrib_draw_in_a_rule() {
+    // an uncertainty annotates, a draw computes: a csymbol of a distribution of distrib in the
+    // math of the model is refused and the message names it, although distrib is read
+    let rule = |math: &str| {
+        format!(
+            r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" xmlns:distrib="http://www.sbml.org/sbml/level3/version1/distrib/version1" level="3" version="2" distrib:required="true"><model>
+<listOfParameters><parameter id="b" constant="false"/></listOfParameters>
+<listOfRules><assignmentRule variable="b"><math xmlns="http://www.w3.org/1998/Math/MathML">{math}</math></assignmentRule></listOfRules>
+</model></sbml>"#
+        )
+    };
+    const NORMAL: &str = "http://www.sbml.org/sbml/symbols/distrib/normal";
+    let message = |math: &str| match read(&rule(math)).unwrap_err() {
+        ReadError::Xml(m) => m,
+        other => panic!("a draw is refused as a math which is not understood: {other}"),
+    };
+    let applied = message(&format!(
+        r#"<apply><csymbol encoding="text" definitionURL="{NORMAL}">normal</csymbol><cn>0</cn><cn>1</cn></apply>"#
+    ));
+    assert!(
+        applied.contains(&format!("csymbol of the definitionURL {NORMAL}")),
+        "{applied}"
+    );
+    // the csymbol on its own, outside of an operator position
+    let bare = message(&format!(
+        r#"<csymbol encoding="text" definitionURL="{NORMAL}">normal</csymbol>"#
+    ));
+    assert!(
+        bare.contains(&format!("csymbol of the definitionURL {NORMAL}")),
+        "{bare}"
+    );
 }
 
 #[test]
