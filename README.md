@@ -7,14 +7,14 @@
 [![python](https://img.shields.io/pypi/pyversions/sbmlsim-core.svg?logo=python&logoColor=white&label=python)](https://pypi.org/project/sbmlsim-core/)
 [![license](https://img.shields.io/badge/license-MIT%20AND%20BSD--3--Clause%20AND%20LGPL--2.1--or--later-blue.svg)](LICENSE)
 
-An SBML to WebAssembly compiler and a CVODE/KLU simulation engine, written in Rust. The two contracts `model/2` (the description and the exports of a compiled model) and `simulation/1` (the request and the result of a simulation) are defined in `crates/abi`.
+An SBML to WebAssembly compiler and a CVODE/IDA simulation engine with KLU, written in Rust. The two contracts `model/2` (the description and the exports of a compiled model) and `simulation/1` (the request and the result of a simulation) are defined in `crates/abi`.
 
 Documentation: https://matthiaskoenig.github.io/sbmlsim-core/ (built from `docs/` with Zensical: `uvx --from zensical==0.1.0 zensical build --clean`).
 
 ## What the core is
 
 - The compiler (`crates/compiler`, built on `sbml`, `ir` and `codegen`) turns an SBML Level 3 Version 2 core model (flat, no required package but `distrib`, whose uncertainties annotate and are ignored) into `model.wasm`, with analytic sparse Jacobians, and `model.json`, its description.
-- The engine (`crates/engine`, `engine.wasm`, wasm32-wasip1) is Rust with CVODE 7.9 and KLU. It runs a request on a compiled model: changes, events, steady states, dense or KLU linear solver (`KLU_THRESHOLD` 12 states).
+- The engine (`crates/engine`, `engine.wasm`, wasm32-wasip1) is Rust with CVODE and IDA 7.9 and KLU. It runs a request on a compiled model: changes, events, steady states, dense or KLU linear solver (`KLU_THRESHOLD` 12 states).
 - The hosts run the same `engine.wasm`, `mathlib.wasm` and `model.wasm` with bitwise identical results: wasmtime (`crates/host`, the command line `sbmlsim-core`) and Node and browsers (`js/loader.mjs`).
 - It is the simulation core of sbmlsim's web apps; the semantics are those of sbmlsim (PEtab v2), the integrator and the solvers those of roadrunner.
 
@@ -164,12 +164,11 @@ Errors derive from `SbmlsimCoreError`: `CompileError`, `LoadError` (a runtime wh
 
 `sbmlsim-core testsuite testdata/cases` compiles and simulates the cases of the SBML Test Suite (prepared with `uv run scripts/prepare_testsuite.py --out testdata/cases`) and compares them with the baseline `testdata/testsuite_baseline.json`; `--write-baseline` writes the baseline from a run. In every mode (analytic and difference Jacobian, optimizer on and off) each passing case is simulated again to check that it repeats bitwise.
 
-Measured in this repository: 1581 of 1789 cases pass, every case which sbmlsim passes among them (the 208 failures are the cases sbmlsim does not pass either). The 208 expected failures are all refused at compilation (`not_compiled`) with a reason in the baseline:
+Measured in this repository: 1701 of 1789 cases pass, including 120 algebraic-rule cases integrated with IDA. The 88 expected failures are all refused at compilation (`not_compiled`) with a reason in the baseline:
 
 | reason | cases |
 |---|---:|
-| algebraic rule is not supported | 123 |
-| delay csymbol is not supported | 50 |
+| delay csymbol is not supported | 53 |
 | not converted: fast reaction (libsbml conversion refuses a fast reaction) | 35 |
 
 ## Benchmark

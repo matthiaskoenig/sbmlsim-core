@@ -4,7 +4,9 @@
 //! functions below. Every pointer is an `i32` offset into the imported memory and every value
 //! is an `f64`, unless stated otherwise. `p` is the vector of the parameters (including the
 //! compartments and species references), followed by the [`ModelDescription::n_constants`]
-//! constants of the model, `y` the vector of the states, `t` the time.
+//! constants of the model, `y` the vector of the states, `t` the time. The final
+//! [`ModelDescription::n_algebraic`] entries of `y` are algebraic unknowns. The field is
+//! omitted for ODEs and defaults to zero when reading an existing `model/2` description.
 //!
 //! The constants are the values of the subexpressions of the math which depend on nothing but
 //! the parameters which no assignment rule assigns (directly or through the assignment rules
@@ -19,9 +21,12 @@
 //! - `model_init(t, p, y, fixed)` evaluates the initial assignments and the initial values of
 //!   assignment rules in dependency order, then the constants; `fixed` is a byte per entity
 //!   (parameters, then states), a fixed entity keeps its value.
-//! - `model_rhs(t, y, p, ydot)` is the right hand side of the ODEs.
-//! - `model_jac(t, y, p, values)` writes the values of the Jacobian in CSC order of the pattern
-//!   (an analytic Jacobian); it traps for a model of a colored difference quotient.
+//! - `model_rhs(t, y, p, out)` writes the differential rates `f` followed by the algebraic
+//!   residuals `g`, one entry per state. Differential equations impose `y' = f` and
+//!   algebraic rules impose `g = 0`.
+//! - `model_jac(t, y, p, values)` writes the analytic Jacobian `d(f,g)/dy` in CSC order of
+//!   the pattern. It traps for a model of a colored difference quotient. The solver supplies
+//!   the derivative of the `-y′` term on differential rows of a DAE.
 //! - `model_roots(t, y, p, g)` writes the [`ModelDescription::n_roots`] root functions of the
 //!   triggers: one per comparison of each trigger (`a - b` of `a > b` and `a >= b`, `b - a` of
 //!   `a < b` and `a <= b`, `a - b` of `a == b` and `a != b`, every adjacent pair of a chain) and
@@ -30,7 +35,7 @@
 //!   evaluates the triggers themselves with `model_trigger`. After them come the
 //!   [`ModelDescription::n_discontinuity_roots`] root functions of the discontinuities of the
 //!   math: one per branch (but the `otherwise`) of every `piecewise` of the assignment rules,
-//!   the rates and the triggers, which changes its sign where the branch the `piecewise` selects
+//!   the rates, algebraic residuals and the triggers, which changes its sign where the branch the `piecewise` selects
 //!   changes (`a - b` of a condition `a > b`, `min` and `max` of the conditions of `and` and
 //!   `or`, see `sbmlsim_ir::Model::discontinuity_roots`), without those which depend neither on
 //!   the time nor on a state. At their zeros the engine starts the integrator again from the
@@ -172,6 +177,10 @@ pub fn check_contract(found: &str, expected: &str) -> Result<(), ContractError> 
     }
 }
 
+fn is_zero(n: &u32) -> bool {
+    *n == 0
+}
+
 /// The description of a compiled model, next to its WebAssembly module.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -184,6 +193,9 @@ pub struct ModelDescription {
     pub id: String,
     /// The states, in the order of the state vector.
     pub states: Vec<Entity>,
+    /// The number of trailing states determined by algebraic residuals.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub n_algebraic: u32,
     /// The parameters, in the order of the parameter vector.
     pub parameters: Vec<Entity>,
     /// The values `model_selections` writes, in its order.
@@ -311,7 +323,7 @@ pub struct Entity {
     pub id: String,
     /// What the entity is.
     pub kind: EntityKind,
-    /// The initial value as loaded; JSON has no number for NaN and the infinities, so they are
+    /// The initial value before DAE consistency initialization. JSON represents NaN and the infinities by
     /// the strings `"NaN"`, `"inf"` and `"-inf"` (as the CSV of the command line writes them).
     #[serde(with = "nonfinite")]
     pub initial: f64,
@@ -691,6 +703,7 @@ mod tests {
             contract: MODEL_CONTRACT.to_string(),
             compiler: "sbmlsim-compiler 0.1.0".to_string(),
             id: "m".to_string(),
+            n_algebraic: 0,
             states: vec![Entity {
                 id: "S".to_string(),
                 kind: EntityKind::Species {
@@ -732,8 +745,9 @@ mod tests {
             ModelSizes::from_words(sizes.words(), sizes.assignments.clone()),
             sizes
         );
-        let back: ModelDescription =
-            serde_json::from_str(&serde_json::to_string(&d).unwrap()).unwrap();
+        let json = serde_json::to_string(&d).unwrap();
+        assert!(!json.contains("n_algebraic"));
+        let back: ModelDescription = serde_json::from_str(&json).unwrap();
         assert_eq!(d, back);
     }
 }

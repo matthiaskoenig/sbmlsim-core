@@ -6,10 +6,10 @@ use sbmlsim_csolvers::ffi::{CV_NORMAL, CV_ONE_STEP, CV_ROOT_RETURN, CV_TSTOP_RET
 use std::borrow::Cow;
 
 use crate::changes::Changes;
-use crate::cvode::{Cvode, Problem};
 use crate::events::{END_RTOL, Events, Probe, time_scale};
 use crate::model::ModelFns;
 use crate::roots::RootGuard;
+use crate::solver::{Integrator, Problem};
 use crate::{EngineError, OUTPUT_LIMIT_FLAG, STALL_FLAG};
 
 /// A column of the result.
@@ -207,8 +207,8 @@ pub(crate) fn too_close(t0: f64, t: f64) -> bool {
 /// of the output. The stop time of CVODE is the end of the segment, so the integration never
 /// passes it; with [`SegmentOutput::Times`] it ends at the last time of the output.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn integrate(
-    mut cvode: Option<&mut Cvode>,
+pub(crate) fn integrate<const DAE: bool>(
+    mut cvode: Option<&mut Integrator<DAE>>,
     problem: &mut Problem<'_>,
     settings: &IntegratorSettings,
     t0: f64,
@@ -217,12 +217,16 @@ pub(crate) fn integrate(
     output: SegmentOutput<'_>,
     recorder: &mut Recorder<'_>,
     changes: &Changes,
+    mut constraints: Option<&mut crate::solver::Constraints<'_>>,
 ) -> Result<(), EngineError> {
     let model = problem.model;
     let y = y0;
     let mut k = 0;
     if changes.time(0) == Some(t0) {
         changes.apply(0, model, y, &mut problem.p)?;
+        if DAE && let Some(projection) = constraints.as_deref_mut() {
+            projection.project(t0, y, &problem.p)?;
+        }
         k = 1;
     }
     let mut t = t0;
@@ -309,6 +313,9 @@ pub(crate) fn integrate(
         }
         // the change at `t`, whose state after it starts the next segment
         changes.apply(k, model, y, &mut problem.p)?;
+        if DAE && let Some(projection) = constraints.as_deref_mut() {
+            projection.project(t, y, &problem.p)?;
+        }
         k += 1;
         if matches!(output, SegmentOutput::Steps) {
             recorder.row(t, y, &problem.p)?;
@@ -401,13 +408,13 @@ impl Outputs<'_> {
     /// at `t` before the end (libroadrunner's two rows of a root, which it writes a little
     /// before and after `t`); where events execute, their two rows, the state before and after
     /// them. Returns whether an event executed.
-    fn stop(
+    fn stop<const DAE: bool>(
         &mut self,
         t: f64,
         y: &mut [f64],
         p: &mut [f64],
         kind: StopKind,
-        events: &mut Events<'_>,
+        events: &mut Events<'_, DAE>,
         recorder: &mut Recorder<'_>,
     ) -> Result<bool, EngineError> {
         let m = self.m;
@@ -457,14 +464,14 @@ impl Outputs<'_> {
     /// executions pending at `t`, the strict comparisons at their threshold); at the end all of
     /// them before the rows of the end.
     #[allow(clippy::too_many_arguments)]
-    fn change(
+    fn change<const DAE: bool>(
         &mut self,
         t: f64,
         k: usize,
         changes: &Changes,
         y: &mut [f64],
         p: &mut [f64],
-        events: &mut Events<'_>,
+        events: &mut Events<'_, DAE>,
         recorder: &mut Recorder<'_>,
     ) -> Result<(), EngineError> {
         let m = self.m;
@@ -478,6 +485,9 @@ impl Outputs<'_> {
             recorder.row(t, &y[..m], p)?;
         }
         changes.apply(k, model, &mut y[..m], p)?;
+        if DAE && let Some(projection) = &mut events.constraints {
+            projection.project(t, &mut y[..m], p)?;
+        }
         self.limit = changes.time(k + 1).unwrap_or(f64::INFINITY);
         events.execute_at(t, &mut y[..m], p, Probe::Change)?;
         if at_end {
@@ -532,8 +542,8 @@ impl Outputs<'_> {
 /// `cvode` is the memory of `problem.n` states; a model without states has `problem.n_model`
 /// 0 and one state of the rate 0.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn integrate_events(
-    cvode: &mut Cvode,
+pub(crate) fn integrate_events<const DAE: bool>(
+    cvode: &mut Integrator<DAE>,
     problem: &mut Problem<'_>,
     settings: &IntegratorSettings,
     start: f64,
@@ -541,7 +551,7 @@ pub(crate) fn integrate_events(
     end: f64,
     output: SegmentOutput<'_>,
     recorder: &mut Recorder<'_>,
-    events: &mut Events<'_>,
+    events: &mut Events<'_, DAE>,
     changes: &Changes,
     scratch: &mut Scratch,
 ) -> Result<(), EngineError> {
@@ -575,6 +585,9 @@ pub(crate) fn integrate_events(
     let mut k = 0;
     if changes.time(0) == Some(start) {
         changes.apply(0, model, &mut y[..m], &mut problem.p)?;
+        if DAE && let Some(projection) = &mut events.constraints {
+            projection.project(t, &mut y[..m], &problem.p)?;
+        }
         events.execute_at(t, &mut y[..m], &mut problem.p, Probe::Change)?;
         k = 1;
     }
@@ -725,8 +738,8 @@ mod tests {
     use sbmlsim_abi::{IntegratorSettings, Tolerance};
 
     use super::*;
-    use crate::cvode::{Config, Jacobian, Linear, Method};
     use crate::model::Decay;
+    use crate::solver::{Config, Jacobian, Linear, Method};
 
     #[test]
     fn steps_stop_at_the_output_limit() {
@@ -744,10 +757,12 @@ mod tests {
                 jacobian: Jacobian::Analytic,
             }),
         };
-        let mut cvode = Cvode::new(config).unwrap();
+        let mut cvode = Integrator::<false>::new(config).unwrap();
         let mut problem = Problem {
             n: 1,
             n_model: 1,
+            n_algebraic: 0,
+            interpolation: None,
             n_roots: 0,
             n_discontinuity_roots: 0,
             model: &model,
@@ -757,7 +772,7 @@ mod tests {
             analytic: true,
             difference: None,
             mem: std::ptr::null_mut(),
-            counts: crate::cvode::Counts::default(),
+            counts: crate::solver::Counts::default(),
             callback_error: None,
         };
         let no_changes = Changes::new(&desc, &[], 0.0, 50.0).unwrap();
@@ -775,6 +790,7 @@ mod tests {
                 SegmentOutput::Steps,
                 &mut recorder,
                 &no_changes,
+                None,
             );
             (result, recorder)
         };

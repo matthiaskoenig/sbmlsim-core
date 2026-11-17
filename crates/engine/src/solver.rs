@@ -1,6 +1,7 @@
-//! The wrapper of CVODE: a context, the memory of CVODE, the state vector, the matrix and the
-//! linear solver (or the fixed point iteration) of one configuration, created once and
-//! re-initialized for every segment.
+//! A SUNDIALS integrator with its owned context, vectors, matrix and solvers,
+//! reused across segments and simulations of the same configuration.
+//! ODEs use CVODE. Semi-explicit index-one DAEs use IDA's BDF method with
+//! the residual and consistent initialization callbacks in [`ida`].
 //!
 //! The methods are the ones of libroadrunner: `stiff` is BDF with the Newton iteration and a
 //! linear solver, non-stiff is Adams-Moulton with the fixed point iteration.
@@ -36,6 +37,9 @@ use sbmlsim_csolvers::ffi::*;
 
 use crate::EngineError;
 use crate::model::ModelFns;
+
+mod ida;
+pub(crate) use ida::Constraints;
 
 /// The number of states above which [`LinearSolver::Auto`](sbmlsim_abi::LinearSolver::Auto)
 /// takes KLU, else the dense solver.
@@ -126,11 +130,49 @@ impl Difference {
     }
 }
 
+impl Difference {
+    /// Evaluate the colored difference quotient for the increments of the active integrator.
+    #[allow(clippy::too_many_arguments)]
+    fn evaluate(
+        &mut self,
+        model: &dyn ModelFns,
+        t: f64,
+        y_values: &[f64],
+        p: &[f64],
+        fy: &[f64],
+        pattern: &SparsityPattern,
+        jac_values: &mut [f64],
+        counts: &mut Counts,
+    ) {
+        self.perturbed.copy_from_slice(y_values);
+        for c in 0..self.n_colors() {
+            let columns = &self.columns[self.starts[c]..self.starts[c + 1]];
+            for &j in columns {
+                self.perturbed[j] += self.increments[j];
+            }
+            model.rhs(t, &self.perturbed, p, &mut self.rates);
+            counts.jacobian_rhs += 1;
+            for &j in columns {
+                self.perturbed[j] = y_values[j];
+                // `N_VLinearSum(inc_inv, ftemp, -inc_inv, fy)` is `inc_inv * (ftemp - fy)`
+                let inc_inv = 1.0 / self.increments[j];
+                let (start, end) = (pattern.col_ptr[j] as usize, pattern.col_ptr[j + 1] as usize);
+                for k in start..end {
+                    let i = pattern.row_idx[k] as usize;
+                    jac_values[k] = inc_inv * (self.rates[i] - fy[i]);
+                }
+            }
+        }
+    }
+}
+
 /// The method of a configuration, as libroadrunner chooses it from `stiff`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Method {
     /// Stiff: BDF with the Newton iteration and a linear solver.
     Bdf(Linear),
+    /// IDA for a semi-explicit index-one DAE.
+    Ida { linear: Linear, n_algebraic: usize },
     /// Non-stiff: Adams-Moulton with the fixed point iteration, no linear solver.
     Adams,
 }
@@ -151,6 +193,11 @@ pub(crate) struct Problem<'a> {
     /// The number of states of the model: `n`, or 0 for a model without states which CVODE
     /// integrates with one state of the rate 0 (to locate the zeros of its root functions).
     pub n_model: usize,
+    /// Number of trailing algebraic residual equations.
+    pub n_algebraic: usize,
+    /// Project IDA interpolation when algebraic jumps preclude including
+    /// algebraic variables in the local error norm.
+    pub interpolation: Option<Box<Constraints<'a>>>,
     /// The number of root functions of the model.
     pub n_roots: usize,
     /// The number of root functions of the discontinuities of the math, the last ones of the
@@ -172,7 +219,7 @@ pub(crate) struct Problem<'a> {
     /// The sparse difference quotient: the Jacobian, or the fallback of the analytic one; `None`
     /// without a pattern.
     pub difference: Option<&'a mut Difference>,
-    /// The CVODE memory of the running integration, set by [`Cvode::integrate`] (the sparse
+    /// The CVODE memory of the running integration, set by [`Integrator::integrate`] (the sparse
     /// difference quotient reads its error weights and step size).
     pub mem: *mut c_void,
     /// The calls of the model the callbacks of CVODE and the engine made.
@@ -199,9 +246,22 @@ pub(crate) struct Counts {
     pub steady_state_rhs: u64,
 }
 
-/// The counters of CVODE itself, summed over the (re)initializations of a simulation.
+impl Counts {
+    pub(crate) fn add(self, other: Self) -> Self {
+        Self {
+            rhs: self.rhs + other.rhs,
+            jacobian: self.jacobian + other.jacobian,
+            jacobian_rhs: self.jacobian_rhs + other.jacobian_rhs,
+            fallbacks: self.fallbacks + other.fallbacks,
+            roots: self.roots + other.roots,
+            steady_state_rhs: self.steady_state_rhs + other.steady_state_rhs,
+        }
+    }
+}
+
+/// The counters of the SUNDIALS integrator, summed over the (re)initializations of a simulation.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct CvodeCounts {
+pub(crate) struct SolverCounts {
     /// The steps.
     pub steps: u64,
     /// The setups of the linear solver.
@@ -216,10 +276,10 @@ pub(crate) struct CvodeCounts {
     pub integrations: u64,
 }
 
-impl CvodeCounts {
+impl SolverCounts {
     /// The sum of two counts.
-    fn add(self, other: CvodeCounts) -> CvodeCounts {
-        CvodeCounts {
+    pub(crate) fn add(self, other: SolverCounts) -> SolverCounts {
+        SolverCounts {
             steps: self.steps + other.steps,
             linear_setups: self.linear_setups + other.linear_setups,
             error_test_failures: self.error_test_failures + other.error_test_failures,
@@ -233,7 +293,7 @@ impl CvodeCounts {
 
 /// The statistics of a simulation from the counts of the engine, of CVODE and of the probes of
 /// the triggers.
-pub(crate) fn stats(counts: &Counts, cvode: &CvodeCounts, probe_rhs: u64) -> SimulationStats {
+pub(crate) fn stats(counts: &Counts, cvode: &SolverCounts, probe_rhs: u64) -> SimulationStats {
     SimulationStats {
         steps: cvode.steps,
         rhs_evals: counts.rhs,
@@ -268,7 +328,7 @@ unsafe extern "C" fn record_error(
     err_user_data: *mut c_void,
     _sunctx: SUNContext,
 ) {
-    // SAFETY: `err_user_data` is the `ErrorLog` of the `Cvode` which owns the context, the
+    // SAFETY: `err_user_data` is the `ErrorLog` of the `Integrator` which owns the context, the
     // strings are null or C strings of SUNDIALS.
     unsafe {
         let log = &mut *(err_user_data as *mut ErrorLog);
@@ -294,7 +354,7 @@ unsafe fn values<'a>(v: N_Vector, n: usize) -> &'a mut [f64] {
 /// The problem behind the user data of CVODE.
 ///
 /// # Safety
-/// `data` is the pointer to the `Problem` [`Cvode::integrate`] set, which lives during the call.
+/// `data` is the pointer to the `Problem` [`Integrator::integrate`] set, which lives during the call.
 unsafe fn problem<'a>(data: *mut c_void) -> &'a mut Problem<'a> {
     unsafe { &mut *(data as *mut Problem<'a>) }
 }
@@ -416,27 +476,16 @@ unsafe fn jacobian_values(
             dq.increments[j] = if a > b { a } else { b };
         }
         let fy = values(fy, n);
-        dq.perturbed.copy_from_slice(y_values);
-        for c in 0..dq.n_colors() {
-            let columns = &dq.columns[dq.starts[c]..dq.starts[c + 1]];
-            for &j in columns {
-                dq.perturbed[j] += dq.increments[j];
-            }
-            problem
-                .model
-                .rhs(t, &dq.perturbed, &problem.p, &mut dq.rates);
-            problem.counts.jacobian_rhs += 1;
-            for &j in columns {
-                dq.perturbed[j] = y_values[j];
-                // `N_VLinearSum(inc_inv, ftemp, -inc_inv, fy)` is `inc_inv * (ftemp - fy)`
-                let inc_inv = 1.0 / dq.increments[j];
-                let (start, end) = (pattern.col_ptr[j] as usize, pattern.col_ptr[j + 1] as usize);
-                for k in start..end {
-                    let i = pattern.row_idx[k] as usize;
-                    problem.jac_values[k] = inc_inv * (dq.rates[i] - fy[i]);
-                }
-            }
-        }
+        dq.evaluate(
+            problem.model,
+            t,
+            y_values,
+            &problem.p,
+            fy,
+            pattern,
+            &mut problem.jac_values,
+            &mut problem.counts,
+        );
     }
     0
 }
@@ -535,13 +584,18 @@ fn check(code: c_int, call: &str) -> Result<(), EngineError> {
     }
 }
 
-/// A CVODE memory of one [`Config`] with its context, vectors, matrix and linear solver.
-pub(crate) struct Cvode {
+/// A CVODE or IDA memory of one [`Config`] with its context, vectors, matrix and solvers.
+pub(crate) struct Integrator<const DAE: bool> {
     config: Config,
     ctx: SUNContext,
     mem: *mut c_void,
     y: N_Vector,
     abstol: N_Vector,
+    /// IDA derivative and differential/algebraic identifier vectors.
+    yp: N_Vector,
+    id: N_Vector,
+    /// Start time at which consistent initial conditions are still needed.
+    pending_ic: Option<f64>,
     matrix: SUNMatrix,
     solver: SUNLinearSolver,
     nonlinear: SUNNonlinearSolver,
@@ -554,21 +608,36 @@ pub(crate) struct Cvode {
     /// The last error, written by [`record_error`] through the pointer of the context.
     errors: Box<ErrorLog>,
     /// The counters of the (re)initializations of the simulation before the current one.
-    totals: CvodeCounts,
+    totals: SolverCounts,
     /// Whether the counters of the memory belong to the running simulation (a segment of it
-    /// was started since [`Cvode::begin`]).
+    /// was started since [`Integrator::begin`]).
     live: bool,
     /// The roots found at the last return at a root (`CVodeGetRootInfo`), one per root function.
     found: Vec<c_int>,
 }
 
-impl Drop for Cvode {
+// These SUNDIALS calls share signatures across CVODE and IDA.
+macro_rules! backend {
+    ($self:expr, $cvode:ident, $ida:ident, $($arg:expr),+ $(,)?) => {{
+        if DAE {
+            $ida($self.mem, $($arg),+)
+        } else {
+            $cvode($self.mem, $($arg),+)
+        }
+    }};
+}
+
+impl<const DAE: bool> Drop for Integrator<DAE> {
     fn drop(&mut self) {
         // SAFETY: every pointer is null or owned by this memory; CVODE is freed before the
         // linear solver and the matrix it uses, the context last.
         unsafe {
             if !self.mem.is_null() {
-                CVodeFree(&mut self.mem);
+                if !DAE {
+                    CVodeFree(&mut self.mem);
+                } else {
+                    IDAFree(&mut self.mem);
+                }
             }
             if !self.solver.is_null() {
                 SUNLinSolFree(self.solver);
@@ -579,7 +648,7 @@ impl Drop for Cvode {
             if !self.matrix.is_null() {
                 SUNMatDestroy(self.matrix);
             }
-            for v in [self.abstol, self.y] {
+            for v in [self.abstol, self.y, self.yp, self.id] {
                 if !v.is_null() {
                     N_VDestroy(v);
                 }
@@ -607,10 +676,16 @@ pub(crate) fn check_index_range(config: &Config) -> Result<(), EngineError> {
     let n = config.n as u128;
     let (entries, matrix) = match config.method {
         Method::Adams => (n, "the state vector"),
-        Method::Bdf(Linear::Dense { .. }) => (n * n, "the dense matrix of the Jacobian"),
-        Method::Bdf(Linear::Klu { nnz, .. }) => {
-            (nnz as u128 + n, "the sparse matrix of the Jacobian")
-        }
+        Method::Bdf(Linear::Dense { .. })
+        | Method::Ida {
+            linear: Linear::Dense { .. },
+            ..
+        } => (n * n, "the dense matrix of the Jacobian"),
+        Method::Bdf(Linear::Klu { nnz, .. })
+        | Method::Ida {
+            linear: Linear::Klu { nnz, .. },
+            ..
+        } => (nnz as u128 + n, "the sparse matrix of the Jacobian"),
     };
     let max = sunindextype::MAX as u128;
     if n > max || entries > max {
@@ -623,24 +698,28 @@ pub(crate) fn check_index_range(config: &Config) -> Result<(), EngineError> {
     Ok(())
 }
 
-impl Cvode {
+impl<const DAE: bool> Integrator<DAE> {
     /// Creates the memory of a configuration; refuses one which exceeds the indices of
     /// SUNDIALS ([`check_index_range`]).
-    pub fn new(config: Config) -> Result<Cvode, EngineError> {
+    pub fn new(config: Config) -> Result<Self, EngineError> {
+        assert_eq!(DAE, matches!(config.method, Method::Ida { .. }));
         check_index_range(&config)?;
-        let mut cvode = Cvode {
+        let mut cvode = Integrator {
             config,
             ctx: ptr::null_mut(),
             mem: ptr::null_mut(),
             y: ptr::null_mut(),
             abstol: ptr::null_mut(),
+            yp: ptr::null_mut(),
+            id: ptr::null_mut(),
+            pending_ic: None,
             matrix: ptr::null_mut(),
             solver: ptr::null_mut(),
             nonlinear: ptr::null_mut(),
             initialized: false,
             attached: false,
             errors: Box::default(),
-            totals: CvodeCounts::default(),
+            totals: SolverCounts::default(),
             live: false,
             found: Vec::new(),
         };
@@ -667,16 +746,27 @@ impl Cvode {
                 return Err(not_created("the vectors"));
             }
             values(cvode.y, config.n).fill(0.0);
-            let lmm = match config.method {
-                Method::Bdf(_) => CV_BDF,
-                Method::Adams => CV_ADAMS,
+            cvode.mem = match config.method {
+                Method::Ida { n_algebraic, .. } => {
+                    cvode.yp = N_VNew_Serial(n, cvode.ctx);
+                    cvode.id = N_VNew_Serial(n, cvode.ctx);
+                    if cvode.yp.is_null() || cvode.id.is_null() {
+                        return Err(not_created("the IDA vectors"));
+                    }
+                    let (diff, alg) =
+                        values(cvode.id, config.n).split_at_mut(config.n - n_algebraic);
+                    diff.fill(1.0);
+                    alg.fill(0.0);
+                    IDACreate(cvode.ctx)
+                }
+                Method::Bdf(_) => CVodeCreate(CV_BDF, cvode.ctx),
+                Method::Adams => CVodeCreate(CV_ADAMS, cvode.ctx),
             };
-            cvode.mem = CVodeCreate(lmm, cvode.ctx);
             if cvode.mem.is_null() {
-                return Err(not_created("the CVODE memory"));
+                return Err(not_created("the integrator memory"));
             }
             let linear = match config.method {
-                Method::Bdf(linear) => linear,
+                Method::Bdf(linear) | Method::Ida { linear, .. } => linear,
                 Method::Adams => {
                     cvode.nonlinear = SUNNonlinSol_FixedPoint(cvode.y, 0, cvode.ctx);
                     if cvode.nonlinear.is_null() {
@@ -694,7 +784,12 @@ impl Cvode {
                 }
                 Linear::Klu { nnz, .. } => {
                     // a capacity of at least 1, CVODE grows it when it adds the diagonal
-                    let capacity = nnz.max(1) as sunindextype;
+                    let extra = if let Method::Ida { n_algebraic, .. } = config.method {
+                        config.n - n_algebraic
+                    } else {
+                        0
+                    };
+                    let capacity = (nnz + extra).max(1) as sunindextype;
                     cvode.matrix = SUNSparseMatrix(n, n, capacity, CSC_MAT, cvode.ctx);
                     if !cvode.matrix.is_null() {
                         // the pattern of the matrix is the same in every segment (`jac_sparse`
@@ -759,7 +854,24 @@ impl Cvode {
         // re-initialized and before the linear solver is attached.
         unsafe {
             values(self.y, n).copy_from_slice(y0);
-            if self.initialized {
+            if DAE {
+                values(self.yp, n).fill(0.0);
+                if self.initialized {
+                    self.flag(IDAReInit(self.mem, t0, self.y, self.yp), t0)?;
+                } else {
+                    self.flag(
+                        IDAInit(self.mem, Some(ida::residual), t0, self.y, self.yp),
+                        t0,
+                    )?;
+                    self.initialized = true;
+                }
+                self.flag(IDASetId(self.mem, self.id), t0)?;
+                // CalcIC sets differential rates. For an explicitly time-dependent
+                // algebraic equation its initial algebraic derivative guess is zero.
+                // Permit enough reductions for IDA to estimate and control that rate.
+                self.flag(IDASetMaxErrTestFails(self.mem, 30), t0)?;
+                self.pending_ic = Some(t0);
+            } else if self.initialized {
                 self.flag(CVodeReInit(self.mem, t0, self.y), t0)?;
             } else {
                 self.flag(CVodeInit(self.mem, Some(rhs), t0, self.y), t0)?;
@@ -769,6 +881,14 @@ impl Cvode {
                 match self.config.method {
                     Method::Adams => {
                         self.flag(CVodeSetNonlinearSolver(self.mem, self.nonlinear), t0)?;
+                    }
+                    Method::Ida { linear, .. } => {
+                        self.flag(IDASetLinearSolver(self.mem, self.solver, self.matrix), t0)?;
+                        let jac: IDALsJacFn = match linear {
+                            Linear::Dense { .. } => Some(ida::dense),
+                            Linear::Klu { .. } => Some(ida::sparse),
+                        };
+                        self.flag(IDASetJacFn(self.mem, jac), t0)?;
                     }
                     Method::Bdf(linear) => {
                         self.flag(CVodeSetLinearSolver(self.mem, self.solver, self.matrix), t0)?;
@@ -787,32 +907,59 @@ impl Cvode {
             let rtol = settings.relative_tolerance;
             match &settings.absolute_tolerance {
                 Tolerance::Scalar(atol) => {
-                    self.flag(CVodeSStolerances(self.mem, rtol, *atol), t0)?;
+                    self.flag(
+                        backend!(self, CVodeSStolerances, IDASStolerances, rtol, *atol),
+                        t0,
+                    )?;
                 }
                 Tolerance::PerState(atol) => {
                     values(self.abstol, n).copy_from_slice(atol);
-                    self.flag(CVodeSVtolerances(self.mem, rtol, self.abstol), t0)?;
+                    self.flag(
+                        backend!(self, CVodeSVtolerances, IDASVtolerances, rtol, self.abstol),
+                        t0,
+                    )?;
                 }
             }
             // `long` is 32 bits on wasm32: the largest count it holds (`as u32` of `i64::MAX` is
             // `u32::MAX`, so the bound changes nothing on 64-bit targets)
             let max_steps = settings.maximum_num_steps.min(c_long::MAX as u32) as c_long;
-            self.flag(CVodeSetMaxNumSteps(self.mem, max_steps), t0)?;
+            self.flag(
+                backend!(self, CVodeSetMaxNumSteps, IDASetMaxNumSteps, max_steps),
+                t0,
+            )?;
             // 0.0 is CVODE's own default for both: no largest step, an estimated first step
-            self.flag(CVodeSetMaxStep(self.mem, settings.maximum_time_step), t0)?;
-            self.flag(CVodeSetInitStep(self.mem, settings.initial_time_step), t0)?;
-            self.flag(CVodeSetStopTime(self.mem, tstop), t0)?;
-            let (nrtfn, g): (c_int, CVRootFn) = if n_roots == 0 {
-                (0, None)
+            self.flag(
+                backend!(
+                    self,
+                    CVodeSetMaxStep,
+                    IDASetMaxStep,
+                    settings.maximum_time_step
+                ),
+                t0,
+            )?;
+            self.flag(
+                backend!(
+                    self,
+                    CVodeSetInitStep,
+                    IDASetInitStep,
+                    settings.initial_time_step
+                ),
+                t0,
+            )?;
+            self.flag(backend!(self, CVodeSetStopTime, IDASetStopTime, tstop), t0)?;
+            let nr = c_int::try_from(n_roots).map_err(|_| {
+                EngineError::Request(format!(
+                    "{n_roots} root functions exceed the SUNDIALS index range"
+                ))
+            })?;
+            if !DAE {
+                self.flag(CVodeRootInit(self.mem, nr, (nr > 0).then_some(roots)), t0)?;
             } else {
-                let nrtfn = c_int::try_from(n_roots).map_err(|_| {
-                    EngineError::Request(format!(
-                        "{n_roots} root functions are more than CVODE takes"
-                    ))
-                })?;
-                (nrtfn, Some(roots))
-            };
-            self.flag(CVodeRootInit(self.mem, nrtfn, g), t0)?;
+                self.flag(
+                    IDARootInit(self.mem, nr, (nr > 0).then_some(ida::roots)),
+                    t0,
+                )?;
+            }
         }
         Ok(())
     }
@@ -820,12 +967,12 @@ impl Cvode {
     /// Starts the counters of a simulation: the counters of the memory, which a simulation
     /// before left in it, are no part of it until a segment is started.
     pub fn begin(&mut self) {
-        self.totals = CvodeCounts::default();
+        self.totals = SolverCounts::default();
         self.live = false;
     }
 
-    /// The counters of CVODE of the simulation since [`Cvode::begin`].
-    pub fn counts(&self) -> CvodeCounts {
+    /// The counters of CVODE of the simulation since [`Integrator::begin`].
+    pub fn counts(&self) -> SolverCounts {
         if self.live {
             self.totals.add(self.current())
         } else {
@@ -835,7 +982,7 @@ impl Cvode {
 
     /// The counters of the current (re)initialization of the memory, 0 before the first one
     /// (CVODE answers with an error, which leaves them 0).
-    fn current(&self) -> CvodeCounts {
+    fn current(&self) -> SolverCounts {
         let (mut steps, mut nfe, mut setups, mut netf) = (0, 0, 0, 0);
         let (mut qlast, mut qcur) = (0, 0);
         let (mut hinused, mut hlast, mut hcur, mut tcur) = (0.0, 0.0, 0.0, 0.0);
@@ -843,8 +990,10 @@ impl Cvode {
         if self.initialized {
             // SAFETY: the memory is initialized; every out-pointer is a local
             unsafe {
-                CVodeGetIntegratorStats(
-                    self.mem,
+                backend!(
+                    self,
+                    CVodeGetIntegratorStats,
+                    IDAGetIntegratorStats,
                     &mut steps,
                     &mut nfe,
                     &mut setups,
@@ -856,11 +1005,17 @@ impl Cvode {
                     &mut hcur,
                     &mut tcur,
                 );
-                CVodeGetNonlinSolvStats(self.mem, &mut nni, &mut ncfn);
+                backend!(
+                    self,
+                    CVodeGetNonlinSolvStats,
+                    IDAGetNonlinSolvStats,
+                    &mut nni,
+                    &mut ncfn
+                );
             }
         }
         let count = |x: c_long| x.max(0) as u64;
-        CvodeCounts {
+        SolverCounts {
             steps: count(steps),
             linear_setups: count(setups),
             error_test_failures: count(netf),
@@ -874,7 +1029,12 @@ impl Cvode {
     /// CVODE.
     pub fn set_stop(&mut self, tstop: f64) -> Result<(), EngineError> {
         // SAFETY: the memory is initialized (a segment was started).
-        unsafe { self.flag(CVodeSetStopTime(self.mem, tstop), tstop) }
+        unsafe {
+            self.flag(
+                backend!(self, CVodeSetStopTime, IDASetStopTime, tstop),
+                tstop,
+            )
+        }
     }
 
     /// Whether the return of CVODE at a zero of a root function (`CV_ROOT_RETURN`) is at a zero
@@ -890,28 +1050,38 @@ impl Cvode {
         // SAFETY: the memory was initialized with `n` root functions, so CVODE writes `n` values
         // into the buffer of `n`.
         unsafe {
-            let flag = CVodeGetRootInfo(self.mem, self.found.as_mut_ptr());
+            let flag = backend!(
+                self,
+                CVodeGetRootInfo,
+                IDAGetRootInfo,
+                self.found.as_mut_ptr()
+            );
             self.flag(flag, f64::NAN)?;
         }
         Ok(self.found[first..].iter().any(|&f| f != 0))
     }
 
-    /// The steps of CVODE in the simulation since [`Cvode::begin`].
+    /// The steps of CVODE in the simulation since [`Integrator::begin`].
     pub fn steps(&self) -> u64 {
         let mut current: c_long = 0;
         if self.live && self.initialized {
             // SAFETY: the memory is initialized; the out-pointer is a local.
-            unsafe { CVodeGetNumSteps(self.mem, &mut current) };
+            unsafe { backend!(self, CVodeGetNumSteps, IDAGetNumSteps, &mut current) };
         }
         self.totals.steps + current.max(0) as u64
     }
 
-    /// Sets the largest number of steps of the next call of [`Cvode::integrate`] (until the next
+    /// Sets the largest number of steps of the next call of [`Integrator::integrate`] (until the next
     /// start, which sets the one of the settings).
     pub fn set_max_steps(&mut self, steps: u64) -> Result<(), EngineError> {
         let steps = steps.min(c_long::MAX as u64) as c_long;
         // SAFETY: the memory is initialized (a segment was started).
-        unsafe { self.flag(CVodeSetMaxNumSteps(self.mem, steps), f64::NAN) }
+        unsafe {
+            self.flag(
+                backend!(self, CVodeSetMaxNumSteps, IDASetMaxNumSteps, steps),
+                f64::NAN,
+            )
+        }
     }
 
     /// Integrates towards `tout` (`CV_NORMAL`) or takes one step (`CV_ONE_STEP`); returns the
@@ -927,12 +1097,20 @@ impl Cvode {
         unsafe {
             problem.mem = self.mem;
             let data = problem as *mut Problem<'_> as *mut c_void;
-            self.flag(CVodeSetUserData(self.mem, data), tout)?;
-            let flag = CVode(self.mem, tout, self.y, &mut tret, itask);
+            self.flag(backend!(self, CVodeSetUserData, IDASetUserData, data), tout)?;
+            let flag = if !DAE {
+                CVode(self.mem, tout, self.y, &mut tret, itask)
+            } else {
+                self.consistent(problem)?;
+                IDASolve(self.mem, tout, &mut tret, self.y, self.yp, itask)
+            };
             if let Some(error) = problem.callback_error.take() {
                 return Err(error);
             }
             self.flag(flag, tret)?;
+            if DAE && let Some(projection) = &mut problem.interpolation {
+                projection.project(tret, values(self.y, problem.n), &problem.p)?;
+            }
             Ok((tret, flag))
         }
     }
@@ -958,6 +1136,21 @@ mod tests {
     use super::*;
     use crate::model::{ModelFns, Robertson};
 
+    #[test]
+    fn ode_contexts_keep_projection_storage_out_of_line() {
+        use crate::events::Events;
+        use std::mem::size_of;
+
+        assert!(size_of::<Problem<'_>>() < size_of::<Constraints<'_>>());
+        assert!(size_of::<Events<'_, false>>() < size_of::<Constraints<'_>>());
+        let cvode = Integrator::<false>::new(Config {
+            n: 1,
+            method: Method::Adams,
+        })
+        .unwrap();
+        assert!(cvode.yp.is_null() && cvode.id.is_null());
+    }
+
     /// Integrates Robertson with a configuration to `4e10`, returns the state at the outputs
     /// `0.4 * 10^i` and the number of steps.
     fn robertson(linear: Linear, mut difference: Option<Difference>) -> (Vec<f64>, c_long) {
@@ -974,7 +1167,7 @@ mod tests {
         let desc = model.description();
         let (mut p, mut y) = (vec![0.0; 3], vec![0.0; 3]);
         model.defaults(&mut p, &mut y);
-        let mut cvode = Cvode::new(Config {
+        let mut cvode = Integrator::<false>::new(Config {
             n: 3,
             method: Method::Bdf(linear),
         })
@@ -988,6 +1181,8 @@ mod tests {
         let mut problem = Problem {
             n: 3,
             n_model: 3,
+            n_algebraic: 0,
+            interpolation: None,
             n_roots: 0,
             n_discontinuity_roots: 0,
             model: &model,
@@ -1074,7 +1269,7 @@ mod tests {
     /// number of steps.
     fn chain(linear: Linear, mut difference: Option<Difference>) -> (Vec<f64>, c_long) {
         let pattern = chain_pattern();
-        let mut cvode = Cvode::new(Config {
+        let mut cvode = Integrator::<false>::new(Config {
             n: N,
             method: Method::Bdf(linear),
         })
@@ -1088,6 +1283,8 @@ mod tests {
         let mut problem = Problem {
             n: N,
             n_model: N,
+            n_algebraic: 0,
+            interpolation: None,
             n_roots: 0,
             n_discontinuity_roots: 0,
             model: &Chain,
@@ -1124,7 +1321,7 @@ mod tests {
         let pattern = desc.jacobian.pattern();
         let (mut p, mut y) = (vec![0.0; 3], vec![0.0; 3]);
         model.defaults(&mut p, &mut y);
-        let mut cvode = Cvode::new(Config {
+        let mut cvode = Integrator::<false>::new(Config {
             n: 3,
             method: Method::Bdf(Linear::Klu {
                 nnz: pattern.nnz(),
@@ -1138,7 +1335,7 @@ mod tests {
                 SUNLinSolFree(cvode.solver);
                 cvode.solver = SUNLinSol_KLU(cvode.y, cvode.matrix, cvode.ctx);
                 assert!(!cvode.solver.is_null());
-                // the ordering of the solver of `Cvode::new`
+                // the ordering of the solver of `Integrator::new`
                 assert_eq!(
                     SUNLinSol_KLUSetOrdering(cvode.solver, SUNKLU_ORDERING_AMD),
                     0
@@ -1153,6 +1350,8 @@ mod tests {
         let mut problem = Problem {
             n: 3,
             n_model: 3,
+            n_algebraic: 0,
+            interpolation: None,
             n_roots: 0,
             n_discontinuity_roots: 0,
             model: &model,

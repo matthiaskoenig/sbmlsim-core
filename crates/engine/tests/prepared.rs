@@ -1,7 +1,7 @@
 //! Prepared requests must preserve numerical results and reset all run state.
 use sbmlsim_abi::{
     Change, IntegratorSettings, JacobianChoice, LinearSolver, Output, SIMULATION_CONTRACT,
-    SimulationRequest, SimulationResult, SteadyState, Tolerance,
+    SimulationRequest, SimulationResult, SimulationStats, SteadyState, Tolerance,
 };
 use sbmlsim_engine::model::{Compartmental, Decay, EventModel, Target, TestEvent};
 use sbmlsim_engine::{Engine, EngineError};
@@ -196,6 +196,42 @@ fn event_engine() -> Engine {
     };
     let desc = model.description();
     Engine::new(Box::new(model), desc).unwrap()
+}
+
+#[test]
+fn a_prepared_ode_probes_all_differential_states_without_consistency_steps() {
+    let mut event = TestEvent::new("crossing", |_, y, _| y[1] > 0.0, vec![|_, y, _| y[1]]);
+    event.assignments = vec![(Target::State(0), |_, _, p| p[0])];
+    let model = EventModel {
+        states: vec![("observed", 0.0), ("ramp", 0.0)],
+        parameters: vec![("amount", 0.0)],
+        rhs: |_, _, _, rates| rates.copy_from_slice(&[0.0, 1.0]),
+        events: vec![event],
+        discontinuities: vec![],
+    };
+    let desc = model.description();
+    let mut engine = Engine::new(Box::new(model), desc).unwrap();
+    let mut req = request();
+    req.end = req.start;
+    req.output = Output::Times(vec![0.0]);
+    req.changes = vec![Change {
+        time: 0.0,
+        values: vec![],
+        increments: vec![("amount".into(), 1.0)],
+    }];
+    req.selections = vec!["observed".into()];
+    let plan = engine.prepare(&req, &["amount".into()]).unwrap();
+    for amount in [2.0, 4.0, 2.0] {
+        let result = engine.simulate_prepared(&plan, &[amount]).unwrap();
+        assert_eq!(result.values, [0.0, amount + 1.0]);
+        assert_eq!(
+            engine.stats(),
+            SimulationStats {
+                probe_rhs_evals: 2,
+                ..SimulationStats::default()
+            }
+        );
+    }
 }
 
 #[test]

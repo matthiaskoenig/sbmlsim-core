@@ -141,8 +141,10 @@ pub(crate) struct Scratch {
 }
 
 /// The events of a simulation: the last values of the triggers and the pending executions.
-pub(crate) struct Events<'a> {
+pub(crate) struct Events<'a, const DAE: bool> {
     scratch: &'a mut Scratch,
+    pub constraints: Option<Box<crate::solver::Constraints<'a>>>,
+    differential: usize,
     model: &'a dyn ModelFns,
     info: &'a [EventInfo],
     /// The value of every trigger where it was evaluated last.
@@ -189,7 +191,7 @@ pub(crate) enum Probe {
     Change,
 }
 
-impl Drop for Events<'_> {
+impl<const DAE: bool> Drop for Events<'_, DAE> {
     fn drop(&mut self) {
         let scratch = &mut self.scratch;
         self.pending.clear();
@@ -203,7 +205,7 @@ impl Drop for Events<'_> {
     }
 }
 
-impl<'a> Events<'a> {
+impl<'a, const DAE: bool> Events<'a, DAE> {
     /// The events of a model for a simulation from `start` to `end` with the seed of the order
     /// of ties; the triggers have their initial values.
     #[allow(clippy::too_many_arguments)]
@@ -215,7 +217,7 @@ impl<'a> Events<'a> {
         end: f64,
         limits: EventLimits,
         scratch: &'a mut Scratch,
-    ) -> Events<'a> {
+    ) -> Self {
         let storage = std::mem::take(scratch);
         let Scratch {
             mut armed,
@@ -241,6 +243,12 @@ impl<'a> Events<'a> {
         ydot.resize(desc.states.len(), 0.0);
         let mut events = Events {
             scratch,
+            constraints: None,
+            differential: if DAE {
+                desc.states.len() - desc.n_algebraic as usize
+            } else {
+                0
+            },
             model,
             info: &desc.events,
             armed,
@@ -365,8 +373,18 @@ impl<'a> Events<'a> {
             model.check_error()?;
         }
         if *moved != Some(delta) {
-            for ((q, x), r) in self.y_probe.iter_mut().zip(y).zip(&self.ydot) {
+            let probe = if DAE {
+                let (differential, algebraic) = self.y_probe.split_at_mut(self.differential);
+                algebraic.copy_from_slice(&y[self.differential..]);
+                differential
+            } else {
+                &mut self.y_probe[..]
+            };
+            for ((q, x), r) in probe.iter_mut().zip(y).zip(&self.ydot) {
                 *q = x + delta * r;
+            }
+            if DAE && let Some(constraints) = &mut self.constraints {
+                constraints.project(t + delta, &mut self.y_probe, p)?;
             }
             *moved = Some(delta);
         }
@@ -540,6 +558,14 @@ impl<'a> Events<'a> {
             };
             model.event_apply(i as u32, t, &values, y, p);
             model.check_error()?;
+            if DAE && let Some(constraints) = &mut self.constraints {
+                // Refresh cached parameter expressions before the residual reads them.
+                model.assign(t, y, p);
+                model.check_error()?;
+                constraints.project(t, y, p)?;
+                model.assign(t, y, p);
+                model.check_error()?;
+            }
             executed = true;
         }
         Ok(executed)

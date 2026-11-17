@@ -17,7 +17,7 @@
 //! - `model_init` evaluates the initial evaluations of the model in their order, into the
 //!   memory, each unless its target is fixed.
 //! - `model_rhs` and `model_selections` evaluate the assignment rules into locals in their
-//!   order, then the rate of every state or every selection; they read the targets of the
+//!   order, then the differential rates and algebraic residuals or the selections; they read the targets of the
 //!   assignment rules from these locals, so they depend on nothing but `t`, `y` and the other
 //!   parameters.
 //! - `model_assign` evaluates the assignment rules in their order into the memory.
@@ -936,6 +936,7 @@ fn description(
         contract: MODEL_CONTRACT.to_string(),
         compiler: COMPILER.to_string(),
         id: model.id.clone().unwrap_or_default(),
+        n_algebraic: model.n_algebraic,
         states: model
             .states
             .iter()

@@ -29,10 +29,10 @@
 use sbmlsim_abi::{IntegratorSettings, SteadyState};
 use sbmlsim_csolvers::ffi::{CV_NORMAL, CV_ROOT_RETURN, CV_TSTOP_RETURN};
 
-use crate::cvode::{Cvode, Problem};
 use crate::events::{Events, Probe};
 use crate::roots::RootGuard;
 use crate::segments::too_close;
+use crate::solver::{Integrator, Problem};
 use crate::{EngineError, STEADY_STATE_FLAG};
 
 /// The time the integration to a steady state starts at.
@@ -43,17 +43,18 @@ pub const STEADY_STATE_FROM: f64 = 0.0;
 /// `start` and `end` are the times of the simulation which follows: the pending executions are
 /// moved to `start`, the windows of the events are the ones of the simulation again.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn steady_state(
-    mut cvode: Option<&mut Cvode>,
+pub(crate) fn steady_state<'a, const DAE: bool>(
+    mut cvode: Option<&mut Integrator<DAE>>,
     problem: &mut Problem<'_>,
     settings: &IntegratorSettings,
     start: f64,
     end: f64,
     y: &mut [f64],
     steady: &SteadyState,
-    mut events: Option<&mut Events<'_>>,
+    mut events: Option<&mut Events<'a, DAE>>,
     model_id: &str,
     rates: &mut Vec<f64>,
+    mut constraints: Option<&mut crate::solver::Constraints<'a>>,
 ) -> Result<(), EngineError> {
     let m = problem.n_model;
     let model = problem.model;
@@ -84,6 +85,14 @@ pub(crate) fn steady_state(
         problem.counts.steady_state_rhs += 1;
         model.rhs(t, &y[..m], &problem.p, rates);
         model.check_error()?;
+        if DAE
+            && let Some(projection) = events
+                .as_deref_mut()
+                .and_then(|events| events.constraints.as_deref_mut())
+                .or(constraints.as_deref_mut())
+        {
+            projection.algebraic_rates(t, &y[..m], &problem.p, rates)?;
+        }
         let steady_now = rates.iter().zip(&y[..m]).all(|(r, x)| {
             r.abs() <= steady.absolute_tolerance + steady.relative_tolerance * x.abs()
         });
@@ -115,14 +124,14 @@ pub(crate) fn steady_state(
 /// of the root functions and stops at every pending execution, the events execute at every stop
 /// ([`Events::execute`], `stop` included) and CVODE starts again after an execution and at a
 /// zero of a root function of a discontinuity.
-fn with_events(
-    cvode: &mut Cvode,
+fn with_events<const DAE: bool>(
+    cvode: &mut Integrator<DAE>,
     problem: &mut Problem<'_>,
     settings: &IntegratorSettings,
     mut t: f64,
     stop: f64,
     y: &mut [f64],
-    events: &mut Events<'_>,
+    events: &mut Events<'_, DAE>,
 ) -> Result<(), EngineError> {
     let m = problem.n_model;
     let mut started = false;

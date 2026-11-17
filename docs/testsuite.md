@@ -6,12 +6,11 @@
   <p class="suite-fallback">The grid of the cases needs JavaScript; the counts and the reasons are in the tables below.</p>
 </div>
 
-The engine compiles and passes every case the compiler accepts. Nothing in the suite fails: the 208 cases which are not green are the ones it refuses at compilation, each for a feature which is out of scope, and they are the cases [sbmlsim](https://github.com/matthiaskoenig/sbmlsim) does not pass with roadrunner either.
+The engine passes 1701 of 1789 cases, including 120 algebraic-rule cases integrated with IDA. Every case the compiler accepts passes. The remaining 88 cases are refused at compilation for an unsupported feature. Three of the cases with algebraic rules also use the unsupported MathML `delay` csymbol.
 
 | reason | cases |
 |---|---:|
-| algebraic rule is not supported | 123 |
-| delay csymbol is not supported | 50 |
+| delay csymbol is not supported | 53 |
 | not converted: fast reaction (libsbml conversion refuses a fast reaction) | 35 |
 
 ## Running the suite

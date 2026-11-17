@@ -54,8 +54,8 @@ def test_compile_refuses_an_unknown_jacobian(decay_sbml: str) -> None:
         sbmlsim_core.compile_sbml(decay_sbml, jacobian="symbolic")
 
 
-def test_compile_refuses_a_model_with_an_algebraic_rule() -> None:
-    with pytest.raises(sbmlsim_core.CompileError, match="algebraic"):
+def test_compile_refuses_an_overdetermined_algebraic_system() -> None:
+    with pytest.raises(sbmlsim_core.CompileError, match="overdetermined algebraic"):
         sbmlsim_core.compile_sbml(ALGEBRAIC_SBML)
 
 

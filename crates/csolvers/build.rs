@@ -1,4 +1,4 @@
-//! Compiles SUNDIALS CVODE and SuiteSparse KLU from the submodules in `third_party` with `cc`.
+//! Compiles SUNDIALS CVODE/IDA and SuiteSparse KLU from the submodules in `third_party` with `cc`.
 //!
 //! For a native target the C compiler is the one `cc` finds (`CC`, else `cc`), for a target of
 //! MSVC without `CC` the `clang` of LLVM on the path, since `cl` reads neither the GNU attributes
@@ -62,6 +62,13 @@ const SUNDIALS_SOURCES: &[&str] = &[
     "cvode/cvode_nls.c",
     "cvode/cvode_proj.c",
     "cvode/cvode_resize.c",
+    // IDA with serial direct linear solvers (no band-block preconditioner).
+    "ida/ida.c",
+    "ida/ida_cli.c",
+    "ida/ida_ic.c",
+    "ida/ida_io.c",
+    "ida/ida_ls.c",
+    "ida/ida_nls.c",
     // the vector, the matrices (the band matrix for the difference quotient Jacobian of
     // `cvode_ls.c`), the linear and the nonlinear solvers
     "nvector/serial/nvector_serial.c",
@@ -241,6 +248,7 @@ fn main() {
         sundials.join("include"),
         sundials.join("src/sundials"),
         sundials.join("src/cvode"),
+        sundials.join("src/ida"),
         sundials.join("src/nvector/serial"),
         sundials.join("src/sunmatrix/band"),
         sundials.join("src/sunmatrix/dense"),
@@ -317,7 +325,7 @@ fn compiler_given() -> bool {
 /// the memory of the index arrays of KLU and of the sparse matrix, and no conversion of a 64 bit
 /// index into a 32 bit address in wasm32, which makes the KLU runs 3 to 6% faster in wasm (the
 /// results are bitwise those of 64 bit indices). The engine refuses a model whose matrix would
-/// not fit (`sbmlsim-engine`, `cvode::check_index_range`).
+/// not fit (`sbmlsim-engine`, `solver::check_index_range`).
 fn write_config(include: &Path, compiler: &str, flags: &str, posix_timers: bool) {
     let dir = include.join("sundials");
     fs::create_dir_all(&dir).unwrap();
@@ -388,6 +396,7 @@ fn write_config(include: &Path, compiler: &str, flags: &str, posix_timers: bool)
         ("SUN_KLU_VERSION", "\"\""),
         ("SUNDIALS_MPI_ENABLED", "0"),
         ("SUNDIALS_CVODE", "1"),
+        ("SUNDIALS_IDA", "1"),
         ("SUNDIALS_NVECTOR_SERIAL", "1"),
         ("SUNDIALS_SUNMATRIX_BAND", "1"),
         ("SUNDIALS_SUNMATRIX_DENSE", "1"),

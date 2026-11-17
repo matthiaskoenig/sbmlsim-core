@@ -118,7 +118,10 @@ mod tests {
             r#"<listOfRules><algebraicRule id="A"><math xmlns="http://www.w3.org/1998/Math/MathML"><ci>k</ci></math></algebraicRule></listOfRules></model>"#,
         );
         let error = compile(&algebraic, &CompileOptions::default()).unwrap_err();
-        assert_eq!(error.to_string(), "algebraic rule is not supported (A)");
+        assert_eq!(
+            error.to_string(),
+            "overdetermined algebraic system: no independent variable for A"
+        );
     }
 
     #[test]
