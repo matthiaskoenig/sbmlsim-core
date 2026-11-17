@@ -59,3 +59,7 @@ required-features = ["native"]
 [[test]]
 name = "native"
 required-features = ["native"]
+
+[[example]]
+name = "ode_performance"
+required-features = ["native"]

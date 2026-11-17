@@ -1,6 +1,6 @@
 # Semantics and known differences
 
-The semantics follow the simulation core of sbmlsim (PEtab v2): the pre-initialization, the changes at times and the steady state of [Simulating](simulating.md), the events, and the root finding of the conditions of `piecewise`. The integrator and the solvers are those of roadrunner: CVODE (BDF or Adams) with the dense linear solver or KLU, an analytic sparse Jacobian or the colored sparse difference quotient.
+The semantics follow the simulation core of sbmlsim (PEtab v2): the pre-initialization, the changes at times and the steady state of [Simulating](simulating.md), the events, and the root finding of the conditions of `piecewise`. ODE models use CVODE (BDF or Adams); models with algebraic rules use IDA (BDF). Both use the dense linear solver or KLU, an analytic sparse Jacobian or the colored sparse difference quotient.
 
 ## Bitwise identical hosts
 

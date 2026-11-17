@@ -128,6 +128,13 @@ struct Pending {
     held: bool,
 }
 
+/// The state used for the output row immediately before the first event at a stop.
+#[derive(Default)]
+pub(crate) struct BeforeEvent {
+    pub y: Vec<f64>,
+    pub p: Vec<f64>,
+}
+
 /// Reusable event storage. Every execution resets logical state before use.
 #[derive(Default)]
 pub(crate) struct Scratch {
@@ -141,8 +148,10 @@ pub(crate) struct Scratch {
 }
 
 /// The events of a simulation: the last values of the triggers and the pending executions.
-pub(crate) struct Events<'a> {
+pub(crate) struct Events<'a, const DAE: bool> {
     scratch: &'a mut Scratch,
+    pub constraints: Option<Box<crate::solver::Constraints<'a>>>,
+    differential: usize,
     model: &'a dyn ModelFns,
     info: &'a [EventInfo],
     /// The value of every trigger where it was evaluated last.
@@ -189,7 +198,7 @@ pub(crate) enum Probe {
     Change,
 }
 
-impl Drop for Events<'_> {
+impl<const DAE: bool> Drop for Events<'_, DAE> {
     fn drop(&mut self) {
         let scratch = &mut self.scratch;
         self.pending.clear();
@@ -203,7 +212,7 @@ impl Drop for Events<'_> {
     }
 }
 
-impl<'a> Events<'a> {
+impl<'a, const DAE: bool> Events<'a, DAE> {
     /// The events of a model for a simulation from `start` to `end` with the seed of the order
     /// of ties; the triggers have their initial values.
     #[allow(clippy::too_many_arguments)]
@@ -215,7 +224,7 @@ impl<'a> Events<'a> {
         end: f64,
         limits: EventLimits,
         scratch: &'a mut Scratch,
-    ) -> Events<'a> {
+    ) -> Self {
         let storage = std::mem::take(scratch);
         let Scratch {
             mut armed,
@@ -241,6 +250,12 @@ impl<'a> Events<'a> {
         ydot.resize(desc.states.len(), 0.0);
         let mut events = Events {
             scratch,
+            constraints: None,
+            differential: if DAE {
+                desc.states.len() - desc.n_algebraic as usize
+            } else {
+                0
+            },
             model,
             info: &desc.events,
             armed,
@@ -365,8 +380,18 @@ impl<'a> Events<'a> {
             model.check_error()?;
         }
         if *moved != Some(delta) {
-            for ((q, x), r) in self.y_probe.iter_mut().zip(y).zip(&self.ydot) {
+            let probe = if DAE {
+                let (differential, algebraic) = self.y_probe.split_at_mut(self.differential);
+                algebraic.copy_from_slice(&y[self.differential..]);
+                differential
+            } else {
+                &mut self.y_probe[..]
+            };
+            for ((q, x), r) in probe.iter_mut().zip(y).zip(&self.ydot) {
                 *q = x + delta * r;
+            }
+            if DAE && let Some(constraints) = &mut self.constraints {
+                constraints.project(t + delta, &mut self.y_probe, p)?;
             }
             *moved = Some(delta);
         }
@@ -384,9 +409,25 @@ impl<'a> Events<'a> {
         p: &mut [f64],
         at_end: bool,
     ) -> Result<bool, EngineError> {
-        let at = self.execute_at(t, y, p, Probe::Exact)?;
         let after = if at_end { Probe::End } else { Probe::After };
-        let after = self.execute_at(t, y, p, after)?;
+        self.execute_stop(t, y, p, Some(after), None)
+    }
+
+    /// Execute the exact trigger round and the optional probe. Snapshot once, only
+    /// when an event actually executes, including an event found by the probe.
+    pub fn execute_stop(
+        &mut self,
+        t: f64,
+        y: &mut [f64],
+        p: &mut [f64],
+        after: Option<Probe>,
+        mut before: Option<&mut BeforeEvent>,
+    ) -> Result<bool, EngineError> {
+        let at = self.execute_rounds(t, y, p, Probe::Exact, &mut before)?;
+        let Some(probe) = after else {
+            return Ok(at);
+        };
+        let after = self.execute_rounds(t, y, p, probe, &mut before)?;
         Ok(at || after)
     }
 
@@ -401,6 +442,17 @@ impl<'a> Events<'a> {
         p: &mut [f64],
         probe: Probe,
     ) -> Result<bool, EngineError> {
+        self.execute_rounds(t, y, p, probe, &mut None)
+    }
+
+    fn execute_rounds(
+        &mut self,
+        t: f64,
+        y: &mut [f64],
+        p: &mut [f64],
+        probe: Probe,
+        before: &mut Option<&mut BeforeEvent>,
+    ) -> Result<bool, EngineError> {
         if t != self.executions_at {
             self.executions.fill(0);
             self.executions_at = t;
@@ -410,7 +462,7 @@ impl<'a> Events<'a> {
                 e.held = true;
             }
         }
-        let result = self.rounds(t, y, p, probe);
+        let result = self.rounds(t, y, p, probe, before);
         for e in &mut self.pending {
             e.held = false;
         }
@@ -424,6 +476,7 @@ impl<'a> Events<'a> {
         y: &mut [f64],
         p: &mut [f64],
         probe: Probe,
+        before: &mut Option<&mut BeforeEvent>,
     ) -> Result<bool, EngineError> {
         let model = self.model;
         let mut executed = false;
@@ -538,8 +591,24 @@ impl<'a> Events<'a> {
                 Some(values) => values,
                 None => self.snapshot(i, t, y, p)?,
             };
+            if let Some(before) = before.take() {
+                // Selections compute their own assignment rules. Refreshing the
+                // rule targets earlier in this round leaves the pre-event row intact.
+                before.y.clear();
+                before.y.extend_from_slice(y);
+                before.p.clear();
+                before.p.extend_from_slice(p);
+            }
             model.event_apply(i as u32, t, &values, y, p);
             model.check_error()?;
+            if DAE && let Some(constraints) = &mut self.constraints {
+                // Refresh cached parameter expressions before the residual reads them.
+                model.assign(t, y, p);
+                model.check_error()?;
+                constraints.project(t, y, p)?;
+                model.assign(t, y, p);
+                model.check_error()?;
+            }
             executed = true;
         }
         Ok(executed)
@@ -611,5 +680,55 @@ impl<'a> Events<'a> {
                 Some(best[r])
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{EventModel, Target, TestEvent};
+
+    #[test]
+    fn step_snapshot_is_lazy_and_keeps_the_state_before_the_first_execution() {
+        let mut exact = TestEvent::new("exact", |t, _, _| t >= 1.0, vec![]);
+        exact.assignments = vec![(Target::State(0), |_, _, _| 4.0)];
+        let mut strict = TestEvent::new("strict", |t, _, _| t > 1.0, vec![]);
+        strict.assignments = vec![(Target::Param(0), |_, y, _| y[0] + 1.0)];
+        let model = EventModel {
+            states: vec![("x", 2.0)],
+            parameters: vec![("p", 3.0)],
+            rhs: |_, _, _, rates| rates.fill(0.0),
+            events: vec![exact, strict],
+            discontinuities: vec![],
+        };
+        let desc = model.description();
+        let mut scratch = Scratch::default();
+        let mut events = Events::<false>::with_scratch(
+            &model,
+            &desc,
+            0,
+            0.0,
+            2.0,
+            EventLimits::default(),
+            &mut scratch,
+        );
+        let mut before = BeforeEvent::default();
+        let (mut y, mut p) = ([2.0], [3.0]);
+        assert!(
+            !events
+                .execute_stop(0.5, &mut y, &mut p, None, Some(&mut before))
+                .unwrap()
+        );
+        assert_eq!((before.y.capacity(), before.p.capacity()), (0, 0));
+        assert!(
+            events
+                .execute_stop(1.0, &mut y, &mut p, Some(Probe::After), Some(&mut before))
+                .unwrap()
+        );
+        assert_eq!(
+            (before.y.as_slice(), before.p.as_slice()),
+            (&[2.0][..], &[3.0][..])
+        );
+        assert_eq!((y, p), ([4.0], [5.0]));
     }
 }

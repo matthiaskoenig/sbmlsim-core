@@ -2,7 +2,7 @@
 //!
 //! [`build`] turns the [`Document`] of the reader into a [`Model`]: the
 //! vectors of the states `y` and of the parameters `p`, the assignment rules in their order of
-//! dependency, the initial evaluations in their order of dependency, one rate per state, the
+//! dependency, the initial evaluations in their order of dependency, one rate or residual per state, the
 //! events and the selections, every math an [`Expr`] over resolved [`Symbol`]s. Code generation
 //! (`sbmlsim-codegen`) emits the functions of `model/2` from it, as written or as the programs of the
 //! optimizer ([`optimize`]), with the Jacobian of [`derive`](mod@derive) and the meanings of
@@ -14,10 +14,11 @@
 //! `y` holds what is integrated, in the order of libroadrunner's state vector: first the target
 //! of every rate rule in the order of the rules (a compartment, a parameter, a species or a
 //! species reference), then every species which reactions change (neither constant nor a
-//! boundary condition nor the target of a rule) in the order of the species. `p` holds
+//! boundary condition nor the target of a rule) in the order of the species. Algebraic
+//! unknowns follow in the order of their matched algebraic rules. `p` holds
 //! everything else in the order compartments, species, parameters, species references with an
 //! id, each in document order: the constants, the boundary and constant species, the entities
-//! only events change and the targets of assignment rules (which are not settable,
+//! only events change and the targets of assignment rules (which, like algebraic unknowns, are not settable,
 //! [`Entity::settable`]).
 //!
 //! # Species
@@ -41,7 +42,8 @@
 //! stoichiometry 1 (also inlined where it has no id), a local parameter without a value NaN; a
 //! parameter without a value is refused (`Unsupported`, `parameter without a value`) unless an
 //! initial assignment or an assignment rule gives it one, also when a rate rule or an event
-//! changes it, as libroadrunner refuses to load it. The default is NaN for a species given in
+//! changes it, as libroadrunner refuses to load it. An algebraic parameter without a value
+//! starts with a finite guess for the consistency solve. The default is NaN for a species given in
 //! the other quantity and for a parameter without a value which is assigned.
 //! [`Model::initial`] completes them: the amount of a species given as a concentration
 //! (`initialConcentration * compartment`, the compartment as evaluated at init), the
@@ -81,7 +83,7 @@ pub enum CompileError {
     /// A feature the engine does not simulate as sbmlsim does.
     #[error("{feature} is not supported ({element})")]
     Unsupported {
-        /// The feature, e.g. `algebraic rule`.
+        /// The feature, e.g. `fast reaction`.
         feature: String,
         /// The element: its id, or its kind and position (`algebraicRule #0`).
         element: String,
@@ -136,8 +138,8 @@ pub struct Entity {
     /// sets it (see the crate documentation), NaN until [`Model::initial`] when it is given in
     /// the other quantity or assigned.
     pub default: f64,
-    /// Whether a pre-initialization or a change may set it (not the target of an assignment
-    /// rule).
+    /// Whether a pre-initialization or a change may set it. Assignment rules and algebraic
+    /// constraints determine their own dependent values.
     pub settable: bool,
     /// The unit expression of its value, when SBML gives one.
     pub unit: Option<String>,
@@ -324,6 +326,8 @@ pub struct Model {
     pub id: Option<String>,
     /// The states, the vector `y`.
     pub states: Vec<State>,
+    /// The number of trailing states determined by algebraic rules, in rule order.
+    pub n_algebraic: u32,
     /// The parameters, the vector `p`.
     pub parameters: Vec<Param>,
     /// The assignment rules, in their order of dependency (ties in document order).
@@ -332,7 +336,7 @@ pub struct Model {
     /// (ties: the species given in the other quantity, the initial assignments, the assignment
     /// rules, each in document order).
     pub initial: Vec<Assignment>,
-    /// The rate of every state, in the order of `states`.
+    /// The differential rates followed by the algebraic residuals, in the order of `states`.
     pub rates: Vec<Expr>,
     /// The events, in document order.
     pub events: Vec<Event>,
@@ -369,7 +373,9 @@ impl Model {
     /// The rate of the state `id`.
     pub fn rate(&self, id: &str) -> Option<&Expr> {
         match self.symbol(id)? {
-            Symbol::State(i) => Some(&self.rates[i as usize]),
+            Symbol::State(i) if (i as usize) < self.states.len() - self.n_algebraic as usize => {
+                Some(&self.rates[i as usize])
+            }
             _ => None,
         }
     }

@@ -13,7 +13,7 @@ cargo run -p sbmlsim-cli -- compile crates/host/tests/decay.xml -o decay-model
 | `--no-optimize` | without the optimizer: the same results, a larger and slower module |
 
 <svg class="core-diagram" viewBox="0 12 840 304" xmlns="http://www.w3.org/2000/svg" role="img"
-     aria-label="A model of any SBML level is prepared with prepare_model.py when it is not Level 3 Version 2 core or carries comp. The compiler takes Level 3 Version 2 core, reading the distrib package as annotation only, and writes model.wasm, which imports the memory of the engine and the functions of mathlib and exports the contract model/2, and model.json, which describes the states and selections, the units as text and the Jacobian with the reason when it is not analytic. A required package, an algebraic rule, the delay csymbol, a fast reaction, an unknown identifier, a cycle of assignment rules and a draw of distrib are refused, each named with the element which caused it.">
+     aria-label="A model of any SBML level is prepared with prepare_model.py when it is not Level 3 Version 2 core or carries comp. The compiler takes Level 3 Version 2 core, reading the distrib package as annotation only, and writes model.wasm, which imports the memory of the engine and the functions of mathlib and exports the contract model/2, and model.json, which describes the states and selections, the units as text and the Jacobian with the reason when it is not analytic. A required package, the delay csymbol, a fast reaction, an unknown identifier, a cycle of assignment rules and a draw of distrib are refused, each named with the element which caused it.">
   <defs>
     <marker id="cp-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
       <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
@@ -63,16 +63,37 @@ cargo run -p sbmlsim-cli -- compile crates/host/tests/decay.xml -o decay-model
   <text class="cd-label" x="16" y="258">refused, each with the element which caused it</text>
   <g class="cd-step">
     <rect x="16" y="266" width="808" height="42" rx="6"/>
-    <text class="cd-sub" x="420" y="284">a required package (comp) &#183; an algebraic rule &#183; the delay csymbol &#183; a fast reaction</text>
+    <text class="cd-sub" x="420" y="284">a required package (comp) &#183; the delay csymbol &#183; a fast reaction</text>
     <text class="cd-sub" x="420" y="300">an unknown identifier &#183; a cycle of assignment rules &#183; a draw of distrib</text>
   </g>
 </svg>
+
+## Algebraic rules
+
+Models with algebraic rules use SUNDIALS IDA. The compiler matches each equation to
+an eligible nonconstant variable and appends these unknowns to the state vector.
+Variables determined by assignment rules, rate rules or reactions retain their
+existing roles. An overdetermined algebraic system is a compilation error. IDA integrates
+regular index-1 systems, whose algebraic equations have a nonsingular Jacobian
+with respect to the matched unknowns along the solution.
+
+Algebraic variables are determined by their constraints. Their SBML initial values
+are guesses for the consistency solve; changes and pre-initialization target the
+independent variables. Constraints are solved before initial output and event
+triggers, and after changes and event assignments. Pure algebraic models are
+supported as well. Initial assignments and species concentration conversions use
+the consistent algebraic values.
+
+Both analytic and difference Jacobians and the dense and KLU linear solvers are
+available. IDA uses BDF regardless of the request's `stiff` setting. The optional
+`n_algebraic` field of `model.json` gives the length of the algebraic suffix; it is
+absent for ODE models.
 
 ## What the compiler reads
 
 The reader (`crates/sbml`) takes SBML Level 3 Version 2 core. A package with `required="false"` (layout, render, fbc annotations, ...) is ignored, and a package whose `required` attribute is `"true"` is refused (`the required package comp is not supported`): `comp` must be flattened before, a model read without its submodels is another model. A required package whose elements only annotate the model is read as well, its elements ignored as those of an optional one, so far `distrib`: it carries the uncertainty of a parameter (`<distrib:uncertainty>`, which the models of pkdb_models write for every fitted parameter: the confidence interval of the profile likelihood, the standard error of the Fisher information and the distribution of the draws), and the mathematics of the model is the same without it. The package is read by its namespace URI, never by its prefix, and only the elements of an uncertainty are read of it (`listOfUncertainties`, `uncertainty`, `listOfUncertParameters`, `uncertParameter`, `uncertSpan`, the whole of the package as libsbml implements it): any other element of that namespace is refused with its name (`<drawFromDistribution> of the namespace ... is not supported`), not ignored, so that no element which computes is dropped on the way to a deterministic simulation. A draw is therefore refused in either shape it has, whatever `required` says: the `<csymbol>` of a distribution (`http://www.sbml.org/sbml/symbols/distrib/normal`) in a math of the model is an unknown csymbol, as any math the reader does not understand, and the `<distrib:drawFromDistribution>` element of the drafts of the package is an element of the namespace which is no uncertainty. Units pass through as text and nothing is computed with them: a unit definition becomes a unit expression which a unit registry such as pint parses (`mmol/min` as `0.001*mole*(60*second)**-1`), the field `units` of `model.json`.
 
-A feature the engine does not simulate as sbmlsim does is refused with its element (`algebraic rule is not supported (algebraicRule #0)`), and so is a model which is not valid SBML (an unknown identifier, a cycle of assignment rules). In the SBML Test Suite the refusals are the algebraic rules, the `delay` csymbol and the fast reactions (see [Test suite](testsuite.md)). Missing math is handled as libroadrunner 2.11 handles it: a rule or an initial assignment without math is ignored, an event without a trigger is ignored, a delay or a priority without math is none; a kinetic law without math, a call of a function definition without math and an empty `<math>` are refused.
+A feature the engine does not simulate as sbmlsim does is refused with its element (`delay csymbol is not supported`), and so is a model which is not valid SBML (an unknown identifier, a cycle of assignment rules). In the SBML Test Suite the refusals are the `delay` csymbol and the fast reactions (see [Test suite](testsuite.md)). Missing math is handled as libroadrunner 2.11 handles it: a rule or an initial assignment without math is ignored, an event without a trigger is ignored, a delay or a priority without math is none; a kinetic law without math, a call of a function definition without math and an empty `<math>` are refused.
 
 Compilation also bounds function expansion, generated discontinuity roots and analytic derivatives before large intermediate expressions are constructed. Deep alias chains and expanding function substitutions return a compile error. Wide XOR conditions use sequential temporaries instead of duplicating the accumulated expression. If analytic differentiation exceeds its construction budget, `auto` uses the colored difference quotient and records the reason; an explicitly requested analytic Jacobian is refused. An explicitly requested difference quotient skips analytic derivative construction.
 

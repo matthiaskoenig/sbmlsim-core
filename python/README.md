@@ -1,6 +1,6 @@
 # sbmlsim-core
 
-Compile SBML models to WebAssembly and simulate them. [sbmlsim-core](https://matthiaskoenig.github.io/sbmlsim-core/) compiles an SBML model into a WebAssembly module (`model.wasm` with its description `model.json`) and simulates it with its engine (`engine.wasm`: CVODE of SUNDIALS with the sparse solver KLU), with the semantics of [sbmlsim](https://matthiaskoenig.github.io/sbmlsim/) and bitwise the same results on every host. This package is its python host: the compiler and the engine in one extension, run on wasmtime, so a model compiled here runs unchanged in a browser with the JavaScript host of the npm package [`sbmlsim-core`](https://www.npmjs.com/package/sbmlsim-core).
+Compile SBML models to WebAssembly and simulate them. [sbmlsim-core](https://matthiaskoenig.github.io/sbmlsim-core/) compiles an SBML model into a WebAssembly module (`model.wasm` with its description `model.json`) and simulates it with its engine (`engine.wasm`: CVODE and IDA of SUNDIALS with the sparse solver KLU), with the semantics of [sbmlsim](https://matthiaskoenig.github.io/sbmlsim/) and bitwise the same results on every host. This package is its python host: the compiler and the engine in one extension, run on wasmtime, so a model compiled here runs unchanged in a browser with the JavaScript host of the npm package [`sbmlsim-core`](https://www.npmjs.com/package/sbmlsim-core).
 
 ## Install
 

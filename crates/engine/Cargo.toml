@@ -7,7 +7,7 @@ edition.workspace = true
 publish = false
 license.workspace = true
 authors.workspace = true
-description = "The engine of sbmlsim-core: integrates a compiled model with CVODE"
+description = "The engine of sbmlsim-core: integrates a compiled model with SUNDIALS CVODE and IDA"
 
 [features]
 # the test models `Decay` and `Robertson` of `model.rs`, for the tests of this and other crates

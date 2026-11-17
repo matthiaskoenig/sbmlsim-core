@@ -420,6 +420,7 @@ fn unread_rules_are_not_computed() {
     assert!(lets(&prog).is_empty());
 
     let model = Model {
+        n_algebraic: 0,
         id: Some("m".to_string()),
         states: vec![entity("x")],
         parameters: ["k", "a", "b", "c"].iter().map(|s| entity(s)).collect(),
@@ -485,6 +486,7 @@ fn subtrees_of_the_parameters_alone_are_constants() {
         ],
     );
     let model = Model {
+        n_algebraic: 0,
         id: Some("m".to_string()),
         states: vec![entity("x")],
         parameters: ["k", "V", "BW", "b", "r"]
@@ -550,6 +552,7 @@ fn a_parameter_of_a_rule_of_the_time_is_no_constant() {
         expr: ap(Op::Times, vec![n(2.0), t()]),
     }];
     let model = Model {
+        n_algebraic: 0,
         id: Some("m".to_string()),
         states: vec![entity("x")],
         parameters: ["k", "a"].iter().map(|s| entity(s)).collect(),

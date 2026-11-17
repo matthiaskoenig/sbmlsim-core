@@ -120,14 +120,20 @@ The settings of the integrator:
 |---|---|---|
 | `relative_tolerance` | `1e-6` | the relative tolerance |
 | `absolute_tolerance` | `{"scalar": 1e-12}` | `{"scalar": x}` one tolerance for every state, `{"per_state": [x, ...]}` one per state in the order of the state vector (the `states` of `model.json`) |
-| `maximum_num_steps` | `20000` | the most steps of one call of CVODE; in an output of times (and in a horizon of a steady state) the steps towards one output time, summed over the returns of CVODE at roots without an execution of an event and its restarts at the roots of discontinuities |
+| `maximum_num_steps` | `20000` | the most steps of one call of the integrator; in an output of times (and in a horizon of a steady state) the steps towards one output time, including returns at roots without an event execution and restarts at discontinuity roots |
 | `maximum_time_step` | `0.0` | the largest step in time, `0.0` for none |
-| `initial_time_step` | `0.0` | the first step in time, `0.0` for CVODE's choice |
-| `stiff` | `true` | BDF (`true`) or Adams (`false`) |
+| `initial_time_step` | `0.0` | the first step in time, `0.0` for the integrator's choice |
+| `stiff` | `true` | CVODE BDF (`true`) or Adams (`false`); models with algebraic rules always use IDA BDF |
 | `linear_solver` | `"auto"` | `"auto"` (dense up to 12 states, KLU above), `"dense"` or `"klu"` |
 | `jacobian` | `"auto"` | `"auto"`, `"analytic"` (refused for a model without one) or `"difference_quotient"` (the sparse difference quotient over the colors of the columns of the pattern, also for a model with an analytic Jacobian) |
 
 **Initialization.** The model gets its SBML values, then the pre-initialization values of the request and of its steady state, then its initial assignments and the initial values of its assignment rules are evaluated at the time 0, whatever the start of the simulation (as sbmlsim initializes roadrunner at its time 0). A value which carries the concentration of a species which stores its amount, or the amount of a species which stores its concentration, needs the size of its compartment: it is set after that evaluation, with the size the evaluation settled on, and the initial assignments are evaluated once more, so a pre-initialization holds the concentration of a species also when it changes the size of its compartment, directly or through an initial assignment. The integration runs in absolute time from the start, in segments between the changes.
+
+For models with algebraic rules, consistent initial conditions also solve the
+constraints together with dependent initial assignments and species concentration
+conversions. Initial event triggers and initial selections see the consistent
+values. A constraint which depends explicitly on time is reconciled at the start
+of the simulation as well.
 
 **Changes.** The values of a change are set at once (the changes of one time are one change): a compartment keeps the concentrations of the species of a concentration in it (not of an amount, not of an assignment rule, not of one the change sets), and the assignment rules follow. A change at the start is applied after the initialization (and after the steady state) and before the output of the start; a change after the start ends a segment of the integration, and the output has the state before it and the state after it at its time (two rows: in the steps of the integrator always, in an output of times when its time is one of them). The events a change triggers execute with it; an event at its time executes after it. An increment adds to the value of its id in the state before the change (an amount `S`, a concentration `[S]`, the value of any other entity), at once with the values: a repeated dose is `{"time": 24, "increments": [["PODOSE_x", 25]]}`, the formula `"PODOSE_x + 25"` of a change of sbmlsim. One change sets or increments an id once.
 
@@ -137,9 +143,9 @@ The settings of the integrator:
 
 `{columns, n_rows, values}`: the names of the columns (`time` first), the number of rows and `n_rows * columns.length` values, row major. A result does not depend on the simulations before it on the same instance.
 
-An error of the engine has a kind: `load` (the description is refused), `request` (the request is invalid, e.g. a tolerance which is not positive or an output beyond the limit of the values of a result), `unsupported`, `integration` (CVODE failed, with its `flag` and the `time`), or, in the hosts, `internal` (a trap of the engine or the model). The command line prints it, e.g. `integration failed at t = 0 (flag -4): ...`; the JavaScript loader throws an `EngineError`.
+An error of the engine has a kind: `load` (the description is refused), `request` (the request is invalid, e.g. a tolerance which is not positive or an output beyond the limit of the values of a result), `unsupported`, `integration` (CVODE or IDA failed, with its `flag` and the `time`), or, in the hosts, `internal` (a trap of the engine or the model). The command line prints it, e.g. `integration failed at t = 0 (flag -4): ...`; the JavaScript loader throws an `EngineError`.
 
-The counters of the integrator of the last simulation (steps, calls of the right hand side and of the Jacobian, setups of the linear solver, error test and convergence failures, calls of the root functions, (re)initializations of CVODE, the calls of the probes of the triggers and of the criterion of a steady state) are `Instance::stats` in wasmtime and `instance.stats()` in JavaScript; they are diagnostics, no part of a result.
+The counters of the integrator of the last simulation (steps, calls of the right hand side and of the Jacobian, setups of the linear solver, error test and convergence failures, calls of the root functions, (re)initializations of the integrator, the calls of the probes of the triggers and of the criterion of a steady state) are `Instance::stats` in wasmtime and `instance.stats()` in JavaScript; they are diagnostics, no part of a result.
 
 The engine bounds delayed-event storage independently of the numerical settings:
 65,536 pending executions and 1,048,576 retained assignment values (8 MiB) by default.
@@ -188,6 +194,12 @@ An entity of `states` and `parameters` is `{"id", "kind", "initial", "settable"}
   "units": {}
 }
 ```
+
+For a model with algebraic rules, `n_algebraic` is the number of algebraic unknowns
+at the end of `states`. The preceding states have differential equations. The
+algebraic unknowns contribute to per-state tolerance vectors and to the Jacobian.
+An ODE description omits this optional field. Older ODE models continue to load;
+a runtime predating DAE support refuses descriptions containing `n_algebraic`.
 
 The exports of `model.wasm` (`model_defaults`, `model_init`, `model_rhs`, `model_jac`, `model_roots`, `model_trigger`, `model_priority`, `model_delay`, `model_event_values`, `model_event_apply`, `model_selections`, `model_assign`, `model_sizes`, `model_event_sizes`) and their arguments are documented in `crates/abi/src/lib.rs`; the exports of `engine.wasm` and the layout of its output in `crates/engine/src/exports.rs`.
 

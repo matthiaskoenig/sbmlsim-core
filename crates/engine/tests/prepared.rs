@@ -1,7 +1,7 @@
 //! Prepared requests must preserve numerical results and reset all run state.
 use sbmlsim_abi::{
     Change, IntegratorSettings, JacobianChoice, LinearSolver, Output, SIMULATION_CONTRACT,
-    SimulationRequest, SimulationResult, SteadyState, Tolerance,
+    SimulationRequest, SimulationResult, SimulationStats, SteadyState, Tolerance,
 };
 use sbmlsim_engine::model::{Compartmental, Decay, EventModel, Target, TestEvent};
 use sbmlsim_engine::{Engine, EngineError};
@@ -80,6 +80,57 @@ fn prepared_runs_are_bit_identical_across_settings_and_changes() {
             }
         }
     }
+}
+
+#[test]
+fn a_point_request_records_each_requested_row_from_the_initialized_ode() {
+    let mut engine = decay();
+    let trajectory = request();
+    let original = engine.simulate(&trajectory).unwrap();
+    let trajectory_stats = engine.stats();
+    assert!(trajectory_stats.steps > 0);
+
+    let mut req = request();
+    req.start = 5.0;
+    req.end = 5.0;
+    req.selections = vec!["y".into()];
+    for (output, rows) in [
+        (Output::Times(vec![]), 0),
+        (Output::Times(vec![5.0, 5.0]), 2),
+        (Output::Uniform { steps: 3 }, 4),
+        (Output::IntegratorSteps, 1),
+    ] {
+        req.output = output;
+        req.preinit = vec![("y".into(), 3.0)];
+        let ordinary = engine.simulate(&req).unwrap();
+        assert_eq!(ordinary.n_rows, rows);
+        assert_eq!(ordinary.values, [5.0, 3.0].repeat(rows));
+        assert_eq!(engine.stats(), SimulationStats::default());
+        let prepared = engine.prepare(&req, &["y".into()]).unwrap();
+        for value in [7.0, 3.0] {
+            let result = engine.simulate_prepared(&prepared, &[value]).unwrap();
+            assert_eq!(result.columns, ordinary.columns);
+            assert_eq!(result.n_rows, rows);
+            assert_eq!(result.values, [5.0, value].repeat(rows));
+            assert_eq!(engine.stats(), SimulationStats::default());
+        }
+    }
+
+    assert!(matches!(
+        decay().with_max_output_values(1).simulate(&req),
+        Err(EngineError::Integration {
+            flag: sbmlsim_engine::OUTPUT_LIMIT_FLAG,
+            ..
+        })
+    ));
+    req.changes = vec![Change {
+        time: req.start,
+        values: vec![("y".into(), 11.0)],
+        increments: vec![],
+    }];
+    assert_eq!(engine.simulate(&req).unwrap().values, [5.0, 11.0]);
+    equal(&engine.simulate(&trajectory).unwrap(), &original);
+    assert_eq!(engine.stats(), trajectory_stats);
 }
 
 #[test]
@@ -196,6 +247,42 @@ fn event_engine() -> Engine {
     };
     let desc = model.description();
     Engine::new(Box::new(model), desc).unwrap()
+}
+
+#[test]
+fn a_prepared_ode_probes_all_differential_states_without_consistency_steps() {
+    let mut event = TestEvent::new("crossing", |_, y, _| y[1] > 0.0, vec![|_, y, _| y[1]]);
+    event.assignments = vec![(Target::State(0), |_, _, p| p[0])];
+    let model = EventModel {
+        states: vec![("observed", 0.0), ("ramp", 0.0)],
+        parameters: vec![("amount", 0.0)],
+        rhs: |_, _, _, rates| rates.copy_from_slice(&[0.0, 1.0]),
+        events: vec![event],
+        discontinuities: vec![],
+    };
+    let desc = model.description();
+    let mut engine = Engine::new(Box::new(model), desc).unwrap();
+    let mut req = request();
+    req.end = req.start;
+    req.output = Output::Times(vec![0.0]);
+    req.changes = vec![Change {
+        time: 0.0,
+        values: vec![],
+        increments: vec![("amount".into(), 1.0)],
+    }];
+    req.selections = vec!["observed".into()];
+    let plan = engine.prepare(&req, &["amount".into()]).unwrap();
+    for amount in [2.0, 4.0, 2.0] {
+        let result = engine.simulate_prepared(&plan, &[amount]).unwrap();
+        assert_eq!(result.values, [0.0, amount + 1.0]);
+        assert_eq!(
+            engine.stats(),
+            SimulationStats {
+                probe_rhs_evals: 2,
+                ..SimulationStats::default()
+            }
+        );
+    }
 }
 
 #[test]

@@ -131,12 +131,12 @@ fn compile_writes_a_model_which_simulates() {
 }
 
 #[test]
-fn compile_reports_a_refusal() {
+fn compile_reports_an_overdetermined_algebraic_system() {
     let tmp = Path::new(env!("CARGO_TARGET_TMPDIR"));
     let sbml = tmp.join("algebraic.xml");
     std::fs::write(
         &sbml,
-        r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2"><model><listOfParameters><parameter id="x" value="1" constant="false"/></listOfParameters><listOfRules><algebraicRule><math xmlns="http://www.w3.org/1998/Math/MathML"><ci>x</ci></math></algebraicRule></listOfRules></model></sbml>"#,
+        r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2"><model><listOfParameters><parameter id="x" value="1" constant="true"/></listOfParameters><listOfRules><algebraicRule><math xmlns="http://www.w3.org/1998/Math/MathML"><ci>x</ci></math></algebraicRule></listOfRules></model></sbml>"#,
     )
     .unwrap();
     let out = tmp.join("algebraic");
@@ -149,7 +149,7 @@ fn compile_reports_a_refusal() {
     assert_eq!(output.status.code(), Some(1));
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(
-        stderr.contains("algebraic rule is not supported"),
+        stderr.contains("overdetermined algebraic system"),
         "{stderr}"
     );
     assert!(!out.join("model.wasm").exists());

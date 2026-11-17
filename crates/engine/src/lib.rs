@@ -1,11 +1,11 @@
-//! The engine of sbmlsim-core: integrates a compiled model with CVODE.
+//! The engine of sbmlsim-core integrates ODEs with CVODE and differential-algebraic systems with IDA.
 //!
 //! A compiled model satisfies [`ModelFns`] and is described by a [`ModelDescription`]; a
 //! [`SimulationRequest`] gives the times, the pre-initialization and the settings of the
 //! integrator, and the answer is a [`SimulationResult`], a table of the time and the selections.
 //!
 //! - [`model`]: the functions of a compiled model and the test models.
-//! - `cvode`: the wrapper of CVODE, created once per configuration and re-initialized per
+//! - `solver`: the SUNDIALS integrator, created once per configuration and re-initialized per
 //!   segment.
 //! - `segments`: the integration of a segment and the rows of its output, without and with
 //!   events.
@@ -69,13 +69,14 @@
 //!   to the time half way between them for a model with events.
 
 mod changes;
-mod cvode;
 mod events;
 #[cfg(all(target_arch = "wasm32", feature = "exports"))]
 mod exports;
+mod initial;
 pub mod model;
 mod roots;
 mod segments;
+mod solver;
 mod steady;
 
 use sbmlsim_abi::{
@@ -86,7 +87,7 @@ use sbmlsim_abi::{
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-pub use cvode::KLU_THRESHOLD;
+pub use solver::KLU_THRESHOLD;
 
 /// The most `f64` values a result may hold (rows times columns, 512 MiB).
 ///
@@ -157,18 +158,18 @@ pub use events::MAX_EXECUTIONS_PER_EVENT;
 pub use model::ModelFns;
 
 use changes::{Changes, Target};
-use cvode::{Config, Counts, Cvode, Difference, Jacobian, Linear, Method, Problem};
 use events::Events;
 use segments::{Column, Recorder, SegmentOutput};
+use solver::{Config, Counts, Difference, Integrator, Jacobian, Linear, Method, Problem};
 
 pub use sbmlsim_abi::EngineError;
 
-/// A loaded model with the CVODE memory of its last simulation, which the next simulation of
+/// A loaded model with the integrator memory of its last simulation, which the next simulation of
 /// the same configuration (number of states, method, linear solver) re-initializes.
 pub struct Engine {
     model: Box<dyn ModelFns>,
     desc: ModelDescription,
-    cvode: Option<Cvode>,
+    cache: SolverCache,
     stats: SimulationStats,
     metadata: Metadata,
     failed: bool,
@@ -269,8 +270,8 @@ impl Engine {
         Ok(Engine {
             metadata: Metadata::new(&desc),
             model,
+            cache: SolverCache::new(&desc),
             desc,
-            cvode: None,
             stats: SimulationStats::default(),
             failed: false,
             identity: Arc::new(()),
@@ -281,6 +282,44 @@ impl Engine {
     /// The description of the model.
     pub fn description(&self) -> &ModelDescription {
         &self.desc
+    }
+
+    /// Initial selection values in selection-index order, before any event executes.
+    pub fn initial_values(&mut self) -> Result<Vec<f64>, EngineError> {
+        self.ensure_ready()?;
+        let model = &*self.model;
+        let mut initialize = || {
+            initial_values(model, &self.desc, &[], &mut self.scratch)?;
+            if self.desc.n_algebraic > 0 {
+                initial::consistent(
+                    model,
+                    &self.desc,
+                    &[],
+                    &mut self.scratch,
+                    &IntegratorSettings::default(),
+                )?;
+            }
+            let n = self.desc.selections.len();
+            let mut out = vec![0.0; n];
+            model.selections(
+                INIT_TIME,
+                &self.scratch.y,
+                &self.scratch.p,
+                &vec![1; n],
+                &mut out,
+            );
+            model.check_error()?;
+            Ok(out)
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(&mut initialize))
+            .unwrap_or_else(|error| Err(EngineError::Internal(panic_message(&*error))));
+        #[cfg(target_arch = "wasm32")]
+        let outcome = initialize();
+        if matches!(outcome, Err(EngineError::Internal(_))) {
+            self.failed = true;
+        }
+        outcome
     }
 
     /// Overrides this engine's event resource policy. Zero refuses storage; it does not
@@ -401,7 +440,7 @@ impl Engine {
                 &*self.model,
                 &self.desc,
                 &mut self.metadata,
-                &mut self.cvode,
+                &mut self.cache,
                 plan,
                 values,
                 &mut self.scratch,
@@ -442,6 +481,14 @@ struct RecordedValues {
 }
 
 impl RecordedValues {
+    fn from_recorder(mut recorder: Recorder<'_>, prefix: usize) -> Self {
+        Self {
+            n_rows: recorder.n_rows,
+            values: std::mem::take(&mut recorder.values),
+            prefix,
+        }
+    }
+
     fn with_columns(self, columns: Vec<String>) -> Recorded {
         Recorded {
             columns,
@@ -467,7 +514,7 @@ impl Recorded {
     }
 }
 
-/// Simulates a model once, with a CVODE memory of its own.
+/// Simulates a model once, with an integrator memory of its own.
 pub fn simulate(
     model: &dyn ModelFns,
     desc: &ModelDescription,
@@ -482,7 +529,7 @@ pub fn simulate(
         model,
         desc,
         &mut metadata,
-        &mut None,
+        &mut SolverCache::new(desc),
         &plan,
         &[],
         &mut Scratch::default(),
@@ -528,6 +575,9 @@ fn pattern_of(desc: &ModelDescription) -> &SparsityPattern {
 fn check_description(desc: &ModelDescription) -> Result<(), EngineError> {
     check_contract(&desc.contract, MODEL_CONTRACT).map_err(|e| request(e.to_string()))?;
     let n = desc.states.len();
+    if desc.n_algebraic as usize > n {
+        return Err(request("more algebraic equations than states"));
+    }
     let pattern = pattern_of(desc);
     if !pattern.is_csc_of(n) {
         return Err(request(format!(
@@ -921,7 +971,12 @@ fn prepare(
     } else {
         Some(Config {
             n: n_cvode,
-            method: if req.settings.stiff {
+            method: if desc.n_algebraic > 0 {
+                Method::Ida {
+                    linear: linear_of(desc, &req.settings)?,
+                    n_algebraic: desc.n_algebraic as usize,
+                }
+            } else if req.settings.stiff {
                 Method::Bdf(if n == 0 {
                     Linear::Dense {
                         jacobian: Jacobian::Internal,
@@ -978,16 +1033,86 @@ fn prepare(
     })
 }
 
-/// The simulation [`simulate`] and [`Engine::simulate`] share; `cache` is the CVODE memory of
+/// A loaded model keeps its solver family across requests. Matching the cache once
+/// selects direct CVODE or IDA calls throughout the simulation.
+enum SolverCache {
+    Ode(Option<Integrator<false>>),
+    Dae(Option<Integrator<true>>),
+}
+
+impl SolverCache {
+    fn new(desc: &ModelDescription) -> Self {
+        if desc.n_algebraic == 0 {
+            Self::Ode(None)
+        } else {
+            Self::Dae(None)
+        }
+    }
+}
+
+/// The simulation [`simulate`] and [`Engine::simulate`] share; `cache` is the integrator memory of
 /// the last simulation, replaced when the configuration differs; the result has
 /// `prefix(columns)` slots of 0 before its values; `stats` gets the counters of the simulation
 /// (0 for a request refused before the integration).
 #[allow(clippy::too_many_arguments)]
+#[inline(always)]
 fn run(
     model: &dyn ModelFns,
     desc: &ModelDescription,
     metadata: &mut Metadata,
-    cache: &mut Option<Cvode>,
+    cache: &mut SolverCache,
+    plan: &Plan,
+    values: &[f64],
+    scratch: &mut Scratch,
+    prefix: &dyn Fn(&[String]) -> usize,
+    stats: &mut SimulationStats,
+) -> Result<RecordedValues, EngineError> {
+    match cache {
+        SolverCache::Ode(cache) => run_model(
+            model, desc, metadata, cache, plan, values, scratch, prefix, stats,
+        ),
+        SolverCache::Dae(cache) => run_model(
+            model, desc, metadata, cache, plan, values, scratch, prefix, stats,
+        ),
+    }
+}
+
+fn record_point(
+    model: &dyn ModelFns,
+    plan: &Plan,
+    scratch: &mut Scratch,
+    max_output_values: usize,
+    prefix: usize,
+) -> Result<RecordedValues, EngineError> {
+    if let Some(config) = &plan.config {
+        solver::check_index_range(config)?;
+    }
+    let mut recorder = Recorder::with_scratch(
+        model,
+        &plan.columns,
+        &plan.mask,
+        &mut scratch.selections,
+        max_output_values,
+        prefix,
+    )?;
+    let times = if plan.req.steps {
+        std::slice::from_ref(&plan.req.start)
+    } else {
+        recorder.reserve(plan.times.len())?;
+        &plan.times
+    };
+    for &time in times {
+        recorder.row(time, &scratch.y, &scratch.p)?;
+    }
+    Ok(RecordedValues::from_recorder(recorder, prefix))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_model<const DAE: bool>(
+    model: &dyn ModelFns,
+    desc: &ModelDescription,
+    metadata: &mut Metadata,
+    cache: &mut Option<Integrator<DAE>>,
     plan: &Plan,
     values: &[f64],
     scratch: &mut Scratch,
@@ -1005,11 +1130,37 @@ fn run(
     }
     let preinit = std::mem::take(&mut scratch.preinit);
     let initialized = initial_values(model, desc, &preinit, scratch);
+    let mut init_callbacks = Counts::default();
+    let mut projection_counts = solver::SolverCounts::default();
+    let initialized = initialized.and_then(|()| {
+        if DAE {
+            (init_callbacks, projection_counts) =
+                initial::consistent(model, desc, &preinit, scratch, &req.settings)?;
+        }
+        Ok(())
+    });
     scratch.preinit = preinit;
     initialized?;
     // 2. the initialization
 
     let with_events = !desc.events.is_empty() || desc.n_roots > 0;
+
+    // At a single time without events, changes or a steady-state calculation, the
+    // requested rows read only the initialized ODE state.
+    if !DAE
+        && start == end
+        && !with_events
+        && req.steady_state.is_none()
+        && changes.time(0).is_none()
+    {
+        return record_point(
+            model,
+            plan,
+            scratch,
+            metadata.max_output_values,
+            prefix(names),
+        );
+    }
 
     // a model without states but with events integrates one state of the rate 0, so CVODE
     // locates the zeros of its root functions
@@ -1021,7 +1172,7 @@ fn run(
         None
     } else {
         let config = plan.config.expect("nonempty integration");
-        if let Method::Bdf(linear) = config.method
+        if let Method::Bdf(linear) | Method::Ida { linear, .. } = config.method
             && n > 0
         {
             pattern = Some(pattern_of(desc));
@@ -1040,9 +1191,9 @@ fn run(
                 }
             );
         }
-        if cache.as_ref().map(Cvode::config) != Some(config) {
+        if cache.as_ref().map(Integrator::config) != Some(config) {
             *cache = None;
-            *cache = Some(Cvode::new(config)?);
+            *cache = Some(Integrator::new(config)?);
         }
         let cvode = cache.as_mut();
         if let Some(cvode) = cvode {
@@ -1066,6 +1217,7 @@ fn run(
     if !req.steps {
         recorder.reserve(times.len())?;
     }
+
     scratch.jac_values.clear();
     scratch
         .jac_values
@@ -1074,6 +1226,12 @@ fn run(
     let mut problem = Problem {
         n: n_cvode,
         n_model: n,
+        n_algebraic: desc.n_algebraic as usize,
+        interpolation: if DAE && desc.n_discontinuity_roots > 0 {
+            Some(Box::new(solver::Constraints::new(model, desc, settings)?))
+        } else {
+            None
+        },
         n_roots: desc.n_roots as usize,
         n_discontinuity_roots: desc.n_discontinuity_roots as usize,
         model,
@@ -1083,7 +1241,7 @@ fn run(
         analytic,
         difference,
         mem: std::ptr::null_mut(),
-        counts: Counts::default(),
+        counts: init_callbacks,
         callback_error: None,
     };
     let output = if req.steps {
@@ -1093,8 +1251,13 @@ fn run(
     };
     // the state of CVODE: the model reads its first `n` values
     y0.resize(n_cvode, 0.0);
+    let mut constraints = if DAE {
+        Some(Box::new(solver::Constraints::new(model, desc, settings)?))
+    } else {
+        None
+    };
     let mut probe_rhs = 0;
-    let (outcome, cvode_counts) = match cvode {
+    let (outcome, mut cvode_counts) = match cvode {
         Some(cvode) if with_events => {
             let mut events = Events::with_scratch(
                 model,
@@ -1105,6 +1268,7 @@ fn run(
                 metadata.event_limits,
                 &mut scratch.events,
             );
+            events.constraints = constraints.take();
             let mut integrate = || {
                 if let Some(steady) = &req.steady_state {
                     steady::steady_state(
@@ -1118,7 +1282,11 @@ fn run(
                         Some(&mut events),
                         &desc.id,
                         &mut scratch.steady_rates,
+                        None,
                     )?;
+                }
+                if DAE && let Some(projection) = &mut events.constraints {
+                    projection.project(start, &mut y0, &problem.p)?;
                 }
                 segments::integrate_events(
                     cvode,
@@ -1136,6 +1304,7 @@ fn run(
             };
             let outcome = integrate();
             probe_rhs = events.probe_rhs();
+            constraints = events.constraints.take();
             (outcome, cvode.counts())
         }
         mut cvode => {
@@ -1152,7 +1321,11 @@ fn run(
                         None,
                         &desc.id,
                         &mut scratch.steady_rates,
+                        constraints.as_deref_mut(),
                     )?;
+                }
+                if DAE && let Some(projection) = &mut constraints {
+                    projection.project(start, &mut y0, &problem.p)?;
                 }
                 segments::integrate(
                     cvode.as_deref_mut(),
@@ -1164,23 +1337,31 @@ fn run(
                     output,
                     &mut recorder,
                     changes,
+                    constraints.as_deref_mut(),
                 )
             };
             let outcome = integrate();
-            let counts = cvode.as_deref().map(Cvode::counts).unwrap_or_default();
+            let counts = cvode.as_deref().map(Integrator::counts).unwrap_or_default();
             (outcome, counts)
         }
     };
-    *stats = cvode::stats(&problem.counts, &cvode_counts, probe_rhs);
+    if DAE {
+        for projection in [constraints.as_ref(), problem.interpolation.as_ref()]
+            .into_iter()
+            .flatten()
+        {
+            let (callbacks, counts) = projection.counts();
+            problem.counts = problem.counts.add(callbacks);
+            projection_counts = projection_counts.add(counts);
+        }
+        cvode_counts = cvode_counts.add(projection_counts);
+    }
+    *stats = solver::stats(&problem.counts, &cvode_counts, probe_rhs);
     scratch.p = problem.p;
     scratch.jac_values = problem.jac_values;
     scratch.y = y0;
     outcome?;
-    Ok(RecordedValues {
-        n_rows: recorder.n_rows,
-        values: std::mem::take(&mut recorder.values),
-        prefix,
-    })
+    Ok(RecordedValues::from_recorder(recorder, prefix))
 }
 
 #[cfg(test)]
