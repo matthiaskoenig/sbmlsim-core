@@ -71,6 +71,16 @@ compiler WASM build, and the host/CLI build without default features pass.
 
 ### ODE performance
 
-The merge gate requires final release measurements. Earlier paired comparisons
-are retained for diagnosis. A reproduced slowdown in the restored-order KLU
-measurements keeps the gate open while the final fast path is evaluated.
+The zero-margin ODE performance gate remains open. In four baseline, feature,
+feature, baseline processes, native thread CPU time was 9.34% higher by the
+median across 24 scenarios. The ordinary Adams scenario was 22.17% slower.
+Result hashes and all 13 counters matched across rounds.
+
+The fixed WASM confirmation used 32 fresh processes across 24 scenarios. All
+processes matched output bits and all 13 solver counters. Of the 24 simultaneous
+95% confidence intervals, 10 fell below 1.0 and 14 included 1.0 and allowed a
+slowdown. The largest upper bound was 1.0609× for ordinary dense hydrochlorothiazide
+output. The identical-engine control flagged the ordinary KLU event scenario.
+
+The report and raw measurements are in `bench/ODE_PERFORMANCE.md` and
+`bench/ode-performance-data.json`.

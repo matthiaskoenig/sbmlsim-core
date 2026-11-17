@@ -173,6 +173,8 @@ Measured in this repository: 1701 of 1789 cases pass, including 120 algebraic-ru
 
 ## Benchmark
 
+The DAE feature has a separate [ODE performance report](bench/ODE_PERFORMANCE.md) and reproducible measurements. Its no-penalty acceptance condition remains open: the final native comparison measured 9.34% higher median thread CPU time. The roadrunner measurements below predate DAE support.
+
 `bench/models.toml` lists the models of the benchmark against roadrunner; `bench/RESULTS.md` has the method and the results. A model with `comp`, `distrib` or of another level is prepared first (`scripts/prepare_model.py`: comp flattened, the uncertainties of distrib stripped, a distribution function in a math refused, converted to L3V2):
 
 ```bash
