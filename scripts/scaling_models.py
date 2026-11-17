@@ -9,7 +9,7 @@
 
 Two families of SBML L3V2 models of a growing number of states, which `sbmlsim-core bench`
 simulates with the dense solver and with KLU to find the number of states above which KLU is
-faster (`KLU_THRESHOLD` of `crates/engine/src/cvode.rs`, bench/RESULTS.md):
+faster (`KLU_THRESHOLD` of `crates/engine/src/solver.rs`, bench/RESULTS.md):
 
 - `chain_<n>`: a chain of `n / 4` units as the sinusoidal units of the machine perfusion model,
   each with a substrate `A` and a product `D` carried by the flow from the unit before, a fast

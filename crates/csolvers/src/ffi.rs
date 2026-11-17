@@ -3,7 +3,7 @@
 //! The signatures are the ones of the headers of SUNDIALS v7.9.0 (`sundials_context.h`,
 //! `sundials_nvector.h`, `nvector_serial.h`, `sundials_matrix.h`, `sunmatrix_dense.h`,
 //! `sunmatrix_sparse.h`, `sundials_linearsolver.h`, `sunlinsol_dense.h`, `sunlinsol_klu.h`,
-//! `sundials_nonlinearsolver.h`, `sunnonlinsol_fixedpoint.h`, `cvode.h`, `cvode_ls.h`) as this
+//! `sundials_nonlinearsolver.h`, `sunnonlinsol_fixedpoint.h`, `cvode.h`, `cvode_ls.h`, `ida.h`, `ida_ls.h`) as this
 //! crate configures them: `sunrealtype` is `double`,
 //! `sunindextype` is `int32_t`, the counters are `long int` (32 bits on wasm32) and `SUNComm` is
 //! `int` (no MPI). The functions with the prefix `sbmlsim_` are the C sources of this crate.
@@ -124,6 +124,31 @@ pub const CSR_MAT: c_int = 1;
 /// default of `SUNLinSol_KLU`, 2 is the ordering of the user.
 pub const SUNKLU_ORDERING_AMD: c_int = 0;
 
+/// IDA residual F(t, y, yp) and root callbacks.
+pub type IDAResFn =
+    Option<unsafe extern "C" fn(sunrealtype, N_Vector, N_Vector, N_Vector, *mut c_void) -> c_int>;
+/// IDA root functions.
+pub type IDARootFn = Option<
+    unsafe extern "C" fn(sunrealtype, N_Vector, N_Vector, *mut sunrealtype, *mut c_void) -> c_int,
+>;
+/// IDA Newton matrix dF/dy + cj dF/dyp.
+pub type IDALsJacFn = Option<
+    unsafe extern "C" fn(
+        sunrealtype,
+        sunrealtype,
+        N_Vector,
+        N_Vector,
+        N_Vector,
+        SUNMatrix,
+        *mut c_void,
+        N_Vector,
+        N_Vector,
+        N_Vector,
+    ) -> c_int,
+>;
+/// Hold differential states fixed and calculate algebraic states and differential rates.
+pub const IDA_YA_YDP_INIT: c_int = 1;
+
 unsafe extern "C" {
     // the context
     pub fn SUNContext_Create(comm: SUNComm, sunctx_out: *mut SUNContext) -> SUNErrCode;
@@ -141,6 +166,8 @@ unsafe extern "C" {
     pub fn N_VNew_Serial(vec_length: sunindextype, sunctx: SUNContext) -> N_Vector;
     pub fn N_VDestroy(v: N_Vector);
     pub fn N_VGetArrayPointer(v: N_Vector) -> *mut sunrealtype;
+    /// Data of a serial vector created by `N_VNew_Serial` or cloned from one.
+    pub fn N_VGetArrayPointer_Serial(v: N_Vector) -> *mut sunrealtype;
     /// The weighted root mean square norm `sqrt(sum((x_i * w_i)^2) / n)`.
     pub fn N_VWrmsNorm(x: N_Vector, w: N_Vector) -> sunrealtype;
 
@@ -255,4 +282,63 @@ unsafe extern "C" {
         nncfails: *mut c_long,
     ) -> c_int;
     pub fn CVodeFree(cvode_mem: *mut *mut c_void);
+
+    // IDA
+    pub fn IDASStolerances(ida_mem: *mut c_void, reltol: sunrealtype, abstol: sunrealtype)
+    -> c_int;
+    pub fn IDASVtolerances(ida_mem: *mut c_void, reltol: sunrealtype, abstol: N_Vector) -> c_int;
+    pub fn IDASetUserData(ida_mem: *mut c_void, user_data: *mut c_void) -> c_int;
+    pub fn IDASetMaxNumSteps(ida_mem: *mut c_void, mxsteps: c_long) -> c_int;
+    pub fn IDASetMaxStep(ida_mem: *mut c_void, hmax: sunrealtype) -> c_int;
+    pub fn IDASetInitStep(ida_mem: *mut c_void, hin: sunrealtype) -> c_int;
+    pub fn IDASetStopTime(ida_mem: *mut c_void, tstop: sunrealtype) -> c_int;
+    pub fn IDASetLinearSolver(ida_mem: *mut c_void, ls: SUNLinearSolver, a: SUNMatrix) -> c_int;
+    pub fn IDAGetRootInfo(ida_mem: *mut c_void, rootsfound: *mut c_int) -> c_int;
+    pub fn IDAGetNumSteps(ida_mem: *mut c_void, nsteps: *mut c_long) -> c_int;
+    pub fn IDAGetErrWeights(ida_mem: *mut c_void, eweight: N_Vector) -> c_int;
+    pub fn IDAGetCurrentStep(ida_mem: *mut c_void, hcur: *mut sunrealtype) -> c_int;
+    pub fn IDAGetIntegratorStats(
+        ida_mem: *mut c_void,
+        nsteps: *mut c_long,
+        nfevals: *mut c_long,
+        nlinsetups: *mut c_long,
+        netfails: *mut c_long,
+        qlast: *mut c_int,
+        qcur: *mut c_int,
+        hinused: *mut sunrealtype,
+        hlast: *mut sunrealtype,
+        hcur: *mut sunrealtype,
+        tcur: *mut sunrealtype,
+    ) -> c_int;
+    pub fn IDAGetNonlinSolvStats(
+        ida_mem: *mut c_void,
+        nniters: *mut c_long,
+        nncfails: *mut c_long,
+    ) -> c_int;
+    pub fn IDAFree(ida_mem: *mut *mut c_void);
+
+    pub fn IDACreate(ctx: SUNContext) -> *mut c_void;
+    pub fn IDAInit(
+        mem: *mut c_void,
+        res: IDAResFn,
+        t: sunrealtype,
+        y: N_Vector,
+        yp: N_Vector,
+    ) -> c_int;
+    pub fn IDAReInit(mem: *mut c_void, t: sunrealtype, y: N_Vector, yp: N_Vector) -> c_int;
+    pub fn IDASetMaxErrTestFails(mem: *mut c_void, maxnef: c_int) -> c_int;
+    pub fn IDASetSuppressAlg(mem: *mut c_void, suppressalg: sunbooleantype) -> c_int;
+    pub fn IDASetId(mem: *mut c_void, id: N_Vector) -> c_int;
+    pub fn IDACalcIC(mem: *mut c_void, opt: c_int, tout: sunrealtype) -> c_int;
+    pub fn IDAGetConsistentIC(mem: *mut c_void, y: N_Vector, yp: N_Vector) -> c_int;
+    pub fn IDASetJacFn(mem: *mut c_void, jac: IDALsJacFn) -> c_int;
+    pub fn IDARootInit(mem: *mut c_void, nr: c_int, roots: IDARootFn) -> c_int;
+    pub fn IDASolve(
+        mem: *mut c_void,
+        tout: sunrealtype,
+        tret: *mut sunrealtype,
+        y: N_Vector,
+        yp: N_Vector,
+        itask: c_int,
+    ) -> c_int;
 }

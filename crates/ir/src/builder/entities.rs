@@ -82,6 +82,7 @@ impl<'m> Builder<'m> {
             symbols: HashMap::new(),
             assignment_rule: HashMap::new(),
             rate_rule: HashMap::new(),
+            algebraic: Default::default(),
             species: Vec::new(),
             state_ids: Vec::new(),
             sources: Vec::new(),
@@ -128,7 +129,7 @@ impl<'m> Builder<'m> {
                 Rule::Rate { variable, .. } => {
                     (variable, &mut self.rate_rule, &self.assignment_rule)
                 }
-                Rule::Algebraic { .. } => unreachable!("refused before"),
+                Rule::Algebraic { .. } => continue,
             };
             if other.contains_key(variable.as_str())
                 || map.insert(variable.as_str(), position).is_some()
@@ -167,11 +168,14 @@ impl<'m> Builder<'m> {
                 return Err(invalid(format!("{s} has two initial assignments")));
             }
         }
+        let algebraic = self.algebraic_unknowns(&assigned_initially)?;
+        self.algebraic.extend(algebraic.iter().copied());
         // libroadrunner refuses a parameter without a value unless an initial assignment or an
         // assignment rule gives it one ("Global parameter 'p' is missing a value"), also when a
         // rate rule or an event changes it
         if let Some(p) = m.parameters.iter().find(|p| {
             p.value.is_none()
+                && !self.algebraic.contains(p.id.as_str())
                 && !assigned_initially.contains_key(p.id.as_str())
                 && !self.assignment_rule.contains_key(p.id.as_str())
         }) {
@@ -213,11 +217,13 @@ impl<'m> Builder<'m> {
                 && !s.boundary_condition
                 && !self.assignment_rule.contains_key(id)
                 && !self.rate_rule.contains_key(id)
+                && !self.algebraic.contains(id)
             {
                 self.sources.push(Source::Reactions(i));
                 self.state_ids.push(id);
             }
         }
+        self.state_ids.extend(algebraic);
         for (k, id) in self.state_ids.iter().enumerate() {
             self.symbols.insert(id, Symbol::State(index(k)));
         }
@@ -249,7 +255,8 @@ impl<'m> Builder<'m> {
                 )));
             }
             let ruled = self.assignment_rule.contains_key(s.id.as_str())
-                || self.rate_rule.contains_key(s.id.as_str());
+                || self.rate_rule.contains_key(s.id.as_str())
+                || self.algebraic.contains(s.id.as_str());
             self.species.push(SpeciesInfo {
                 symbol: self.symbols[s.id.as_str()],
                 compartment: self.symbols[s.compartment.as_str()],
@@ -276,7 +283,7 @@ impl<'m> Builder<'m> {
                 id: id.to_string(),
                 kind,
                 default: default.unwrap_or(f64::NAN),
-                settable: !self.assignment_rule.contains_key(id),
+                settable: !self.assignment_rule.contains_key(id) && !self.algebraic.contains(id),
                 unit,
             };
             match self.symbols[id] {
@@ -290,7 +297,7 @@ impl<'m> Builder<'m> {
             }
         };
         // the missing values of libroadrunner: a compartment 1, a species 0, a stoichiometry 1;
-        // a parameter without a value is refused unless it is assigned (then NaN until `initial`)
+        // an algebraic parameter starts from a guess, an explicitly assigned one from NaN
         for c in &m.compartments {
             let size = Some(c.size.unwrap_or(1.0));
             push(&c.id, EntityKind::Compartment, size, units.compartment(c));
@@ -317,7 +324,12 @@ impl<'m> Builder<'m> {
         }
         for p in &m.parameters {
             let unit = units.parameter(p.units.as_ref());
-            push(&p.id, EntityKind::Parameter, p.value, unit);
+            let default = if self.algebraic.contains(p.id.as_str()) {
+                Some(p.value.unwrap_or(1.0))
+            } else {
+                p.value
+            };
+            push(&p.id, EntityKind::Parameter, default, unit);
         }
         for r in &self.refs {
             if let Some(id) = &r.reference.id {

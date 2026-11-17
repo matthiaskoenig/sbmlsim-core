@@ -308,17 +308,88 @@ fn rate_of_an_assignment_rule_target_is_refused() {
 }
 
 #[test]
-fn refuses_algebraic_rule() {
+fn coupled_algebraic_rules_match_distinct_unset_parameters() {
+    // x is eligible in both rows. Matching the second row must reassign the first to y,
+    // even though the second row could instead use the initialized parameter z.
+    let m = model(
+        r#"<listOfParameters>
+      <parameter id="x" constant="false"/><parameter id="y" constant="false"/>
+      <parameter id="z" value="1" constant="false"/><parameter id="t" value="0" constant="false"/>
+    </listOfParameters><listOfRules>
+      <algebraicRule><math $><apply><plus/><ci>x</ci><ci>y</ci></apply></math></algebraicRule>
+      <algebraicRule><math $><apply><minus/><ci>x</ci><ci>z</ci></apply></math></algebraicRule>
+      <rateRule variable="t"><math $><ci>x</ci></math></rateRule>
+    </listOfRules>"#,
+    );
+    assert_eq!(m.n_algebraic, 2);
+    assert_eq!(
+        m.states.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+        ["t", "y", "x"]
+    );
+    assert!(
+        m.states[1..]
+            .iter()
+            .all(|s| !s.settable && s.default.is_finite())
+    );
+    assert_eq!(m.rate("t"), Some(&sym(&m, "x")));
+    assert!(m.rate("x").is_none());
+    assert_eq!(m.rates[1], ap(Op::Plus, vec![sym(&m, "x"), sym(&m, "y")]));
+}
+
+#[test]
+fn algebraic_matching_expands_assignment_and_function_dependencies() {
+    let m = model(
+        r#"<listOfFunctionDefinitions><functionDefinition id="f"><math $>
+      <lambda><bvar><ci>a</ci></bvar><bvar><ci>b</ci></bvar><ci>b</ci></lambda>
+    </math></functionDefinition></listOfFunctionDefinitions><listOfParameters>
+      <parameter id="x" constant="false" value="2"/><parameter id="y" constant="false" value="3"/>
+      <parameter id="z" constant="false"/>
+    </listOfParameters><listOfRules>
+      <assignmentRule variable="z"><math $><apply><ci>f</ci><ci>x</ci><ci>y</ci></apply></math></assignmentRule>
+      <algebraicRule><math $><ci>z</ci></math></algebraicRule>
+    </listOfRules>"#,
+    );
+    assert_eq!(m.states[0].id, "y");
+    assert_eq!(m.rates, [sym(&m, "z")]);
+}
+
+#[test]
+fn an_algebraic_species_stores_the_quantity_seen_by_math() {
+    let m = model(
+        r#"<listOfCompartments><compartment id="C" size="3" constant="false"/></listOfCompartments>
+    <listOfSpecies><species id="S" compartment="C" initialAmount="6" hasOnlySubstanceUnits="false" boundaryCondition="false" constant="false"/></listOfSpecies>
+    <listOfRules><algebraicRule><math $><ci>S</ci></math></algebraicRule></listOfRules>"#,
+    );
+    assert_eq!(m.n_algebraic, 1);
+    assert_eq!(m.states[0].id, "S");
+    assert_eq!(m.selection("[S]").unwrap().expr, sym(&m, "S"));
+    assert_eq!(
+        m.selection("S").unwrap().expr,
+        ap(Op::Times, vec![sym(&m, "S"), sym(&m, "C")])
+    );
+    assert_eq!(
+        m.initial[0].expr,
+        ap(Op::Divide, vec![num(6.0), sym(&m, "C")])
+    );
+}
+
+#[test]
+fn an_algebraic_rule_cannot_redetermine_a_reacting_species_or_a_rateof_target() {
     let e = error(&format!(
-        r#"<listOfParameters>{}</listOfParameters><listOfRules><algebraicRule><math $><ci>x</ci></math></algebraicRule></listOfRules>"#,
-        variable("x")
+        r#"<listOfCompartments>{}</listOfCompartments>
+    <listOfSpecies>{}</listOfSpecies><listOfParameters>
+    <parameter id="p" value="2" constant="false"/><parameter id="q" constant="false"/>
+    </listOfParameters><listOfRules>
+    <assignmentRule variable="q"><math $>{}</math></assignmentRule>
+    <algebraicRule><math $><apply><plus/><ci>p</ci><ci>S</ci></apply></math></algebraicRule></listOfRules>
+    <listOfReactions><reaction id="r" reversible="false"><listOfProducts><speciesReference species="S" constant="true"/></listOfProducts></reaction></listOfReactions>"#,
+        compartment("C", "1", true),
+        amount("S", "1"),
+        rate_of("p")
     ));
     assert_eq!(
-        e,
-        CompileError::Unsupported {
-            feature: "algebraic rule".into(),
-            element: "algebraicRule #0".into()
-        }
+        e.to_string(),
+        "overdetermined algebraic system: no independent variable for algebraicRule #1"
     );
 }
 

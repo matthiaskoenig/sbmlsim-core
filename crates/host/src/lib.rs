@@ -504,6 +504,13 @@ impl LoadedModel {
             free: engine.get_typed_func(&mut store, "engine_free")?,
             load: engine.get_typed_func(&mut store, "engine_load")?,
             simulate: engine.get_typed_func(&mut store, "engine_simulate")?,
+            initial_values: if desc.n_algebraic == 0 {
+                None
+            } else {
+                engine
+                    .get_typed_func(&mut store, "engine_initial_values")
+                    .ok()
+            },
             output_ptr: engine.get_typed_func(&mut store, "engine_output_ptr")?,
             output_len: engine.get_typed_func(&mut store, "engine_output_len")?,
             stats_ptr: engine.get_typed_func(&mut store, "engine_stats_ptr")?,
@@ -535,10 +542,14 @@ impl LoadedModel {
     /// The value of every selection of the description, in its order, for the model as loaded:
     /// `model_defaults`, `model_init` at the time 0 with no fixed entity, `model_assign`, then
     /// `model_selections` with every selection masked in. It links mathlib and the model in a
-    /// store of its own and never runs the engine, so no simulation is needed to read the initial
-    /// state. It refuses a model whose `model_sizes` differ from the description.
+    /// store of its own. For a DAE model the engine solves consistent initial conditions
+    /// before evaluating selections, without executing events. It refuses a model whose
+    /// `model_sizes` differ from the description.
     pub fn initial_selections(&self) -> anyhow::Result<Vec<f64>> {
         let desc = &self.desc;
+        if desc.n_algebraic > 0 {
+            return Ok(self.instantiate()?.initial_selections()?);
+        }
         let (np, ns, nsel) = (
             desc.parameters.len(),
             desc.states.len(),
@@ -1027,6 +1038,7 @@ pub struct Instance {
     free: TypedFunc<(i32, i32), ()>,
     load: TypedFunc<(i32, i32), i32>,
     simulate: TypedFunc<(i32, i32), i32>,
+    initial_values: Option<TypedFunc<(), i32>>,
     output_ptr: TypedFunc<(), i32>,
     output_len: TypedFunc<(), i32>,
     stats_ptr: TypedFunc<(), i32>,
@@ -1036,6 +1048,23 @@ pub struct Instance {
 }
 
 impl Instance {
+    /// Reads initialized selections without applying events, including DAE constraints.
+    fn initial_selections(&mut self) -> Result<Vec<f64>, EngineError> {
+        let function = self
+            .initial_values
+            .clone()
+            .ok_or_else(|| internal("the engine does not support consistent initial selections"))?;
+        self.execution.begin(&mut self.store);
+        let code = self.guard(|this| function.call(&mut this.store, ()))?;
+        match (code, self.output()?) {
+            (0, Output::Table(result)) if result.n_rows == 1 => Ok(result.values),
+            (_, Output::Error(error)) => Err(engine_error(error)),
+            (code, output) => Err(internal(format!(
+                "engine_initial_values returned {code} with the output {output:?}"
+            ))),
+        }
+    }
+
     /// Simulates a request; the result does not depend on the simulations before.
     ///
     /// The errors are the ones of the native engine, and [`EngineError::Internal`] for a trap

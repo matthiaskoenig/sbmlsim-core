@@ -10,7 +10,7 @@ publish = false
 # (THIRD_PARTY.md has their versions, commits and texts)
 license = "MIT AND BSD-3-Clause AND LGPL-2.1-or-later"
 authors.workspace = true
-description = "SUNDIALS CVODE and SuiteSparse KLU built for native targets and wasm32-wasip1, with their FFI declarations"
+description = "SUNDIALS CVODE/IDA and SuiteSparse KLU built for native targets and wasm32-wasip1, with their FFI declarations"
 links = "sbmlsim_csolvers"
 build = "build.rs"
 

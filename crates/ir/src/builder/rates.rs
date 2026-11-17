@@ -165,11 +165,24 @@ impl Context for Builder<'_> {
             // assignment rule"
             return Err(unsupported("rateOf of an assignment rule target", id));
         }
+        if self.algebraic.contains(id) {
+            return Err(unsupported("rateOf of an algebraic variable", id));
+        }
         let species = match self.items[id] {
             Item::Species(i) => Some(self.species[i]),
             _ => None,
         };
         let concentration = species.filter(|s| !s.has_only_substance_units);
+        if let Some(s) = concentration
+            && self
+                .algebraic
+                .contains(self.m.compartments[s.compartment_index].id.as_str())
+        {
+            return Err(unsupported(
+                "rateOf of a concentration in an algebraic compartment",
+                id,
+            ));
+        }
         match self.symbols[id] {
             Symbol::State(k) => {
                 let k = k as usize;

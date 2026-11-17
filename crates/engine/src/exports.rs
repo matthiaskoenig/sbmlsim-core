@@ -20,6 +20,9 @@
 //!   [`ModelDescription`]; 0 on success, 1 with an error of the kind `load` in the output.
 //! - `engine_simulate(req_ptr, req_len) -> i32`: simulates the JSON of a [`SimulationRequest`];
 //!   0 with the table in the output, 1 with an error in the output.
+//! - `engine_initial_values() -> i32`: initializes the model without executing events; 0
+//!   with one row of selections in the output, 1 with an error. Algebraic constraints are
+//!   solved before the selections are evaluated.
 //! - `engine_prepare(ptr, len) -> i32`: validates JSON containing `request` and `varying`
 //!   (an array of pre-initialization target IDs). Returns 0 with header
 //!   `{"prepared":id,"n_values":n}`, or 1 with an error. At most 32 plans and 16 MiB of
@@ -513,6 +516,43 @@ pub unsafe extern "C" fn engine_simulate(req_ptr: i32, req_len: i32) -> i32 {
     match result {
         Ok(recorded) => {
             set_output(table_output(recorded));
+            0
+        }
+        Err(error) => {
+            set_output(engine_error_output(&error));
+            1
+        }
+    }
+}
+
+/// Initializes the loaded model without executing events and returns its selections.
+#[unsafe(no_mangle)]
+pub extern "C" fn engine_initial_values() -> i32 {
+    install_panic_hook();
+    let Some(mut engine) = STATE.with_borrow_mut(|state| state.engine.take()) else {
+        set_output(error_output("request", "no model is loaded"));
+        return 1;
+    };
+    set_output(OutputBuffer::default());
+    let result = engine.initial_values();
+    let mut selections = engine.description().selections.clone();
+    selections.sort_by_key(|selection| selection.index);
+    let columns: Vec<String> = selections
+        .into_iter()
+        .map(|selection| selection.id)
+        .collect();
+    STATE.with_borrow_mut(|state| state.engine = Some(engine));
+    match result {
+        Ok(initial) => {
+            let prefix = header_slots(&columns);
+            let mut values = vec![0.0; prefix];
+            values.extend(initial);
+            set_output(table_output(Recorded {
+                columns,
+                n_rows: 1,
+                values,
+                prefix,
+            }));
             0
         }
         Err(error) => {

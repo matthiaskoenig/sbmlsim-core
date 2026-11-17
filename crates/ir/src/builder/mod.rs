@@ -1,5 +1,6 @@
 //! The construction of the [`Model`] from the data model of the reader.
 
+mod algebraic;
 mod entities;
 mod outputs;
 mod rates;
@@ -71,6 +72,8 @@ struct Builder<'m> {
     assignment_rule: HashMap<&'m str, usize>,
     /// The position in the list of rules of the rate rule of an id.
     rate_rule: HashMap<&'m str, usize>,
+    /// The unknowns matched to algebraic rules.
+    algebraic: std::collections::HashSet<&'m str>,
     species: Vec<SpeciesInfo>,
     /// The ids of the states, in the order of `y`.
     state_ids: Vec<&'m str>,
@@ -151,14 +154,28 @@ fn sum(mut terms: Vec<Expr>) -> Expr {
 }
 
 pub(crate) fn build(m: &Sbml) -> Result<Model, CompileError> {
-    refuse_unsupported(m)?;
+    if let Some(r) = m.reactions.iter().find(|r| r.fast) {
+        return Err(unsupported("fast reaction", &r.id));
+    }
     let mut b = Builder::new(m)?;
     b.classify()?;
     let (states, parameters) = b.entities();
 
-    let rates = (0..b.state_ids.len())
+    let mut rates = (0..b.sources.len())
         .map(|k| b.state_rate(k))
         .collect::<Result<Vec<_>, _>>()?;
+
+    if !b.algebraic.is_empty() {
+        for (position, rule) in rules_with_math(m) {
+            if let Rule::Algebraic {
+                math: Some(math), ..
+            } = rule
+            {
+                let element = rule_name(position, rule);
+                rates.push(expr::build(math, &mut b, &Scope::global(&element))?);
+            }
+        }
+    }
 
     // the assignment rules, built once for both lists
     let mut rules = Vec::new();
@@ -194,6 +211,7 @@ pub(crate) fn build(m: &Sbml) -> Result<Model, CompileError> {
     let selections = b.selections()?;
     Ok(Model {
         id: m.id.clone(),
+        n_algebraic: index(b.algebraic.len()),
         states,
         parameters,
         assignment_rules,
@@ -202,18 +220,4 @@ pub(crate) fn build(m: &Sbml) -> Result<Model, CompileError> {
         events,
         selections,
     })
-}
-
-/// The features refused before anything is built: algebraic rules (with math) and fast
-/// reactions.
-fn refuse_unsupported(m: &Sbml) -> Result<(), CompileError> {
-    for (position, rule) in rules_with_math(m) {
-        if let Rule::Algebraic { .. } = rule {
-            return Err(unsupported("algebraic rule", &rule_name(position, rule)));
-        }
-    }
-    if let Some(r) = m.reactions.iter().find(|r| r.fast) {
-        return Err(unsupported("fast reaction", &r.id));
-    }
-    Ok(())
 }

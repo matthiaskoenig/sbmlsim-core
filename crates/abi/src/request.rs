@@ -167,15 +167,15 @@ pub struct IntegratorSettings {
     pub relative_tolerance: f64,
     /// The absolute tolerance.
     pub absolute_tolerance: Tolerance,
-    /// The largest number of steps of one call of CVODE; in an output of times (and in a horizon
-    /// of a steady state) the steps towards one output time, summed over the returns of CVODE at
+    /// The largest number of steps of one call of the integrator; in an output of times (and in a horizon
+    /// of a steady state) the steps towards one output time, summed over the returns of the integrator at
     /// roots without an execution of an event and its restarts at the roots of discontinuities.
     pub maximum_num_steps: u32,
-    /// The largest step in time; `0.0` is not set (CVODE chooses).
+    /// The largest step in time; `0.0` is not set (the integrator chooses).
     pub maximum_time_step: f64,
-    /// The first step in time; `0.0` is not set (CVODE chooses).
+    /// The first step in time; `0.0` is not set (the integrator chooses).
     pub initial_time_step: f64,
-    /// Stiff (BDF) or non-stiff (Adams).
+    /// CVODE BDF (`true`) or Adams (`false`); DAE models always use IDA BDF.
     pub stiff: bool,
     /// The linear solver.
     pub linear_solver: LinearSolver,
@@ -213,19 +213,20 @@ pub struct SimulationResult {
 /// The counters of the last simulation of an engine: diagnostics of the work of the
 /// integrator, no part of a result (`engine_stats_ptr` of `engine.wasm`, `stats()` of the hosts).
 ///
-/// The counters of CVODE are summed over every (re)initialization of the simulation (the
+/// The counters of CVODE or IDA are summed over every (re)initialization (including IDA
+/// consistency projections) of the simulation (the
 /// steady state, the segments between the changes and the events). The calls of the right hand
-/// side are counted where they are made: by CVODE (its nonlinear iteration, its error
+/// side or residual are counted where they are made: by the integrator (its nonlinear iteration, its error
 /// estimates, its own difference quotient), by the sparse difference quotient, by the probes of
 /// the triggers of the events and by the criterion of the steady state.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SimulationStats {
-    /// The steps of CVODE.
+    /// The steps of the integrator.
     pub steps: u64,
-    /// The calls of the right hand side by CVODE.
+    /// The calls of the right hand side or residual by the integrator.
     pub rhs_evals: u64,
-    /// The calls of the Jacobian function by CVODE (the analytic Jacobian or the sparse
+    /// The calls of the Jacobian function by the integrator (the analytic Jacobian or the sparse
     /// difference quotient; CVODE's own difference quotient of a model without states is not
     /// counted).
     pub jacobian_evals: u64,
@@ -235,7 +236,7 @@ pub struct SimulationStats {
     /// The calls of the analytic Jacobian with an entry which is not finite, which the sparse
     /// difference quotient replaced.
     pub jacobian_fallbacks: u64,
-    /// The setups of the linear solver (factorizations of `I - gamma J`).
+    /// The setups of the linear solver (ODE or DAE Newton matrix factorizations).
     pub linear_setups: u64,
     /// The failures of the local error test.
     pub error_test_failures: u64,
@@ -243,9 +244,9 @@ pub struct SimulationStats {
     pub nonlinear_iterations: u64,
     /// The convergence failures of the nonlinear solver.
     pub nonlinear_convergence_failures: u64,
-    /// The calls of the root functions by CVODE.
+    /// The calls of the root functions by the integrator.
     pub root_evals: u64,
-    /// The (re)initializations of CVODE.
+    /// The (re)initializations of the integrator and IDA consistency projections.
     pub integrations: u64,
     /// The calls of the right hand side by the probes of the triggers right after a time.
     pub probe_rhs_evals: u64,

@@ -52,6 +52,30 @@ fn small() -> Model {
     )
 }
 
+#[test]
+fn an_algebraic_species_reference_contributes_residual_sparsity_and_discontinuities() {
+    let m = model(
+        r#"<listOfCompartments><compartment id="C" size="1" constant="true"/></listOfCompartments>
+    <listOfSpecies><species id="S" compartment="C" hasOnlySubstanceUnits="true" initialAmount="0" boundaryCondition="false" constant="false"/></listOfSpecies>
+    <listOfRules><algebraicRule><math $><apply><minus/><ci>nu</ci>
+    <piecewise><piece><ci>S</ci><apply><gt/><ci>S</ci><cn>1</cn></apply></piece><otherwise><cn>1</cn></otherwise></piecewise>
+    </apply></math></algebraicRule></listOfRules>
+    <listOfReactions><reaction id="r" reversible="false"><listOfProducts><speciesReference id="nu" species="S" constant="false"/></listOfProducts>
+    <kineticLaw><math $><cn>1</cn></math></kineticLaw></reaction></listOfReactions>"#,
+    );
+    for emit_model in [emit_with, emit_optimized] {
+        for choice in [JacobianChoice::Analytic, JacobianChoice::DifferenceQuotient] {
+            let (wasm, d) = emit_model(&m, choice).unwrap();
+            wasmparser::validate(&wasm).unwrap();
+            assert_eq!(d.n_algebraic, 1);
+            assert_eq!(d.states[1].id, "nu");
+            assert_eq!(d.n_discontinuity_roots, 1);
+            assert_eq!(d.jacobian.pattern().rows(0), [1]);
+            assert_eq!(d.jacobian.pattern().rows(1), [0, 1]);
+        }
+    }
+}
+
 /// The function types, the imports, the exports and the code of the functions of a module.
 struct Parsed {
     types: Vec<FuncType>,
@@ -443,6 +467,7 @@ fn a_statement_above_the_limits_is_an_error() {
             .collect(),
     );
     let m = Model {
+        n_algebraic: 0,
         id: None,
         states: vec![],
         parameters,
@@ -490,6 +515,7 @@ fn locals_are_reused_after_their_last_use() {
         })
         .collect();
     let m = Model {
+        n_algebraic: 0,
         id: None,
         states: vec![],
         parameters,

@@ -76,6 +76,34 @@ def loaded(runtime: sbmlsim_core.Runtime, sbml: str) -> sbmlsim_core.LoadedModel
     return runtime.load(compiled.wasm, compiled.description)
 
 
+def test_algebraic_rules_have_consistent_initial_values_and_trajectories(runtime):
+    model = loaded(
+        runtime,
+        f"""<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2">
+<model id="dae"><listOfParameters>
+<parameter id="x" value="1" constant="false"/>
+<parameter id="z" constant="false"/>
+<parameter id="k" value="0.5" constant="true"/>
+</listOfParameters><listOfRules>
+<rateRule variable="x"><math {MATH}>
+<apply><minus/><apply><times/><ci>k</ci><ci>x</ci></apply></apply>
+</math></rateRule>
+<algebraicRule><math {MATH}>
+<apply><minus/><ci>z</ci><apply><times/><ci>x</ci><ci>x</ci></apply></apply>
+</math></algebraicRule>
+</listOfRules></model></sbml>""",
+    )
+    assert model.description["n_algebraic"] == 1
+    assert model.initial_values()["z"] == pytest.approx(1.0)
+    req = request(end=2.0, steps=8, relative_tolerance=1e-10)
+    req["selections"] = ["x", "z"]
+    result = model.instance().simulate(req)
+    assert result.columns == ["time", "x", "z"]
+    expected = numpy.exp(-0.5 * result.values[:, 0])
+    numpy.testing.assert_allclose(result.values[:, 1], expected, rtol=2e-8)
+    numpy.testing.assert_allclose(result.values[:, 2], expected**2, rtol=2e-8)
+
+
 def test_compilation_cache_is_reused_by_fresh_python_processes(tmp_path):
     cache = tmp_path / "compilation-cache"
     script = """

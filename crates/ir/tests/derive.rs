@@ -38,6 +38,7 @@ fn entity(id: &str) -> Entity {
 /// A model of the states `x`, `y`, ... with the given rates, parameters and assignment rules.
 fn model(states: &[&str], params: &[&str], rules: Vec<Assignment>, rates: Vec<Expr>) -> Model {
     Model {
+        n_algebraic: 0,
         id: Some("m".to_string()),
         states: states.iter().map(|s| entity(s)).collect(),
         parameters: params.iter().map(|s| entity(s)).collect(),

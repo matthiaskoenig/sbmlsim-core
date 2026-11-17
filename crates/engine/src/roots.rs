@@ -40,7 +40,7 @@ use sbmlsim_abi::IntegratorSettings;
 use sbmlsim_csolvers::ffi::CV_TOO_MUCH_WORK;
 
 use crate::EngineError;
-use crate::cvode::Cvode;
+use crate::solver::Integrator;
 
 /// libroadrunner's count of roots close to the last applied one in one interval: the third
 /// such root is ignored.
@@ -81,7 +81,7 @@ pub(crate) struct RootGuard {
 impl RootGuard {
     /// The guard of an integration from `start`: with libroadrunner's count and the budget of
     /// steps for an output of times or a steady state (`times`), else the bound of chatter
-    /// within `resolution`; `steps` is [`Cvode::steps`] now.
+    /// within `resolution`; `steps` is [`Integrator::steps`] now.
     pub fn new(
         start: f64,
         settings: &IntegratorSettings,
@@ -163,7 +163,7 @@ impl RootGuard {
     }
 
     /// A return of CVODE at a zero of a root function at `t`; `discontinuity` is whether it is
-    /// a zero of a root function of a discontinuity, `steps` is [`Cvode::steps`] now. Returns
+    /// a zero of a root function of a discontinuity, `steps` is [`Integrator::steps`] now. Returns
     /// whether CVODE starts again for it. A restart at a root far from the last applied one
     /// (where the count starts again) starts the budget of steps again too, so well separated
     /// roots do not share one budget; roots which chatter, within the tolerance of each other,
@@ -195,7 +195,11 @@ impl RootGuard {
     /// Sets the steps CVODE may take towards the next output time (the budget less the steps
     /// since it started), before a call of CVODE at `t`; an exhausted budget is CVODE's error
     /// `CV_TOO_MUCH_WORK`.
-    pub fn limit(&self, cvode: &mut Cvode, t: f64) -> Result<(), EngineError> {
+    pub fn limit<const DAE: bool>(
+        &self,
+        cvode: &mut Integrator<DAE>,
+        t: f64,
+    ) -> Result<(), EngineError> {
         let Some(from) = self.budget_from else {
             return Ok(());
         };

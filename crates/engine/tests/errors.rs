@@ -503,3 +503,41 @@ fn a_selection_failure_stops_a_large_output_request_at_the_first_row() {
         "a failed engine must not execute another request"
     );
 }
+
+#[test]
+fn dae_failure_leaves_the_engine_reusable() {
+    use sbmlsim_engine::model::EventModel;
+    let model = EventModel {
+        states: vec![("z", 1.0)],
+        parameters: vec![("valid", 0.0)],
+        rhs: |t, y, p, out| {
+            out[0] = if p[0] == 0.0 && t >= 0.5 {
+                1.0
+            } else {
+                y[0] - (1.0 + t)
+            };
+        },
+        events: vec![],
+        discontinuities: vec![],
+    };
+    let mut desc = model.description();
+    desc.n_algebraic = 1;
+    let mut engine = Engine::new(Box::new(model), desc).unwrap();
+    let mut req = request(0.0, 1.0, Output::Uniform { steps: 2 });
+    req.selections = vec!["z".into()];
+    assert!(matches!(
+        engine.simulate(&req),
+        Err(EngineError::Integration { .. })
+    ));
+    req.preinit = vec![("valid".into(), 1.0)];
+    let result = engine.simulate(&req).unwrap();
+    assert!((result.values.last().unwrap() - 2.0).abs() < 1e-7);
+    let repeat = engine.simulate(&req).unwrap();
+    assert_eq!(result.values, repeat.values);
+    req.end = 0.0;
+    req.output = Output::Times(vec![0.0]);
+    engine.simulate(&req).unwrap();
+    let stats = engine.stats();
+    assert_eq!(stats.steps, 0);
+    assert!(stats.rhs_evals > 0 && stats.jacobian_evals > 0);
+}

@@ -21,7 +21,7 @@ pub trait ModelFns {
     /// order of dependency; `fixed` has a byte per entity (the parameters, then the states), a
     /// fixed entity (not 0) keeps its value.
     fn init(&self, t: f64, p: &mut [f64], y: &mut [f64], fixed: &[u8]);
-    /// The right hand side of the ODEs.
+    /// The differential rates followed by algebraic residuals, in state order.
     fn rhs(&self, t: f64, y: &[f64], p: &[f64], ydot: &mut [f64]);
     /// The values of the Jacobian, in the CSC order of the pattern of the description.
     fn jac(&self, t: f64, y: &[f64], p: &[f64], values: &mut [f64]);
@@ -108,6 +108,7 @@ mod test_models {
             events: vec![],
             n_roots: 0,
             n_discontinuity_roots: 0,
+            n_algebraic: 0,
             n_constants: 0,
             units: BTreeMap::new(),
         }
@@ -637,6 +638,7 @@ mod test_models {
                         n_assignments: e.assignments.len() as u32,
                     })
                     .collect(),
+                n_algebraic: 0,
                 n_roots: self
                     .events
                     .iter()
