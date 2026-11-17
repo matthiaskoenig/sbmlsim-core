@@ -612,8 +612,10 @@ fn read_model(m: X) -> Result<Model, ReadError> {
     })
 }
 
-/// The packages which are read although they are required: their elements annotate the model
-/// and define none of its mathematics, so a model without them is the model the document means.
+/// The namespace URIs, without the version of the package, of the packages which are read
+/// although they are required: their elements annotate the model and define none of its
+/// mathematics, so a model without them is the model the document means. A package is its
+/// namespace URI, never the prefix a document gives it.
 ///
 /// `distrib` carries the uncertainty of a parameter (`<distrib:uncertainty>` of a parameter,
 /// which the models of pkdb_models write for every fitted parameter: the confidence interval
@@ -622,7 +624,7 @@ fn read_model(m: X) -> Result<Model, ReadError> {
 /// draw, a `<csymbol>` of a distribution (`http://www.sbml.org/sbml/symbols/distrib/normal`),
 /// which [`math`](crate::math) refuses as an unknown csymbol wherever a math of the model
 /// stands; the `<math>` of an uncertainty is no child of the parameter and is never read.
-const READ_REQUIRED_PACKAGES: [&str; 1] = ["distrib"];
+const READ_REQUIRED_PACKAGES: [&str; 1] = ["http://www.sbml.org/sbml/level3/version1/distrib/"];
 
 /// The package of a namespace URI such as `.../level3/version1/comp/version1`.
 fn package_name(uri: &str, prefix: Option<&str>) -> String {
@@ -656,11 +658,9 @@ pub(crate) fn read_document(sbml: &str) -> Result<Document, ReadError> {
         if a.name() == "required"
             && let Some(ns) = a.namespace()
             && a.value() == "true"
+            && !READ_REQUIRED_PACKAGES.iter().any(|uri| ns.starts_with(uri))
         {
-            let package = package_name(ns, root.lookup_prefix(ns));
-            if !READ_REQUIRED_PACKAGES.contains(&package.as_str()) {
-                return Err(ReadError::Package(package));
-            }
+            return Err(ReadError::Package(package_name(ns, root.lookup_prefix(ns))));
         }
     }
     let model = child(root, "model").ok_or_else(|| err("<sbml> without a <model>".into()))?;

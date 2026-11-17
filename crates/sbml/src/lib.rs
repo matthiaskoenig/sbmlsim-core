@@ -13,7 +13,8 @@
 //! with `required="false"` (layout, render, fbc annotations, ...) is ignored. A required
 //! package which annotates and computes nothing is read as well and its elements are ignored,
 //! so far `distrib`: a `<distrib:uncertainty>` of a parameter is the uncertainty of the fit
-//! which gave its value, and the mathematics of the model is the same without it. The
+//! which gave its value, and the mathematics of the model is the same without it; such a
+//! package is matched by its namespace URI, never by its prefix. The
 //! mathematics a package defines is refused as any math the reader does not understand: a
 //! draw, the `<csymbol>` of a distribution of `distrib` in a math of the model, is an unknown
 //! csymbol whatever `required` says.
