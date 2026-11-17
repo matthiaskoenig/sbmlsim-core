@@ -17,7 +17,7 @@ A release is made from `develop`. Since `develop` only accepts pull requests, th
     | `CORE_VERSION` of `js/panels.mjs` | `js/prepack.mjs` at `npm pack`, which runs only while the tag publishes |
     | the `compiler` of `testdata/golden/model.json` | `cargo test --all-features`, the job `checks` of `ci.yml` |
     | the header and the `CORE_VERSION` of `python/sbmlsim_core/web/sbmlsim-core.js`, the inline build of the JavaScript host | `python/tests/test_web.py`, the job `python-bindings` of `ci.yml` |
-    | the examples: the CDN of `js/README.md` and of `docs/javascript.md`, the compiler of `docs/simulating.md` | nothing |
+    | the examples: the CDN of `js/README.md` and of `docs/javascript.md`, the compiler of `docs/simulating.md`, the three `tag = "vX.Y.Z"` of the git dependencies of `docs/rust.md` | nothing |
 
     A version left behind in the golden model fails the job `checks` and with it every job which builds a wheel, so a missed place looks like eight of the fourteen checks red while `testsuite-parity` and `testsuite-cases` stay green, the engine itself being unchanged.
 
@@ -36,5 +36,7 @@ A release is made from `develop`. Since `develop` only accepts pull requests, th
     Check the version before pushing: the tag publishes to PyPI and to npm, and a version of either registry cannot be taken back.
 
     The tag makes all three of a release: the python package on PyPI, the package on npm and the release of this repository, named `sbmlsim-core x.y.z` with the body of `release-notes/x.y.z.md`. The job `github_release` makes the last one once both registries carry the version, so a release of this repository never announces a version a registry does not have. Nothing of a release is made by hand.
+
+8. bump the live demo of the documentation, which is vendored from the published npm package and so can only follow the tag: set `NPM_VERSION` of `scripts/demo_assets.py` to the new version, run `uv run scripts/demo_assets.py` to vendor the package and compile the model again, compare it with `uv run scripts/demo_assets.py --check` and take `docs/demo/` through a pull request of its own. Nothing compares this one either, so a demo left behind keeps running the engine of the release before.
 
 `CORE_VERSION` of `js/panels.mjs` is the one version no check of a pull request compares, since `npm pack` runs only while the tag publishes; a release which gets it wrong fails after the tag exists.
