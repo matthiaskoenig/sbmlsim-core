@@ -210,6 +210,8 @@ jobs:
         run: |
           .venv/bin/ruff check
           .venv/bin/ruff format --check
+      - name: The assets of the live demo of the documentation
+        run: .venv/bin/python scripts/demo_assets.py --check
       - name: The tests
         run: .venv/bin/pytest python/tests -q
       - name: The type check of the stub and of a caller (python/typecheck)

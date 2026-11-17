@@ -1,0 +1,11 @@
+{
+  "files": {
+    "engine.wasm": "ab5b9a05114555f036f039cff151d5e7cd8367bd3822bc43b420a5d588379e98",
+    "loader.mjs": "18577a5039cef2ce8bffa72d703df6f491a05f0037ba4160c85b74ccf75fa149",
+    "mathlib.wasm": "7d5d5257181f7a023f30207a6a4057bd6569e70c9028ee6ef33feb93239674b6",
+    "model.json": "09b33ab09e5874ea4727a0c8bb056eaa6fc0b2d9175a6b8f99d67ceab1e1cefc",
+    "model.wasm": "ff852edf106f1b6ae18b4eef3d90d874cefa16fe94534ed61cc3445dc737920a",
+    "repressilator.xml": "b6e05cc413d354597a4a0d2834cf7a27b72318c9a7af225058aa0c9151befdca"
+  },
+  "npm_version": "0.9.0"
+}
