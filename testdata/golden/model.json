@@ -1,6 +1,6 @@
 {
   "contract": "model/2",
-  "compiler": "sbmlsim-compiler 0.9.0",
+  "compiler": "sbmlsim-compiler 0.10.0",
   "id": "golden",
   "states": [
     {
