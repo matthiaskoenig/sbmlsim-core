@@ -1,6 +1,6 @@
 # Development
 
-How a release of sbmlsim-core is made. The toolchain, the build of the engine and the tests are in [Installation](installation.md) and [Test suite and benchmark](testsuite.md).
+How a release of sbmlsim-core is made. The toolchain, the build of the engine and the tests are in [Installation](installation.md) and [Test suite](testsuite.md).
 
 ## Release
 

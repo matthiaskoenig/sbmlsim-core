@@ -6,6 +6,31 @@ The python package `sbmlsim-core` is the compiler and the engine in one extensio
 pip install sbmlsim-core
 ```
 
+## A first simulation
+
+```python
+import sbmlsim_core
+
+compiled = sbmlsim_core.compile_sbml(open("model.xml").read())
+runtime = sbmlsim_core.Runtime()
+model = runtime.load(compiled.wasm, compiled.description)
+instance = model.instance()
+
+request = {
+    "contract": "simulation/1",
+    "start": 0.0,
+    "end": 10.0,
+    "output": {"uniform": {"steps": 100}},
+    "selections": ["time", "[S]"],
+}
+out = instance.simulate(request)
+
+print(out.columns)
+print(out.values)  # a float64 array, (rows, columns)
+```
+
+A `Runtime` and a model are shared between threads, an instance is one simulation at a time, and `model.simulate_many(requests)` runs a batch on rayon threads. The same `compiled.wasm` and `compiled.description` run unchanged in a browser, see [JavaScript](javascript.md), and the same request is the one the [Rust](rust.md) host takes.
+
 PyPI has one abi3 wheel for python 3.14 or newer per platform: linux x86_64 and aarch64 (manylinux_2_28), macOS arm64 and x86_64, windows x86_64. Every wheel carries the same `model.wasm` compiler and the same `mathlib.wasm` as the npm package of the release, so the math of a model is the same everywhere. There is no source distribution; a build from a checkout needs the toolchain of [Installation](installation.md).
 
 ## The engine of the wheel

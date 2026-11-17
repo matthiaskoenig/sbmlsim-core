@@ -15,12 +15,17 @@ nav = [
   { "Overview" = "index.md" },
   { "Installation" = "installation.md" },
   { "Compiling a model" = "compiling.md" },
-  { "Simulating" = "simulating.md" },
-  { "Python" = "python.md" },
-  { "JavaScript" = "javascript.md" },
+  { "Simulation" = "simulating.md" },
   { "Semantics" = "semantics.md" },
-  { "Test suite and benchmark" = "testsuite.md" },
-  { "Benchmarks" = "benchmarks.md" },
+  { "Language bindings" = [
+    { "Python" = "python.md" },
+    { "JavaScript" = "javascript.md" },
+    { "Rust" = "rust.md" },
+  ] },
+  { "Testing" = [
+    { "Benchmarks" = "benchmarks.md" },
+    { "Test suite" = "testsuite.md" },
+  ] },
   { "Contributing" = "development.md" },
   { "Licenses" = "licenses.md" },
 ]

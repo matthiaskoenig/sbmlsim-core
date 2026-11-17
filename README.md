@@ -1,5 +1,12 @@
 # sbmlsim-core
 
+[![ci](https://github.com/matthiaskoenig/sbmlsim-core/actions/workflows/ci.yml/badge.svg)](https://github.com/matthiaskoenig/sbmlsim-core/actions/workflows/ci.yml)
+[![docs](https://github.com/matthiaskoenig/sbmlsim-core/actions/workflows/docs.yml/badge.svg)](https://matthiaskoenig.github.io/sbmlsim-core/)
+[![PyPI](https://img.shields.io/pypi/v/sbmlsim-core.svg?logo=pypi&logoColor=white&label=PyPI)](https://pypi.org/project/sbmlsim-core/)
+[![npm](https://img.shields.io/npm/v/sbmlsim-core.svg?logo=npm&logoColor=white&label=npm)](https://www.npmjs.com/package/sbmlsim-core)
+[![python](https://img.shields.io/pypi/pyversions/sbmlsim-core.svg?logo=python&logoColor=white&label=python)](https://pypi.org/project/sbmlsim-core/)
+[![license](https://img.shields.io/badge/license-MIT%20AND%20BSD--3--Clause%20AND%20LGPL--2.1--or--later-blue.svg)](LICENSE)
+
 An SBML to WebAssembly compiler and a CVODE/KLU simulation engine, written in Rust. The two contracts `model/2` (the description and the exports of a compiled model) and `simulation/1` (the request and the result of a simulation) are defined in `crates/abi`.
 
 Documentation: https://matthiaskoenig.github.io/sbmlsim-core/ (built from `docs/` with Zensical: `uvx --from zensical==0.1.0 zensical build --clean`).
