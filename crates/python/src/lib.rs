@@ -1,6 +1,26 @@
 //! The python bindings of sbmlsim-core: the extension module `sbmlsim_core._core`, which the
 //! package `sbmlsim_core` re-exports.
 
+/// The allocator of the extension module.
+///
+/// A simulation allocates inside the linear memory of the engine, which no allocator of the host
+/// sees, so it is not the simulation this is for. The compiler of a model and Cranelift do
+/// allocate on their hot path, which is visible from outside the process: glibc without its
+/// thread cache (`GLIBC_TUNABLES=glibc.malloc.tcache_count=0`) costs 16 percent of the
+/// compilation of the flat machine perfusion model (919 states), 7 percent of a PBPK model and
+/// 2 percent of a `Runtime`, and nothing of a simulation or a batch. mimalloc takes 21.0 percent
+/// off that compilation, 17.2 percent off a PBPK model, 7.5 percent off the `load` of the large
+/// one and 4.7 percent off a `Runtime`, and lowers the peak resident set size of such a process
+/// by 23.0 percent (the arenas of Cranelift and of the compiler, which it reuses better than
+/// glibc does); a simulation and a batch are unchanged either way. The wheel keeps its tag and
+/// its floor (`manylinux_2_28_x86_64`, no symbol above `GLIBC_2.28`) and grows by 54 kB.
+/// `bench/RESULTS.md` ("CPU features, the instruction set and the allocator") has the numbers.
+///
+/// It is set here and not in a crate which is also an rlib, so that it takes the choice away
+/// from no rust caller: a rust program links `sbmlsim-host` and `sbmlsim-compiler` instead.
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 mod compile;
 mod errors;
 mod runtime;

@@ -7,6 +7,7 @@ The threshold of the project: at most 2x the simulation time of roadrunner nativ
 - The performance round (below, "Performance round"): every model of the benchmark is now faster than roadrunner native in Node and Chrome but Chen and mp_flat dense (1.10 to 1.14) and the event model (0.93 to 1.04); the largest ratio of any host is 1.38 (`repeated_dose`, dense, wasmtime; was 1.60). The PBPK models take 0.45 to 0.61 of roadrunner's time natively, 0.57 to 0.83 in wasmtime, Node and Chrome; Chen with KLU 0.16 to 0.19 (KLU in the ordering AMD). The native engine (`sbmlsim-core bench --host native`) is a new column of every table. The sections after "Performance round" are the measurements before it.
 
 - No ratio is above 2x. The largest is 1.56 (the event model `repeated_dose`, dense, output of 201 times, wasmtime; Node and Chrome 1.05) (1.60 in the rerun after the bound of events which accumulate, below). On the large models the ratio is 1.04 to 1.45 (Chen dense 1.25 to 1.42, KLU 1.04 to 1.16; mp_flat dense 1.27 to 1.45, KLU 1.36 to 1.39), on the PBPK models 0.80 to 0.94, on mp_core 0.91 to 1.04 (dense) and 1.13 to 1.30 (KLU). The engine finds the roots of the conditions of `piecewise` and restarts CVODE there as roadrunner does, with roadrunner's guard against roots which chatter (below), so mp_core and Chen now do roadrunner's work (Chen 4 restarts in both, mp_core 158 against 161 with KLU and 6456 against 4648 dense).
+- CPU features and the instruction set (below, "CPU features, the instruction set and the allocator", issue #15): Cranelift compiles `engine.wasm` on the machine which runs it and enables AVX2 and FMA from its CPUID already, and taking those features away costs nothing (0.97x to 1.04x), since the SIMD of WebAssembly is 128 bits wide. In a native engine AVX2 (`x86-64-v3`) is worth 1.20x to 1.38x on the dense linear solver of a large model and 1.02x to 1.10x everywhere else, and the compilation and instantiation of a model do not depend on the level at all. The startup of a process (626.5 ms of Cranelift on `engine.wasm` against 0.63 ms to deserialize it compiled ahead of time) and the allocator of the extension (mimalloc: -21.0 % on the compilation of mp_flat, -23.0 % peak resident set size, the tag and the glibc floor of the wheel unchanged) are each worth more than any instruction set.
 - Chrome (headless Chrome 157 in a module worker, pinned to the performance cores) measured directly; Node and Chrome agree within a few percent and are 2 % to 13 % faster than wasmtime on the large models.
 - The counters of the integrator are the same in wasmtime, Node and Chrome for every configuration (one `engine.wasm`, the same bits), and every timed simulation repeated the bits of the first.
 - `KLU_THRESHOLD` was 16 (was 64): KLU with the analytic Jacobian is as fast as the dense solver at 11 to 20 states and faster above (0.65 of the dense time at 64 states). Since the performance round it is 12.
@@ -115,6 +116,143 @@ The matrices are small (PBPK) or very sparse (Chen, mp_flat): a factorization of
 - The fused vector operations of SUNDIALS (`N_VEnableFusedOps_Serial`): the same steps, no difference of the time (hctz 0.40 to 0.42 against 0.42 ms, repeated_dose 1.34 to 1.36 against 1.37 to 1.39 ms natively).
 - The discontinuities of the time (a `piecewise` or a trigger of the time alone) as stop times of CVODE instead of root functions: the root functions take 1.5 % of the event model (`cvRcheck3`), Chen restarts 4 times; the restart at a discontinuity is needed in either case.
 - One model with events instead of a request with changes: an event restarts CVODE as a change does; hctz with 7 daily doses as changes takes 342 steps per day against 458 of the single dose, so the restarts cost little (and less with the kept analysis of KLU).
+
+## CPU features, the instruction set and the allocator
+
+The question of issue #15: one wheel which carries several optimized implementations of the
+engine and picks one by the features of the CPU at runtime (AVX2, FMA). Measured on the machine
+of the setup below, an i7-12700 (AVX2 and FMA, no AVX-512), with the models of
+`bench/models.toml`, the analytic Jacobian, `taskset -c 2`, 5 passes of 6 timed simulations
+after 2 warm ups, the configurations taking turns; the tables report the minimum of the passes.
+
+The machine carried other work of its own during this round, which the spread of the passes
+shows (1.05x to 1.3x in the native round, 1.9x to 2.5x in the wasm round), and the minimum is
+the least contended estimate rather than a quiet one. So the ratios within a table are what this
+section says; its absolute times are not comparable with the tables of the performance round
+above, where the wasm times were 2x lower on a quiet machine. The counters of the integrator are
+identical in every configuration of both tables, so no configuration changes a result.
+
+### The wasm engine already dispatches on the features of the CPU
+
+`engine.wasm` and `model.wasm` are compiled to machine code by Cranelift on the machine which
+runs them (`Runtime::new`, `Config::new()` without a target), and `cranelift-native` enables
+`has_sse3`, `has_sse41`, `has_sse42`, `has_avx`, `has_avx2`, `has_fma`, `has_bmi1`, `has_bmi2`
+and `has_lzcnt` from the CPUID of the host. The wheel therefore dispatches per machine already,
+and exactly rather than in a few buckets. What those features are worth is measured by taking
+them away (the Cranelift flags set to false in the configuration of the engine, a temporary knob
+of `Runtime::new`):
+
+| model | solver | the features of the host | without AVX, AVX2, FMA, BMI |
+|---|---|---:|---:|
+| hctz | dense | 1.030 ms | 1.033 ms (1.00x) |
+| hctz | klu | 0.849 ms | 0.840 ms (1.01x) |
+| midazolam | dense | 0.914 ms | 0.927 ms (0.99x) |
+| midazolam | klu | 0.647 ms | 0.652 ms (0.99x) |
+| repeated_dose | dense | 2.688 ms | 2.779 ms (0.97x) |
+| repeated_dose | klu | 2.909 ms | 2.916 ms (1.00x) |
+| mp_core | dense | 193.5 ms | 192.4 ms (1.01x) |
+| mp_core | klu | 10.01 ms | 9.89 ms (1.01x) |
+| chen | dense | 3154 ms | 3199 ms (0.99x) |
+| chen | klu | 128.5 ms | 124.0 ms (1.04x) |
+| mp_flat | dense | 8483 ms | 8427 ms (1.01x) |
+| mp_flat | klu | 130.4 ms | 131.3 ms (0.99x) |
+
+Nothing: the fixed-width SIMD of WebAssembly is 128 bits wide, the wider vectors of AVX2 are not
+reachable from it, relaxed SIMD (which would give a fused multiply add) is off by contract, and
+what Cranelift does with AVX is mostly the three-operand encodings of the same SSE operations.
+An engine compiled ahead of time for a baseline x86-64 would lose nothing either.
+
+### The instruction set of a native engine
+
+The only code of the wheel which an instruction set could be chosen for is the native code of
+the extension (the compiler of a model, the marshalling, Cranelift itself) and, if the engine
+ever ran natively instead of as `engine.wasm`, the integrator. The native engine
+(`bench --host native`) built at four levels, the Rust code with `-C target-cpu` and the C of
+SUNDIALS and KLU with `-march` of the same level (`cc` appends its own `-march=x86-64` for the
+target, so the level has to come after it; the build script of `sbmlsim-csolvers` removes
+`CFLAGS` from the environment by design, so a wrapper of `CC` is the way in):
+
+| model | solver | x86-64 | x86-64-v2 | x86-64-v3 (AVX2) | native |
+|---|---|---:|---:|---:|---:|
+| hctz | dense | 0.531 ms | 0.97x | 1.10x | 0.98x |
+| hctz | klu | 0.381 ms | 0.96x | 1.06x | 0.92x |
+| midazolam | dense | 0.472 ms | 0.98x | 1.09x | 1.01x |
+| midazolam | klu | 0.288 ms | 0.98x | 0.97x | 0.96x |
+| repeated_dose | dense | 1.302 ms | 0.99x | 0.99x | 1.01x |
+| repeated_dose | klu | 1.363 ms | 1.00x | 1.00x | 1.00x |
+| mp_core | dense | 110.7 ms | 1.05x | 1.20x | 1.13x |
+| mp_core | klu | 5.20 ms | 1.01x | 1.04x | 0.96x |
+| chen | dense | 1136 ms | 1.00x | 1.35x | 1.23x |
+| chen | klu | 71.3 ms | 1.09x | 1.07x | 1.10x |
+| mp_flat | dense | 3265 ms | 1.06x | 1.38x | 1.30x |
+| mp_flat | klu | 68.6 ms | 1.00x | 1.02x | 1.03x |
+
+AVX2 is worth 1.20x to 1.38x on the dense linear solver of a large model and nothing anywhere
+else: 1.02x to 1.07x with KLU, which `linear_solver = auto` takes above `KLU_THRESHOLD` states
+and which is 10x to 48x faster than the dense solver on those models in any case, 1.06x to 1.10x
+for the dense solver of a PBPK model, and 1.00x for the event model. `x86-64-v2` is worth
+nothing, and `-march=native` nothing beyond `x86-64-v3`. The compilation of a model and its
+instantiation do not depend on the level at all (Chen 60.7 against 59.2 ms and 174.9 against
+173.0 ms, mp_flat 127.6 against 125.5 ms and 366.3 against 364.3 ms), so the native code which
+the wheel carries today gains nothing from an instruction set either.
+
+A fused multiply add is not available in any case: the `exp`, `log` and `pow` of mathlib are
+ported with `HAVE_FAST_FMA == 0` and the C solvers are compiled `-ffp-contract=off
+-fno-fast-math`, both so that native and wasm give the same bits. The `-march=x86-64-v3` objects
+of this measurement hold 242 uses of a `ymm` register and no `vfmadd`.
+
+### The startup, which is where the time of a small simulation goes
+
+Cranelift compiles `engine.wasm` once per process. The cost of that compilation against the cost
+of deserializing the same module compiled ahead of time (wasmtime 50.0.1, the configuration of
+`Runtime::new`, the median of 5):
+
+| module | bytes | Cranelift | `Module::deserialize` | the serialized module |
+|---|---:|---:|---:|---:|
+| `engine.wasm` | 725196 | 626.5 ms | 0.63 ms | 2101 KiB |
+| `mathlib.wasm` | 58668 | 42.0 ms | 0.08 ms | 170 KiB |
+| hctz `model.wasm` | 19016 | 10.6 ms | 0.03 ms | 55 KiB |
+| mp_core `model.wasm` | 23418 | 13.9 ms | 0.04 ms | 67 KiB |
+| chen `model.wasm` | 240133 | 197.4 ms | 0.14 ms | 487 KiB |
+| mp_flat `model.wasm` | 549195 | 374.1 ms | 0.29 ms | 1163 KiB |
+
+In the python package, a process which simulates hctz spends 564 ms in `Runtime()`, 2.9 ms in
+`compile_sbml`, about 10 ms in `load` and 0.74 ms in a simulation of 201 points, and a scan of
+512 such simulations takes 445 ms on one thread and 67 ms on eight. The startup is most of such
+a run, so a cache of the compiled modules (`Config::cache`, which keeps one portable wheel
+because the cache is written on the machine that runs it) is worth far more than any choice of
+an instruction set.
+
+### mimalloc as the allocator of the extension
+
+The allocator is on the hot path of the compiler of a model and of Cranelift, not of a
+simulation (which allocates inside the linear memory of the engine): glibc without its thread
+cache (`GLIBC_TUNABLES=glibc.malloc.tcache_count=0`) costs 16 % of the compilation of mp_flat,
+7 % of hctz and 2 % of `Runtime()`, and nothing of a simulation or a batch. mimalloc as the
+`#[global_allocator]` of `sbmlsim-python` (as pkpdutils-core does it), both wheels built as CI
+builds them (`maturin build --release --zig --compatibility manylinux_2_28`) with the same
+`engine.wasm`, the minimum of 3 passes which take turns, python 3.14:
+
+| shape | glibc malloc | mimalloc | change |
+|---|---:|---:|---:|
+| `Runtime()` | 557.1 ms | 530.9 ms | -4.7 % |
+| `compile_sbml` hctz | 2.9 ms | 2.4 ms | -17.2 % |
+| `compile_sbml` mp_flat | 124.6 ms | 98.4 ms | -21.0 % |
+| `load` mp_flat | 358.0 ms | 331.0 ms | -7.5 % |
+| one simulation of hctz | 0.74 ms | 0.73 ms | -2.2 % |
+| a scan of 512, one thread | 438.5 ms | 403.8 ms | -7.9 % |
+| a scan of 512, 4 threads | 110.9 ms | 111.5 ms | +0.5 % |
+| a scan of 512, 8 threads | 66.7 ms | 65.9 ms | -1.2 % |
+| peak resident set size | 430.2 MiB | 331.4 MiB | -23.0 % |
+
+The wheel keeps its tag and its floor: `manylinux_2_28_x86_64`, no symbol above `GLIBC_2.28`, the
+same four needed libraries, 5296238 against 5349837 bytes (the extension 15036376 against
+15163248). The tests of `python/tests` and the type check of `python/typecheck` pass against the
+installed wheel. Unlike an instruction set, an allocator travels inside the artifact and depends
+on nothing about the machine which installs it, and it cannot change a result. On this
+repository the peak resident set size falls rather than rises (the arenas of Cranelift and of
+the compiler, which mimalloc reuses better than glibc), where pkpdutils-core measured a third
+more on its own hot shape.
 
 ## Setup
 
