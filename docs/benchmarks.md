@@ -84,4 +84,4 @@ uv run scripts/roadrunner_reference.py bench/sbmlsim.toml --only perfusion \
 uv run scripts/bench_figure.py target/bench/sb --out docs/images
 ```
 
-The two runs of a host are one file per host (`sb-<host>.json`, the models of the second added to the first), since the large model is measured with KLU alone while the four small ones are measured with both solvers, and the export of the JavaScript hosts holds all five models.
+The two runs of a host are one file per host (`sb-<host>.json`, the models of the second added to the first), since the large model is measured with KLU alone while the four small ones are measured with both solvers, and the export of the JavaScript hosts holds all five models. `scripts/roadrunner_reference.py` has no switch for the solver and measures the large model with both, which is where the dense number above comes from; only its KLU is a cell of the tables, and skipping that run of 34 minutes costs nothing but that one number.
