@@ -13,7 +13,11 @@ description = "The wasmtime host of sbmlsim-core: links mathlib, a compiled mode
 
 [features]
 default = []
-native = ["dep:sbmlsim-engine", "sbmlsim-engine/test-models"]
+# The native engine for a caller which simulates with it, e.g. the python bindings: only the
+# engine, so that a wheel carries no test model. The tests of this crate reach `Decay` and
+# `Robertson` through the dev-dependency on the engine below, which enables `test-models` for
+# a test build alone.
+native = ["dep:sbmlsim-engine"]
 
 [dependencies]
 anyhow = "1"
@@ -33,6 +37,9 @@ sbmlsim-abi = { path = "../abi" }
 [dev-dependencies]
 # compiled models, whose description is compared with what their module computes
 sbmlsim-compiler = { path = "../compiler" }
+# `Decay` and `Robertson` of `golden.rs` and `wat_model.rs`; a dev-dependency, so the feature
+# `native` of a build which is not a test build carries no test model
+sbmlsim-engine = { path = "../engine", features = ["test-models"] }
 serde_json.workspace = true
 tempfile = "3"
 wat = "1"

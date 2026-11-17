@@ -40,7 +40,7 @@ Node 20 or newer runs the JavaScript host and its tests (CI uses Node 24). [uv](
 
 On windows the native C solvers (`sbmlsim-csolvers`, which the command line and the python package link) are compiled with the `clang` of [LLVM](https://releases.llvm.org/) on the path, unless `CC` names another compiler; `cl` of MSVC cannot compile them.
 
-The python extension links mimalloc, the allocator of the extension module (`crates/python/src/lib.rs`): `cc` compiles its vendored C sources with the C compiler of the target, the `cl` of MSVC among them, so a source build of the python package needs a C compiler but no particular one. The wheels are built as before and keep their tags: the linux ones `manylinux_2_28` with no symbol above `GLIBC_2.28`.
+The python extension links mimalloc, the allocator of the extension module (`crates/python/src/lib.rs`), and the native engine it simulates on (`crates/csolvers`: SUNDIALS CVODE and SuiteSparse KLU from the submodules of `third_party`), so a source build of the python package compiles C. `cc` uses the C compiler of the target, except for a target of MSVC, where it needs the `clang` of LLVM on the path rather than `cl`, which reads neither the GNU attributes of the configuration of SUNDIALS nor the flags the build script sets. The wheels are built as before and keep their tags: the linux ones `manylinux_2_28` with no symbol above `GLIBC_2.28`.
 
 `cargo build` builds `engine.wasm` (wasm32-wasip1, the C solvers compiled with the clang of wasi-sdk, `WASI_SDK_PATH`) and `mathlib.wasm` (wasm32-unknown-unknown) in the build script of `sbmlsim-host`, which embeds them; `SBMLSIM_CORE_WASM_DIR` names a directory with prebuilt ones instead.
 

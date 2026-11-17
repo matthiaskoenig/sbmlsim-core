@@ -26,5 +26,9 @@ pythonize = "0.30"
 rayon = "1.10"
 sbmlsim-abi = { path = "../abi" }
 sbmlsim-compiler = { path = "../compiler" }
-sbmlsim-host = { path = "../host" }
+# The native engine: the integrator compiled for the machine of the wheel (CVODE and KLU built
+# by `crates/csolvers`) with `model.wasm` and `mathlib.wasm` in wasmtime, which simulates about
+# twice as fast as `engine.wasm` in wasmtime does (`bench/SBMLSIM.md`). Its results are not
+# bitwise those of `engine.wasm`, see `crates/host/src/native.rs`.
+sbmlsim-host = { path = "../host", features = ["native"] }
 serde_path_to_error = "0.1.20"

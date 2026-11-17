@@ -1,12 +1,25 @@
 # Python
 
-The python package `sbmlsim-core` is the compiler and the engine in one extension, which runs `engine.wasm` on wasmtime. A model compiled from python is the `model.wasm` and `model.json` the command line writes, so it runs unchanged in a browser with the [JavaScript host](javascript.md).
+The python package `sbmlsim-core` is the compiler and the engine in one extension. It simulates on the native engine: the integrator compiled for the machine of the wheel, with CVODE and SuiteSparse KLU built from their sources, and the model itself as the `model.wasm` and `mathlib.wasm` wasmtime compiles. A model compiled from python is the `model.wasm` and `model.json` the command line writes, so it runs unchanged in a browser with the [JavaScript host](javascript.md).
 
 ```bash
 pip install sbmlsim-core
 ```
 
-PyPI has one abi3 wheel for python 3.14 or newer per platform: linux x86_64 and aarch64 (manylinux_2_28), macOS arm64 and x86_64, windows x86_64. Every wheel embeds the same `engine.wasm` and `mathlib.wasm`, the ones of the npm package of the release, so a simulation gives bitwise the same results on every platform and in the browser. There is no source distribution; a build from a checkout needs the toolchain of [Installation](installation.md).
+PyPI has one abi3 wheel for python 3.14 or newer per platform: linux x86_64 and aarch64 (manylinux_2_28), macOS arm64 and x86_64, windows x86_64. Every wheel carries the same `model.wasm` compiler and the same `mathlib.wasm` as the npm package of the release, so the math of a model is the same everywhere. There is no source distribution; a build from a checkout needs the toolchain of [Installation](installation.md).
+
+## The engine of the wheel
+
+A wheel simulates on the native engine and not on `engine.wasm`, which is about twice as fast: on the four packaged models of [sbmlsim](https://github.com/matthiaskoenig/sbmlsim) one simulation takes 0.0103 to 0.339 ms natively against 0.0229 to 0.710 ms with `engine.wasm` in wasmtime (`bench/SBMLSIM.md`, one performance core). The model is `model.wasm` in both, so only the integrator changes.
+
+What this costs is the last bits. CVODE calls the `pow` and `sqrt` of the C library of the platform where the step size is chosen (`SUNRpowerR`), `engine.wasm` calls those of wasi-libc, so:
+
+- a result of a wheel is **not** bitwise a result of `engine.wasm`, i.e. not bitwise a result of the same model in the browser or under `node`;
+- a result of a wheel is not guaranteed bitwise across platforms either, since the C library is the platform's.
+
+How large those differences are, measured: on the four packaged models of sbmlsim the integrator took the **identical path** in the native engine, in wasmtime and under Node, all sixteen configurations of a model, a solver and a Jacobian agreeing on every counter (steps, right hand side evaluations, Jacobian evaluations, nonlinear iterations, error test failures), so nothing of those results moved. On the golden model of `crates/host/tests/native.rs`, which has events, root functions and a steady state in its request, 3 of 30 values differ and the largest relative difference is 1.0e-14, against an integration at a relative tolerance of 1e-6. So the two engines can differ, and where they do it is near the last bits of a double and far below the error of the integration.
+
+Within one platform and one wheel a result is reproducible as before: the C sources are compiled with `-O3 -DNDEBUG -ffp-contract=off -fno-fast-math`, so no fused multiply-add and no fast math enter a result, every instance of a model integrates the same way, and a batch gives the results of a serial run bitwise whatever its threads. The differences are those of an integration at the given tolerances, which is what [Simulating](simulating.md) compares engines at; `sbmlsim-core bench --host wasmtime` and the [JavaScript host](javascript.md) are the way to a result of `engine.wasm`.
 
 ## Compile and simulate
 
