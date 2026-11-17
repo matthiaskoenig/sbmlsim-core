@@ -195,6 +195,74 @@ fn the_sbml_of_decay_wat_computes_its_bits() {
 }
 
 #[test]
+fn the_uncertainty_of_a_fitted_parameter_changes_no_value() {
+    // decay.xml with the required distrib package and the uncertainty of the fit which gave
+    // `k`, as the models of pkdb_models write it: the elements annotate the parameter and the
+    // compiled model is the one of the document without them, bit for bit
+    let sbml =
+        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/decay.xml"))
+            .unwrap();
+    let distrib = sbml
+        .replace(
+            r#"level="3" version="2""#,
+            r#"xmlns:distrib="http://www.sbml.org/sbml/level3/version1/distrib/version1" level="3" version="2" distrib:required="true""#,
+        )
+        .replace(
+            r#"<parameter id="k" value="0.5" constant="true"/>"#,
+            r#"<parameter metaid="meta_k" id="k" value="0.5" constant="true">
+        <distrib:listOfUncertainties>
+          <distrib:uncertainty distrib:name="fit PK_20261028_003811__eb362">
+            <distrib:uncertSpan distrib:name="95 % confidence interval (profile likelihood)" distrib:units="dimensionless" distrib:type="confidenceInterval" distrib:valueLower="0.449782163912786" distrib:valueUpper="0.557640733722810"/>
+            <distrib:uncertParameter distrib:name="standard error (Fisher information)" distrib:value="0.029663600785681" distrib:units="dimensionless" distrib:type="standardError"/>
+            <distrib:uncertParameter distrib:name="distribution of the draws" distrib:type="distribution">
+              <math xmlns="http://www.w3.org/1998/Math/MathML">
+                <apply>
+                  <csymbol encoding="text" definitionURL="http://www.sbml.org/sbml/symbols/distrib/lognormal"> lognormal </csymbol>
+                  <cn> -0.693147180559945 </cn>
+                  <cn> 0.059327201571362 </cn>
+                  <cn> 0.1 </cn>
+                  <cn> 10 </cn>
+                </apply>
+              </math>
+            </distrib:uncertParameter>
+          </distrib:uncertainty>
+        </distrib:listOfUncertainties>
+      </parameter>"#,
+        );
+    assert!(distrib.contains("distrib:uncertainty"), "{distrib}");
+    let req = request(10.0, 10, &["time", "y", "t_half"]);
+    let values = |sbml: &str| {
+        let compiled = compile(sbml, &CompileOptions::default()).unwrap();
+        assert_eq!(
+            compiled
+                .description
+                .parameters
+                .iter()
+                .find(|p| p.id == "k")
+                .map(|p| p.initial),
+            Some(0.5)
+        );
+        runtime()
+            .instantiate(&compiled.wasm, &compiled.description)
+            .unwrap()
+            .simulate(&req)
+            .unwrap()
+    };
+    let with = values(&distrib);
+    let without = values(&sbml);
+    assert_eq!(with.columns, without.columns);
+    let bits = |v: &[f64]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+    assert_eq!(bits(&with.values), bits(&without.values));
+    // the ODE is simulated: y(t) = exp(-k t)
+    let k = 0.5;
+    let y: Vec<f64> = with.values.chunks(3).map(|row| row[1]).collect();
+    for (i, y) in y.iter().enumerate() {
+        let expected = (-k * i as f64).exp();
+        assert!((y - expected).abs() < 1e-8, "y({i}) = {y}, not {expected}");
+    }
+}
+
+#[test]
 fn a_later_time_column_is_the_entity_time() {
     let sbml = r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2"><model><listOfParameters><parameter id="time" value="10" constant="true"/></listOfParameters></model></sbml>"#;
     let compiled = compile(sbml, &CompileOptions::default()).unwrap();

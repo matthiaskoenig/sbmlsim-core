@@ -14,7 +14,7 @@ cargo run -p sbmlsim-cli -- compile crates/host/tests/decay.xml -o decay-model
 
 ## What the compiler reads
 
-The reader (`crates/sbml`) takes SBML Level 3 Version 2 core. A package whose `required` attribute is `"true"` is refused (`the required package comp is not supported`); `comp` must be flattened before. A package with `required="false"` (layout, render, fbc annotations, ...) is ignored. Units pass through as text and nothing is computed with them: a unit definition becomes a unit expression which a unit registry such as pint parses (`mmol/min` as `0.001*mole*(60*second)**-1`), the field `units` of `model.json`.
+The reader (`crates/sbml`) takes SBML Level 3 Version 2 core. A package with `required="false"` (layout, render, fbc annotations, ...) is ignored, and a package whose `required` attribute is `"true"` is refused (`the required package comp is not supported`): `comp` must be flattened before, a model read without its submodels is another model. A required package whose elements only annotate the model is read as well, its elements ignored as those of an optional one, so far `distrib`: it carries the uncertainty of a parameter (`<distrib:uncertainty>`, which the models of pkdb_models write for every fitted parameter: the confidence interval of the profile likelihood, the standard error of the Fisher information and the distribution of the draws), and the mathematics of the model is the same without it. The package is read by its namespace URI, never by its prefix, and only the elements of an uncertainty are read of it (`listOfUncertainties`, `uncertainty`, `listOfUncertParameters`, `uncertParameter`, `uncertSpan`, the whole of the package as libsbml implements it): any other element of that namespace is refused with its name (`<drawFromDistribution> of the namespace ... is not supported`), not ignored, so that no element which computes is dropped on the way to a deterministic simulation. A draw is therefore refused in either shape it has, whatever `required` says: the `<csymbol>` of a distribution (`http://www.sbml.org/sbml/symbols/distrib/normal`) in a math of the model is an unknown csymbol, as any math the reader does not understand, and the `<distrib:drawFromDistribution>` element of the drafts of the package is an element of the namespace which is no uncertainty. Units pass through as text and nothing is computed with them: a unit definition becomes a unit expression which a unit registry such as pint parses (`mmol/min` as `0.001*mole*(60*second)**-1`), the field `units` of `model.json`.
 
 A feature the engine does not simulate as sbmlsim does is refused with its element (`algebraic rule is not supported (algebraicRule #0)`), and so is a model which is not valid SBML (an unknown identifier, a cycle of assignment rules). In the SBML Test Suite the refusals are the algebraic rules, the `delay` csymbol and the fast reactions (see [Test suite and benchmark](testsuite.md)). Missing math is handled as libroadrunner 2.11 handles it: a rule or an initial assignment without math is ignored, an event without a trigger is ignored, a delay or a priority without math is none; a kinetic law without math, a call of a function definition without math and an empty `<math>` are refused.
 
@@ -30,7 +30,7 @@ The Jacobian is analytic, on its sparsity pattern. A model whose math has no der
 
 ## Preparing a model
 
-A model of another level or version, with `comp` or with the uncertainties of `distrib`, is prepared with `scripts/prepare_model.py` first (libsbml, run with uv):
+A model of another level or version or with `comp` is prepared with `scripts/prepare_model.py` first (libsbml, run with uv):
 
 ```bash
 uv run scripts/prepare_model.py model.xml -o prepared.xml
@@ -38,7 +38,7 @@ sbmlsim-core compile prepared.xml -o model-dir
 ```
 
 - `comp` is flattened.
-- The elements and annotations of `distrib` are stripped: the uncertainties of `distrib` (`<distrib:listOfUncertainties>` of the parameters of a fit) are metadata and do not change a simulation. A distribution function of `distrib` in a math (`normal(0, 1)` as a csymbol) would change it, so such a model is refused with a non-zero exit, naming the element (`initialAssignment of x (normal)`).
+- The elements and annotations of `distrib` are stripped, which the compiler does not need (it reads the package and ignores them, see above): the uncertainties of `distrib` (`<distrib:listOfUncertainties>` of the parameters of a fit) are metadata and do not change a simulation. A distribution function of `distrib` in a math (`normal(0, 1)` as a csymbol) would change it, so such a model is refused with a non-zero exit, naming the element (`initialAssignment of x (normal)`), as the compiler refuses it.
 - The model is converted to L3V2.
 - The rest of the model (non-required packages such as `fbc` and `layout`, notes, annotations) is kept.
 
