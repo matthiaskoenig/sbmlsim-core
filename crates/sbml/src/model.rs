@@ -612,19 +612,69 @@ fn read_model(m: X) -> Result<Model, ReadError> {
     })
 }
 
-/// The namespace URIs, without the version of the package, of the packages which are read
-/// although they are required: their elements annotate the model and define none of its
-/// mathematics, so a model without them is the model the document means. A package is its
-/// namespace URI, never the prefix a document gives it.
+/// The packages which are read although they are required, each as the namespace URI it is
+/// identified by, without the version of the package, and the elements of it which annotate the
+/// model: those define none of its mathematics, so a model without them is the model the
+/// document means. A package is its namespace URI, never the prefix a document gives it.
 ///
 /// `distrib` carries the uncertainty of a parameter (`<distrib:uncertainty>` of a parameter,
 /// which the models of pkdb_models write for every fitted parameter: the confidence interval
 /// of the profile likelihood, the standard error of the Fisher information and the
-/// distribution of the draws). The one distrib construct which reaches the mathematics is a
-/// draw, a `<csymbol>` of a distribution (`http://www.sbml.org/sbml/symbols/distrib/normal`),
-/// which [`math`](crate::math) refuses as an unknown csymbol wherever a math of the model
-/// stands; the `<math>` of an uncertainty is no child of the parameter and is never read.
-const READ_REQUIRED_PACKAGES: [&str; 1] = ["http://www.sbml.org/sbml/level3/version1/distrib/"];
+/// distribution of the draws). The elements listed are the whole of the package as libsbml
+/// 5.21.2 implements it, its reference implementation (`externalParameter` is no element of it
+/// but a `type` of an `<distrib:uncertParameter>`); every other element of the namespace is
+/// refused by [`check_read_package_elements`], because the reader would ignore it as it ignores
+/// everything which is not core. What reaches the mathematics is a draw, which the released
+/// package writes as a `<csymbol>` of a distribution
+/// (`http://www.sbml.org/sbml/symbols/distrib/normal`), refused by [`math`](crate::math) as an
+/// unknown csymbol wherever a math of the model stands, and the drafts of the package as a
+/// `<distrib:drawFromDistribution>` element, refused as an element of the namespace which is no
+/// uncertainty. The `<math>` of an uncertainty is no child of the parameter and is never read.
+const READ_REQUIRED_PACKAGES: [(&str, &[&str]); 1] = [(
+    "http://www.sbml.org/sbml/level3/version1/distrib/",
+    &[
+        "listOfUncertainties",
+        "uncertainty",
+        "listOfUncertParameters",
+        "uncertParameter",
+        "uncertSpan",
+    ],
+)];
+
+/// The elements of a read package which annotate, or `None` for a namespace of no read package.
+fn read_package_elements(ns: &str) -> Option<&'static [&'static str]> {
+    READ_REQUIRED_PACKAGES
+        .iter()
+        .find(|(uri, _)| ns.starts_with(uri))
+        .map(|(_, elements)| *elements)
+}
+
+/// Refuses an element of a read package which is none of the elements of it which annotate.
+///
+/// A read package is read for its annotations, which the reader ignores as it ignores every
+/// element that is not core. An element of such a package which computes must not be ignored:
+/// a draw of the drafts of distrib (`<distrib:drawFromDistribution>` of a function definition,
+/// of an initial assignment or of a rule, with the distribution in UncertML beside it) or an
+/// element of a later version of the package would be dropped without a trace and the model
+/// simulated as if it were not there, which is worse than a model refused. The elements of the
+/// other packages are not looked at: a package which is not read is refused by its `required`
+/// when it changes the model, and ignored when it declares that it does not.
+fn check_read_package_elements(root: X) -> Result<(), ReadError> {
+    for n in root.descendants() {
+        let tag = n.tag_name();
+        if n.is_element()
+            && let Some(ns) = tag.namespace()
+            && let Some(annotations) = read_package_elements(ns)
+            && !annotations.contains(&tag.name())
+        {
+            return Err(err(format!(
+                "<{}> of the namespace {ns} is not supported: of that package only the elements of an uncertainty are read, which annotate the model and compute nothing",
+                tag.name()
+            )));
+        }
+    }
+    Ok(())
+}
 
 /// The package of a namespace URI such as `.../level3/version1/comp/version1`.
 fn package_name(uri: &str, prefix: Option<&str>) -> String {
@@ -658,11 +708,12 @@ pub(crate) fn read_document(sbml: &str) -> Result<Document, ReadError> {
         if a.name() == "required"
             && let Some(ns) = a.namespace()
             && a.value() == "true"
-            && !READ_REQUIRED_PACKAGES.iter().any(|uri| ns.starts_with(uri))
+            && read_package_elements(ns).is_none()
         {
             return Err(ReadError::Package(package_name(ns, root.lookup_prefix(ns))));
         }
     }
+    check_read_package_elements(root)?;
     let model = child(root, "model").ok_or_else(|| err("<sbml> without a <model>".into()))?;
     Ok(Document {
         level,
