@@ -17,8 +17,6 @@ npm install sbmlsim-core
 
 A page imports the modules from its own files or from a CDN (`https://cdn.jsdelivr.net/npm/sbmlsim-core@0.9.0/panels.mjs`); a pool of a module of another origin starts its workers through a module of the page's own origin, which browsers require of a worker. A checkout serves the files of `js/` with the runtime of a build (`sbmlsim-core runtime -o js/runtime`, see [Installation](installation.md#building)). A release publishes the package from the tag `vX.Y.Z` (`.github/workflows/publish.yml`, trusted publishing with provenance, together with the python package on PyPI); the version of `js/package.json` is the one of the crates and of `CORE_VERSION`, which `npm pack` checks.
 
-## The loader
-
 ## A first simulation
 
 ```js
@@ -45,6 +43,213 @@ console.log(columns, nRows, values); // values: a Float64Array, row major
 ```
 
 `model.wasm` and `model.json` are what `sbmlsim-core compile` writes, or what the [Python](python.md) binding compiles; the request is the one every host takes, see [Rust](rust.md). The rest of this page is the API in detail.
+
+## A live simulation in this page
+
+The repressilator (Elowitz and Leibler 2000, [BIOMD0000000012](https://www.ebi.ac.uk/biomodels/BIOMD0000000012)) is three repressors in a ring, each one repressing the next. Whether the ring oscillates or settles depends on how cooperative the repression is, the Hill coefficient `n`. Move the slider: everything below is compiled, instantiated and integrated in this page, with no server and nothing but the files of this site.
+
+<div class="rp" data-base="../demo/">
+<div class="rp-head">
+<label class="rp-knob">Hill coefficient <b>n</b><input class="rp-range" type="range" min="1" max="4" step="0.05" value="2" aria-label="Hill coefficient n"><output class="rp-value">2.00</output></label>
+<p class="rp-state">loading the engine ...</p>
+</div>
+<svg class="rp-plot" viewBox="0 0 660 270" role="img" aria-label="The three repressilator proteins PX, PY and PZ over 200 time units. The same numbers are in the table below the figure."></svg>
+<details class="rp-table"><summary>The simulated values</summary><div></div></details>
+</div>
+
+Below `n` of about 1.5 the ring settles to a steady state; above it the three proteins chase each other around the ring and the amplitude grows with `n`. The engine is the same `engine.wasm` the command line and the python wheel run, so these are the numbers of [the benchmarks](benchmarks.md), produced in the browser of the reader.
+
+This is the whole of it, the loader and the two modules of the engine taken from the npm package:
+
+```js
+import { createRuntime } from "sbmlsim-core";
+
+const fetchBytes = (name) => fetch(name).then((r) => r.arrayBuffer());
+const runtime = await createRuntime({
+  engine: await fetchBytes("engine.wasm"),
+  mathlib: await fetchBytes("mathlib.wasm"),
+});
+const instance = await runtime.instantiate(
+  await fetchBytes("model.wasm"),
+  await fetch("model.json").then((r) => r.text()),
+);
+
+const simulate = (n) =>
+  instance.simulate({
+    contract: "simulation/1",
+    start: 0,
+    end: 200,
+    output: { uniform: { steps: 400 } },
+    preinit: [["n", n]],          // the one value the slider sets
+    changes: [],
+    steady_state: null,
+    selections: ["time", "PX", "PY", "PZ"],
+    settings: {
+      relative_tolerance: 1e-8,
+      absolute_tolerance: { scalar: 1e-10 },
+      maximum_num_steps: 100000,
+      maximum_time_step: 0,
+      initial_time_step: 0,
+      stiff: true,
+      linear_solver: "dense",
+      jacobian: "auto",
+    },
+    seed: 0,
+  });
+
+const { columns, nRows, values } = simulate(2.0); // values: a Float64Array, row major
+```
+
+`instance.simulate` is synchronous and takes one to two milliseconds here, which is why the slider can redraw on every `input` event without a worker. That is longer than the 0.2 ms the [benchmarks](benchmarks.md) report for this model, because this simulation runs twice as far, asks for four times the output rows and integrates at a hundred times the accuracy; the readout above is what the browser measures, coarsened to a tenth of a millisecond as browsers coarsen their clock. A model whose simulations are long enough to be felt belongs in `js/pool.mjs` instead, see [the worker pool](#the-worker-pool); `model.wasm` and `model.json` here are what `sbmlsim-core compile` wrote, and `docs/demo/` holds them with the vendored runtime (`scripts/demo_assets.py`).
+
+<style>
+.rp { margin: 1rem 0 1.4rem; --rp-a: #2a78d6; --rp-b: #eb6834; --rp-c: #1baf7a;
+  --rp-ink: var(--md-default-fg-color, #1a1a19); --rp-soft: var(--md-default-fg-color--light, #6b6b68);
+  --rp-line: var(--md-default-fg-color--lighter, #d6d6d3); }
+[data-md-color-scheme="slate"] .rp { --rp-a: #3987e5; --rp-b: #d95926; --rp-c: #199e70; }
+.rp-head { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem 1.4rem; margin-bottom: .5rem; }
+.rp-knob { display: flex; align-items: center; gap: .6rem; font-size: .82rem; }
+.rp-range { width: 15rem; max-width: 46vw; accent-color: var(--rp-a); }
+.rp-value { font-variant-numeric: tabular-nums; font-weight: 600; min-width: 2.6rem; }
+.rp-state { margin: 0; font-size: .76rem; color: var(--rp-soft); font-variant-numeric: tabular-nums; }
+.rp-plot { width: 100%; height: auto; }
+.rp-plot text { fill: var(--rp-soft); font-size: 11px;
+  font-family: var(--md-text-font-family, system-ui), sans-serif; }
+.rp-plot .rp-name { font-size: 12px; font-weight: 600; }
+.rp-plot .rp-axis { stroke: var(--rp-line); stroke-width: 1; }
+.rp-plot .rp-curve { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.rp-table { margin-top: .4rem; font-size: .76rem; }
+.rp-table summary { cursor: pointer; color: var(--rp-soft); }
+.rp-table table { font-variant-numeric: tabular-nums; }
+.rp-failed { color: var(--rp-ink); }
+</style>
+<script type="module">
+const root = document.querySelector(".rp");
+if (root) {
+  const base = root.dataset.base;
+  const plot = root.querySelector(".rp-plot");
+  const state = root.querySelector(".rp-state");
+  const range = root.querySelector(".rp-range");
+  const value = root.querySelector(".rp-value");
+  const table = root.querySelector(".rp-table div");
+  const SERIES = [
+    { id: "PX", color: "--rp-a" },
+    { id: "PY", color: "--rp-b" },
+    { id: "PZ", color: "--rp-c" },
+  ];
+  const SVG = "http://www.w3.org/2000/svg";
+  const W = 660, H = 270, L = 52, R = 42, T = 14, B = 34;
+  const node = (name, attrs, text) => {
+    const e = document.createElementNS(SVG, name);
+    for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+    if (text !== undefined) e.textContent = text;
+    return e;
+  };
+  // a round number at or above the largest value, so the axis reads cleanly
+  const niceMax = (v) => {
+    if (!(v > 0)) return 1;
+    const step = 10 ** Math.floor(Math.log10(v));
+    return Math.ceil(v / step) * step;
+  };
+  const draw = (columns, nRows, values, end) => {
+    const index = Object.fromEntries(columns.map((c, i) => [c, i]));
+    const at = (row, id) => values[row * columns.length + index[id]];
+    let peak = 0;
+    for (let r = 0; r < nRows; r += 1)
+      for (const s of SERIES) peak = Math.max(peak, at(r, s.id));
+    const top = niceMax(peak);
+    const x = (t) => L + (t / end) * (W - L - R);
+    const y = (v) => H - B - (v / top) * (H - T - B);
+    plot.replaceChildren();
+    plot.append(node("line", { class: "rp-axis", x1: L, y1: H - B, x2: W - R, y2: H - B }));
+    plot.append(node("line", { class: "rp-axis", x1: L, y1: T, x2: L, y2: H - B }));
+    for (const t of [0, 50, 100, 150, 200]) {
+      plot.append(node("text", { x: x(t), y: H - B + 16, "text-anchor": "middle" }, String(t)));
+    }
+    plot.append(node("text", { x: (L + W - R) / 2, y: H - 4, "text-anchor": "middle" }, "time"));
+    for (const v of [0, top / 2, top]) {
+      plot.append(node("text", { x: L - 8, y: y(v) + 4, "text-anchor": "end" },
+        v >= 1000 ? (v / 1000).toFixed(v % 1000 ? 1 : 0) + "k" : String(Math.round(v))));
+      if (v > 0) plot.append(node("line", { class: "rp-axis", x1: L, y1: y(v), x2: W - R, y2: y(v), "stroke-dasharray": "3 4" }));
+    }
+    const labels = [];
+    for (const s of SERIES) {
+      const points = [];
+      for (let r = 0; r < nRows; r += 1) points.push(x(at(r, "time")) + "," + y(at(r, s.id)));
+      const stroke = getComputedStyle(root).getPropertyValue(s.color).trim();
+      plot.append(node("polyline", { class: "rp-curve", points: points.join(" "), stroke }));
+      labels.push({ id: s.id, stroke, y: y(at(nRows - 1, s.id)) });
+    }
+    // the name sits at the end of its own curve, so the lines are not read by colour
+    // alone; two curves which end together have their names pushed apart instead
+    labels.sort((a, b) => a.y - b.y);
+    for (let i = 1; i < labels.length; i += 1) {
+      labels[i].y = Math.max(labels[i].y, labels[i - 1].y + 13);
+    }
+    const overflow = labels[labels.length - 1].y - (H - B);
+    if (overflow > 0) for (const label of labels) label.y -= overflow;
+    for (const label of labels) {
+      plot.append(node("text", { class: "rp-name", x: W - R + 6, y: label.y + 4, fill: label.stroke }, label.id));
+    }
+    const rows = [];
+    for (let r = 0; r < nRows; r += 20) {
+      rows.push("<tr><td>" + at(r, "time").toFixed(0) + "</td>" +
+        SERIES.map((s) => "<td>" + at(r, s.id).toFixed(1) + "</td>").join("") + "</tr>");
+    }
+    table.innerHTML = "<table><thead><tr><th>time</th>" +
+      SERIES.map((s) => "<th>" + s.id + "</th>").join("") +
+      "</tr></thead><tbody>" + rows.join("") + "</tbody></table>";
+  };
+  const request = (n) => ({
+    contract: "simulation/1",
+    start: 0,
+    end: 200,
+    output: { uniform: { steps: 400 } },
+    preinit: [["n", n]],
+    changes: [],
+    steady_state: null,
+    selections: ["time", "PX", "PY", "PZ"],
+    settings: {
+      relative_tolerance: 1e-8,
+      absolute_tolerance: { scalar: 1e-10 },
+      maximum_num_steps: 100000,
+      maximum_time_step: 0,
+      initial_time_step: 0,
+      stiff: true,
+      linear_solver: "dense",
+      jacobian: "auto",
+    },
+    seed: 0,
+  });
+  try {
+    const { createRuntime } = await import(base + "loader.mjs");
+    const bytes = (name) => fetch(base + name).then((r) => r.arrayBuffer());
+    const runtime = await createRuntime({
+      engine: await bytes("engine.wasm"),
+      mathlib: await bytes("mathlib.wasm"),
+    });
+    const instance = await runtime.instantiate(
+      await bytes("model.wasm"),
+      await fetch(base + "model.json").then((r) => r.text()),
+    );
+    const run = () => {
+      const n = Number(range.value);
+      value.textContent = n.toFixed(2);
+      const started = performance.now();
+      const out = instance.simulate(request(n));
+      const ms = performance.now() - started;
+      draw(out.columns, out.nRows, out.values, 200);
+      state.textContent = out.nRows + " output rows simulated in this page in "
+        + ms.toFixed(2) + " ms";
+    };
+    range.addEventListener("input", run);
+    run();
+  } catch (error) {
+    state.classList.add("rp-failed");
+    state.textContent = "The demo could not run in this browser: " + error.message;
+  }
+}
+</script>
 
 ## The loader
 
