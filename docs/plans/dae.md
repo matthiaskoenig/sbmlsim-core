@@ -71,7 +71,8 @@ compiler WASM build, and the host/CLI build without default features pass.
 
 ### ODE performance
 
-The zero-margin ODE performance gate remains open. In four baseline, feature,
+DAE support is accepted for merge with the measured ODE performance limits below.
+The measurements do not establish zero overhead. In four baseline, feature,
 feature, baseline processes, native thread CPU time was 9.34% higher by the
 median across 24 scenarios. The ordinary Adams scenario was 22.17% slower.
 Result hashes and all 13 counters matched across rounds.

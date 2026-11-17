@@ -1,12 +1,13 @@
 # ODE performance with algebraic-rule support
 
-The ODE performance gate remains open. The final native comparison measured
+DAE support is accepted with the measured ODE performance limits below.
+The measurements do not establish zero overhead. The final native comparison measured
 9.34% higher median thread CPU time across
 24 scenarios (1.0934× the baseline).
 23 scenario ratios exceeded 1.0, and `adams/native/ordinary` was
 22.17% slower (1.2217×).
 
-The zero-margin criterion remains open for the tested WASM scenarios. No simultaneous interval lies entirely above 1.0. 10 intervals lie below 1.0. 14 intervals include 1.0 and allow a slowdown.
+The tested WASM scenarios do not establish the zero-margin criterion. No simultaneous interval lies entirely above 1.0. 10 intervals lie below 1.0. 14 intervals include 1.0 and allow a slowdown.
 The highest point estimate is 1.0206× for `hctz/wasm/ordinary/dense/analytic/times`.
 The largest simultaneous upper bound is 1.0609× for `hctz/wasm/ordinary/dense/analytic/times`, allowing up to 6.09% higher thread CPU time in that case.
 This measures warmed ODE requests on the frozen workload matrix and benchmark host.
@@ -134,6 +135,10 @@ The data archives earlier native and WASM batch and paired runs
 without pooling them with confirmation. Uncompressed WASM size and uncached
 compilation time are separate from warmed simulation timings, with the earlier
 cold samples archived. [Raw samples and frozen inputs](ode-performance-data.json)
+
+The archived input hashes refer to the benchmark scripts at commit `140bd0c`.
+The published scripts have since received lint and formatting fixes; they reproduce
+the frozen trial schedule and analysis results exactly.
 
 ## Reproducing the comparison
 
