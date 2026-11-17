@@ -672,8 +672,8 @@ fn output_times(
 ) -> Result<Vec<f64>, EngineError> {
     let too_large = |rows: u128| {
         request(format!(
-            "an output of {rows} rows of {n_columns} columns does not fit into the memory of \
-             the engine, which holds at most {max_values} values"
+            "an output of {rows} rows of {n_columns} columns exceeds the limit of \
+             {max_values} values and does not fit into the memory of the engine"
         ))
     };
     let exceeds = |rows: u128| rows * n_columns as u128 > max_values as u128;
