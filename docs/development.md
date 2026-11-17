@@ -35,4 +35,6 @@ A release is made from `develop`. Since `develop` only accepts pull requests, th
 
     Check the version before pushing: the tag publishes to PyPI and to npm, and a version of either registry cannot be taken back.
 
+    The tag makes all three of a release: the python package on PyPI, the package on npm and the release of this repository, named `sbmlsim-core x.y.z` with the body of `release-notes/x.y.z.md`. The job `github_release` makes the last one once both registries carry the version, so a release of this repository never announces a version a registry does not have. Nothing of a release is made by hand.
+
 `CORE_VERSION` of `js/panels.mjs` is the one version no check of a pull request compares, since `npm pack` runs only while the tag publishes; a release which gets it wrong fails after the tag exists.
