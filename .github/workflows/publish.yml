@@ -1,6 +1,9 @@
 # Publish a release for a tag `vX.Y.Z` on a commit of develop: the JavaScript host (`js/`) as the
 # npm package `sbmlsim-core` and the python package `sbmlsim-core` on PyPI, both with trusted
-# publishing (the OIDC token of GitHub, no stored token) and the provenance of this workflow.
+# publishing (the OIDC token of GitHub, no stored token) and the provenance of this workflow,
+# and then the release of this repository, whose body is `release-notes/X.Y.Z.md`. The three
+# belong together: a tag which publishes to a registry without a release of its notes, or a
+# release of notes for a version a registry does not carry, is a release which is only half made.
 # The engine and its math library are built once from the tagged sources (`wheels.yml`, job
 # `runtime`): the npm package carries them in `js/runtime`, and every wheel embeds the same bytes.
 # Nothing is published unless the tests of the JavaScript host and of every wheel passed, so
@@ -129,3 +132,31 @@ jobs:
       - uses: pypa/gh-action-pypi-publish@v1.14.3
         with:
           skip-existing: true
+
+  github_release:
+    # only once both registries carry the version, so the release of this repository never
+    # announces a version which a registry does not have
+    needs: [npm, pypi]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # the release of the tag
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: The release of the tag, whose body is the release notes of its version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" > /dev/null 2>&1; then
+            echo "::notice::the release ${GITHUB_REF_NAME} exists already, nothing is created"
+            exit 0
+          fi
+          gh release create "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --verify-tag \
+            --latest \
+            --title "sbmlsim-core ${version}" \
+            --notes-file "release-notes/${version}.md"
