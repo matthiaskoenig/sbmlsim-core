@@ -1,0 +1,56 @@
+# The four packaged models of sbmlsim as its own benchmark simulates them
+# (`scripts/engine_benchmark.py` of matthiaskoenig/sbmlsim, the page
+# `docs/benchmarks.md`), so the raw speed of the engine and of roadrunner can be
+# read against the speeds sbmlsim measures through python and the python layer
+# can be told from the engine.
+#
+# Every entry is the simulation of that page: its `end`, its 101 output points
+# (`steps=100`), its pre-initialization and the settings sbmlsim sends the
+# engine for a run at the defaults of `Simulator` (rtol 1e-6 and roadrunner's
+# vector of absolute tolerances of the base 1e-10, `request_settings`), which is
+# what `bench/models.toml` does with the tighter 1e-12 of the spike. Prepared
+# and run as `bench/models.toml` is, see `bench/RESULTS.md`:
+#
+#     uv run scripts/prepare_model.py --bench bench/sbmlsim.toml
+#     sbmlsim-core bench bench/sbmlsim.toml --json target/bench/sbmlsim-engine.json
+#     uv run scripts/roadrunner_reference.py bench/sbmlsim.toml --json target/bench/sbmlsim-roadrunner.json
+
+[models.repressilator]
+# the repressilator, 6 states; no dose, the oscillation over 100 time units
+source = "sbmlsim:repressilator.xml"
+sbml = "../target/bench-models/sbmlsim-repressilator.xml"
+end = 100.0
+points = 101
+preinit = []
+relative_tolerance = 1e-6
+absolute_tolerance = 1e-10
+
+[models.demo]
+# the demo model of sbmlsim (Koenig_demo_14), 4 states; the smallest model of the benchmark
+source = "sbmlsim:Koenig_demo_14.xml"
+sbml = "../target/bench-models/sbmlsim-demo.xml"
+end = 100.0
+points = 101
+preinit = []
+relative_tolerance = 1e-6
+absolute_tolerance = 1e-10
+
+[models.midazolam]
+# midazolam whole body PBPK, 38 states; an oral dose of 10 mg over 24 h
+source = "sbmlsim:midazolam_body_flat.xml"
+sbml = "../target/bench-models/sbmlsim-midazolam.xml"
+end = 1440.0
+points = 101
+preinit = [["PODOSE_mid", 10.0]]
+relative_tolerance = 1e-6
+absolute_tolerance = 1e-10
+
+[models.hctz]
+# hydrochlorothiazide whole body PBPK, 28 states; an oral dose of 25 mg over 24 h
+source = "sbmlsim:hctz_body_flat.xml"
+sbml = "../target/bench-models/sbmlsim-hctz.xml"
+end = 1440.0
+points = 101
+preinit = [["PODOSE_hctz", 25.0]]
+relative_tolerance = 1e-6
+absolute_tolerance = 1e-10

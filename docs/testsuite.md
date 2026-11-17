@@ -26,7 +26,7 @@ CI runs the whole suite in the three modes (the job `testsuite-parity`) and the 
 
 ## Benchmark
 
-`bench/models.toml` lists the models of the benchmark against roadrunner; `bench/RESULTS.md` has the method and the results. A model with `comp`, `distrib` or of another level is prepared first (`scripts/prepare_model.py`, see [Compiling a model](compiling.md#preparing-a-model)):
+`bench/models.toml` lists the models of the benchmark against roadrunner; `bench/RESULTS.md` has the method and the results. `bench/sbmlsim.toml` is a second list, the four packaged models of [sbmlsim](https://github.com/matthiaskoenig/sbmlsim) as its own benchmark simulates them, with which `bench/SBMLSIM.md` reads the raw speed of the engine against the speed sbmlsim measures through python; the two lists carry different tolerances and output grids and are not comparable with each other. A model with `comp`, `distrib` or of another level is prepared first (`scripts/prepare_model.py`, see [Compiling a model](compiling.md#preparing-a-model)):
 
 ```bash
 uv run scripts/prepare_model.py --bench bench/models.toml        # into target/bench-models/
