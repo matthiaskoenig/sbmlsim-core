@@ -14,7 +14,7 @@ cargo run -p sbmlsim-cli -- compile crates/host/tests/decay.xml -o decay-model
 
 ## What the compiler reads
 
-The reader (`crates/sbml`) takes SBML Level 3 Version 2 core. A package whose `required` attribute is `"true"` is refused (`the required package comp is not supported`); `comp` must be flattened before. A package with `required="false"` (layout, render, fbc annotations, ...) is ignored. Units pass through as text and nothing is computed with them: a unit definition becomes a unit expression which a unit registry such as pint parses (`mmol/min` as `0.001*mole*(60*second)**-1`), the field `units` of `model.json`.
+The reader (`crates/sbml`) takes SBML Level 3 Version 2 core. A package whose `required` attribute is `"true"` is refused (`the required package comp is not supported`); `comp` must be flattened before, a model read without its submodels is another model. A package with `required="false"` (layout, render, fbc annotations, ...) is ignored, and so are the elements of a required package which only annotates the model: `distrib`, so far the only one, carries the uncertainty of a parameter (`<distrib:uncertainty>`, which the models of pkdb_models write for every fitted parameter: the confidence interval of the profile likelihood, the standard error of the Fisher information and the distribution of the draws), and the mathematics of the model is the same without it, so such a document is read. The mathematics a package defines is refused as any math the reader does not understand: a draw, the `<csymbol>` of a distribution of `distrib` (`http://www.sbml.org/sbml/symbols/distrib/normal`) in a math of the model, is an unknown csymbol whatever `required` says. Units pass through as text and nothing is computed with them: a unit definition becomes a unit expression which a unit registry such as pint parses (`mmol/min` as `0.001*mole*(60*second)**-1`), the field `units` of `model.json`.
 
 A feature the engine does not simulate as sbmlsim does is refused with its element (`algebraic rule is not supported (algebraicRule #0)`), and so is a model which is not valid SBML (an unknown identifier, a cycle of assignment rules). In the SBML Test Suite the refusals are the algebraic rules, the `delay` csymbol and the fast reactions (see [Test suite and benchmark](testsuite.md)). Missing math is handled as libroadrunner 2.11 handles it: a rule or an initial assignment without math is ignored, an event without a trigger is ignored, a delay or a priority without math is none; a kinetic law without math, a call of a function definition without math and an empty `<math>` are refused.
 
@@ -30,7 +30,7 @@ The Jacobian is analytic, on its sparsity pattern. A model whose math has no der
 
 ## Preparing a model
 
-A model of another level or version, with `comp` or with the uncertainties of `distrib`, is prepared with `scripts/prepare_model.py` first (libsbml, run with uv):
+A model of another level or version or with `comp` is prepared with `scripts/prepare_model.py` first (libsbml, run with uv):
 
 ```bash
 uv run scripts/prepare_model.py model.xml -o prepared.xml
@@ -38,7 +38,7 @@ sbmlsim-core compile prepared.xml -o model-dir
 ```
 
 - `comp` is flattened.
-- The elements and annotations of `distrib` are stripped: the uncertainties of `distrib` (`<distrib:listOfUncertainties>` of the parameters of a fit) are metadata and do not change a simulation. A distribution function of `distrib` in a math (`normal(0, 1)` as a csymbol) would change it, so such a model is refused with a non-zero exit, naming the element (`initialAssignment of x (normal)`).
+- The elements and annotations of `distrib` are stripped, which the compiler does not need (it reads the package and ignores them, see above): the uncertainties of `distrib` (`<distrib:listOfUncertainties>` of the parameters of a fit) are metadata and do not change a simulation. A distribution function of `distrib` in a math (`normal(0, 1)` as a csymbol) would change it, so such a model is refused with a non-zero exit, naming the element (`initialAssignment of x (normal)`), as the compiler refuses it.
 - The model is converted to L3V2.
 - The rest of the model (non-required packages such as `fbc` and `layout`, notes, annotations) is kept.
 

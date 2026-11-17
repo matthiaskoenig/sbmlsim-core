@@ -12,7 +12,7 @@ One abi3 wheel per platform for python 3.14 or newer: linux (x86_64, aarch64, ma
 
 ## Compile and simulate
 
-The compiler reads SBML Level 3 (version 1 or 2) core, flat and without required packages.
+The compiler reads SBML Level 3 (version 1 or 2) core, flat and without a required package but `distrib`, whose uncertainties of a fitted parameter annotate it and are ignored.
 
 ```python
 import sbmlsim_core

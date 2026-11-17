@@ -16,14 +16,15 @@
 # ///
 """Prepare an SBML model for `sbmlsim-core compile`.
 
-The compiler reads SBML Level 3 Version 2 and refuses every required package. A model of
-another level or version, with `comp` or with the uncertainties of `distrib`, is prepared with
-libsbml: `comp` is flattened, the elements and annotations of `distrib` are stripped, and the
-model is converted to L3V2. The uncertainties of `distrib` (`<distrib:listOfUncertainties>` of
-the parameters of a fit) are metadata and do not change a simulation; a distribution function
-of `distrib` in a math (`normal(0, 1)` as a csymbol) would change it, so such a model is
-refused, naming the element. The rest of the model (non-required packages such as `fbc` and
-`layout`, notes, annotations) is kept.
+The compiler reads SBML Level 3 Version 2 and refuses every required package but `distrib`,
+whose elements it reads and ignores. A model of another level or version or with `comp` is
+prepared with libsbml: `comp` is flattened, the elements and annotations of `distrib` are
+stripped (which the compiler does not need; a document without them is smaller), and the model
+is converted to L3V2. The uncertainties of `distrib` (`<distrib:listOfUncertainties>` of the
+parameters of a fit) are metadata and do not change a simulation; a distribution function of
+`distrib` in a math (`normal(0, 1)` as a csymbol) would change it, so such a model is refused,
+naming the element, as the compiler refuses it. The rest of the model (non-required packages
+such as `fbc` and `layout`, notes, annotations) is kept.
 
     uv run scripts/prepare_model.py model.xml -o prepared.xml
     uv run scripts/prepare_model.py --bench bench/models.toml
