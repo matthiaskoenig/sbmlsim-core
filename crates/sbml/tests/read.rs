@@ -227,7 +227,10 @@ fn reads_a_required_distrib_document() {
     let m = &doc.model;
     assert_eq!(m.id.as_deref(), Some("decay"));
     assert_eq!(
-        m.parameters.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(),
+        m.parameters
+            .iter()
+            .map(|p| p.id.as_str())
+            .collect::<Vec<_>>(),
         ["y", "k", "t_half"]
     );
     assert_eq!(m.parameters[1].value, Some(0.5));
@@ -246,10 +249,8 @@ fn reads_a_required_distrib_document() {
 #[test]
 fn reads_distrib_when_it_is_not_required() {
     // the same document is read as a document of an optional package was always read
-    let xml = data("distrib.xml").replace(
-        r#"distrib:required="true""#,
-        r#"distrib:required="false""#,
-    );
+    let xml =
+        data("distrib.xml").replace(r#"distrib:required="true""#, r#"distrib:required="false""#);
     let doc = read(&xml).unwrap();
     assert_eq!(doc.model.rules[0].math(), Some(&decay_rate_rule()));
     assert_eq!(doc.model.parameters[1].value, Some(0.5));
