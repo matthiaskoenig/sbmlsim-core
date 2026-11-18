@@ -36,15 +36,33 @@ use crate::{Settings, Stop};
 pub const DELTA_95: f64 = 1.920_729_410_347_062;
 
 /// What a profile walks and where it stops.
+///
+/// A walk steps away from the optimum until the cost reaches the threshold of the parameter,
+/// which is where the profile bounds it, and the step is the one of the rise of the cost: a
+/// step which raises the cost by more than [`Walk::rise`] of [`Walk::delta`] is reduced and
+/// walked again, and one which raises it by little is enlarged, so the points of a profile
+/// lie where it bends and not where it is flat. A side which does not reach the threshold
+/// walks [`Walk::points`] points or the bound of the parameter, whichever comes first, which
+/// is what a parameter the data does not determine does.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Walk {
-    /// The points of the profile on each side of the optimum.
+    /// The most points of the profile on each side of the optimum.
     pub points: usize,
-    /// How far the profile reaches on each side, in the space the parameter is searched: a
-    /// decade for a parameter of the scale `log10`, the value itself for a linear one. The
-    /// bounds of the parameter end the walk before it.
-    pub span: f64,
+    /// The first step of a side, in the space the parameter is searched: a decade for a
+    /// parameter of the scale `log10`, the value itself for a linear one.
+    pub step: f64,
+    /// The smallest step a walk reduces to, which it steps with where the cost rises faster
+    /// than [`Walk::rise`] allows.
+    pub min_step: f64,
+    /// The largest step a walk enlarges to.
+    pub max_step: f64,
+    /// What a step is reduced or enlarged by, larger than one.
+    pub factor: f64,
+    /// The most a single step may raise the cost, as a fraction of [`Walk::delta`]: a step
+    /// which raises it by more is reduced and walked again, so a side of a profile has about
+    /// `1 / rise` points between the optimum and the threshold.
+    pub rise: f64,
     /// The rise of the cost which bounds the parameter, [`DELTA_95`] by default.
     pub delta: f64,
 }
@@ -52,12 +70,19 @@ pub struct Walk {
 impl Default for Walk {
     fn default() -> Walk {
         Walk {
-            points: 10,
-            span: 1.0,
+            points: 50,
+            step: 0.1,
+            min_step: 0.01,
+            max_step: 1.0,
+            factor: 2.0,
+            rise: 0.2,
             delta: DELTA_95,
         }
     }
 }
+
+/// A parameter closer to its bound than this, in the space it is searched, is at the bound.
+const AT_THE_BOUND: f64 = 1e-9;
 
 /// One point of a profile: the parameter held at a value and the fit of the others there.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -72,7 +97,7 @@ pub struct ProfilePoint {
     pub values: Vec<f64>,
     /// Why the optimizer of the point stopped.
     pub status: String,
-    /// The time the point took.
+    /// The time the point took, the fits of the steps which were walked again included.
     pub seconds: f64,
 }
 
@@ -162,10 +187,25 @@ pub fn profile(
             "parameter to fit again while one is held at a value",
         ));
     }
-    if walk.points == 0 || !walk.span.is_finite() || walk.span <= 0.0 {
+    if walk.points == 0
+        || !(walk.min_step > 0.0
+            && walk.min_step <= walk.step
+            && walk.step <= walk.max_step
+            && walk.max_step.is_finite())
+        || !(walk.factor > 1.0 && walk.factor.is_finite())
+        || !(walk.rise > 0.0 && walk.rise <= 1.0)
+        || !(walk.delta > 0.0 && walk.delta.is_finite())
+    {
         return Err(FitError::Optimizer(format!(
-            "walks {} points of a span of {}, which is no profile",
-            walk.points, walk.span
+            "walks {} points of steps of {} between {} and {}, enlarged by {}, of a rise of \
+             {} of a delta of {}, which is no profile",
+            walk.points,
+            walk.step,
+            walk.min_step,
+            walk.max_step,
+            walk.factor,
+            walk.rise,
+            walk.delta
         )));
     }
     let scale = subject.scale;
@@ -175,7 +215,9 @@ pub fn profile(
         scale.to_search(subject.lower),
         scale.to_search(subject.upper),
     );
-    let step = walk.span / walk.points as f64;
+    let threshold = cost + walk.delta;
+    // the most a single step may raise the cost, which is what the step of a walk follows
+    let allowed = walk.rise * walk.delta;
     // the optimum of the parameters which are fitted again, which the first point starts from
     let free: Vec<f64> = at
         .iter()
@@ -186,28 +228,55 @@ pub fn profile(
     // one side of the optimum: the fit of a point starts from the optimum of the point before
     // it, so a side is a chain and the two sides are none of each other's
     let side = |direction: f64| -> Result<Vec<ProfilePoint>, FitError> {
-        let mut points = Vec::with_capacity(walk.points);
+        let bound = if direction < 0.0 { bounds.0 } else { bounds.1 };
+        let mut points = Vec::new();
+        // the point the next step walks from: the optimum, and then the last point of the side
         let mut from = free.clone();
-        for point in 1..=walk.points {
-            if stop.stopped() {
+        let mut at_x = x;
+        let mut at_cost = cost;
+        let mut step = walk.step;
+        while points.len() < walk.points {
+            if stop.stopped() || (at_x - bound).abs() <= AT_THE_BOUND {
                 break;
             }
-            let x = x + direction * step * point as f64;
-            if x < bounds.0 || x > bounds.1 {
-                break;
-            }
-            let value = scale.to_model(x);
-            let held = problem.fixing(&[(parameter, value)])?;
-            let fit = held.optimize_with(settings, &from, stop)?;
-            from = fit.x.clone();
+            // the step, reduced while the cost rises faster than the walk allows: the fit of
+            // a step which is walked again is thrown away, which is what resolving a profile
+            // where it bends costs
+            let began_point = std::time::Instant::now();
+            let (x, fit) = loop {
+                let mut next = at_x + direction * step;
+                if (next - bound) * direction > 0.0 {
+                    next = bound;
+                }
+                let held = problem.fixing(&[(parameter, scale.to_model(next))])?;
+                let fit = held.optimize_with(settings, &from, stop)?;
+                let rise = fit.cost - at_cost;
+                if rise > allowed && step > walk.min_step && !stop.stopped() {
+                    step = (step / walk.factor).max(walk.min_step);
+                    continue;
+                }
+                break (next, fit);
+            };
+            let rise = fit.cost - at_cost;
             points.push(ProfilePoint {
-                value,
+                value: scale.to_model(x),
                 x,
                 cost: fit.cost,
-                values: fit.values,
-                status: fit.status,
-                seconds: fit.seconds,
+                values: fit.values.clone(),
+                status: fit.status.clone(),
+                seconds: began_point.elapsed().as_secs_f64(),
             });
+            // the side ends where the profile bounds the parameter, and the point which
+            // crosses the threshold is the one the crossing is interpolated to
+            if !fit.cost.is_finite() || fit.cost >= threshold {
+                break;
+            }
+            if rise < allowed / walk.factor {
+                step = (step * walk.factor).min(walk.max_step);
+            }
+            at_x = x;
+            at_cost = fit.cost;
+            from = fit.x;
         }
         Ok(points)
     };
@@ -217,7 +286,6 @@ pub fn profile(
     let mut points = below?;
     points.extend(above?);
     points.sort_by(|one, two| one.x.total_cmp(&two.x));
-    let threshold = cost + walk.delta;
     let lower = crossing(
         (x, cost),
         points

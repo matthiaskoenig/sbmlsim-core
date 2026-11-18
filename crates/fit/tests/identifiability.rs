@@ -21,12 +21,12 @@ fn fitted(scale: Scale) -> (Problem, Vec<f64>) {
     (problem, fit.x)
 }
 
-/// A walk of four points on each side, half a decade wide.
+/// A walk of at most four points on each side, of steps of an eighth of a decade.
 fn walk() -> Walk {
     Walk {
         points: 4,
-        span: 0.5,
-        delta: DELTA_95,
+        step: 0.125,
+        ..Walk::default()
     }
 }
 
@@ -85,7 +85,21 @@ fn the_profile_of_a_parameter_rises_on_both_sides_of_the_optimum() {
     .unwrap();
 
     assert_eq!(profile.id, "k");
-    assert_eq!(profile.points.len(), 8, "four points on each side");
+    // at most four points on each side, fewer where the profile crosses the threshold
+    assert!(
+        !profile.points.is_empty() && profile.points.len() <= 8,
+        "the walk took {} points of the four of each side",
+        profile.points.len()
+    );
+    for side in [-1.0_f64, 1.0] {
+        assert!(
+            profile
+                .points
+                .iter()
+                .any(|point| (point.x - at[0]) * side > 0.0),
+            "the walk took no point of one of the sides"
+        );
+    }
     assert!(
         (profile.at - K).abs() < 1e-6,
         "the optimum is {}",
@@ -126,8 +140,8 @@ fn the_profile_of_a_parameter_brackets_it_at_the_threshold() {
     let (problem, at) = fitted(Scale::Log10);
     let walk = Walk {
         points: 6,
-        span: 0.3,
-        delta: DELTA_95,
+        step: 0.05,
+        ..Walk::default()
     };
 
     let profile = profile(&problem, &Settings::default(), &at, 0, &walk, &Stop::new()).unwrap();
@@ -148,8 +162,8 @@ fn the_interval_of_a_profile_is_the_error_of_the_fisher_information() {
     let (problem, at) = fitted(Scale::Log10);
     let walk = Walk {
         points: 6,
-        span: 0.3,
-        delta: DELTA_95,
+        step: 0.05,
+        ..Walk::default()
     };
 
     let walked = profile(&problem, &Settings::default(), &at, 0, &walk, &Stop::new()).unwrap();
@@ -293,4 +307,166 @@ fn sides(profile: &Profile) -> [f64; 2] {
         sides[usize::from(point.value > profile.at)] += point.seconds;
     }
     sides
+}
+
+#[test]
+fn a_walk_stops_where_the_cost_crosses_the_threshold() {
+    // the walk of the default settings reaches the threshold of `k` in a few steps of a
+    // tenth of a decade and stops there, instead of walking its fifty points to the bound
+    let (problem, at) = fitted(Scale::Log10);
+
+    let profile = profile(
+        &problem,
+        &Settings::default(),
+        &at,
+        0,
+        &Walk::default(),
+        &Stop::new(),
+    )
+    .unwrap();
+
+    assert!(profile.identifiable);
+    assert!(
+        profile.points.len() < 2 * Walk::default().points,
+        "the walk did not stop at the threshold: {} points",
+        profile.points.len()
+    );
+    for side in [-1.0_f64, 1.0] {
+        let mut costs: Vec<f64> = profile
+            .points
+            .iter()
+            .filter(|point| (point.x - at[0]) * side > 0.0)
+            .map(|point| point.cost)
+            .collect();
+        if side < 0.0 {
+            costs.reverse();
+        }
+        let (last, before) = costs.split_last().unwrap();
+        assert!(
+            *last >= profile.threshold,
+            "the side of the walk stopped at {last} below the threshold {}",
+            profile.threshold
+        );
+        assert!(
+            before.iter().all(|cost| *cost < profile.threshold),
+            "the side of the walk went past the threshold: {costs:?}"
+        );
+    }
+}
+
+#[test]
+fn a_walk_reduces_a_step_which_raises_the_cost_too_fast() {
+    // a first step of a whole decade raises the cost of `k` far past the threshold, so the
+    // walk halves it until the rise of the first point is the fraction of `delta` it allows
+    let (problem, at) = fitted(Scale::Log10);
+    let walk = Walk {
+        points: 3,
+        step: 1.0,
+        min_step: 1e-3,
+        rise: 0.2,
+        ..Walk::default()
+    };
+
+    let profile = profile(&problem, &Settings::default(), &at, 0, &walk, &Stop::new()).unwrap();
+
+    let first = profile
+        .points
+        .iter()
+        .find(|point| point.x > at[0])
+        .expect("a point above the optimum");
+    assert!(
+        first.x - at[0] < walk.step,
+        "the walk kept its step of {} and landed at {}",
+        walk.step,
+        first.x - at[0]
+    );
+    assert!(
+        first.cost - profile.cost <= walk.rise * walk.delta,
+        "the first point rose by {} of the {} it allows",
+        first.cost - profile.cost,
+        walk.rise * walk.delta
+    );
+}
+
+#[test]
+fn a_walk_enlarges_the_steps_of_a_profile_which_rises_slowly() {
+    // a first step of a thousandth of a decade raises the cost of `k` by almost nothing, so
+    // the walk doubles it from point to point until it reaches the threshold or `max_step`
+    let (problem, at) = fitted(Scale::Log10);
+    let walk = Walk {
+        points: 20,
+        step: 1e-3,
+        min_step: 1e-4,
+        max_step: 0.1,
+        ..Walk::default()
+    };
+
+    let profile = profile(&problem, &Settings::default(), &at, 0, &walk, &Stop::new()).unwrap();
+
+    let above: Vec<f64> = profile
+        .points
+        .iter()
+        .filter(|point| point.x > at[0])
+        .map(|point| point.x)
+        .collect();
+    let steps: Vec<f64> = std::iter::once(at[0])
+        .chain(above.iter().copied())
+        .collect::<Vec<f64>>()
+        .windows(2)
+        .map(|pair| pair[1] - pair[0])
+        .collect();
+    assert!(steps.len() > 3, "the walk of a slow profile took {steps:?}");
+    let largest = steps.iter().copied().fold(0.0_f64, f64::max);
+    assert!(
+        largest >= 2.0 * walk.step,
+        "the steps of a slow profile did not grow: {steps:?}"
+    );
+    assert!(
+        steps.iter().all(|step| *step <= walk.max_step + 1e-12),
+        "a step grew past the largest one: {steps:?}"
+    );
+}
+
+#[test]
+fn a_walk_of_steps_which_are_no_steps_is_no_profile() {
+    let (problem, at) = fitted(Scale::Log10);
+
+    for walk in [
+        Walk {
+            points: 0,
+            ..Walk::default()
+        },
+        Walk {
+            step: 0.0,
+            ..Walk::default()
+        },
+        Walk {
+            min_step: 0.5,
+            step: 0.1,
+            ..Walk::default()
+        },
+        Walk {
+            max_step: 0.05,
+            step: 0.1,
+            ..Walk::default()
+        },
+        Walk {
+            factor: 1.0,
+            ..Walk::default()
+        },
+        Walk {
+            rise: 0.0,
+            ..Walk::default()
+        },
+        Walk {
+            delta: f64::NAN,
+            ..Walk::default()
+        },
+    ] {
+        let refused = profile(&problem, &Settings::default(), &at, 0, &walk, &Stop::new());
+        assert!(
+            refused.is_err(),
+            "the walk {walk:?} is no profile and was walked"
+        );
+    }
 }

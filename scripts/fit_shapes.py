@@ -73,7 +73,7 @@ def shape(
     if profiles > 0:
         request["identifiability"] = {
             "parameters": names[:profiles],
-            "walk": {"points": 4, "span": 0.5},
+            "walk": {"points": 4, "step": 0.125},
             "fisher": False,
         }
     began, cpu = time.perf_counter(), time.process_time()
