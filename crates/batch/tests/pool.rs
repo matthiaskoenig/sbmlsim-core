@@ -119,11 +119,21 @@ fn a_batch_on_many_threads_gives_the_bits_of_one_thread() {
 #[test]
 fn the_threads_reuse_their_instances_across_batches() {
     let workers = Workers::new(model(), 2).unwrap();
-    workers.simulate(&requests(1..=4));
-    let made = workers.instances_made();
-    assert!((1..=2).contains(&made), "{made} instances of two threads");
-    workers.simulate(&requests(1..=4));
-    assert_eq!(workers.instances_made(), made);
+    // Which thread takes a point is rayon's to decide, so a batch of four points may run on one
+    // thread or on both, and a later batch may be the first to reach a thread, which then makes
+    // its instance: the count of a pool which reuses them rises to the number of its threads and
+    // stops there. What the pool promises is an instance per thread and not one per batch, so
+    // sixteen points over four batches make at most the two of its two threads, and every one
+    // which was made is still held, i.e. none was dropped and made again.
+    for batch in 1..=4 {
+        workers.simulate(&requests(1..=4));
+        let made = workers.instances_made();
+        assert!(
+            (1..=2).contains(&made),
+            "{made} instances of two threads after batch {batch}"
+        );
+        assert_eq!(made, workers.instances_held(), "after batch {batch}");
+    }
 }
 
 #[test]

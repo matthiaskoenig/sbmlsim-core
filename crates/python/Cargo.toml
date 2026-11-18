@@ -15,11 +15,6 @@ name = "sbmlsim_core"
 crate-type = ["cdylib"]
 
 [dependencies]
-# The allocator of the extension module (`src/lib.rs`, where the measurement is). It builds
-# mimalloc's C sources through `cc`, which adds no requirement a build of this cdylib did not
-# already have, and it travels inside the wheel: unlike an instruction set it depends on nothing
-# about the machine which installs it, and no allocator can change a result.
-mimalloc = "0.1"
 numpy = "0.30"
 pyo3 = { version = "0.30", features = ["extension-module", "abi3-py314"] }
 pythonize = "0.30"
@@ -35,3 +30,17 @@ sbmlsim-compiler = { path = "../compiler" }
 # bitwise those of `engine.wasm`, see `crates/host/src/native.rs`.
 sbmlsim-host = { path = "../host", features = ["native"] }
 serde_path_to_error = "0.1.20"
+
+# The allocator of the extension module (`src/lib.rs`, where the measurement is), on every
+# target but macOS. It builds mimalloc's C sources through `cc`, which adds no requirement a
+# build of this cdylib did not already have, since `crates/csolvers` compiles the C of the native
+# engine anyway, and it travels inside the wheel: unlike an instruction set it depends on nothing
+# about the machine which installs it, and no allocator can change a result.
+#
+# The target gate is the fix of #40 and the comment on `mod allocator` in `src/lib.rs` is why: on
+# macOS mimalloc keeps the heap of a thread in two fixed slots of the pthread TLS block, claimed
+# by compiled in number, so two extension modules which each link a copy of it corrupt each
+# other's heaps. The macOS wheel therefore links none, and the gate is on the dependency and not
+# only on the `#[global_allocator]`, so its C sources are not compiled there at all.
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+mimalloc = "0.1"

@@ -13,6 +13,7 @@ MODEL_CONTRACT: str
 SIMULATION_CONTRACT: str
 THIRD_PARTY: str
 __version__: str
+__allocator__: str
 
 class SbmlsimCoreError(Exception):
     """The base class of every error of sbmlsim_core."""
