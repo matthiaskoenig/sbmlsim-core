@@ -72,6 +72,7 @@ def use(sbml: str, request: dict[str, Any]) -> None:
     with model.batch_executor(threads=2) as executor:
         executor.simulate_many([request])
         executor.simulate_prepared(prepared, [[0.5], [0.8]])
+        executor.simulate_plans([(prepared, [0.5]), (prepared, [0.8])])
     executor.close()
     for result in results:
         if isinstance(result, PointError):

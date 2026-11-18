@@ -479,3 +479,45 @@ def test_prepared_concentration_values_follow_preinit_semantics():
             base | {"preinit": [("C", volume), ("[S]", concentration)]}
         )
         assert actual.values.tobytes() == expected.values.tobytes()
+
+
+def test_plans_run_their_own_requests_on_the_same_workers(decay):
+    short = decay.prepare(request(end=2.0, steps=2), varying=["k"])
+    long = decay.prepare(request(end=8.0, steps=8), varying=["k"])
+    expected = [
+        decay.instance().simulate(request(end=2.0, steps=2, preinit=[("k", 1.0)])),
+        decay.instance().simulate(request(end=8.0, steps=8, preinit=[("k", 0.5)])),
+        decay.instance().simulate(request(end=2.0, steps=2, preinit=[("k", 0.2)])),
+    ]
+    with decay.batch_executor(threads=2) as executor:
+        results = executor.simulate_plans(
+            [(short, [1.0]), (long, [0.5]), (short, [0.2])]
+        )
+    for result, reference in zip(results, expected, strict=True):
+        assert result.columns == reference.columns
+        assert result.values.tobytes() == reference.values.tobytes()
+
+
+def test_plans_refuse_a_plan_which_is_none_before_simulating(decay):
+    prepared = decay.prepare(request(end=1.0, steps=1), varying=["k"])
+    with decay.batch_executor(threads=1) as executor:
+        assert executor.simulate_plans([]) == []
+        with pytest.raises(ValueError, match=r"plans\[1\]"):
+            executor.simulate_plans([(prepared, [0.2]), (prepared, ["invalid"])])
+        with pytest.raises(ValueError, match=r"plans\[0\]"):
+            executor.simulate_plans([prepared])
+        results = executor.simulate_plans([(prepared, [0.2]), (prepared, [])])
+        assert isinstance(results[0], sbmlsim_core.SimulationOutput)
+        assert isinstance(results[1], sbmlsim_core.PointError)
+
+
+def test_plans_refuse_the_prepared_request_of_another_model(decay):
+    sbml = (ROOT / "crates/host/tests/decay.xml").read_text(encoding="utf-8")
+    compiled = sbmlsim_core.compile_sbml(sbml)
+    other = sbmlsim_core.Runtime().load(compiled.wasm, compiled.description)
+    foreign = other.prepare(request(end=1.0, steps=1), varying=["k"])
+    with (
+        decay.batch_executor(threads=1) as executor,
+        pytest.raises(ValueError, match=r"plans\[0\].*another model"),
+    ):
+        executor.simulate_plans([(foreign, [0.2])])

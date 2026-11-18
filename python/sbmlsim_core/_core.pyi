@@ -144,6 +144,11 @@ class BatchExecutor:
     ) -> list[SimulationOutput | PointError]:
         """Runs numeric rows in order, retaining workers and prepared plans."""
 
+    def simulate_plans(
+        self, plans: Iterable[tuple[PreparedSimulation, Sequence[float]]]
+    ) -> list[SimulationOutput | PointError]:
+        """Runs prepared requests with their own values in order, retaining workers."""
+
     def close(self) -> None:
         """Releases resources; further submissions raise RuntimeError."""
 

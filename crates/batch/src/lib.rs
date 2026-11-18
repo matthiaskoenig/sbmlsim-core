@@ -81,6 +81,21 @@ pub fn thread_count(threads: Option<i64>) -> Result<usize, BatchError> {
         .ok_or(BatchError::Threads(threads))
 }
 
+/// One point of a batch of plans: a prepared request and the values of its varying targets.
+///
+/// A batch of plans is what one evaluation of an objective is: one request per condition of a
+/// fit, every one of them at the same parameters, and the points of a finite difference
+/// Jacobian are that batch once per parameter. The plans of such a batch are all of it, so a
+/// fit of a model of many conditions runs its whole Jacobian on every thread of the pool
+/// instead of one condition after the other.
+pub struct Plan {
+    /// The request, which any number of plans of a batch share: its plan is resolved once per
+    /// instance, so the points after the first transfer their values and nothing else.
+    pub prepared: PreparedSimulation,
+    /// The values of the varying targets of the request, in the order they were prepared in.
+    pub values: Vec<f64>,
+}
+
 /// The instance a thread of the pool simulates on, taken out of its slot while it simulates.
 type Slot = Mutex<Option<NativeInstance>>;
 
@@ -231,6 +246,17 @@ impl Workers {
     ) -> Vec<Outcome<SimulationResult>> {
         self.map(points, |instance, values| {
             instance.simulate_prepared(prepared, values)
+        })
+    }
+
+    /// Simulates every plan of a batch, which are requests of their own, and gives one table
+    /// per plan, in their order.
+    ///
+    /// A plan of another loaded model fails its own point, as every other error of a request
+    /// does, and leaves the plans around it their results.
+    pub fn simulate_plans(&self, plans: &[Plan]) -> Vec<Outcome<SimulationResult>> {
+        self.map(plans, |instance, plan| {
+            instance.simulate_prepared(&plan.prepared, &plan.values)
         })
     }
 

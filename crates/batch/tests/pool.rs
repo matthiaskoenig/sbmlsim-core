@@ -9,7 +9,8 @@ use std::sync::{Arc, OnceLock};
 
 use sbmlsim_abi::{EngineError, ModelDescription, SimulationRequest, SimulationResult};
 use sbmlsim_batch::{
-    BatchError, MAX_THREADS, PointFailure, SLICE_PER_THREAD, WorkerPool, Workers, thread_count,
+    BatchError, MAX_THREADS, Plan, PointFailure, SLICE_PER_THREAD, WorkerPool, Workers,
+    thread_count,
 };
 use sbmlsim_host::{LoadedModel, Runtime};
 
@@ -234,4 +235,80 @@ fn a_pool_knows_the_model_of_its_batches() {
     let model = model();
     let pool = WorkerPool::new(model.clone(), 2);
     assert!(Arc::ptr_eq(pool.model(), &model));
+}
+
+#[test]
+fn the_plans_of_a_batch_run_their_own_requests() {
+    let model = model();
+    let varying = ["k".to_string()];
+    let short = model
+        .prepare(
+            &SimulationRequest {
+                end: 2.0,
+                ..request()
+            },
+            &varying,
+        )
+        .unwrap();
+    let long = model
+        .prepare(
+            &SimulationRequest {
+                end: 8.0,
+                ..request()
+            },
+            &varying,
+        )
+        .unwrap();
+    let workers = Workers::new(model, 2).unwrap();
+    let plans = [
+        Plan {
+            prepared: short.clone(),
+            values: vec![1.0],
+        },
+        Plan {
+            prepared: long,
+            values: vec![0.5],
+        },
+        Plan {
+            prepared: short,
+            values: vec![0.2],
+        },
+    ];
+    let points = workers.simulate_plans(&plans);
+    let ends: Vec<f64> = points
+        .iter()
+        .map(|point| last(point.as_ref().unwrap(), "time"))
+        .collect();
+    assert_eq!(ends, vec![2.0, 8.0, 2.0]);
+    // the same request at the larger k has decayed further at its end
+    let (fast, slow) = (
+        last(points[0].as_ref().unwrap(), "y"),
+        last(points[2].as_ref().unwrap(), "y"),
+    );
+    assert!(fast < slow, "y of k=1.0 is {fast}, of k=0.2 it is {slow}");
+}
+
+#[test]
+fn a_plan_of_another_model_fails_its_own_point() {
+    let prepared = model().prepare(&request(), &[]).unwrap();
+    let workers = Workers::new(model(), 1).unwrap();
+    let points = workers.simulate_plans(&[
+        Plan {
+            prepared,
+            values: vec![],
+        },
+        Plan {
+            prepared: workers.model().prepare(&request(), &[]).unwrap(),
+            values: vec![],
+        },
+    ]);
+    assert!(
+        matches!(
+            &points[0],
+            Err(PointFailure::Engine(EngineError::Request(_)))
+        ),
+        "{:?}",
+        points[0]
+    );
+    assert!(points[1].is_ok(), "{:?}", points[1]);
 }
