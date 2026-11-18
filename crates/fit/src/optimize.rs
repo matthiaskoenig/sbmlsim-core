@@ -125,7 +125,9 @@ impl Default for Settings {
 /// What a fit found.
 #[derive(Clone, Debug)]
 pub struct Fit {
-    /// The values of the parameters of the optimum, on the linear scale.
+    /// The values of the parameters the optimizer searched, on the linear scale, in the
+    /// order of [`Problem::parameters`]; a parameter a profile holds at a value is none of
+    /// them.
     pub values: Vec<f64>,
     /// The optimum in the space the optimizer searched.
     pub x: Vec<f64>,
@@ -352,7 +354,7 @@ pub(crate) fn run(
     }
     let residuals = problem.residuals(&x)?;
     Ok(Fit {
-        values: problem.values(&x),
+        values: problem.parameter_values(&x),
         cost: 0.5 * residuals.iter().map(|value| value * value).sum::<f64>(),
         residuals,
         x,

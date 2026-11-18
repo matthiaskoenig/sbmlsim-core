@@ -125,6 +125,28 @@ def fit_request(
     } | over
 
 
+def pair_request(data: tuple[list[float], list[float]], **over: Any) -> dict[str, Any]:
+    """The fit of `k` and of the initial value of `y`, with the deviation of the data."""
+    times, values = data
+    return {
+        "contract": sbmlsim_core.FIT_CONTRACT,
+        "parameters": [
+            {"id": "k", "start": 0.5, "lower": 0.01, "upper": 10.0, "scale": "log10"},
+            {"id": "y", "start": 2.0, "lower": 0.1, "upper": 10.0, "scale": "log10"},
+        ],
+        "conditions": [{"id": "decay", "request": request(end=10.0, steps=10)}],
+        "curves": [
+            {
+                "condition": "decay",
+                "column": "y",
+                "times": times,
+                "values": values,
+                "noise": [0.02] * len(values),
+            }
+        ],
+    } | over
+
+
 def test_a_fit_finds_the_parameter_of_the_data(decay, data):
     answer = decay.fit(fit_request(data), threads=2)
 
@@ -244,3 +266,32 @@ def test_a_long_fit_is_interrupted(decay, slow):
         f"the fit of {elapsed:.3f} s was not stopped at its next generation "
         f"({generation:.3f} s)"
     )
+
+
+def test_a_fit_answers_with_the_identifiability_of_its_optimum(decay, data):
+    answer = decay.fit(
+        pair_request(
+            data,
+            identifiability={"walk": {"points": 3, "span": 0.3}, "fisher": True},
+        ),
+        threads=2,
+    )
+
+    assert [profile["id"] for profile in answer["profiles"]] == ["k", "y"]
+    k = answer["profiles"][0]
+    assert len(k["points"]) == 6
+    assert k["identifiable"]
+    assert k["lower"] < 0.3 < k["upper"]
+    assert k["threshold"] > k["cost"]
+    assert answer["fisher"]["parameters"] == ["k", "y"]
+    assert all(error > 0.0 for error in answer["fisher"]["errors"])
+    assert answer["fisher"]["correlation"][0] == pytest.approx(1.0)
+
+
+def test_a_fit_without_the_block_of_the_identifiability_answers_without_profiles(
+    decay, data
+):
+    answer = decay.fit(pair_request(data), threads=2)
+
+    assert "profiles" not in answer
+    assert "fisher" not in answer

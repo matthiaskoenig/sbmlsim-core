@@ -184,7 +184,23 @@ fn fit(
             let found: Vec<String> = answer
                 .parameters
                 .iter()
-                .map(|parameter| format!("{} = {:.6}", parameter.id, parameter.value))
+                .map(|parameter| {
+                    let said = format!("{} = {:.6}", parameter.id, parameter.value);
+                    // the interval of the parameter, when the fit profiled it
+                    match answer
+                        .profiles
+                        .iter()
+                        .find(|profile| profile.id == parameter.id)
+                    {
+                        None => said,
+                        Some(profile) => match (profile.lower, profile.upper) {
+                            (Some(lower), Some(upper)) => {
+                                format!("{said} [{lower:.6}, {upper:.6}]")
+                            }
+                            _ => format!("{said} (not identifiable)"),
+                        },
+                    }
+                })
                 .collect();
             println!(
                 "{} after {} evaluations in {:.3} s, cost {:.6e} ({}): {}",

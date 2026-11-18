@@ -230,16 +230,35 @@ struct Shot<'a> {
 /// are resolved once as well: an evaluation is one fan out of the conditions and the
 /// arithmetic of the residuals, see [`Problem::residuals`].
 pub struct Problem {
-    parameters: Vec<Parameter>,
-    points: Vec<Point>,
+    /// The parameters an optimizer searches, which are the ones of the fit without the ones
+    /// a profile holds at a value ([`Problem::fixing`]).
+    free: Vec<Parameter>,
+    /// One slot per varying target of the prepared requests, in their order: the parameter of
+    /// the search space whose value it takes, or the value it is held at.
+    slots: Vec<Slot>,
+    /// The conditions of the fit and the curves they carry, shared with the problems which
+    /// fix a parameter of it.
+    points: Arc<Vec<Point>>,
     n_residuals: usize,
-    workers: Workers,
+    /// The pool of the batch, shared with those problems as well: the instance of a thread is
+    /// made once, whatever is fitted on it.
+    workers: Arc<Workers>,
+}
+
+/// Where a varying target of the prepared requests takes its value from.
+#[derive(Clone, Copy, Debug)]
+enum Slot {
+    /// The parameter at this index of the search space, on its scale.
+    Free { at: usize, scale: Scale },
+    /// A value the parameter is held at, on the linear scale.
+    Fixed(f64),
 }
 
 impl std::fmt::Debug for Problem {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Problem")
-            .field("parameters", &self.parameters.len())
+            .field("parameters", &self.free.len())
+            .field("fixed", &(self.slots.len() - self.free.len()))
             .field("conditions", &self.points.len())
             .field(
                 "curves",
@@ -332,17 +351,95 @@ impl Problem {
             point.curves.push(resolved);
         }
         Ok(Problem {
-            parameters,
-            points,
+            slots: (0..parameters.len())
+                .map(|at| Slot::Free {
+                    at,
+                    scale: parameters[at].scale,
+                })
+                .collect(),
+            free: parameters,
+            points: Arc::new(points),
             n_residuals,
-            workers,
+            workers: Arc::new(workers),
+        })
+    }
+
+    /// The same fit with parameters held at a value, which is the problem of a profile.
+    ///
+    /// The indices are the ones of [`Problem::parameters`] of this problem, and the problem
+    /// it gives has the parameters around them: an optimizer searches those and the model
+    /// sees the values the others are held at. The conditions, the curves and the pool of the
+    /// batch are shared, so a profile of hundreds of points prepares and instantiates
+    /// nothing again.
+    ///
+    /// # Errors
+    ///
+    /// If an index is none of the parameters of the fit, if the fit would have no parameter
+    /// left, or if a value is outside the bounds of its parameter.
+    pub fn fixing(&self, fixed: &[(usize, f64)]) -> Result<Problem, FitError> {
+        let mut held: Vec<Option<f64>> = vec![None; self.free.len()];
+        for (at, value) in fixed {
+            let parameter = self.free.get(*at).ok_or_else(|| FitError::Parameter {
+                id: format!("{at}"),
+                message: format!("is none of the {} parameters of the fit", self.free.len()),
+            })?;
+            if !value.is_finite() || *value < parameter.lower || *value > parameter.upper {
+                return Err(FitError::Parameter {
+                    id: parameter.id.clone(),
+                    message: format!(
+                        "is held at {value}, outside its bounds [{}, {}]",
+                        parameter.lower, parameter.upper
+                    ),
+                });
+            }
+            held[*at] = Some(*value);
+        }
+        let free: Vec<Parameter> = self
+            .free
+            .iter()
+            .zip(held.iter())
+            .filter(|(_, held)| held.is_none())
+            .map(|(parameter, _)| parameter.clone())
+            .collect();
+        if free.is_empty() {
+            return Err(FitError::Empty("parameter which is not held at a value"));
+        }
+        // the index of every parameter which is still searched, in the order of the fit
+        let mut at_of: Vec<usize> = Vec::with_capacity(self.free.len());
+        let mut next = 0;
+        for value in &held {
+            at_of.push(next);
+            if value.is_none() {
+                next += 1;
+            }
+        }
+        let slots = self
+            .slots
+            .iter()
+            .map(|slot| match slot {
+                Slot::Fixed(value) => Slot::Fixed(*value),
+                Slot::Free { at, scale } => match held[*at] {
+                    Some(value) => Slot::Fixed(value),
+                    None => Slot::Free {
+                        at: at_of[*at],
+                        scale: *scale,
+                    },
+                },
+            })
+            .collect();
+        Ok(Problem {
+            free,
+            slots,
+            points: self.points.clone(),
+            n_residuals: self.n_residuals,
+            workers: self.workers.clone(),
         })
     }
 
     /// The parameters of the fit, in the order of the vector of an optimizer.
     #[must_use]
     pub fn parameters(&self) -> &[Parameter] {
-        &self.parameters
+        &self.free
     }
 
     /// The number of residuals of one evaluation.
@@ -360,7 +457,7 @@ impl Problem {
     /// The start of the fit, in the space an optimizer searches.
     #[must_use]
     pub fn start(&self) -> Vec<f64> {
-        self.parameters
+        self.free
             .iter()
             .map(|p| p.scale.to_search(p.start))
             .collect()
@@ -370,24 +467,38 @@ impl Problem {
     #[must_use]
     pub fn bounds(&self) -> (Vec<f64>, Vec<f64>) {
         (
-            self.parameters
+            self.free
                 .iter()
                 .map(|p| p.scale.to_search(p.lower))
                 .collect(),
-            self.parameters
+            self.free
                 .iter()
                 .map(|p| p.scale.to_search(p.upper))
                 .collect(),
         )
     }
 
-    /// The values of the parameters of a point of the search space.
+    /// The values of the parameters an optimizer searches at a point of the search space,
+    /// on the linear scale: the ones of [`Problem::parameters`], in their order.
     #[must_use]
-    pub fn values(&self, x: &[f64]) -> Vec<f64> {
-        self.parameters
+    pub fn parameter_values(&self, x: &[f64]) -> Vec<f64> {
+        self.free
             .iter()
             .zip(x.iter())
-            .map(|(p, value)| p.scale.to_model(*value))
+            .map(|(parameter, value)| parameter.scale.to_model(*value))
+            .collect()
+    }
+
+    /// The values of the varying targets of the conditions at a point of the search space:
+    /// the parameters of the fit on their scale and the ones a profile holds at a value.
+    #[must_use]
+    pub fn values(&self, x: &[f64]) -> Vec<f64> {
+        self.slots
+            .iter()
+            .map(|slot| match slot {
+                Slot::Free { at, scale } => scale.to_model(x[*at]),
+                Slot::Fixed(value) => *value,
+            })
             .collect()
     }
 
@@ -485,7 +596,7 @@ impl Problem {
     /// from the bound it would cross.
     #[must_use]
     pub fn step(&self, k: usize, x: &[f64]) -> f64 {
-        let parameter = &self.parameters[k];
+        let parameter = &self.free[k];
         let step = DIFF_STEP * x[k].abs().max(1.0);
         let upper = parameter.scale.to_search(parameter.upper);
         if x[k] + step > upper { -step } else { step }
@@ -502,7 +613,7 @@ impl Problem {
     ///
     /// As [`Problem::residuals`].
     pub fn jacobian(&self, x: &[f64]) -> Result<Vec<f64>, FitError> {
-        let k = self.parameters.len();
+        let k = self.free.len();
         let steps: Vec<f64> = (0..k).map(|column| self.step(column, x)).collect();
         // the values of the base point and of every column of the difference
         let mut moved: Vec<Vec<f64>> = Vec::with_capacity(k + 1);
@@ -514,7 +625,7 @@ impl Problem {
         }
         let mut shots: Vec<Shot<'_>> = Vec::with_capacity((k + 1) * self.points.len());
         for values in &moved {
-            for point in &self.points {
+            for point in self.points.iter() {
                 shots.push(Shot { point, values });
             }
         }

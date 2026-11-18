@@ -12,7 +12,10 @@ use sbmlsim_abi::SimulationRequest;
 use sbmlsim_host::LoadedModel;
 use serde::{Deserialize, Serialize};
 
-use crate::{Curve, Definition, Fit, FitError, Parameter, Problem, Scale, Settings, Stop};
+use crate::{
+    Curve, Definition, Fisher, Fit, FitError, Parameter, Problem, Profile, Scale, Settings, Stop,
+    Walk, fisher, profiles,
+};
 
 /// The contract of a fit: the version of the schema of a request and of its answer.
 pub const FIT_CONTRACT: &str = "fit/1";
@@ -53,6 +56,35 @@ pub struct FitRequest {
     /// and what the caller gives takes precedence.
     #[serde(default)]
     pub threads: Option<usize>,
+    /// The identifiability of the optimum the fit finds; none of it when the block is absent.
+    #[serde(default)]
+    pub identifiability: Option<Identifiability>,
+}
+
+/// What to ask of the optimum of a fit: how well its data determines it.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Identifiability {
+    /// The ids of the parameters to profile, in the order of the profiles; every parameter of
+    /// the fit when it is empty.
+    pub parameters: Vec<String>,
+    /// What a profile walks, see [`Walk`].
+    pub walk: Walk,
+    /// Whether the profiles are walked, which is a fit per point of every one of them.
+    pub profiles: bool,
+    /// Whether the Fisher information of the optimum is computed, which is one jacobian.
+    pub fisher: bool,
+}
+
+impl Default for Identifiability {
+    fn default() -> Identifiability {
+        Identifiability {
+            parameters: Vec::new(),
+            walk: Walk::default(),
+            profiles: true,
+            fisher: true,
+        }
+    }
 }
 
 /// A parameter of a fit.
@@ -126,6 +158,12 @@ pub struct FitAnswer {
     pub residuals: Vec<f64>,
     /// Every run of the fit, in the order of its starts.
     pub runs: Vec<RunAnswer>,
+    /// The profiles of the likelihood of the parameters, when the fit asked for them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub profiles: Vec<Profile>,
+    /// The Fisher information of the optimum, when the fit asked for it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fisher: Option<Fisher>,
 }
 
 /// A parameter of the optimum of a fit.
@@ -224,6 +262,31 @@ pub fn fit_with(
         }
     }
     let best = best.ok_or_else(|| FitError::Request("has no start to run".to_string()))?;
+    // how well the data determines the optimum of the best run, when the fit asks for it
+    let (walked, information) = match &request.identifiability {
+        None => (Vec::new(), None),
+        Some(analysis) => {
+            let which = which_of(analysis, &problem)?;
+            let walked = if analysis.profiles {
+                profiles(
+                    &problem,
+                    &request.optimizer,
+                    &best.x,
+                    &which,
+                    &analysis.walk,
+                    stop,
+                )?
+            } else {
+                Vec::new()
+            };
+            let information = if analysis.fisher {
+                Some(fisher(&problem, &best.x)?)
+            } else {
+                None
+            };
+            (walked, information)
+        }
+    };
     Ok(FitAnswer {
         contract: FIT_CONTRACT.to_string(),
         status: best.status,
@@ -245,7 +308,27 @@ pub fn fit_with(
         seconds: began.elapsed().as_secs_f64(),
         residuals: best.residuals,
         runs,
+        profiles: walked,
+        fisher: information,
     })
+}
+
+/// The parameters of an identifiability analysis as their indices in the fit.
+fn which_of(analysis: &Identifiability, problem: &Problem) -> Result<Vec<usize>, FitError> {
+    let mut which = Vec::with_capacity(analysis.parameters.len());
+    for id in &analysis.parameters {
+        let at = problem
+            .parameters()
+            .iter()
+            .position(|parameter| parameter.id == *id)
+            .ok_or_else(|| {
+                FitError::Request(format!(
+                    "asks for the profile of '{id}', which is none of its parameters"
+                ))
+            })?;
+        which.push(at);
+    }
+    Ok(which)
 }
 
 /// Resolves a request into the definition of a fit: the ids of its conditions into their

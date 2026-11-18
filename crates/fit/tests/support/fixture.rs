@@ -78,3 +78,53 @@ pub fn definition(start: f64, scale: Scale) -> Definition {
 pub fn problem(start: f64, scale: Scale, threads: usize) -> Problem {
     Problem::new(definition(start, scale), model(), threads).unwrap()
 }
+
+/// The standard deviation of the measurements of the fit of a pair, which is what a
+/// confidence interval of its parameters is measured against: data of this many per cent is
+/// what a study of a drug reports.
+pub const NOISE: f64 = 0.02;
+
+/// The definition of the fit of `k` and of the initial value of `y`, whose data is the model
+/// at `k = K` and `y = 1`, so that a fit of both has to find that pair. Every measurement
+/// carries the standard deviation [`NOISE`].
+pub fn pair(k: f64, y: f64, scale: Scale) -> Definition {
+    let (times, values) = data(K);
+    let noise = Some(vec![NOISE; values.len()]);
+    Definition {
+        parameters: vec![
+            Parameter {
+                id: "k".to_string(),
+                start: k,
+                lower: 0.01,
+                upper: 10.0,
+                scale,
+            },
+            Parameter {
+                id: "y".to_string(),
+                start: y,
+                lower: 0.1,
+                upper: 10.0,
+                scale,
+            },
+        ],
+        conditions: vec![request()],
+        curves: vec![Curve {
+            condition: 0,
+            column: "y".to_string(),
+            times,
+            values,
+            noise,
+            weight: 1.0,
+        }],
+    }
+}
+
+/// The fit of `k` and `y` against one measurement at the start, which tells `y` and says
+/// nothing about `k`: the one case of a parameter the data does not determine.
+pub fn one_point(scale: Scale) -> Definition {
+    let mut definition = pair(0.5, 2.0, scale);
+    definition.curves[0].times = vec![0.0];
+    definition.curves[0].values = vec![1.0];
+    definition.curves[0].noise = Some(vec![NOISE]);
+    definition
+}
