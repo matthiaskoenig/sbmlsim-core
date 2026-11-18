@@ -1118,6 +1118,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "sbmlsim-batch"
+version = "0.10.0"
+dependencies = [
+ "anyhow",
+ "rayon",
+ "sbmlsim-abi",
+ "sbmlsim-compiler",
+ "sbmlsim-host",
+ "serde_json",
+ "thiserror 2.0.21",
+ "wat",
+]
+
+[[package]]
 name = "sbmlsim-cli"
 version = "0.10.0"
 dependencies = [
@@ -1215,8 +1229,8 @@ dependencies = [
  "numpy",
  "pyo3",
  "pythonize",
- "rayon",
  "sbmlsim-abi",
+ "sbmlsim-batch",
  "sbmlsim-compiler",
  "sbmlsim-host",
  "serde_path_to_error",

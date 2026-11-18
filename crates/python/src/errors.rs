@@ -1,7 +1,9 @@
 //! The exceptions of `sbmlsim_core` and the mapping of the errors of the engine onto them.
 
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use sbmlsim_abi::EngineError;
+use sbmlsim_batch::{BatchError, PointFailure};
 use std::sync::PoisonError;
 
 pyo3::create_exception!(
@@ -74,6 +76,16 @@ pub(crate) fn simulation_error(error: EngineError) -> PyErr {
     }
 }
 
+/// The exception of a batch which cannot run: a number of threads which is none, or a pool of
+/// threads which does not start.
+pub(crate) fn batch_error(error: BatchError) -> PyErr {
+    let message = error.to_string();
+    match error {
+        BatchError::Threads(_) => PyValueError::new_err(message),
+        BatchError::Pool { .. } => LoadError::new_err(message),
+    }
+}
+
 /// The error of an instance whose lock a panic poisoned.
 pub(crate) fn poisoned<T>(_: PoisonError<T>) -> EngineError {
     EngineError::Internal("the instance panicked before and is not used again".into())
@@ -108,6 +120,14 @@ impl PointError {
             message,
             flag,
             time,
+        }
+    }
+
+    /// The failure of a point of a batch of `sbmlsim-batch`.
+    pub(crate) fn of_failure(failure: PointFailure) -> PointError {
+        match failure {
+            PointFailure::Engine(error) => PointError::of(error),
+            PointFailure::Internal(message) => PointError::internal(message),
         }
     }
 

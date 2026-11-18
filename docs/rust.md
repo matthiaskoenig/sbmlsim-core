@@ -59,6 +59,64 @@ This is `crates/host/examples/first_simulation.rs`, which `cargo clippy --all-ta
 
 `result.values` is row major with one column per selection, the same layout the other two bindings return. `instance.stats()` gives the counters of the integrator (steps, right hand side evaluations, Jacobian evaluations, nonlinear iterations, error test failures), which are the same in every host for the same request.
 
+## A batch of simulations
+
+A scan, the points of a finite difference Jacobian and the population of an optimizer are the same work: many simulations of one model which do not depend on each other. `sbmlsim-batch` runs them on a pool of threads, each on an engine instance of its own, made at the first point of the thread and reused by every point after it, so the results of a batch are those of a serial run bitwise, whatever the threads are, and the cost of an instance (0.33 ms for a model of 700 kB of description) is paid once per thread instead of once per point.
+
+```rust
+use std::sync::Arc;
+
+use sbmlsim_abi::{IntegratorSettings, Output, SIMULATION_CONTRACT, SimulationRequest};
+use sbmlsim_batch::{WorkerPool, thread_count};
+use sbmlsim_compiler::{CompileOptions, compile};
+use sbmlsim_host::Runtime;
+
+fn main() -> anyhow::Result<()> {
+    let sbml = std::fs::read_to_string("model.xml")?;
+    let compiled = compile(&sbml, &CompileOptions::default())?;
+
+    let runtime = Runtime::embedded()?;
+    let model = Arc::new(runtime.load(&compiled.wasm, &compiled.description)?);
+
+    let request = SimulationRequest {
+        contract: SIMULATION_CONTRACT.to_string(),
+        start: 0.0,
+        end: 10.0,
+        output: Output::Uniform { steps: 100 },
+        selections: vec!["time".to_string(), "[S]".to_string()],
+        settings: IntegratorSettings::default(),
+        preinit: vec![],
+        changes: vec![],
+        steady_state: None,
+        seed: 0,
+    };
+    // the request is validated and resolved once; a point of the scan is the value of `k`
+    let prepared = model.prepare(&request, &["k".to_string()])?;
+    let points: Vec<Vec<f64>> = (1..=64).map(|step| vec![f64::from(step) * 0.1]).collect();
+
+    let mut pool = WorkerPool::new(model, thread_count(None)?);
+    pool.ensure(points.len())?;
+    let workers = pool.workers().expect("the workers of a pool which grew");
+    for (point, outcome) in points
+        .iter()
+        .zip(workers.simulate_prepared(&prepared, &points))
+    {
+        match outcome {
+            Ok(table) => println!("k = {}: {:?}", point[0], table.values.last()),
+            // a point which fails leaves the points around it their results
+            Err(failure) => println!("k = {}: {failure}", point[0]),
+        }
+    }
+    Ok(())
+}
+```
+
+This is `crates/batch/examples/a_scan.rs`, which `cargo clippy --all-targets` builds, so the example above cannot drift from the API either. Run it with `cargo run --example a_scan`.
+
+`Workers::new` is a pool for one batch and `WorkerPool` keeps one across batches, grown to the points of a batch and never shrunk, which is what a caller of many small batches needs. `Workers::map` is the batch of any work which is more than a simulation: the whole work of a point runs on the thread of the point, so a caller which computes the residuals of an objective or the rows of a table does that there as well, and gives one `Outcome` per point in the order of the points. A point which fails, and a point which panics, fails alone: `Outcome` is a result per point, so a batch is never ended by one of its points.
+
+The pool is the one the [Python](python.md) bindings run `simulate_many` and `batch_executor` on.
+
 ## The pieces
 
 | crate | what it is |
@@ -67,6 +125,7 @@ This is `crates/host/examples/first_simulation.rs`, which `cargo clippy --all-ta
 | `sbmlsim-compiler` | SBML to `model.wasm` and `model.json` (over `sbml`, `ir` and `codegen`) |
 | `sbmlsim-engine` | the integrator, compiled to `engine.wasm` (CVODE, KLU) |
 | `sbmlsim-host` | the wasmtime host: `Runtime`, `LoadedModel`, `Instance` |
+| `sbmlsim-batch` | the pool of a batch of simulations: a thread per point, an instance per thread |
 | `sbmlsim-csolvers` | CVODE and SuiteSparse, built from source for the engine and for the native host |
 | `sbmlsim-cli` | the command line `sbmlsim-core` |
 

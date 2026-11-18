@@ -1,0 +1,26 @@
+[package]
+name = "sbmlsim-batch"
+version.workspace = true
+edition.workspace = true
+# not on crates.io yet, as the rest of the workspace
+publish = false
+# the license of sbmlsim-host, whose engine it runs
+license = "MIT AND BSD-3-Clause AND LGPL-2.1-or-later"
+authors.workspace = true
+description = "The batch of simulations of sbmlsim-core: a pool of threads, an engine instance per thread"
+
+[dependencies]
+rayon = "1.10"
+sbmlsim-abi = { path = "../abi" }
+# the native engine, which a batch simulates on: the integrator compiled for the machine with
+# `model.wasm` and `mathlib.wasm` in wasmtime (`crates/host/src/native.rs`)
+sbmlsim-host = { path = "../host", features = ["native"] }
+thiserror.workspace = true
+
+[dev-dependencies]
+# the example `a_scan`, which compiles a model of its own and gives a failure of the host
+anyhow = "1"
+sbmlsim-compiler = { path = "../compiler" }
+# the decay model of `crates/host/tests/decay-model`, which the tests of the pool simulate
+serde_json.workspace = true
+wat = "1"

@@ -1,20 +1,17 @@
 //! The instance which simulates requests, the table it answers with, and the batch of requests
-//! over the threads of a rayon pool.
+//! over the threads of a pool of `sbmlsim-batch`.
 
-use std::any::Any;
 use std::collections::HashMap;
-use std::num::NonZeroUsize;
-use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 
 use numpy::PyArray2;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use rayon::prelude::*;
 use sbmlsim_abi::EngineError;
 use sbmlsim_abi::{SimulationRequest, SimulationResult, SimulationStats};
+use sbmlsim_batch::{Outcome, WorkerPool, Workers, thread_count};
 
-use crate::errors::{InternalError, LoadError, PointError, poisoned, simulation_error};
+use crate::errors::{InternalError, PointError, batch_error, poisoned, simulation_error};
 
 /// A model in an engine of its own; simulates one request after the other.
 #[pyclass(frozen, module = "sbmlsim_core")]
@@ -146,165 +143,75 @@ fn output(py: Python<'_>, result: SimulationResult) -> Result<SimulationOutput, 
     })
 }
 
-/// How many requests of a batch one thread of the pool gets per slice.
-const SLICE_PER_THREAD: usize = 8;
-
-/// The most threads a batch runs on. More of them is no use for simulations, which are CPU
-/// work alone, and a thread costs a stack and an instance, so a number nothing bounds is an
-/// allocation the process would be killed for rather than an error it answers with.
-const MAX_THREADS: usize = 1024;
-
-/// The instance a thread of the pool simulates on, taken out of its slot while it simulates.
-type Slot = Mutex<Option<sbmlsim_host::NativeInstance>>;
-
-/// One point of a batch: the table of its simulation, or the error which failed it.
-enum Point {
-    Table(SimulationResult),
-    Failed(PointError),
+/// The requests of a batch, read while the GIL is held, so that a request which is none is
+/// refused before anything is simulated.
+fn requests_of(requests: &Bound<'_, PyAny>) -> PyResult<Vec<SimulationRequest>> {
+    requests
+        .try_iter()?
+        .enumerate()
+        .map(|(at, object)| request_of(&object?, &format!("requests[{at}]")))
+        .collect()
 }
 
-/// The number of threads of a batch: the given one, or every CPU of the process without it.
-fn thread_count(threads: Option<i64>) -> PyResult<usize> {
-    let Some(threads) = threads else {
-        return Ok(std::thread::available_parallelism()
-            .map_or(1, NonZeroUsize::get)
-            .min(MAX_THREADS));
-    };
-    usize::try_from(threads)
-        .ok()
-        .filter(|threads| (1..=MAX_THREADS).contains(threads))
-        .ok_or_else(|| {
-            PyValueError::new_err(format!(
-                "threads must be at least 1 and at most {MAX_THREADS}, not {threads}"
-            ))
+/// The points of a prepared batch, which are the values of its varying targets.
+fn points_of(points: &Bound<'_, PyAny>) -> PyResult<Vec<Vec<f64>>> {
+    points
+        .try_iter()?
+        .enumerate()
+        .map(|(at, row)| {
+            row?.extract::<Vec<f64>>()
+                .map_err(|error| PyValueError::new_err(format!("points[{at}]: {error}")))
         })
-}
-
-/// The message of the payload of a panic.
-fn panic_message(payload: &(dyn Any + Send)) -> &str {
-    payload
-        .downcast_ref::<&str>()
-        .copied()
-        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
-        .unwrap_or("a panic of no message")
-}
-
-/// Simulates one point of a batch on the instance of its thread; gives its error and never
-/// raises, so that one point never ends the batch.
-fn point(model: &sbmlsim_host::LoadedModel, slots: &[Slot], request: &SimulationRequest) -> Point {
-    // a panic of wasmtime or of the host fails its own point and no other one; the instance of
-    // the point is dropped while it unwinds, so the thread gets a fresh one for its next point
-    // and the poisoned lock of its slot is read as the empty slot it is
-    catch_unwind(AssertUnwindSafe(|| {
-        simulate_point(model, slots, |instance| instance.simulate(request))
-    }))
-    .unwrap_or_else(|payload| {
-        Point::Failed(PointError::internal(format!(
-            "the point panicked: {}",
-            panic_message(&*payload)
-        )))
-    })
-}
-
-/// Simulates a point on the instance of the thread of the pool which runs it, which it takes
-/// out of its slot while it simulates and puts back for the points after it.
-fn simulate_point(
-    model: &sbmlsim_host::LoadedModel,
-    slots: &[Slot],
-    simulate: impl FnOnce(&mut sbmlsim_host::NativeInstance) -> Result<SimulationResult, EngineError>,
-) -> Point {
-    // the slot of the thread which runs the point, which no other thread reads, so that its
-    // lock is never contended; a point outside of the pool, which rayon does not run, and one
-    // whose slot a panic left empty simulate on an instance of their own
-    let slot = rayon::current_thread_index().and_then(|thread| slots.get(thread));
-    let mut slot = slot.map(|slot| slot.lock().unwrap_or_else(PoisonError::into_inner));
-    let mut instance = match slot.as_mut().and_then(|slot| slot.take()) {
-        Some(instance) => instance,
-        None => match model.instantiate_native() {
-            Ok(instance) => instance,
-            Err(error) => {
-                return Point::Failed(PointError::internal(format!(
-                    "the point has no instance: {error:#}"
-                )));
-            }
-        },
-    };
-    let result = simulate(&mut instance);
-    // an instance which trapped refuses every request after it (`EngineError::Internal`), so
-    // it is dropped here and the thread gets a fresh one for its next point
-    if let Some(slot) = slot.as_mut()
-        && !matches!(result, Err(EngineError::Internal(_)))
-    {
-        **slot = Some(instance);
-    }
-    match result {
-        Ok(table) => Point::Table(table),
-        Err(error) => Point::Failed(PointError::of(error)),
-    }
+        .collect()
 }
 
 /// Simulates every request of a batch (`LoadedModel.simulate_many`) and gives one result per
 /// request, in the order of the requests.
 ///
-/// The batch runs in slices of `SLICE_PER_THREAD * threads` requests on a pool of its own, of
-/// at most one thread per request and of none at all for a batch without requests, which is an
-/// empty list; every thread of the pool simulates on an instance of its own, made at its first
-/// point and reused by every point after it, the ones of a later slice as well, so the results
-/// are those of a serial run bitwise, whatever the threads and the slices are. Between two
-/// slices the GIL is taken back, the results of the slice are built and the signals are
-/// checked, which is where a long batch is interrupted.
+/// The batch runs on a pool of its own, of at most one thread per request and of none at all
+/// for a batch without requests, which is an empty list.
 pub(crate) fn batch(
     py: Python<'_>,
-    model: &sbmlsim_host::LoadedModel,
+    model: &Arc<sbmlsim_host::LoadedModel>,
     requests: &Bound<'_, PyAny>,
     threads: Option<i64>,
 ) -> PyResult<Vec<Py<PyAny>>> {
-    let threads = thread_count(threads)?;
-    // the requests are read while the GIL is held, so a request which is none is refused
-    // before anything is simulated
-    let requests: Vec<SimulationRequest> = requests
-        .try_iter()?
-        .enumerate()
-        .map(|(at, object)| request_of(&object?, &format!("requests[{at}]")))
-        .collect::<PyResult<_>>()?;
+    let threads = thread_count(threads).map_err(batch_error)?;
+    let requests = requests_of(requests)?;
     if requests.is_empty() {
         return Ok(Vec::new());
     }
-    // a thread without a point of its own is a thread started for nothing, and rayon's pool
-    // does not wait for its threads when it is dropped, so a caller of many small batches
-    // would hold more threads than it asked for
     let threads = threads.min(requests.len());
-    let pool = py
-        .detach(|| rayon::ThreadPoolBuilder::new().num_threads(threads).build())
-        .map_err(|error| LoadError::new_err(format!("no pool of {threads} threads: {error}")))?;
-    let slots: Vec<Slot> = (0..threads).map(|_| Mutex::new(None)).collect();
-    run_batch(py, &requests, &pool, &slots, |request| {
-        point(model, &slots, request)
-    })
+    let workers = py
+        .detach(|| Workers::new(model.clone(), threads))
+        .map_err(batch_error)?;
+    run_slices(py, &workers, &requests, |slice| workers.simulate(slice))
 }
 
-fn run_batch<T: Sync>(
+/// Runs a batch in slices of `Workers::slice_len` points and gives one object per point, in
+/// the order of the points: the table of a point which ran and a `PointError` for one which
+/// failed.
+///
+/// The points of a slice run without the GIL and give the tables of the engine, which become
+/// the objects of python between two slices, where the GIL is held again, and where the
+/// signals are checked: a thread of the pool never reaches into python, and a long batch is
+/// interrupted there.
+fn run_slices<T: Sync>(
     py: Python<'_>,
-    requests: &[T],
-    pool: &rayon::ThreadPool,
-    slots: &[Slot],
-    simulate: impl Fn(&T) -> Point + Sync,
+    workers: &Workers,
+    items: &[T],
+    run: impl Fn(&[T]) -> Vec<Outcome<SimulationResult>> + Sync,
 ) -> PyResult<Vec<Py<PyAny>>> {
-    let threads = slots.len();
-    let mut results = Vec::with_capacity(requests.len());
-    for slice in requests.chunks(SLICE_PER_THREAD * threads) {
-        // the points of a slice are simulated without the GIL and give the tables of the
-        // engine, which become the objects of python here, where the GIL is held again: a
-        // thread of the pool never reaches into python
-        let points: Vec<Point> =
-            py.detach(|| pool.install(|| slice.par_iter().map(&simulate).collect()));
+    let mut results = Vec::with_capacity(items.len());
+    for slice in items.chunks(workers.slice_len()) {
+        let points = py.detach(|| run(slice));
         for outcome in points {
             results.push(match outcome {
-                Point::Table(table) => match output(py, table) {
+                Ok(table) => match output(py, table) {
                     Ok(out) => Py::new(py, out)?.into_any(),
                     Err(message) => Py::new(py, PointError::internal(message))?.into_any(),
                 },
-                Point::Failed(error) => Py::new(py, error)?.into_any(),
+                Err(failure) => Py::new(py, PointError::of_failure(failure))?.into_any(),
             });
         }
         py.check_signals()?;
@@ -315,62 +222,48 @@ fn run_batch<T: Sync>(
 /// A bounded reusable pool with one active submission at a time.
 #[pyclass(frozen, module = "sbmlsim_core")]
 pub(crate) struct BatchExecutor {
-    model: Arc<sbmlsim_host::LoadedModel>,
-    threads: usize,
     state: Mutex<ExecutorState>,
 }
 
 struct ExecutorState {
     closed: bool,
-    workers: Option<(rayon::ThreadPool, Vec<Slot>)>,
+    pool: WorkerPool,
 }
+
+/// The default bound of the workers of an executor, which a caller of many small batches holds
+/// between them.
+const DEFAULT_EXECUTOR_THREADS: usize = 8;
 
 impl BatchExecutor {
     pub(crate) fn new(
         model: Arc<sbmlsim_host::LoadedModel>,
         threads: Option<i64>,
     ) -> PyResult<Self> {
-        let threads = if threads.is_none() {
-            thread_count(None)?.min(8)
-        } else {
-            thread_count(threads)?
+        let threads = match threads {
+            None => thread_count(None)
+                .map_err(batch_error)?
+                .min(DEFAULT_EXECUTOR_THREADS),
+            threads => thread_count(threads).map_err(batch_error)?,
         };
         Ok(Self {
-            model,
-            threads,
             state: Mutex::new(ExecutorState {
                 closed: false,
-                workers: None,
+                pool: WorkerPool::new(model, threads),
             }),
         })
     }
-    fn ensure_workers(
-        &self,
-        py: Python<'_>,
-        state: &mut ExecutorState,
-        count: usize,
-    ) -> PyResult<()> {
-        let threads = self.threads.min(count);
-        if state
-            .workers
-            .as_ref()
-            .is_none_or(|(_, slots)| slots.len() < threads)
-        {
-            let pool = py
-                .detach(|| rayon::ThreadPoolBuilder::new().num_threads(threads).build())
-                .map_err(|error| {
-                    LoadError::new_err(format!("no pool of {threads} threads: {error}"))
-                })?;
-            let mut slots = if let Some((old_pool, slots)) = state.workers.take() {
-                py.detach(|| drop(old_pool));
-                slots
-            } else {
-                Vec::new()
-            };
-            slots.resize_with(threads, || Mutex::new(None));
-            state.workers = Some((pool, slots));
+
+    /// The state of the executor, or why it has none: a call of another thread holds it, or it
+    /// is closed.
+    fn state(&self) -> PyResult<std::sync::MutexGuard<'_, ExecutorState>> {
+        let state = self
+            .state
+            .try_lock()
+            .map_err(|_| PyRuntimeError::new_err("batch executor is busy"))?;
+        if state.closed {
+            return Err(PyRuntimeError::new_err("batch executor is closed"));
         }
-        Ok(())
+        Ok(state)
     }
 }
 
@@ -382,26 +275,18 @@ impl BatchExecutor {
         py: Python<'_>,
         requests: &Bound<'_, PyAny>,
     ) -> PyResult<Vec<Py<PyAny>>> {
-        let mut state = self
-            .state
-            .try_lock()
-            .map_err(|_| PyRuntimeError::new_err("batch executor is busy"))?;
-        if state.closed {
-            return Err(PyRuntimeError::new_err("batch executor is closed"));
-        }
-        let requests: Vec<SimulationRequest> = requests
-            .try_iter()?
-            .enumerate()
-            .map(|(at, object)| request_of(&object?, &format!("requests[{at}]")))
-            .collect::<PyResult<_>>()?;
+        let mut state = self.state()?;
+        let requests = requests_of(requests)?;
         if requests.is_empty() {
             return Ok(Vec::new());
         }
-        self.ensure_workers(py, &mut state, requests.len())?;
-        let (pool, slots) = state.workers.as_ref().expect("initialized pool");
-        run_batch(py, &requests, pool, slots, |request| {
-            point(&self.model, slots, request)
-        })
+        // the guard of the lock is not Send, the state behind it is, so the pool grows while
+        // the GIL is released
+        let state = &mut *state;
+        py.detach(|| state.pool.ensure(requests.len()))
+            .map_err(batch_error)?;
+        let workers = state.pool.workers().expect("the pool of a batch which ran");
+        run_slices(py, workers, &requests, |slice| workers.simulate(slice))
     }
 
     /// Runs numeric rows in order on the retained workers.
@@ -411,43 +296,22 @@ impl BatchExecutor {
         prepared: &PreparedSimulation,
         points: &Bound<'_, PyAny>,
     ) -> PyResult<Vec<Py<PyAny>>> {
-        let mut state = self
-            .state
-            .try_lock()
-            .map_err(|_| PyRuntimeError::new_err("batch executor is busy"))?;
-        if state.closed {
-            return Err(PyRuntimeError::new_err("batch executor is closed"));
-        }
-        if !Arc::ptr_eq(&self.model, &prepared.model) {
+        let mut state = self.state()?;
+        if !Arc::ptr_eq(state.pool.model(), &prepared.model) {
             return Err(PyValueError::new_err(
                 "prepared simulation belongs to another model",
             ));
         }
-        let points: Vec<Vec<f64>> = points
-            .try_iter()?
-            .enumerate()
-            .map(|(at, row)| {
-                row?.extract::<Vec<f64>>()
-                    .map_err(|error| PyValueError::new_err(format!("points[{at}]: {error}")))
-            })
-            .collect::<PyResult<_>>()?;
+        let points = points_of(points)?;
         if points.is_empty() {
             return Ok(Vec::new());
         }
-        self.ensure_workers(py, &mut state, points.len())?;
-        let (pool, slots) = state.workers.as_ref().expect("initialized pool");
-        run_batch(py, &points, pool, slots, |values| {
-            catch_unwind(AssertUnwindSafe(|| {
-                simulate_point(&self.model, slots, |instance| {
-                    instance.simulate_prepared(&prepared.prepared, values)
-                })
-            }))
-            .unwrap_or_else(|payload| {
-                Point::Failed(PointError::internal(format!(
-                    "the point panicked: {}",
-                    panic_message(&*payload)
-                )))
-            })
+        let state = &mut *state;
+        py.detach(|| state.pool.ensure(points.len()))
+            .map_err(batch_error)?;
+        let workers = state.pool.workers().expect("the pool of a batch which ran");
+        run_slices(py, workers, &points, |slice| {
+            workers.simulate_prepared(&prepared.prepared, slice)
         })
     }
 
@@ -458,20 +322,14 @@ impl BatchExecutor {
             .try_lock()
             .map_err(|_| PyRuntimeError::new_err("batch executor is busy"))?;
         state.closed = true;
-        let workers = state.workers.take();
+        let workers = state.pool.take();
+        // the threads of the pool and the instances of the threads go without the GIL
         py.detach(|| drop(workers));
         Ok(())
     }
 
     fn __enter__(slf: PyRef<'_, Self>) -> PyResult<PyRef<'_, Self>> {
-        let state = slf
-            .state
-            .try_lock()
-            .map_err(|_| PyRuntimeError::new_err("batch executor is busy"))?;
-        if state.closed {
-            return Err(PyRuntimeError::new_err("batch executor is closed"));
-        }
-        drop(state);
+        drop(slf.state()?);
         Ok(slf)
     }
 
