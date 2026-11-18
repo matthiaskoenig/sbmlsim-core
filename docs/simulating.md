@@ -275,8 +275,31 @@ are the same for both submission methods.
 
 Existing pre-initialization entries retain their order and quantity when overridden.
 For example, varying `S` with a template entry for `[S]` replaces the value in that
-concentration entry. Drop unused Python plans to release their guest slots on the
-next prepared operation. Each worker retains at most 32 live plans.
+concentration entry. Drop unused Python plans to release the plans the instances of
+the model cached for them on the next prepared operation. The limit of 32 live plans
+per instance is the one of a wasm instance, which the hosts of Rust and JavaScript
+run; the wheel runs the native engine, whose instances cache the plan of every
+request which is alive.
+
+One batch can also hold requests of its own, as a fit does: `simulate_plans` takes
+pairs of a prepared request and the values of its varying targets, so the conditions
+of one evaluation of an objective, or the whole finite difference Jacobian of one,
+are a single fan-out over the pool instead of one call per condition:
+
+```python
+first = model.prepare(request, varying=["k"])
+second = model.prepare(other_request, varying=["k"])
+with model.batch_executor(threads=4) as executor:
+    outputs = executor.simulate_plans(
+        [(first, [0.2]), (second, [0.2]), (first, [0.5]), (second, [0.5])]
+    )
+```
+
+Every request of a batch of plans belongs to the loaded model of the executor; one of
+another model raises `ValueError` naming its plan (`plans[3]`), as a pair which is
+none does, before anything is simulated. The results keep the order of the plans and a
+point which fails is a `PointError` in its own position, as in every other batch.
+`bench/OPTIMIZATION.md` measures what one batch of plans is worth to a fit.
 
 ## Prepared requests in Rust
 

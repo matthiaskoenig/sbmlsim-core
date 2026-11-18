@@ -9,7 +9,7 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use sbmlsim_abi::EngineError;
 use sbmlsim_abi::{SimulationRequest, SimulationResult, SimulationStats};
-use sbmlsim_batch::{Outcome, WorkerPool, Workers, thread_count};
+use sbmlsim_batch::{Outcome, Plan, WorkerPool, Workers, thread_count};
 
 use crate::errors::{InternalError, PointError, batch_error, poisoned, simulation_error};
 
@@ -165,6 +165,34 @@ fn points_of(points: &Bound<'_, PyAny>) -> PyResult<Vec<Vec<f64>>> {
         .collect()
 }
 
+/// The plans of a batch, which are pairs of a prepared request and the values of its varying
+/// targets; `model` is the model of the pool the plans run on, which every one of them belongs
+/// to, so that a plan of another model is refused before anything is simulated.
+fn plans_of(
+    plans: &Bound<'_, PyAny>,
+    model: &Arc<sbmlsim_host::LoadedModel>,
+) -> PyResult<Vec<Plan>> {
+    plans
+        .try_iter()?
+        .enumerate()
+        .map(|(at, plan)| {
+            let plan = plan?;
+            let (prepared, values) = plan
+                .extract::<(PyRef<'_, PreparedSimulation>, Vec<f64>)>()
+                .map_err(|error| PyValueError::new_err(format!("plans[{at}]: {error}")))?;
+            if !Arc::ptr_eq(model, &prepared.model) {
+                return Err(PyValueError::new_err(format!(
+                    "plans[{at}]: prepared simulation belongs to another model"
+                )));
+            }
+            Ok(Plan {
+                prepared: prepared.prepared.clone(),
+                values,
+            })
+        })
+        .collect()
+}
+
 /// Simulates every request of a batch (`LoadedModel.simulate_many`) and gives one result per
 /// request, in the order of the requests.
 ///
@@ -313,6 +341,23 @@ impl BatchExecutor {
         run_slices(py, workers, &points, |slice| {
             workers.simulate_prepared(&prepared.prepared, slice)
         })
+    }
+
+    /// Runs the plans of a batch on the retained workers, in order: a plan is a prepared
+    /// request with the values of its varying targets, so the plans of one batch are requests
+    /// of their own, and one evaluation of an objective, or the whole Jacobian of one, is a
+    /// batch instead of one call per condition.
+    fn simulate_plans(&self, py: Python<'_>, plans: &Bound<'_, PyAny>) -> PyResult<Vec<Py<PyAny>>> {
+        let mut state = self.state()?;
+        let plans = plans_of(plans, state.pool.model())?;
+        if plans.is_empty() {
+            return Ok(Vec::new());
+        }
+        let state = &mut *state;
+        py.detach(|| state.pool.ensure(plans.len()))
+            .map_err(batch_error)?;
+        let workers = state.pool.workers().expect("the pool of a batch which ran");
+        run_slices(py, workers, &plans, |slice| workers.simulate_plans(slice))
     }
 
     /// Idempotently releases retained resources. Concurrent calls raise RuntimeError.
