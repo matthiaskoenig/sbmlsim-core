@@ -174,8 +174,9 @@ cached per engine and reused across compatible simulations.
 | `jacobian` | `{"analytic": pattern}` or `{"colored_difference": {"pattern", "colors", "reason"}}`; a pattern is compressed sparse column (`n`, `col_ptr`, `row_idx`) |
 | `events` | per event `id` (empty for an event without one), `has_delay`, `has_priority`, `persistent`, `initial_value`, `use_values_from_trigger_time`, `n_assignments` |
 | `n_roots` | the number of root functions of the model, those of the triggers first |
-| `n_discontinuity_roots` | the number of root functions of the discontinuities of the math (the branches of `piecewise`), the last of the `n_roots` |
-| `n_constants` | the number of constants of the model: the subexpressions of the parameters alone, which `model_init` and `model_assign` compute into the parameter vector behind the parameters, so the right hand side does not compute them in every call |
+| `n_discontinuity_roots` | the number of root functions of math discontinuities and delayed history crossings, the last of the `n_roots` |
+| `n_constants` | the number of cached parameter-only subexpressions behind the parameters; a DDE model instead reserves one slot for its history address |
+| `n_delays` | optional historical query slot count, omitted for ordinary ODEs; see [Delay equations](delays.md) |
 | `units` | the unit expression of every entity id |
 
 An entity of `states` and `parameters` is `{"id", "kind", "initial", "settable"}`: its SBML id; its kind, `"compartment"`, `"parameter"`, `"species_reference"` or `{"species": {"compartment", "has_only_substance_units", "stores_concentration"}}`; its initial value as loaded (a value which is not finite is the string `"NaN"`, `"inf"` or `"-inf"`, since JSON has no such numbers); and whether a change may set it (the target of an assignment rule may not).

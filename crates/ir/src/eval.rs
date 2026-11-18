@@ -102,29 +102,47 @@ pub fn quotient(a: f64, b: f64) -> f64 {
 
 /// The native evaluation of an expression; `read` gives the value of a symbol.
 pub fn eval(e: &Expr, read: &dyn Fn(Symbol) -> f64) -> f64 {
+    eval_history(e, read, &|_, _| f64::NAN)
+}
+
+/// Evaluates math with a caller-provided resolver for delayed operands and their current lag.
+pub fn eval_history(
+    e: &Expr,
+    read: &dyn Fn(Symbol) -> f64,
+    history: &dyn Fn(&Expr, f64) -> f64,
+) -> f64 {
+    let evaluate = |e: &Expr| eval_history(e, read, history);
     match e {
         Expr::Number(x) => *x,
         Expr::Bool(b) => f64::from(u8::from(*b)),
         Expr::Symbol(s) => read(*s),
-        Expr::Apply { op, .. } if is_boolean(*op) => f64::from(u8::from(eval_bool(e, read))),
-        Expr::Apply { op, args } => apply(*op, args, read),
+        Expr::Apply {
+            op: Op::Delay,
+            args,
+        } => history(&args[0], evaluate(&args[1])),
+        Expr::Apply { op, .. } if is_boolean(*op) => f64::from(u8::from(boolean(e, &evaluate))),
+        Expr::Apply { op, args } => apply(*op, args, &evaluate),
         Expr::Piecewise { pieces, otherwise } => {
             for (value, condition) in pieces {
-                if eval_bool(condition, read) {
-                    return eval(value, read);
+                if boolean(condition, &evaluate) {
+                    return evaluate(value);
                 }
             }
-            otherwise.as_ref().map_or(f64::NAN, |o| eval(o, read))
+            otherwise.as_deref().map_or(f64::NAN, evaluate)
         }
     }
 }
 
 /// The native evaluation of an expression as a boolean.
 pub fn eval_bool(e: &Expr, read: &dyn Fn(Symbol) -> f64) -> bool {
+    boolean(e, &|e| eval(e, read))
+}
+
+fn boolean(e: &Expr, evaluate: &dyn Fn(&Expr) -> f64) -> bool {
     match e {
         Expr::Bool(b) => *b,
         Expr::Apply { op, args } if is_boolean(*op) => {
-            let b = |i: usize| eval_bool(&args[i], read);
+            let b = |i: usize| boolean(&args[i], evaluate);
             match op {
                 Op::And => (0..args.len()).fold(true, |acc, i| acc & b(i)),
                 Op::Or => (0..args.len()).fold(false, |acc, i| acc | b(i)),
@@ -132,29 +150,29 @@ pub fn eval_bool(e: &Expr, read: &dyn Fn(Symbol) -> f64) -> bool {
                 Op::Not => !b(0),
                 Op::Implies => !b(0) | b(1),
                 _ => {
-                    let values: Vec<f64> = args.iter().map(|a| eval(a, read)).collect();
+                    let values: Vec<f64> = args.iter().map(evaluate).collect();
                     values.windows(2).all(|w| relation(*op, w[0], w[1]))
                 }
             }
         }
-        _ => eval(e, read).abs() > 0.0,
+        _ => evaluate(e).abs() > 0.0,
     }
 }
 
-fn apply(op: Op, args: &[Expr], read: &dyn Fn(Symbol) -> f64) -> f64 {
-    let x = |i: usize| eval(&args[i], read);
+fn apply(op: Op, args: &[Expr], evaluate: &dyn Fn(&Expr) -> f64) -> f64 {
+    let x = |i: usize| evaluate(&args[i]);
     match op {
         Op::Plus => match args.split_first() {
             None => 0.0,
             Some((first, rest)) => rest
                 .iter()
-                .fold(eval(first, read), |acc, a| acc + eval(a, read)),
+                .fold(evaluate(first), |acc, a| acc + evaluate(a)),
         },
         Op::Times => match args.split_first() {
             None => 1.0,
             Some((first, rest)) => rest
                 .iter()
-                .fold(eval(first, read), |acc, a| acc * eval(a, read)),
+                .fold(evaluate(first), |acc, a| acc * evaluate(a)),
         },
         Op::Minus if args.len() == 1 => 0.0 - x(0),
         Op::Minus => x(0) - x(1),
@@ -169,6 +187,9 @@ fn apply(op: Op, args: &[Expr], read: &dyn Fn(Symbol) -> f64) -> f64 {
         Op::Ln => f::math_log(x(0)),
         Op::Log if args.len() == 1 => f::math_log(x(0)) / f::math_log(10.0),
         Op::Log => f::math_log(x(1)) / f::math_log(x(0)),
+        Op::Delay | Op::HistoryQuery => {
+            unreachable!("eval_history resolves delay before arithmetic")
+        }
         Op::Factorial => f::math_factorial(x(0)),
         Op::Sin => f::math_sin(x(0)),
         Op::Cos => f::math_cos(x(0)),
@@ -224,8 +245,8 @@ fn apply(op: Op, args: &[Expr], read: &dyn Fn(Symbol) -> f64) -> f64 {
         }
         Op::XorSign => match args.split_first() {
             None => -1.0,
-            Some((first, rest)) => rest.iter().fold(eval(first, read), |a, e| {
-                let b = eval(e, read);
+            Some((first, rest)) => rest.iter().fold(evaluate(first), |a, e| {
+                let b = evaluate(e);
                 let na = 0.0 - a;
                 let nb = 0.0 - b;
                 let left = if a < nb { a } else { nb };
@@ -236,8 +257,8 @@ fn apply(op: Op, args: &[Expr], read: &dyn Fn(Symbol) -> f64) -> f64 {
         Op::Max | Op::Min => match args.split_first() {
             None if op == Op::Max => f64::NEG_INFINITY,
             None => f64::INFINITY,
-            Some((first, rest)) => rest.iter().fold(eval(first, read), |a, e| {
-                let b = eval(e, read);
+            Some((first, rest)) => rest.iter().fold(evaluate(first), |a, e| {
+                let b = evaluate(e);
                 let pick_a = if op == Op::Max { a > b } else { a < b };
                 if pick_a { a } else { b }
             }),

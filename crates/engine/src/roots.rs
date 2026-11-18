@@ -195,9 +195,9 @@ impl RootGuard {
     /// Sets the steps CVODE may take towards the next output time (the budget less the steps
     /// since it started), before a call of CVODE at `t`; an exhausted budget is CVODE's error
     /// `CV_TOO_MUCH_WORK`.
-    pub fn limit<const DAE: bool>(
+    pub fn limit<const DAE: bool, H: crate::delay::Mode>(
         &self,
-        cvode: &mut Integrator<DAE>,
+        cvode: &mut Integrator<DAE, H>,
         t: f64,
     ) -> Result<(), EngineError> {
         let Some(from) = self.budget_from else {

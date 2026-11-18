@@ -52,7 +52,8 @@ struct CachedPrepared {
 // creates both and hands out neither, and nothing clones the `Rc` afterwards, so every handle
 // of the count moves with the instance and no two threads ever touch the count at once. What
 // the `Rc` holds is a wasmtime `Store`, which is `Send`, and the engine is the C memory of
-// CVODE and KLU, which one thread at a time may use and which a move does not touch. `Sync` is
+// CVODE and KLU, which one thread at a time may use and which a move does not touch. A DDE's
+// private history graph is also owned by the engine and moves with it. `Sync` is
 // not implied: an instance simulates one request after the other, and a caller which shares one
 // between threads puts it behind a lock, as `Instance` of the python bindings does.
 unsafe impl Send for NativeInstance {}
@@ -390,6 +391,88 @@ impl WasmModel {
 }
 
 impl ModelFns for WasmModel {
+    fn set_history(
+        &self,
+        data: &[u8],
+        updates: &[(usize, usize)],
+        _address: usize,
+    ) -> Result<u32, EngineError> {
+        let header = abi::history::HEADER_BYTES as usize;
+        let at = self.layout.end;
+        let end = at
+            .checked_add(data.len())
+            .filter(|end| *end <= i32::MAX as usize)
+            .ok_or_else(|| {
+                EngineError::Internal("model history exceeds the wasm address limit".into())
+            })?;
+        if data.len() < header
+            || updates
+                .iter()
+                .any(|&(offset, len)| offset.checked_add(len).is_none_or(|end| end > data.len()))
+        {
+            return Err(EngineError::Internal("invalid model history update".into()));
+        }
+
+        // Fixed vectors occupy [0, at). A wasm offset remains valid across memory growth.
+        let mut inner = self.inner.borrow_mut();
+        let Inner { store, memory } = &mut *inner;
+        let pages = end.div_ceil(PAGE) as u64;
+        let allocated = memory.size(&*store);
+        if pages > allocated {
+            memory.grow(&mut *store, pages - allocated).map_err(|e| {
+                EngineError::Internal(format!(
+                    "cannot allocate model history in guest memory: {e}"
+                ))
+            })?;
+        }
+        let arena = &mut memory.data_mut(store)[at..end];
+        arena[..header].copy_from_slice(&data[..header]);
+        for &(offset, len) in updates {
+            let range = offset..offset + len;
+            arena[range.clone()].copy_from_slice(&data[range]);
+        }
+        Ok(at as u32)
+    }
+
+    fn read_history_status(&self, data: &mut [u8]) -> Result<bool, EngineError> {
+        let header = abi::history::HEADER_BYTES as usize;
+        let inner = self.inner.borrow();
+        let guest = inner.memory.data(&inner.store);
+        let at = self.layout.end;
+        let header = guest
+            .get(at..at + header)
+            .zip(data.get_mut(..header))
+            .ok_or_else(|| EngineError::Internal("invalid model history header".into()))?;
+        let (source, destination) = header;
+        for (offset, len) in [
+            (abi::history::STATUS, 4),
+            (abi::history::MAX_QUERY, 8),
+            (abi::history::MIN_LAG, 8),
+        ] {
+            let range = offset as usize..offset as usize + len;
+            destination[range.clone()].copy_from_slice(&source[range]);
+        }
+        Ok(true)
+    }
+
+    fn read_history_queries(&self, offset: usize, out: &mut [f64]) -> Result<bool, EngineError> {
+        let inner = self.inner.borrow();
+        let at = self
+            .layout
+            .end
+            .checked_add(offset)
+            .ok_or_else(|| EngineError::Internal("invalid history query offset".into()))?;
+        let bytes = inner
+            .memory
+            .data(&inner.store)
+            .get(at..at + out.len() * 8)
+            .ok_or_else(|| EngineError::Internal("invalid history query buffer".into()))?;
+        for (value, bytes) in out.iter_mut().zip(bytes.as_chunks::<8>().0) {
+            *value = f64::from_le_bytes(*bytes);
+        }
+        Ok(true)
+    }
+
     fn check_error(&self) -> Result<(), EngineError> {
         match &*self.error.borrow() {
             Some(error) => Err(EngineError::Internal(error.clone())),

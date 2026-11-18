@@ -40,6 +40,7 @@ use sbmlsim_csolvers::ffi::*;
 use crate::EngineError;
 use crate::model::ModelFns;
 
+mod delay;
 mod ida;
 mod krylov;
 pub(crate) use ida::Constraints;
@@ -608,7 +609,8 @@ fn check(code: c_int, call: &str) -> Result<(), EngineError> {
 }
 
 /// A CVODE or IDA memory of one [`Config`] with its context, vectors, matrix and solvers.
-pub(crate) struct Integrator<const DAE: bool> {
+pub(crate) struct Integrator<const DAE: bool, H: crate::delay::Mode = crate::delay::NoHistory> {
+    pub(crate) history: H,
     config: Config,
     ctx: SUNContext,
     mem: *mut c_void,
@@ -651,7 +653,7 @@ macro_rules! backend {
     }};
 }
 
-impl<const DAE: bool> Drop for Integrator<DAE> {
+impl<const DAE: bool, H: crate::delay::Mode> Drop for Integrator<DAE, H> {
     fn drop(&mut self) {
         // SAFETY: every pointer is null or owned by this memory; CVODE is freed before the
         // linear solver and the matrix it uses, the context last.
@@ -723,13 +725,14 @@ pub(crate) fn check_index_range(config: &Config) -> Result<(), EngineError> {
     Ok(())
 }
 
-impl<const DAE: bool> Integrator<DAE> {
+impl<const DAE: bool, H: crate::delay::Mode> Integrator<DAE, H> {
     /// Creates the memory of a configuration; refuses one which exceeds the indices of
     /// SUNDIALS ([`check_index_range`]).
     pub fn new(config: Config) -> Result<Self, EngineError> {
         assert_eq!(DAE, matches!(config.method, Method::Ida { .. }));
         check_index_range(&config)?;
         let mut cvode = Integrator {
+            history: H::default(),
             config,
             ctx: ptr::null_mut(),
             mem: ptr::null_mut(),
@@ -878,6 +881,16 @@ impl<const DAE: bool> Integrator<DAE> {
         settings: &IntegratorSettings,
         n_roots: usize,
     ) -> Result<(), EngineError> {
+        if H::ENABLED {
+            let mut history = self.history.shared().unwrap().borrow_mut();
+            history.start = t0;
+            history.stop = tstop;
+            history.max_step = settings.maximum_time_step;
+            history.step_budget = u64::from(settings.maximum_num_steps);
+            history.settings = settings.clone();
+            history.pending = None;
+            history.new_segment = true;
+        }
         let n = self.config.n;
         self.errors.message.clear();
         if let Some(preconditioner) = &mut self.krylov {
@@ -1103,6 +1116,9 @@ impl<const DAE: bool> Integrator<DAE> {
     /// Sets the stop time of the running segment, which must not be behind the internal time of
     /// CVODE.
     pub fn set_stop(&mut self, tstop: f64) -> Result<(), EngineError> {
+        if H::ENABLED {
+            self.history.shared().unwrap().borrow_mut().stop = tstop;
+        }
         // SAFETY: the memory is initialized (a segment was started).
         unsafe {
             self.flag(
@@ -1133,6 +1149,13 @@ impl<const DAE: bool> Integrator<DAE> {
             );
             self.flag(flag, f64::NAN)?;
         }
+        if H::ENABLED {
+            self.history
+                .shared()
+                .unwrap()
+                .borrow_mut()
+                .mark_roots(&self.found, first);
+        }
         Ok(self.found[first..].iter().any(|&f| f != 0))
     }
 
@@ -1149,6 +1172,9 @@ impl<const DAE: bool> Integrator<DAE> {
     /// Sets the largest number of steps of the next call of [`Integrator::integrate`] (until the next
     /// start, which sets the one of the settings).
     pub fn set_max_steps(&mut self, steps: u64) -> Result<(), EngineError> {
+        if H::ENABLED {
+            self.history.shared().unwrap().borrow_mut().step_budget = steps;
+        }
         let steps = steps.min(c_long::MAX as u64) as c_long;
         // SAFETY: the memory is initialized (a segment was started).
         unsafe {
@@ -1161,7 +1187,20 @@ impl<const DAE: bool> Integrator<DAE> {
 
     /// Integrates towards `tout` (`CV_NORMAL`) or takes one step (`CV_ONE_STEP`); returns the
     /// time reached and the return flag of CVODE (`CV_SUCCESS` or `CV_TSTOP_RETURN`).
+    #[inline(always)]
     pub fn integrate(
+        &mut self,
+        problem: &mut Problem<'_>,
+        tout: f64,
+        itask: c_int,
+    ) -> Result<(f64, c_int), EngineError> {
+        if H::ENABLED {
+            return delay::integrate(self, problem, tout, itask);
+        }
+        self.integrate_raw(problem, tout, itask)
+    }
+
+    fn integrate_raw(
         &mut self,
         problem: &mut Problem<'_>,
         tout: f64,

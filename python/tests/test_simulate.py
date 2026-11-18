@@ -221,6 +221,25 @@ def test_gmres_matches_decay_and_reports_iterative_counts(decay):
     assert instance.stats() == stats
 
 
+def test_delay_feedback_initial_values_and_replay(runtime):
+    sbml = f"""<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2">
+<model id="delayed"><listOfParameters><parameter id="x" value="1" constant="false"/></listOfParameters>
+<listOfRules><rateRule variable="x"><math {MATH}><apply>
+<csymbol definitionURL="http://www.sbml.org/sbml/symbols/delay">delay</csymbol><ci>x</ci><cn>1</cn>
+</apply></math></rateRule></listOfRules></model></sbml>"""
+    compiled = sbmlsim_core.compile_sbml(sbml)
+    assert compiled.description["n_delays"] > 0
+    model = runtime.load(compiled.wasm, compiled.description)
+    assert model.initial_values()["x"] == 1.0
+    instance = model.instance()
+    req = request(end=3.0, steps=2, relative_tolerance=1e-9)
+    result = instance.simulate(req)
+    numpy.testing.assert_allclose(
+        result.values[:, 1], [1.0, 2.625, 6 + 1 / 6], rtol=1e-6
+    )
+    assert instance.simulate(req).values.tobytes() == result.values.tobytes()
+
+
 def test_a_reused_instance_gives_the_bits_of_a_fresh_one(decay):
     reused = decay.instance()
     first = reused.simulate(request(end=10.0, steps=10))

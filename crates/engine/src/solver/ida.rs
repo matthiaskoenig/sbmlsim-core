@@ -215,7 +215,7 @@ pub(super) unsafe extern "C" fn sparse(
     }
 }
 
-impl<const DAE: bool> Integrator<DAE> {
+impl<const DAE: bool, H: crate::delay::Mode> Integrator<DAE, H> {
     /// Obtain consistent y and y' after an IDA (re)initialization.
     pub(super) fn consistent(&mut self, problem: &mut Problem<'_>) -> Result<(), EngineError> {
         let Some(t) = self.pending_ic else {

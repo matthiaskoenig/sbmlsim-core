@@ -487,6 +487,7 @@ fn apply(
         Ok(d(u)?.map(|du| f(u, du)))
     };
     Ok(match op {
+        Op::Delay | Op::HistoryQuery => return Err(op.into()),
         Op::Plus => {
             let terms: Vec<Expr> = args
                 .iter()

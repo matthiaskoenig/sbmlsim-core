@@ -1,0 +1,35 @@
+{
+  "baseline_commit": "d904f63c03d1c99d05e75ffdfec90b2c226db8be",
+  "cpu": 0,
+  "inputs": {
+    "jobs.json": "d4d0e25679b1b5f47eccfd3c5d970f2f708c83a737919b36e8d7246185b814e0",
+    "models/decay/model.json": "171552b4a9588a30e673c964ec5cc9a674822ac75b4e3bcf930e3e7d6977b876",
+    "models/decay/model.wasm": "e56e86b52757c8b21f8207458e2005f4f8cecceea14b925490daaee91a1682fd",
+    "models/events/model.json": "63b845555bf487b72119539b1c347118453f100f819d9b6a8a77647e9365481f",
+    "models/events/model.wasm": "ac4486fccc869a83c15e1d4032691747a7494740568f0b54f26b4e0d81055721",
+    "models/hctz/model.json": "9fbb45b016f1003031c25dff360d7f1580743bd259e02db9255b931e507bec1c",
+    "models/hctz/model.wasm": "4991d5d75fb5a67f05ff832c20b09e5b51abfc74ea78cd56df21bc7395921792",
+    "models/midazolam/model.json": "923f6356355900bd041d94720f71decf8ac2ff5dc95d576027ca57cdcb77da2d",
+    "models/midazolam/model.wasm": "a148b1e2b636a7d77fb5b102cac4d9f6d1bd7b4df080f7ab0e45a6fdb2cbb5de",
+    "models/robertson/model.json": "7c9e4fb5a54db76bfb37bf3414c72d8c9a9cb921218a60d36f073a0d034be3f8",
+    "models/robertson/model.wasm": "95d72ae1176af3a02bf43564119d14c4418b4fb84f27df0021ad40248e40d23f",
+    "models/robertson/source.xml": "de15df93722b9a2d8bc47771e105da4f6d78c79c6a75bcda51111f455c83d4dc",
+    "schedule.json": "315dbb02a0b0f9014bb64c622f634e99777e9466567f18063ee3992cdb7de84c"
+  },
+  "repository_files": {
+    "bench/dde-performance/protocol.md": "b5dfe3388cc9432d5fdf236f96973a926aa4aa3acdf625d9e4cfd85ced10ae29",
+    "bench/ode-confirmation/confirm_ode_stats.py": "ea2a8a41eb3a168d77d77eca5d7b319e660f2a29f074b118b462e790573beda1",
+    "scripts/dde_performance.py": "c1f6acd14a0f2cac3e2b6510d266b9acb3918055760999f0e7db2726274de0e0",
+    "target/dde-baseline/ode_performance": "1a33bd9e8d98b5b1eff2fe6ff1007f48e460bc40bb2748c8fad0309fe6cdc0c5",
+    "target/dde-baseline/runtime/engine.wasm": "1391125a9dd353e3d0ad10e1015e3156a0ca8c137513ad3beda5770442dd7be6",
+    "target/dde-baseline/runtime/mathlib.wasm": "8f725c0b975e7b2c43a7bd002d4d298c104ef34927e9d669e73e76771bf62a8c",
+    "target/dde-baseline/sbmlsim-core": "c13ea14cb991792a4c0f1c1e6afdf00ae5fa447b2e5bbb28c107e919805d8abf"
+  },
+  "source_sha256": {
+    "decay": "1031f57874ceb7da85b9b45b3432874e13021526480995046a33e51c90272fcb",
+    "events": "e92d26325d4c5afd913eb0caeae611f642afbf2211ea2440bbf6db5a74e154be",
+    "hctz": "e47e40b60ff28f8d3a12b0b99d09482ed3cba8e239dcb5cd9cc14cadae48f82c",
+    "midazolam": "426ff947b44a7057694ac05754c80493a1846da8a5ca357155ab7fa92afa2e44",
+    "robertson": "de15df93722b9a2d8bc47771e105da4f6d78c79c6a75bcda51111f455c83d4dc"
+  }
+}

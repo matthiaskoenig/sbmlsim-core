@@ -394,20 +394,31 @@ fn an_algebraic_rule_cannot_redetermine_a_reacting_species_or_a_rateof_target() 
 }
 
 #[test]
-fn refuses_delay() {
+fn preserves_delay_operands() {
     let delay = r#"<apply><csymbol encoding="text" definitionURL="http://www.sbml.org/sbml/symbols/delay">delay</csymbol><ci>k</ci><cn>1</cn></apply>"#;
-    let e = error(&format!(
+    let m = model(&format!(
         "<listOfParameters>{}{}</listOfParameters><listOfRules>{}</listOfRules>",
         parameter("k", "1"),
         variable("x"),
         assignment_rule("x", delay)
     ));
-    assert_eq!(
-        e,
-        CompileError::Unsupported {
-            feature: "delay csymbol".into(),
-            element: "assignmentRule #0 (x)".into()
-        }
+    assert!(
+        matches!(&m.assignment_rules[0].expr, Expr::Apply { op: Op::Delay, args } if args.len()==2)
+    );
+}
+
+#[test]
+fn rejects_a_delay_symbol_without_operands() {
+    let body = format!(
+        "<listOfParameters>{}</listOfParameters><listOfRules>{}</listOfRules>",
+        variable("x"),
+        assignment_rule(
+            "x",
+            r#"<csymbol definitionURL="http://www.sbml.org/sbml/symbols/delay">delay</csymbol>"#
+        )
+    );
+    assert!(
+        matches!(error(&body),CompileError::Invalid(reason) if reason.contains("delay is not applied"))
     );
 }
 

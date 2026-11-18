@@ -179,7 +179,9 @@ fn check_case(dir: &Path, rows: usize, compare_values: bool) -> Found {
     let desc: &ModelDescription = &compiled.description;
     let mut found = Found::default();
     let n = desc.states.len();
-    if n == 0 {
+    // A delay model needs a continuous history; these pointwise probes deliberately have none.
+    // Its colored Jacobian and trajectory are exercised by the DDE integration tests.
+    if n == 0 || desc.n_delays > 0 {
         return found;
     }
     let analytic = matches!(desc.jacobian, JacobianKind::Analytic(_));

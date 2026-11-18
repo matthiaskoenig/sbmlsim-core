@@ -13,3 +13,4 @@ import "./prepared.test.mjs";
 import "./golden.test.mjs";
 import "./inline.test.mjs";
 import "./dosing.test.mjs";
+import "./dde.test.mjs";

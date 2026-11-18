@@ -2,6 +2,8 @@
 
 The semantics follow the simulation core of sbmlsim (PEtab v2): the pre-initialization, the changes at times and the steady state of [Simulating](simulating.md), the events, and the root finding of the conditions of `piecewise`. ODE models use CVODE (BDF or Adams); models with algebraic rules use IDA (BDF). Both use the dense linear solver or KLU, an analytic sparse Jacobian or the colored sparse difference quotient.
 
+[Delay differential equations](delays.md) use the same solvers with retained dense history and the colored difference Jacobian. The SBML `delay` function evaluates its operand in the historical context, including before time zero.
+
 ## Bitwise identical hosts
 
 wasmtime, Node and the browsers run one `engine.wasm`, one `mathlib.wasm` and one `model.wasm`, so a request gives the same bits on every host. The compiler emits the math as written, without fast math, reassociation or folding of constants, with the meaning libroadrunner gives every operator; every math function of a model is the one of `mathlib.wasm` (the functions of the Rust crate `libm`), never the builtin math of a host. The C solvers are compiled with `-ffp-contract=off` and without fast math. The tests check it: every passing case of the SBML Test Suite gives in Node the CSV of the wasmtime host byte for byte, a model posted to workers gives the bits of the main thread, and every repeated simulation of the test suite and of the benchmark repeats the bits of the first.

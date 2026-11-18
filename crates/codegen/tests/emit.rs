@@ -585,3 +585,45 @@ fn requested_difference_quotients_need_only_the_structural_pattern() {
         "{error:?}"
     );
 }
+
+#[test]
+fn delay_uses_initial_assignments_at_the_requested_time() {
+    let delay =
+        r#"<csymbol definitionURL="http://www.sbml.org/sbml/symbols/delay">delay</csymbol>"#;
+    let time = r#"<csymbol definitionURL="http://www.sbml.org/sbml/symbols/time">time</csymbol>"#;
+    let m = model(&format!(
+        r#"<listOfParameters>
+        <parameter id="x" constant="false"/><parameter id="past" constant="false"/>
+      </listOfParameters><listOfInitialAssignments>
+        <initialAssignment symbol="x"><math $><apply><plus/><cn>3</cn>{time}</apply></math></initialAssignment>
+      </listOfInitialAssignments><listOfRules>
+        <rateRule variable="x"><math $><cn>1</cn></math></rateRule>
+        <assignmentRule variable="past"><math $><apply>{delay}
+          <apply>{delay}<ci>x</ci><cn>2</cn></apply><cn>0.5</cn></apply></math></assignmentRule>
+      </listOfRules>"#
+    ));
+    let (bytes, desc) = emit(&m).unwrap();
+    wasmparser::Validator::new().validate_all(&bytes).unwrap();
+    let section = Parser::new(0)
+        .parse_all(&bytes)
+        .find_map(|payload| match payload.unwrap() {
+            Payload::CustomSection(s) if s.name() == abi::history::SECTION => Some(s.data()),
+            _ => None,
+        })
+        .expect("delay history contract");
+    assert_eq!(section, [1, 0, 0, 0, 2, 0, 0, 0]);
+    assert_eq!(desc.n_delays, 2);
+    assert_eq!(desc.n_constants, 1);
+    assert!(matches!(
+        desc.jacobian,
+        JacobianKind::ColoredDifference { .. }
+    ));
+    assert_eq!(
+        desc.parameters
+            .iter()
+            .find(|p| p.id == "past")
+            .unwrap()
+            .initial,
+        0.5
+    );
+}

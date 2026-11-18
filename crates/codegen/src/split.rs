@@ -49,6 +49,12 @@ use crate::wasm::{Body, Ctx, ModuleBuilder};
 /// A statement of a function.
 #[derive(Clone)]
 pub(crate) enum Stmt<'e> {
+    /// Publish a history query and write its pair of boundary roots.
+    HistoryRoots {
+        index: u32,
+        output: u32,
+        query: &'e Expr,
+    },
     /// The value of the expression into a local, which later statements read as the symbol.
     Let(Symbol, &'e Expr),
     /// `out[k] = expr`, `out` the pointer in the local `ptr`.
@@ -87,7 +93,8 @@ impl<'e> Stmt<'e> {
     /// Calls `f` on every symbol the statement reads (in a block: every symbol of its body).
     fn visit_symbols(&self, f: &mut dyn FnMut(Symbol)) {
         match self {
-            Stmt::Let(_, e)
+            Stmt::HistoryRoots { query: e, .. }
+            | Stmt::Let(_, e)
             | Stmt::StoreAt { expr: e, .. }
             | Stmt::Masked { expr: e, .. }
             | Stmt::Store(_, e) => e.visit_symbols(&mut |s| f(s)),
@@ -100,6 +107,11 @@ impl<'e> Stmt<'e> {
     fn emit(&self, f: &mut Body<'_>) {
         match self {
             Stmt::Let(s, e) => f.let_(*s, e),
+            Stmt::HistoryRoots {
+                index,
+                output,
+                query,
+            } => f.history_roots(*index, *output, query),
             Stmt::StoreAt { ptr, k, expr } => f.store_at(*ptr, *k, expr),
             Stmt::Masked { mask, ptr, k, expr } => {
                 f.if_masked(*mask, *k);

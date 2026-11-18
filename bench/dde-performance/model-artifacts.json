@@ -1,0 +1,22 @@
+{
+  "baseline_commit": "d904f63c03d1c99d05e75ffdfec90b2c226db8be",
+  "suite_commit": "bbcbc80c4daec79fea301299f981746408a1742b",
+  "suite_models": 1754,
+  "previously_compiled_models": 1701,
+  "newly_compiled_models": 53,
+  "compiler_options": "CompileOptions::default()",
+  "description_encoding": "serde_json::to_vec(&compiled.description)",
+  "digest_format": "SHA-256 of sorted UTF-8 lines <sha256(file)>  <case>/<filename>\\n for previously compiled cases",
+  "manifests": {
+    "model.wasm": {
+      "files": 1701,
+      "baseline_sha256": "1650b81f66dbf62225ac4a3f9ef3153fd783defebc94656f7e96a6126f553972",
+      "feature_sha256": "1650b81f66dbf62225ac4a3f9ef3153fd783defebc94656f7e96a6126f553972"
+    },
+    "model.json": {
+      "files": 1701,
+      "baseline_sha256": "ece2b8232198cf3f1d35cc1cf08266177179e92b2a07e084f6cbf3aaa6e566fd",
+      "feature_sha256": "ece2b8232198cf3f1d35cc1cf08266177179e92b2a07e084f6cbf3aaa6e566fd"
+    }
+  }
+}

@@ -82,6 +82,10 @@ struct Builder<'m> {
     state_rates: HashMap<usize, Expr>,
     /// The rates being built (reaction and state ids), to name a cycle through `rateOf`.
     busy: Vec<String>,
+    /// The historical rateOf guard is needed only in models using both csymbols.
+    delay_seen: bool,
+    rate_of_seen: bool,
+    prehistory: bool,
 }
 
 fn invalid(message: String) -> CompileError {
@@ -154,10 +158,15 @@ fn sum(mut terms: Vec<Expr>) -> Expr {
 }
 
 pub(crate) fn build(m: &Sbml) -> Result<Model, CompileError> {
+    build_with_history(m, false)
+}
+
+fn build_with_history(m: &Sbml, prehistory: bool) -> Result<Model, CompileError> {
     if let Some(r) = m.reactions.iter().find(|r| r.fast) {
         return Err(unsupported("fast reaction", &r.id));
     }
     let mut b = Builder::new(m)?;
+    b.prehistory = prehistory;
     b.classify()?;
     let (states, parameters) = b.entities();
 
@@ -209,6 +218,9 @@ pub(crate) fn build(m: &Sbml) -> Result<Model, CompileError> {
         .map(|(k, e, trigger, math)| b.event(k, e, trigger, math))
         .collect::<Result<_, _>>()?;
     let selections = b.selections()?;
+    if b.delay_seen && b.rate_of_seen && !prehistory {
+        return build_with_history(m, true);
+    }
     Ok(Model {
         id: m.id.clone(),
         n_algebraic: index(b.algebraic.len()),

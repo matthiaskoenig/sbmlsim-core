@@ -150,7 +150,16 @@ impl Context for Builder<'_> {
         }
     }
 
+    fn note_delay(&mut self) {
+        self.delay_seen = true;
+    }
+
+    fn has_prehistory(&self) -> bool {
+        self.prehistory
+    }
+
     fn rate_of(&mut self, id: &str, element: &str) -> Result<Expr, CompileError> {
+        self.rate_of_seen = true;
         match self.items.get(id).copied() {
             Some(Item::Reaction(_)) => return Err(unsupported("rateOf of a reaction", id)),
             Some(Item::Function(_) | Item::Event) | None => {

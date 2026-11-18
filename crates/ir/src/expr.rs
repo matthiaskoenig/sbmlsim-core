@@ -40,8 +40,8 @@ pub enum Symbol {
     Constant(u32),
 }
 
-/// An operator, those of the MathML of SBML Level 3 Version 2 without the csymbols `delay` and
-/// `rateOf` and the calls of function definitions, which the construction resolves.
+/// An SBML MathML operator, including the `delay` csymbol. Construction expands
+/// `rateOf` and calls of function definitions.
 /// `XorSign` is an internal operator for discontinuity roots.
 ///
 /// The arity is the one of the MathML: `Minus` has one argument (negation) or two, `Log` has
@@ -50,6 +50,10 @@ pub enum Symbol {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[allow(missing_docs)]
 pub enum Op {
+    /// Evaluate the first operand at the time shifted by the second.
+    Delay,
+    /// Internal delayed query time on the continuous history axis across simulation stages.
+    HistoryQuery,
     Plus,
     Minus,
     Times,
@@ -192,6 +196,12 @@ impl Expr {
 
 /// What the construction of an expression needs to know of the model.
 pub(crate) trait Context {
+    /// Marks a model that needs historical initial values.
+    fn note_delay(&mut self) {}
+    /// Enables the negative-time meaning of `rateOf` when expanding a delay model.
+    fn has_prehistory(&self) -> bool {
+        false
+    }
     /// The value of a model identifier as the math sees it (not a local parameter or a bound
     /// variable), `element` the element of the math for an error.
     fn identifier(&mut self, id: &str, element: &str) -> Result<Expr, CompileError>;
@@ -339,7 +349,12 @@ fn build_node_inner(
         Node::NotANumber => Expr::Number(f64::NAN),
         Node::CsymbolTime => Expr::Symbol(Symbol::Time),
         Node::CsymbolAvogadro => Expr::Number(AVOGADRO),
-        Node::CsymbolDelay => return Err(unsupported("delay csymbol", scope.element)),
+        Node::CsymbolDelay => {
+            return Err(CompileError::Invalid(format!(
+                "the csymbol delay is not applied to an expression and a duration in {}",
+                scope.element
+            )));
+        }
         // libroadrunner: "Unknown ASTNode type of 9999"
         Node::Empty => return Err(unsupported("math without content", scope.element)),
         Node::CsymbolRateOf => {
@@ -379,7 +394,22 @@ fn build_node_inner(
                 .transpose()?,
         },
         Node::Apply { op, args } => match op {
-            MathOp::Delay => return Err(unsupported("delay csymbol", scope.element)),
+            MathOp::Delay => {
+                let [value, duration] = args.as_slice() else {
+                    return Err(CompileError::Invalid(format!(
+                        "delay requires an expression and a duration in {}",
+                        scope.element
+                    )));
+                };
+                cx.note_delay();
+                Expr::apply(
+                    Op::Delay,
+                    vec![
+                        build_node(value, cx, scope, budget)?,
+                        build_node(duration, cx, scope, budget)?,
+                    ],
+                )
+            }
             MathOp::RateOf => match args.as_slice() {
                 [Node::Symbol(id)] => {
                     if scope.bvars.is_some_and(|b| b.contains_key(id)) {
@@ -392,7 +422,21 @@ fn build_node_inner(
                         // a local parameter is a constant
                         Expr::Number(0.0)
                     } else {
-                        cx.rate_of(id, scope.element)?
+                        let rate = cx.rate_of(id, scope.element)?;
+                        if cx.has_prehistory() {
+                            Expr::Piecewise {
+                                pieces: vec![(
+                                    Expr::Number(0.0),
+                                    Expr::apply(
+                                        Op::Lt,
+                                        vec![Expr::Symbol(Symbol::Time), Expr::Number(0.0)],
+                                    ),
+                                )],
+                                otherwise: Some(Box::new(rate)),
+                            }
+                        } else {
+                            rate
+                        }
                     }
                 }
                 _ => {
