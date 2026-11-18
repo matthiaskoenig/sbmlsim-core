@@ -5,7 +5,7 @@
 //! `y`, against the data of the model at `k = 0.3` and `y = 1`.
 
 use sbmlsim_fit::{
-    DELTA_95, Fisher, Problem, Profile, Scale, Settings, Stop, Walk, fisher, profile,
+    DELTA_95, Fisher, Problem, Profile, Scale, Settings, Stop, Walk, fisher, profile, profiles,
 };
 
 #[path = "support/fixture.rs"]
@@ -251,4 +251,43 @@ fn the_fisher_information_of_a_parameter_the_data_does_not_determine_is_singular
     assert!(fisher.correlation.is_none());
     let singular = fisher.singular.unwrap();
     assert!(singular.contains("k"), "{singular}");
+}
+
+#[test]
+fn the_profiles_of_the_parameters_of_a_fit_run_on_the_threads_of_its_batch() {
+    // the profiles of both parameters of the fit, every point of them a fit of the other one:
+    // the two profiles run next to each other and the two sides of a profile as well, so the
+    // seconds of the points are more than the ones of the whole walk
+    let (problem, at) = fitted(Scale::Log10);
+
+    let began = std::time::Instant::now();
+    let walked = profiles(
+        &problem,
+        &Settings::default(),
+        &at,
+        &[],
+        &walk(),
+        &Stop::new(),
+    )
+    .unwrap();
+    let took = began.elapsed().as_secs_f64();
+
+    assert_eq!(walked.len(), 2);
+    let points: f64 = walked
+        .iter()
+        .flat_map(|profile| profile.points.iter().map(|point| point.seconds))
+        .sum();
+    assert!(
+        points > 2.0 * took,
+        "the points of the profiles took {points:.4} s of the threads in {took:.4} s"
+    );
+    // the sides of one profile run next to each other as well
+    let one = &walked[0];
+    let sides: f64 = one.points.iter().map(|point| point.seconds).sum();
+    assert!(
+        sides > 1.5 * one.seconds,
+        "the points of the profile of {} took {sides:.4} s of the threads in {:.4} s",
+        one.id,
+        one.seconds
+    );
 }

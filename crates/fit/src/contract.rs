@@ -8,6 +8,7 @@
 
 use std::sync::Arc;
 
+use rayon::prelude::*;
 use sbmlsim_abi::SimulationRequest;
 use sbmlsim_host::LoadedModel;
 use serde::{Deserialize, Serialize};
@@ -278,10 +279,24 @@ pub fn fit_with(
     let problem = problem_of(request, model, threads)?;
     let starts = starts_of(request, &problem)?;
     let began = std::time::Instant::now();
+    // the starts do not depend on each other, so they run next to each other on the pool of
+    // the batch: a start whose evaluation fans fewer conditions out than the pool has threads
+    // leaves them to the starts beside it. A fit which was stopped before a start began runs
+    // none of it, as a sequence of them would have left it out.
+    let fits: Vec<Option<Result<Fit, FitError>>> = problem.install(|| {
+        starts
+            .par_iter()
+            .map(|start| {
+                (!stop.stopped())
+                    .then(|| problem.optimize_with(&request.optimizer, &start.point, stop))
+            })
+            .collect()
+    });
     let mut runs: Vec<RunAnswer> = Vec::with_capacity(starts.len());
     let mut best: Option<Fit> = None;
-    for start in &starts {
-        let fit = problem.optimize_with(&request.optimizer, &start.point, stop)?;
+    for (start, fit) in starts.iter().zip(fits) {
+        let Some(fit) = fit else { continue };
+        let fit = fit?;
         runs.push(RunAnswer {
             start: start.values.clone(),
             values: fit.values.clone(),
@@ -294,9 +309,6 @@ pub fn fit_with(
         });
         if best.as_ref().is_none_or(|best| fit.cost < best.cost) {
             best = Some(fit);
-        }
-        if stop.stopped() {
-            break;
         }
     }
     let best = best.ok_or_else(|| FitError::Request("has no start to run".to_string()))?;

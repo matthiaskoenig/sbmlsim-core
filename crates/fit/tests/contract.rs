@@ -159,6 +159,62 @@ fn a_fit_of_many_starts_keeps_the_best_of_them() {
 }
 
 #[test]
+fn the_starts_of_a_fit_run_on_the_threads_of_its_batch() {
+    // four runs of the same start on four threads, which is the same work four times: the
+    // seconds of the answer are the ones of the longest run and not the sum of the four
+    let mut request = json(3.0);
+    request["starts"] = json!([[3.0], [3.0], [3.0], [3.0]]);
+    request["threads"] = json!(4);
+
+    let answer = run(request).unwrap();
+
+    assert_eq!(answer.runs.len(), 4);
+    let sum: f64 = answer.runs.iter().map(|run| run.seconds).sum();
+    assert!(
+        sum > 2.0 * answer.seconds,
+        "the four runs took {sum:.4} s of the threads in {:.4} s of the fit",
+        answer.seconds
+    );
+    // and every one of them is the same fit, which no thread of the others disturbed
+    let costs: Vec<f64> = answer.runs.iter().map(|run| run.cost).collect();
+    assert!(
+        costs
+            .iter()
+            .all(|cost| cost.to_bits() == costs[0].to_bits()),
+        "{costs:?}"
+    );
+}
+
+#[test]
+fn a_fit_of_many_starts_answers_the_same_on_one_thread_and_on_eight() {
+    // the starts run next to each other on the threads of the batch, and none of them is a
+    // step of another: the runs are in the order of the starts and the best of them is the
+    // same one, whatever the pool of the fit is
+    let starts = json!([[0.02], [0.5], [3.0], [9.0]]);
+    let mut one = json(3.0);
+    one["starts"] = starts.clone();
+    one["threads"] = json!(1);
+    let mut eight = json(3.0);
+    eight["starts"] = starts;
+    eight["threads"] = json!(8);
+
+    let (one, eight) = (run(one).unwrap(), run(eight).unwrap());
+
+    assert_eq!(one.runs.len(), 4);
+    for (one, eight) in one.runs.iter().zip(&eight.runs) {
+        assert_eq!(one.start, eight.start);
+        assert_eq!(one.cost.to_bits(), eight.cost.to_bits(), "{:?}", one.start);
+        assert_eq!(one.status, eight.status);
+        assert_eq!(one.iterations, eight.iterations);
+        let values: Vec<u64> = one.values.iter().map(|v| v.to_bits()).collect();
+        let others: Vec<u64> = eight.values.iter().map(|v| v.to_bits()).collect();
+        assert_eq!(values, others);
+    }
+    assert_eq!(one.cost.to_bits(), eight.cost.to_bits());
+    assert_eq!(one.simulations, eight.simulations);
+}
+
+#[test]
 fn a_request_of_another_contract_is_refused() {
     let mut request = json(3.0);
     request["contract"] = json!("fit/2");

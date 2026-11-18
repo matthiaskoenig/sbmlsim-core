@@ -14,10 +14,13 @@
 //!   parameters are searched. It costs one jacobian against the hundreds of fits of a profile
 //!   and holds only where the cost is a parabola around the optimum.
 //!
-//! The points of a profile are fits of their own, and every one of them fans its jacobian out
-//! over the threads of the engine, so the profile walks them one after the other: the fit of
-//! a point starts from the optimum of the point before it, which is what makes a profile
-//! cheap and its path smooth.
+//! The points of one side of a profile are fits of their own, walked one after the other: the
+//! fit of a point starts from the optimum of the point before it, which is what makes a
+//! profile cheap and its path smooth. What does not depend on anything else runs next to it on
+//! the pool of the batch instead: the two sides of a profile and the profiles of the
+//! parameters, every point of them fanning its own jacobian out over the threads the others
+//! leave. A fit of few conditions is narrower than the pool, and an identifiability of a
+//! handful of parameters is what fills it.
 
 use basin::{DenseMatrix, GramMatrix, LinearSolveSpd};
 use serde::{Deserialize, Serialize};
@@ -180,8 +183,10 @@ pub fn profile(
         .filter(|(at, _)| *at != parameter)
         .map(|(_, value)| *value)
         .collect();
-    let mut points: Vec<ProfilePoint> = Vec::with_capacity(2 * walk.points);
-    for direction in [-1.0, 1.0] {
+    // one side of the optimum: the fit of a point starts from the optimum of the point before
+    // it, so a side is a chain and the two sides are none of each other's
+    let side = |direction: f64| -> Result<Vec<ProfilePoint>, FitError> {
+        let mut points = Vec::with_capacity(walk.points);
         let mut from = free.clone();
         for point in 1..=walk.points {
             if stop.stopped() {
@@ -204,7 +209,13 @@ pub fn profile(
                 seconds: fit.seconds,
             });
         }
-    }
+        Ok(points)
+    };
+    // the two sides run next to each other on the pool of the batch, where the jacobian of a
+    // point of one of them fans out over the threads the other one leaves
+    let (below, above) = problem.install(|| rayon::join(|| side(-1.0), || side(1.0)));
+    let mut points = below?;
+    points.extend(above?);
     points.sort_by(|one, two| one.x.total_cmp(&two.x));
     let threshold = cost + walk.delta;
     let lower = crossing(
@@ -253,16 +264,27 @@ pub fn profiles(
     walk: &Walk,
     stop: &Stop,
 ) -> Result<Vec<Profile>, FitError> {
+    use rayon::prelude::*;
+
     let every: Vec<usize> = (0..problem.parameters().len()).collect();
     let which = if which.is_empty() { &every } else { which };
-    let mut profiles = Vec::with_capacity(which.len());
-    for parameter in which {
-        profiles.push(profile(problem, settings, at, *parameter, walk, stop)?);
-        if stop.stopped() {
-            break;
-        }
+    // the profile of a parameter is none of the others, so they run next to each other on the
+    // pool of the batch: the points of a profile are a chain of fits of few conditions each,
+    // which leaves the threads of the pool to the profiles beside it
+    let walked: Vec<Result<Profile, FitError>> = problem.install(|| {
+        which
+            .par_iter()
+            .map(|parameter| profile(problem, settings, at, *parameter, walk, stop))
+            .collect()
+    });
+    let mut walked: Vec<Profile> = walked.into_iter().collect::<Result<_, _>>()?;
+    // a walk which was stopped reports the profiles which walked a point of their own and not
+    // the ones it stopped before they began, whose empty points would read as a parameter the
+    // data does not determine
+    if stop.stopped() {
+        walked.retain(|profile| !profile.points.is_empty());
     }
-    Ok(profiles)
+    Ok(walked)
 }
 
 /// The value where the cost of a walk reaches the threshold, interpolated between the point

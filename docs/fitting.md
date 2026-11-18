@@ -65,7 +65,7 @@ k = 0.300000 [0.283746, 0.316945], y = 1.000000 [0.966070, 1.032069] after 8 eva
 | `conditions` | the conditions to simulate, each an `id` and a `request` of [`simulation/1`](simulating.md#the-request-simulation1); the output of a request cannot be `"integrator_steps"`, because the rows of a condition are resolved once |
 | `curves` | the measurements, below; at least one |
 | `optimizer` | which optimizer runs and for how long, below |
-| `starts` | the starts to run, each a value per parameter on the linear scale; the `start` of every parameter when it is empty. Every start is run and the best of them is the answer |
+| `starts` | the starts to run, each a value per parameter on the linear scale; the `start` of every parameter when it is empty. Every start is run, next to the others on the threads of the batch, and the best of them is the answer |
 | `threads` | the threads of the batch of an evaluation; the CPUs of the machine when it is absent, and what a caller gives takes precedence |
 | `jacobian` | where the jacobian of a step comes from: `"auto"` (the default, below), `"sensitivities"` or `"difference_quotient"` |
 | `identifiability` | how well the data determines the optimum, below; nothing of it when it is absent |
@@ -145,6 +145,10 @@ well it does run on the batch of the fit itself:
   interval of a cost that is half a sum of squares. A profile which does not rise is a
   parameter the data says nothing about. The fit of a point starts from the optimum of the
   point before it, so a profile of a real model costs about one fit per point and not more.
+  The two sides of a profile and the profiles of the parameters do not depend on each other
+  and run next to each other on the threads of the batch, which is what fills a pool a fit of
+  few conditions leaves idle: the profiles of three parameters of a fit of two conditions are
+  2.2 times faster that way on 20 threads.
 - **The Fisher information** is `JᵀJ` of the residuals at the optimum, one Jacobian and the
   linear algebra of a `parameters x parameters` matrix. Its inverse is the covariance of the
   parameters, its diagonal their standard errors and its scaled form their correlations, in
@@ -317,14 +321,20 @@ prepares and instantiates nothing again. The optimizers are the ones of
 [basin](https://crates.io/crates/basin), a pure Rust library with no BLAS, and the whole fit
 runs inside `Workers::install` of [`sbmlsim-batch`](rust.md), so the population of a
 differential evolution spreads over the threads of the engine and not over a pool of its own.
+What a fit holds next to each other on that pool nests: the starts of a fit, the two sides of
+a profile and the profiles of the parameters each fan their own evaluations out over the same
+threads, and the answer is the same one on one thread and on twenty.
 
 ## What a fit costs
 
 One Jacobian of a fit of hydrochlorothiazide (28 states, 20 conditions, 10 parameters, 220
 simulations) is 7.7 ms on 20 threads, a fit of ten iterations of that model 0.26 s, and a
-profile of one of its parameters, 8 points of a fit of the other nine, 1.52 s. The same
+profile of one of its parameters, 8 points of a fit of the other nine, 0.91 s. The same
 Jacobian out of the forward sensitivities is 20 simulations and 9.7 ms, and the same fit of
-them 0.28 s and 800 simulations against 2960.
+them 0.28 s and 800 simulations against 2960. A fit of few conditions does not fill a pool of
+20 threads by itself (two conditions keep about five of them busy), which is why the starts and
+the profiles run next to each other on it: four starts of such a fit are 1.2 times faster and
+the profiles of three of its parameters 2.2 times.
 `scripts/fit_timing.py` measures it against the same Jacobian through the python bindings, and
 [bench/OPTIMIZATION.md](https://github.com/matthiaskoenig/sbmlsim-core/blob/main/bench/OPTIMIZATION.md)
 says what the numbers mean: a fit of many conditions is bound by the integration and by how

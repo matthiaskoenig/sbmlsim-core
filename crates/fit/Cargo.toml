@@ -16,6 +16,9 @@ description = "The parameter fit of sbmlsim-core: the objective of a fit on the 
 # `parallel`: the population of a generation of a differential evolution spreads over
 # rayon, which the fit runs on the pool of the batch (`Workers::install`)
 basin = { version = "3.3", features = ["parallel"] }
+# the starts of a fit and the profiles of an identifiability, which run next to each other on
+# the pool of the batch
+rayon = "1.10"
 # the pool of the batch, which an evaluation of the objective fans out on
 sbmlsim-batch = { path = "../batch" }
 sbmlsim-abi = { path = "../abi" }
