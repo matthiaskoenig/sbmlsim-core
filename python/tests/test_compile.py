@@ -54,8 +54,11 @@ def test_compile_refuses_an_unknown_jacobian(decay_sbml: str) -> None:
         sbmlsim_core.compile_sbml(decay_sbml, jacobian="symbolic")
 
 
-def test_compile_refuses_an_overdetermined_algebraic_system() -> None:
-    with pytest.raises(sbmlsim_core.CompileError, match="overdetermined algebraic"):
+def test_compile_names_the_entities_an_algebraic_rule_cannot_determine() -> None:
+    with pytest.raises(
+        sbmlsim_core.CompileError,
+        match=r"A determines no variable.*k is constant",
+    ):
         sbmlsim_core.compile_sbml(ALGEBRAIC_SBML)
 
 

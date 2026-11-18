@@ -150,20 +150,25 @@ impl<'m> Builder<'m> {
         };
 
         let mut candidates = Vec::new();
+        let mut blocked = Vec::new();
         for (_, reads) in &equations {
             let mut seen = HashSet::new();
             let mut queue = VecDeque::from(reads.clone());
-            let mut row = Vec::new();
+            let (mut row, mut taken) = (Vec::new(), Vec::new());
             while let Some(i) = queue.pop_front() {
                 if seen.insert(i) {
                     if is_eligible(deps.ids[i]) {
                         row.push(i);
                     } else {
+                        if self.is_entity(deps.ids[i]) {
+                            taken.push(i);
+                        }
                         queue.extend(&definitions[i]);
                     }
                 }
             }
             candidates.push(row);
+            blocked.push(taken);
         }
         // A parameter with no initialization needs an equation. Among other choices prefer
         // independent event targets and existing initial values to remain free.
@@ -176,11 +181,42 @@ impl<'m> Builder<'m> {
                 (!required, event_targets.contains(id), given)
             })
             .collect();
+        // Why an entity the rule reads cannot be the variable it determines.
+        let role = |id: &str| {
+            if self.is_constant(id) {
+                "constant"
+            } else if self.rate_rule.contains_key(id) {
+                "the target of a rate rule"
+            } else if self.assignment_rule.contains_key(id) {
+                "the target of an assignment rule"
+            } else if deps.derivatives.contains(id) {
+                "read by rateOf"
+            } else {
+                "a species of a reaction"
+            }
+        };
+        let list = |indices: &[usize], of: &dyn Fn(&str) -> String| {
+            let mut parts: Vec<String> = indices.iter().map(|&i| of(deps.ids[i])).collect();
+            parts.sort_unstable();
+            parts.join(", ")
+        };
         let matched = match_rows(&candidates, &priority).map_err(|r| {
-            invalid(format!(
-                "overdetermined algebraic system: no independent variable for {}",
-                equations[r].0
-            ))
+            let name = &equations[r].0;
+            if candidates[r].is_empty() {
+                // Underdetermined or of an index above one, not overdetermined: the rule has
+                // nothing left to determine, so it constrains variables other equations fix.
+                invalid(format!(
+                    "{name} determines no variable: every entity it reads is already \
+                     determined ({})",
+                    list(&blocked[r], &|id| format!("{id} is {}", role(id)))
+                ))
+            } else {
+                invalid(format!(
+                    "overdetermined algebraic system: no independent variable for {name}, whose \
+                     candidates {} are taken by the other algebraic rules",
+                    list(&candidates[r], &|id| id.to_string())
+                ))
+            }
         })?;
         Ok(matched.into_iter().map(|i| deps.ids[i]).collect())
     }

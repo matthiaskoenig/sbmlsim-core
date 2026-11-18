@@ -570,3 +570,50 @@ fn a_differential_state_integrates_the_algebraic_jump() {
         assert_jump_rows(&result, sampled);
     }
 }
+
+/// A request change which feeds an assignment rule that an algebraic rule reads must
+/// project against the refreshed rule, as an executed event does.
+#[test]
+fn a_change_refreshes_the_assignment_rules_the_projection_reads() {
+    let loaded = load(
+        &format!(
+            r#"<listOfParameters>
+<parameter id="k" value="1" constant="false"/>
+<parameter id="q" value="0" constant="false"/>
+<parameter id="x" value="0" constant="false"/>
+<parameter id="z" value="0" constant="false"/>
+</listOfParameters>
+<listOfRules>
+<assignmentRule variable="q"><math {MATH}><apply><times/><cn>2</cn><ci>k</ci></apply></math></assignmentRule>
+<rateRule variable="x"><math {MATH}><cn>1</cn></math></rateRule>
+<algebraicRule><math {MATH}><apply><minus/><ci>z</ci><ci>q</ci></apply></math></algebraicRule>
+</listOfRules>"#
+        ),
+        CompileOptions::default(),
+    );
+    let mut req = request(2.0, Output::IntegratorSteps, &["time", "k", "q", "z"]);
+    req.changes = vec![Change {
+        time: 1.0,
+        values: vec![("k".to_string(), 5.0)],
+        increments: vec![],
+    }];
+    let result = loaded.instantiate().unwrap().simulate(&req).unwrap();
+    assert_eq!(result.columns, ["time", "k", "q", "z"]);
+    for row in result.values.as_chunks::<4>().0 {
+        let [time, k, q, z] = *row;
+        println!("t={time} k={k} q={q} z={z}");
+    }
+    let last = *result.values.as_chunks::<4>().0.last().unwrap();
+    close(last[2], 10.0);
+    close(last[3], 10.0);
+    // the first row after the change carries the refreshed rule and its projection
+    let after = result
+        .values
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .find(|r| r[1] == 5.0)
+        .expect("a row after the change");
+    close(after[2], 10.0);
+    close(after[3], 10.0);
+}
