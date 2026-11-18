@@ -1,11 +1,11 @@
 {
   "files": {
-    "engine.wasm": "ab5b9a05114555f036f039cff151d5e7cd8367bd3822bc43b420a5d588379e98",
-    "loader.mjs": "18577a5039cef2ce8bffa72d703df6f491a05f0037ba4160c85b74ccf75fa149",
-    "mathlib.wasm": "7d5d5257181f7a023f30207a6a4057bd6569e70c9028ee6ef33feb93239674b6",
-    "model.json": "09b33ab09e5874ea4727a0c8bb056eaa6fc0b2d9175a6b8f99d67ceab1e1cefc",
+    "engine.wasm": "eb36ac901b0be020c2064d3e35984262c530e70290ebeb1a00af51f4e3594a1f",
+    "loader.mjs": "35a0c2aea8cee88f9d92e30511ef47b6d4ffc32c17659ac1982af5e5e72d8656",
+    "mathlib.wasm": "8cd323a2aacdf4a6158f26ea8a378fa0bb65b3ba09ddfefcf22a3bbc956cbcee",
+    "model.json": "8c25f2ad87ae567fc2c00350835191928bfec214adaf24b39e999a120db666a3",
     "model.wasm": "ff852edf106f1b6ae18b4eef3d90d874cefa16fe94534ed61cc3445dc737920a",
     "repressilator.xml": "b6e05cc413d354597a4a0d2834cf7a27b72318c9a7af225058aa0c9151befdca"
   },
-  "npm_version": "0.9.0"
+  "npm_version": "0.11.0"
 }
