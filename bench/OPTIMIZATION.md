@@ -78,7 +78,13 @@ The rounds of a path are within 10 % of each other once the pools do not overlap
 
 ### What a fit does not fill by itself
 
-A fit of 20 conditions keeps 13 to 15 of 20 threads busy, and one of two conditions about five: an evaluation fans out one simulation per condition and a Jacobian `(k + 1)` of them, and between the fan outs the optimizer, the residuals and the linear algebra of a step run on the thread of the fit. The shapes of the issue are narrower than the machine, so what a fit holds next to each other runs next to each other on the same pool: the starts of a multi start fit, the two sides of a profile and the profiles of the parameters, each of them fanning its own evaluations out over the threads the others leave (`Workers::install` nests, and the instance of a point belongs to the thread which runs it). The fastest of three rounds of a fit of hydrochlorothiazide, five parameters and ten iterations, on 20 threads:
+A fit of 20 conditions keeps 13 to 15 of 20 threads busy, and one of two conditions about five: an evaluation fans out one simulation per condition and a Jacobian `(k + 1)` of them, and between the fan outs the optimizer, the residuals and the linear algebra of a step run on the thread of the fit. The shapes of the issue are narrower than the machine, so what a fit holds next to each other runs next to each other on the same pool: the starts of a multi start fit, the two sides of a profile and the profiles of the parameters, each of them fanning its own evaluations out over the threads the others leave (`Workers::install` nests, and the instance of a point belongs to the thread which runs it). `scripts/fit_shapes.py` measures those shapes, the fastest of three rounds of each, and reports the threads a shape keeps busy next to its wall time (the CPU time of the process over the wall time of the call):
+
+```bash
+.venv/bin/python scripts/fit_shapes.py --conditions 2,4,20 --starts 4 --profiles 3
+```
+
+A fit of hydrochlorothiazide, five parameters and ten iterations, on 20 threads:
 
 | the shape | one after the other | next to each other | threads busy, before and after |
 |---|---:|---:|---|
