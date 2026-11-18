@@ -364,6 +364,7 @@ fn robertson(choice: JacobianChoice, solver: LinearSolver) -> SimulationResult {
             ..IntegratorSettings::default()
         },
         seed: 0,
+        sensitivities: vec![],
     };
     runtime()
         .instantiate(&compiled.wasm, &compiled.description)
@@ -491,6 +492,7 @@ fn falls_back(sbml: &str, selections: &[&str]) {
             ..IntegratorSettings::default()
         },
         seed: 0,
+        sensitivities: vec![],
     };
     let simulate = |c: &CompiledModel, solver: LinearSolver| {
         let mut req = req.clone();

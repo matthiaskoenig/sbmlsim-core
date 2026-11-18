@@ -28,6 +28,7 @@ fn load(body: &str) -> LoadedModel {
 
 fn request(end: f64, steps: u32, selections: &[&str]) -> SimulationRequest {
     SimulationRequest {
+        sensitivities: vec![],
         contract: SIMULATION_CONTRACT.to_owned(),
         start: 0.,
         end,

@@ -354,6 +354,21 @@ fn engine_error_output(error: &EngineError) -> OutputBuffer {
     error_output(kind, message)
 }
 
+/// Why the forward sensitivities of a request are not answered through this module: the
+/// output of a simulation is the header of a table and its values
+/// ([`crate::ENGINE_OUTPUT_FORMAT`] 2), which carries no table of sensitivities, so a request
+/// which asks for them is refused here instead of being answered without them. The native
+/// host, which calls the engine as a library, answers them.
+fn no_sensitivities(request: &SimulationRequest) -> Option<String> {
+    (!request.sensitivities.is_empty()).then(|| {
+        format!(
+            "the forward sensitivities of a simulation ({}) are not carried by the output of \
+             engine.wasm; the native engine of sbmlsim-core answers them",
+            request.sensitivities.join(", ")
+        )
+    })
+}
+
 /// The JSON of the header of a table.
 fn table_header(columns: &[String], n_rows: u64) -> Vec<u8> {
     serde_json::to_vec(&TableHeader { columns, n_rows }).unwrap_or_default()
@@ -373,6 +388,7 @@ fn table_output(recorded: Recorded) -> OutputBuffer {
         n_rows,
         mut values,
         prefix,
+        sensitivities: _,
     } = recorded;
     let header = table_header(&columns, n_rows as u64);
     let room = 8 * prefix - 4;
@@ -510,6 +526,10 @@ pub unsafe extern "C" fn engine_simulate(req_ptr: i32, req_len: i32) -> i32 {
             return 1;
         }
     };
+    if let Some(message) = no_sensitivities(&request) {
+        set_output(error_output("unsupported", &message));
+        return 1;
+    }
     // the engine is taken out of the state while it runs, so no borrow is held
     let Some(mut engine) = STATE.with_borrow_mut(|state| state.engine.take()) else {
         set_output(error_output("request", "no model is loaded"));
@@ -562,6 +582,7 @@ pub extern "C" fn engine_initial_values() -> i32 {
                 n_rows: 1,
                 values,
                 prefix,
+                sensitivities: None,
             }));
             0
         }
@@ -616,6 +637,10 @@ pub unsafe extern "C" fn engine_prepare(ptr: i32, len: i32) -> i32 {
             return 1;
         }
     };
+    if let Some(message) = no_sensitivities(&input.request) {
+        set_output(error_output("unsupported", &message));
+        return 1;
+    }
     let Some(engine) = STATE.with_borrow_mut(|state| state.engine.take()) else {
         set_output(error_output("request", "no model is loaded"));
         return 1;

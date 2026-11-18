@@ -307,6 +307,16 @@ unsafe extern "C" {
     /// The fixed point (functional) iteration with `m` acceleration vectors (0 is none).
     pub fn SUNNonlinSol_FixedPoint(y: N_Vector, m: c_int, sunctx: SUNContext)
     -> SUNNonlinearSolver;
+    /// The same iteration for `count` sensitivity vectors of the shape of `y`, which the
+    /// staggered forward sensitivities of a non-stiff method need: the Newton iteration
+    /// `CVodeSensInit` attaches by default calls the linear solver, which a run of the Adams
+    /// method has not got.
+    pub fn SUNNonlinSol_FixedPointSens(
+        count: c_int,
+        y: N_Vector,
+        m: c_int,
+        sunctx: SUNContext,
+    ) -> SUNNonlinearSolver;
     pub fn SUNNonlinSolFree(nls: SUNNonlinearSolver) -> SUNErrCode;
 
     // CVODE
@@ -411,6 +421,10 @@ unsafe extern "C" {
     /// The tolerances of the sensitivities from the ones of the states and the scaling of the
     /// parameters, which is what a caller without a tolerance of its own wants.
     pub fn CVodeSensEEtolerances(cvode_mem: *mut c_void) -> c_int;
+    /// The nonlinear solver of the staggered sensitivities, which replaces the Newton
+    /// iteration `CVodeSensInit` attaches; the caller owns the solver it passes.
+    pub fn CVodeSetNonlinearSolverSensStg(cvode_mem: *mut c_void, nls: SUNNonlinearSolver)
+    -> c_int;
     pub fn CVodeSensSStolerances(
         cvode_mem: *mut c_void,
         reltolS: sunrealtype,

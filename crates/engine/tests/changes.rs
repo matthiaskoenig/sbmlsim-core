@@ -13,6 +13,7 @@ use sbmlsim_engine::{Engine, EngineError, STEADY_STATE_FLAG, simulate};
 /// A request from `start` to `end` of the output, every selection, tight tolerances.
 fn request(start: f64, end: f64, output: Output) -> SimulationRequest {
     SimulationRequest {
+        sensitivities: vec![],
         contract: SIMULATION_CONTRACT.to_string(),
         start,
         end,

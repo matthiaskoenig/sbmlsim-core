@@ -93,7 +93,9 @@
 //! is absent ([`DEFAULT_SEED`]), set before the contracts were frozen (no version change).
 //! Additions of `simulation/1` since its release, which a request of a release before reads
 //! as it did: the `increments` of a [`Change`] (0.6.0), absent and empty by default, which an
-//! engine before 0.6.0 refuses as an unknown field.
+//! engine before 0.6.0 refuses as an unknown field, and the `sensitivities` of a
+//! [`SimulationRequest`] (0.12.0) with the `sensitivities` of a [`SimulationResult`], both
+//! absent by default, which an engine before 0.12.0 refuses the same way.
 //!
 //! `engine.wasm` carries the custom section [`ENGINE_SECTION`] with the JSON
 //! `{"memory_minimum_pages":n,"output_format":k}`: the minimum of the memory it imports and
@@ -624,6 +626,7 @@ mod tests {
                 jacobian: JacobianChoice::DifferenceQuotient,
             },
             seed: 42,
+            sensitivities: vec!["k".to_string(), "V".to_string()],
         }
     }
 

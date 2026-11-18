@@ -24,6 +24,123 @@ pub(crate) enum Column {
 /// The rows of a result: every row is the time and the selections of the model
 /// ([`ModelFns::selections`], which computes the assignment rules it reads itself and reads the
 /// state and the parameters only, so the output does not change the integration).
+/// The forward sensitivities of the columns of a result while it is recorded.
+///
+/// The sensitivities of the states come from CVODES, the ones of a column from the values of
+/// the selections of the model at the state and the parameters of the row moved along the
+/// sensitivity: for a column which is a state that difference is the sensitivity itself, for
+/// one which is not (a concentration, an assignment rule, a constant of the model) it is the
+/// derivative of its value in the parameter.
+pub(crate) struct Sensitivities {
+    /// The ids of the parameters, in the order of the sensitivities.
+    pub parameters: Vec<String>,
+    /// For every parameter, its index in `p`, or `None` for a target which is no parameter of
+    /// the model (the initial value of a state), which moves no value of `p`.
+    pub params: Vec<Option<usize>>,
+    /// The step of the difference of every parameter, relative to its value at the start.
+    pub steps: Vec<f64>,
+    /// The sensitivities of the states at the row which is recorded next, `k * n` row major.
+    pub states: Vec<f64>,
+    /// The sensitivities of the columns, row major: the parameter of the column of the row.
+    pub values: Vec<f64>,
+    /// The state, the parameters and the selections of the difference.
+    y: Vec<f64>,
+    p: Vec<f64>,
+    selections: Vec<f64>,
+}
+
+impl Sensitivities {
+    /// The sensitivities of the targets of `parameters`, whose initial values are `states`
+    /// (`k * n` row major), of a model of `n` states, `n_p` values of `p` and `n_selections`
+    /// selections.
+    pub fn new(
+        parameters: Vec<String>,
+        params: Vec<Option<usize>>,
+        steps: Vec<f64>,
+        states: Vec<f64>,
+        n_p: usize,
+        n_selections: usize,
+    ) -> Sensitivities {
+        let n = if parameters.is_empty() {
+            0
+        } else {
+            states.len() / parameters.len()
+        };
+        Sensitivities {
+            parameters,
+            params,
+            steps,
+            states,
+            values: Vec::new(),
+            y: vec![0.0; n],
+            p: vec![0.0; n_p],
+            selections: vec![0.0; n_selections],
+        }
+    }
+
+    /// The number of sensitivities per value of a row.
+    pub fn len(&self) -> usize {
+        self.parameters.len()
+    }
+
+    /// Records the sensitivities of the columns of one row.
+    fn row(&mut self, at: At<'_>) -> Result<(), EngineError> {
+        let At {
+            model,
+            columns,
+            mask,
+            t,
+            y,
+            p,
+            values,
+        } = at;
+        let k = self.parameters.len();
+        let n = self.y.len();
+        let at = self.values.len();
+        self.values.resize(at + columns.len() * k, 0.0);
+        for parameter in 0..k {
+            // the state and the parameters of the row, moved along the sensitivity of this
+            // parameter by the step of its difference
+            let step = self.steps[parameter];
+            for (state, value) in self.y.iter_mut().enumerate() {
+                *value = y[state] + step * self.states[parameter * n + state];
+            }
+            let n_p = self.p.len();
+            self.p.copy_from_slice(&p[..n_p]);
+            if let Some(index) = self.params[parameter] {
+                self.p[index] += step;
+            }
+            // the constants of the model behind its parameters are the ones of the moved
+            // parameter, which `assign` recomputes (it writes the targets of the assignment
+            // rules into the copy of the state as well)
+            model.assign(t, &mut self.y, &mut self.p);
+            model.selections(t, &self.y, &self.p, mask, &mut self.selections);
+            model.check_error()?;
+            for (column, slot) in columns.iter().enumerate() {
+                let difference = match slot {
+                    Column::Time => 0.0,
+                    Column::Selection(index) => (self.selections[*index] - values[*index]) / step,
+                };
+                self.values[at + column * k + parameter] = difference;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The row the sensitivities of a recorder are recorded at: what the model is asked with and
+/// the values of the selections of the row, which the difference of every parameter is taken
+/// against.
+struct At<'a> {
+    model: &'a dyn ModelFns,
+    columns: &'a [Column],
+    mask: &'a [u8],
+    t: f64,
+    y: &'a [f64],
+    p: &'a [f64],
+    values: &'a [f64],
+}
+
 pub(crate) struct Recorder<'a> {
     model: &'a dyn ModelFns,
     columns: Cow<'a, [Column]>,
@@ -40,6 +157,8 @@ pub(crate) struct Recorder<'a> {
     pub n_rows: usize,
     /// The most values the result may hold (the prefix not counted).
     cap: usize,
+    /// The forward sensitivities of the columns, for a run which asked for them.
+    pub sensitivities: Option<Sensitivities>,
 }
 
 /// The [`EngineError::Request`] of a result which does not fit into the memory of the engine.
@@ -89,6 +208,7 @@ impl<'a> Recorder<'a> {
             prefix,
             n_rows: 0,
             cap,
+            sensitivities: None,
         })
     }
 
@@ -117,6 +237,7 @@ impl<'a> Recorder<'a> {
             prefix,
             n_rows: 0,
             cap,
+            sensitivities: None,
         })
     }
 
@@ -151,7 +272,9 @@ impl<'a> Recorder<'a> {
     /// result.
     pub fn row(&mut self, t: f64, y: &[f64], p: &[f64]) -> Result<(), EngineError> {
         let k = self.columns.len();
-        if self.values.len() - self.prefix + k > self.cap {
+        // a row of a run of sensitivities carries one value per parameter of every column
+        let per_row = k * (1 + self.sensitivities.as_ref().map_or(0, Sensitivities::len));
+        if self.values.len() - self.prefix + per_row > self.cap {
             return Err(EngineError::Integration {
                 flag: OUTPUT_LIMIT_FLAG,
                 time: t,
@@ -173,8 +296,34 @@ impl<'a> Recorder<'a> {
                 Column::Selection(index) => self.selections[*index],
             });
         }
+        if let Some(sensitivities) = &mut self.sensitivities {
+            sensitivities.row(At {
+                model: self.model,
+                columns: &self.columns,
+                mask: &self.mask,
+                t,
+                y,
+                p,
+                values: &self.selections,
+            })?;
+        }
         self.n_rows += 1;
         Ok(())
+    }
+
+    /// The sensitivities of the states at the row which is recorded next, which the caller
+    /// fills from the integrator at every return.
+    pub fn state_sensitivities(&mut self) -> Option<&mut [f64]> {
+        self.sensitivities
+            .as_mut()
+            .map(|sensitivities| sensitivities.states.as_mut_slice())
+    }
+
+    /// Those values, to start the sensitivities of a segment with.
+    pub fn sensitivities_at(&self) -> Option<&[f64]> {
+        self.sensitivities
+            .as_ref()
+            .map(|sensitivities| sensitivities.states.as_slice())
     }
 }
 
@@ -251,9 +400,19 @@ pub(crate) fn integrate<const DAE: bool, H: crate::delay::Mode>(
                     }
                     if !started {
                         cvode.start(t, y, stop, settings, 0)?;
+                        if recorder.sensitivities_at().is_some() {
+                            let at = recorder.sensitivities_at().expect("the sensitivities");
+                            // the values are the ones of the recorder, which the problem of
+                            // the call does not borrow
+                            let at = at.to_vec();
+                            cvode.start_sensitivities(problem, &at)?;
+                        }
                         started = true;
                     }
                     cvode.integrate(problem, tout, CV_NORMAL)?;
+                    if let Some(states) = recorder.state_sensitivities() {
+                        cvode.sensitivities(states)?;
+                    }
                     recorder.row(tout, cvode.state(), &problem.p)?;
                 }
                 // nothing after the last output time is seen
@@ -284,6 +443,10 @@ pub(crate) fn integrate<const DAE: bool, H: crate::delay::Mode>(
                     match cvode.as_deref_mut() {
                         Some(cvode) if !too_close(t, stop) => {
                             cvode.start(t, y, stop, settings, 0)?;
+                            if let Some(at) = recorder.sensitivities_at() {
+                                let at = at.to_vec();
+                                cvode.start_sensitivities(problem, &at)?;
+                            }
                             let mut previous = t;
                             loop {
                                 let (tret, flag) = cvode.integrate(problem, stop, CV_ONE_STEP)?;
@@ -295,6 +458,9 @@ pub(crate) fn integrate<const DAE: bool, H: crate::delay::Mode>(
                                 previous = tret;
                                 // CVODE returns the stop time exactly when it reaches it
                                 let tret = if flag == CV_TSTOP_RETURN { stop } else { tret };
+                                if let Some(states) = recorder.state_sensitivities() {
+                                    cvode.sensitivities(states)?;
+                                }
                                 recorder.row(tret, cvode.state(), &problem.p)?;
                                 if flag == CV_TSTOP_RETURN || tret >= stop {
                                     break;
@@ -752,6 +918,7 @@ mod tests {
             ..IntegratorSettings::default()
         };
         let config = Config {
+            n_sens: 0,
             n: 1,
             method: Method::Bdf(Linear::Dense {
                 jacobian: Jacobian::Analytic,
@@ -759,6 +926,7 @@ mod tests {
         };
         let mut cvode = Integrator::<false>::new(config).unwrap();
         let mut problem = Problem {
+            sensitivity: None,
             n: 1,
             n_model: 1,
             n_algebraic: 0,

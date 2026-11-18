@@ -931,6 +931,9 @@ fn read_output(bytes: &[u8]) -> Result<Output, EngineError> {
                 columns,
                 n_rows,
                 values,
+                // the output of engine.wasm carries no table of sensitivities, and a request
+                // which asks for them is refused by the module
+                sensitivities: None,
             }))
         }
     }

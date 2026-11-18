@@ -54,6 +54,7 @@ fn instance() -> Instance {
 /// uniform steps, the columns `time` and `y`, `rtol 1e-10`, the non-stiff method.
 fn request() -> SimulationRequest {
     SimulationRequest {
+        sensitivities: vec![],
         contract: SIMULATION_CONTRACT.to_string(),
         start: 0.0,
         end: 10.0,

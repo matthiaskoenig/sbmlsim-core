@@ -261,7 +261,6 @@ fn solve(how: Sensitivity) -> Run {
         SUNLinSolFree(solver);
         SUNMatDestroy(matrix);
         N_VDestroy(y);
-        let mut ctx = ctx;
         SUNContext_Free(&raw mut ctx);
         Run {
             outputs,

@@ -27,6 +27,7 @@ fn load(parameters: &str, rules: &str) -> LoadedModel {
 
 fn request(start: f64, end: f64, steps: u32, selections: &[&str]) -> SimulationRequest {
     SimulationRequest {
+        sensitivities: vec![],
         contract: SIMULATION_CONTRACT.to_owned(),
         start,
         end,

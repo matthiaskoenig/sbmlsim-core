@@ -16,6 +16,7 @@ use sbmlsim_engine::{Engine, EngineError, simulate};
 /// up to `t = 9`), the one of Adams-Moulton `1.2e-10` (bitwise the value of libroadrunner).
 fn request(start: f64, end: f64, output: Output, selections: &[&str]) -> SimulationRequest {
     SimulationRequest {
+        sensitivities: vec![],
         contract: SIMULATION_CONTRACT.to_string(),
         start,
         end,

@@ -87,6 +87,7 @@ The CSV has the names of the columns in its first line, then one line per row; a
   "changes": [{ "time": 5.0, "values": [["y", 2.0]] }],
   "steady_state": null,
   "selections": ["time", "y"],
+  "sensitivities": ["k"],
   "settings": {
     "relative_tolerance": 1e-10,
     "absolute_tolerance": { "scalar": 1e-12 },
@@ -110,6 +111,7 @@ The CSV has the names of the columns in its first line, then one line per row; a
 | `preinit` | values set before the initialization, as `[id, value]` pairs; the ids are selections: `S` is the amount of a species, `[S]` its concentration (converted with the size its compartment has once the initial assignments are evaluated, so a pre-initialization holds the concentration of a species across the initialization, also when it changes that size, directly or through an initial assignment), any other id the value of its entity. The order of the values does not matter. The initial assignments see them |
 | `changes` | changes at absolute times in `[start, end]`, in non-decreasing order of the time: `{"time": t, "values": [[id, value], ...], "increments": [[id, increment], ...]}` (`increments` optional, 0.6.0), see below |
 | `steady_state` | `null`, or a steady state reached before the start: `{"preinit", "absolute_tolerance", "relative_tolerance", "max_time"}` (defaults `[]`, `1e-8`, `1e-6`, `1e8`), see below |
+| `sensitivities` | the ids of the values the forward sensitivities of the run are taken in (0.12.0, the native engine only), empty for a run without them; see below |
 | `selections` | the ids of the columns after `time`; a leading `"time"` is that column (not repeated), a later `"time"` another copy of the time of the row; empty is `time` followed by every selection of the model |
 | `settings` | the settings of the integrator, below; the defaults of the engine are the ones of roadrunner |
 | `seed` | the seed of the random generator which orders simultaneous events; 1 when it is absent |
@@ -144,6 +146,34 @@ of the simulation as well.
 **Changes.** The values of a change are set at once (the changes of one time are one change): a compartment keeps the concentrations of the species of a concentration in it (not of an amount, not of an assignment rule, not of one the change sets), and the assignment rules follow. A change at the start is applied after the initialization (and after the steady state) and before the output of the start; a change after the start ends a segment of the integration, and the output has the state before it and the state after it at its time (two rows: in the steps of the integrator always, in an output of times when its time is one of them). The events a change triggers execute with it; an event at its time executes after it. An increment adds to the value of its id in the state before the change (an amount `S`, a concentration `[S]`, the value of any other entity), at once with the values: a repeated dose is `{"time": 24, "increments": [["PODOSE_x", 25]]}`, the formula `"PODOSE_x + 25"` of a change of sbmlsim. One change sets or increments an id once.
 
 **Steady state.** The model is initialized once, with the pre-initialization of the request and of the steady state together (an id in both is refused), and integrated from the time 0, events active, until every state has `|dx/dt| <= absolute_tolerance + relative_tolerance * |x|` at the end of a horizon (1, 10, 100, ... time units), at most `max_time`; the simulation starts from that state at its start. A steady state which is not reached is an error of the integration.
+
+## Forward sensitivities
+
+`sensitivities` asks for the derivative of every column of the result in the value every
+listed id has at the start of the run, which a least squares fit uses as the Jacobian of its
+residuals (`crates/fit`, [Fitting](fitting.md)) and a profile of an identifiability as the
+curvature of its cost. The ids are the ones of `preinit`: a parameter of the model, a
+compartment, or a species as its amount (`S`) or its concentration (`[S]`).
+
+The result then carries `sensitivities: {parameters, values}`, with `parameters` the ids in
+the order they were asked for and `values` of `n_rows * columns.length * parameters.length`
+numbers, row major: the sensitivity of the column `c` of the row `r` in the parameter `j` is
+`values[(r * columns.length + c) * parameters.length + j]`. The column of the time is 0.
+
+The engine integrates one sensitivity vector per parameter next to the states (CVODES,
+`CV_STAGGERED`), so a run of `k` parameters is one integration and not `k + 1`. The states of
+such a run stay the states of the same run without it: the sensitivities are not in the error
+test of a step, and the states of a step are solved before them. `df/dp` is a forward
+difference of the right hand side of the model in the parameter and the sensitivity of a
+column which is no state is one of its value, so a sensitivity is accurate to about 1e-8 of
+itself, against 1e-3 for a difference of whole simulations at the default tolerances.
+
+What a run of sensitivities does not carry is refused and not answered wrongly: the events of
+a model, a discontinuity of its math, an algebraic rule, a delay, the `changes` of a request,
+its `steady_state` and the iterative linear solver. `engine.wasm` refuses them as well (its
+output format carries the values of a table and nothing else): they are answered by the
+native engine, which the Rust host, the python bindings and the command line of sbmlsim-core
+call as a library.
 
 ## The result
 

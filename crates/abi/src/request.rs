@@ -37,6 +37,23 @@ pub struct SimulationRequest {
     /// ([`DEFAULT_SEED`]).
     #[serde(default = "default_seed")]
     pub seed: u64,
+    /// The ids whose forward sensitivities the run computes, in the order of the parameters of
+    /// [`Sensitivities`]; none of them when it is empty, which is the default.
+    ///
+    /// An id is a target of a pre-initialization, without the concentration form: a parameter
+    /// of the model, the amount of a species, the size of a compartment. The sensitivity of a
+    /// state is the one of its initial value.
+    ///
+    /// The forward sensitivities of a run are the derivatives of its columns in those values,
+    /// which CVODES integrates along with the states: one run of `k` sensitivities answers
+    /// what `k + 1` runs of a finite difference answer, and to the tolerance of the
+    /// integration instead of the step of the difference.
+    ///
+    /// A run which cannot carry them is refused ([`crate::SimulationResult::sensitivities`]
+    /// says which): a model of events, of algebraic rules or of delays, and a request of
+    /// changes or of a steady state.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sensitivities: Vec<String>,
 }
 
 /// The seed of a request without one.
@@ -209,6 +226,31 @@ pub struct SimulationResult {
     /// The number of rows.
     pub n_rows: usize,
     /// `n_rows * columns.len()` values, row major.
+    pub values: Vec<f64>,
+    /// The forward sensitivities of the columns, when the request asked for them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sensitivities: Option<Sensitivities>,
+}
+
+/// The forward sensitivities of the columns of a result.
+///
+/// The derivative of every column of every row in every parameter of the request, in the
+/// order of the columns of the result and of the parameters of the request: the sensitivity
+/// of the column `c` of the row `r` to the parameter `j` is
+/// `values[(r * columns.len() + c) * parameters.len() + j]`. The column `time` is no function
+/// of a parameter, so its sensitivities are 0.
+///
+/// The sensitivity of a column which is a state is the one CVODES integrated. The one of a
+/// column which is not (a concentration, an assignment rule, a constant of the model) is the
+/// derivative of its value along the sensitivity of the states and of the parameter, a
+/// difference of one evaluation of the selections of the model, which is exact where the
+/// column is a state and of the order of the square root of the rounding otherwise.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Sensitivities {
+    /// The ids of the parameters, the `sensitivities` of the request.
+    pub parameters: Vec<String>,
+    /// `n_rows * columns.len() * parameters.len()` values, row major.
     pub values: Vec<f64>,
 }
 

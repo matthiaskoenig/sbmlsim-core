@@ -190,6 +190,55 @@ pub(crate) struct Config {
     pub n: usize,
     /// The method.
     pub method: Method,
+    /// The number of forward sensitivities, 0 for a run without them. A memory of another
+    /// number is not the memory of this configuration: the vectors of the sensitivities
+    /// belong to it.
+    pub n_sens: usize,
+}
+
+/// What the right hand side of the forward sensitivities needs besides the problem itself.
+///
+/// `d/dt (dy/dp_j) = df/dy (dy/dp_j) + df/dp_j`: the first term is the jacobian of the model
+/// applied to the sensitivity, the second one is nothing for the initial value of a state and
+/// a forward difference of the right hand side in the parameter otherwise, which reuses the
+/// right hand side CVODES passes and so costs one evaluation per parameter and step.
+pub(crate) struct Sensitivity {
+    /// For every sensitivity, the index of its parameter in `p`, or `None` for the initial
+    /// value of a state, which the right hand side does not see.
+    pub params: Vec<Option<usize>>,
+    /// The step of the difference quotient of every parameter.
+    pub steps: Vec<f64>,
+    /// The right hand side at a perturbed parameter.
+    pub f: Vec<f64>,
+    /// A copy of the state, which [`ModelFns::assign`] writes the targets of the assignment
+    /// rules of the model into while it refreshes the constants behind the parameters.
+    pub y: Vec<f64>,
+}
+
+impl Sensitivity {
+    /// The sensitivities of the targets, whose steps are relative to the values they have at
+    /// the start of the run.
+    pub fn new(params: Vec<Option<usize>>, values: &[f64], n: usize) -> Sensitivity {
+        let steps = params
+            .iter()
+            .zip(values)
+            .map(|(param, value)| {
+                if param.is_some() {
+                    // the square root of the rounding, relative to the value: the truncation
+                    // of the difference and its rounding are then both about 1e-8 of `df/dp`
+                    f64::EPSILON.sqrt() * value.abs().max(1.0)
+                } else {
+                    0.0
+                }
+            })
+            .collect();
+        Sensitivity {
+            params,
+            steps,
+            f: vec![0.0; n],
+            y: vec![0.0; n],
+        }
+    }
 }
 
 /// What the callbacks of CVODE read: the model, the parameters and the pattern of the Jacobian.
@@ -230,6 +279,9 @@ pub(crate) struct Problem<'a> {
     pub mem: *mut c_void,
     /// Integrator-owned GMRES workspace, installed only for the duration of integration.
     pub krylov: *mut krylov::Preconditioner,
+    /// What the right hand side of the forward sensitivities needs, `None` for a run without
+    /// them.
+    pub sensitivity: Option<Sensitivity>,
     /// The calls of the model the callbacks of CVODE and the engine made.
     pub counts: Counts,
     /// The first native callback failure, returned after control leaves C.
@@ -252,6 +304,10 @@ pub(crate) struct Counts {
     pub roots: u64,
     /// The calls of the right hand side by the criterion of the steady state.
     pub steady_state_rhs: u64,
+    /// The calls of the right hand side of the forward sensitivities by CVODES.
+    pub sensitivity_rhs: u64,
+    /// The calls of the right hand side of the model by the difference quotient of `df/dp`.
+    pub sensitivity_model_rhs: u64,
 }
 
 impl Counts {
@@ -263,6 +319,8 @@ impl Counts {
             fallbacks: self.fallbacks + other.fallbacks,
             roots: self.roots + other.roots,
             steady_state_rhs: self.steady_state_rhs + other.steady_state_rhs,
+            sensitivity_rhs: self.sensitivity_rhs + other.sensitivity_rhs,
+            sensitivity_model_rhs: self.sensitivity_model_rhs + other.sensitivity_model_rhs,
         }
     }
 }
@@ -514,6 +572,88 @@ unsafe fn jacobian_values(
     0
 }
 
+/// The right hand side of every forward sensitivity at once (`CVodeSensInit`).
+///
+/// # Safety
+/// CVODES passes the state and its right hand side, the `ns` sensitivities and as many slots
+/// for their right hand sides, the user data of [`CVodeSetUserData`] and two vectors of `n`
+/// values it lends.
+unsafe extern "C" fn sens_rhs(
+    ns: c_int,
+    t: sunrealtype,
+    y: N_Vector,
+    ydot: N_Vector,
+    ys: *mut N_Vector,
+    ysdot: *mut N_Vector,
+    data: *mut c_void,
+    tmp1: N_Vector,
+    _tmp2: N_Vector,
+) -> c_int {
+    unsafe {
+        let problem = problem(data);
+        callback(problem, |problem| {
+            problem.counts.sensitivity_rhs += 1;
+            let Some(pattern) = problem.pattern else {
+                return -1;
+            };
+            // one jacobian of the model for every sensitivity of the step
+            let code = jacobian_values(problem, pattern, t, y, ydot, tmp1);
+            if code != 0 {
+                return code;
+            }
+            let n = pattern.n as usize;
+            let (ys, ysdot) = (
+                std::slice::from_raw_parts(ys, ns as usize),
+                std::slice::from_raw_parts(ysdot, ns as usize),
+            );
+            for (at, (sensitivity, out)) in ys.iter().zip(ysdot).enumerate() {
+                let s = values(*sensitivity, n);
+                let out = values(*out, n);
+                out.fill(0.0);
+                // `df/dy s` in the CSC order of the pattern
+                for column in 0..n {
+                    let factor = s[column];
+                    if factor == 0.0 {
+                        continue;
+                    }
+                    let (start, end) = (
+                        pattern.col_ptr[column] as usize,
+                        pattern.col_ptr[column + 1] as usize,
+                    );
+                    for k in start..end {
+                        out[pattern.row_idx[k] as usize] += problem.jac_values[k] * factor;
+                    }
+                }
+                // `df/dp`, the forward difference of the right hand side in the parameter
+                let Some(sensitivity) = &problem.sensitivity else {
+                    return -1;
+                };
+                let Some(index) = sensitivity.params[at] else {
+                    continue;
+                };
+                let step = sensitivity.steps[at];
+                let mut sensitivity = problem.sensitivity.take().expect("the sensitivity");
+                let base = problem.p[index];
+                problem.p[index] = base + step;
+                sensitivity.y.copy_from_slice(values(y, n));
+                problem.model.assign(t, &mut sensitivity.y, &mut problem.p);
+                problem
+                    .model
+                    .rhs(t, values(y, n), &problem.p, &mut sensitivity.f);
+                problem.p[index] = base;
+                problem.model.assign(t, &mut sensitivity.y, &mut problem.p);
+                problem.counts.sensitivity_model_rhs += 1;
+                let f = values(ydot, n);
+                for (row, out) in out.iter_mut().enumerate() {
+                    *out += (sensitivity.f[row] - f[row]) / step;
+                }
+                problem.sensitivity = Some(sensitivity);
+            }
+            0
+        })
+    }
+}
+
 unsafe extern "C" fn jac_dense(
     t: sunrealtype,
     y: N_Vector,
@@ -640,6 +780,15 @@ pub(crate) struct Integrator<const DAE: bool, H: crate::delay::Mode = crate::del
     live: bool,
     /// The roots found at the last return at a root (`CVodeGetRootInfo`), one per root function.
     found: Vec<c_int>,
+    /// The vectors of the forward sensitivities, `config.n_sens` of them, null without.
+    sens: *mut N_Vector,
+    /// Whether `CVodeSensInit` ran, which the first segment of the first simulation does; the
+    /// ones after it re-initialize the sensitivities.
+    sens_initialized: bool,
+    /// The fixed point iteration of the sensitivities of a non-stiff run, which replaces the
+    /// Newton iteration of CVODES: it would call the linear solver the Adams method has not
+    /// got. Null for a method which has one.
+    sens_nonlinear: SUNNonlinearSolver,
 }
 
 // These SUNDIALS calls share signatures across CVODE and IDA.
@@ -658,6 +807,17 @@ impl<const DAE: bool, H: crate::delay::Mode> Drop for Integrator<DAE, H> {
         // SAFETY: every pointer is null or owned by this memory; CVODE is freed before the
         // linear solver and the matrix it uses, the context last.
         unsafe {
+            if !self.sens.is_null() {
+                if !self.mem.is_null() && self.sens_initialized {
+                    CVodeSensFree(self.mem);
+                }
+                if !self.sens_nonlinear.is_null() {
+                    SUNNonlinSolFree(self.sens_nonlinear);
+                    self.sens_nonlinear = ptr::null_mut();
+                }
+                N_VDestroyVectorArray(self.sens, self.config.n_sens as c_int);
+                self.sens = ptr::null_mut();
+            }
             if !self.mem.is_null() {
                 if !DAE {
                     CVodeFree(&mut self.mem);
@@ -751,6 +911,9 @@ impl<const DAE: bool, H: crate::delay::Mode> Integrator<DAE, H> {
             totals: SolverCounts::default(),
             live: false,
             found: Vec::new(),
+            sens: ptr::null_mut(),
+            sens_initialized: false,
+            sens_nonlinear: ptr::null_mut(),
         };
         let n = config.n as sunindextype;
         // SAFETY: the objects are created in the context and owned by `cvode`, which frees them
@@ -775,6 +938,21 @@ impl<const DAE: bool, H: crate::delay::Mode> Integrator<DAE, H> {
                 return Err(not_created("the vectors"));
             }
             values(cvode.y, config.n).fill(0.0);
+            if config.n_sens > 0 {
+                let n_sens = c_int::try_from(config.n_sens).map_err(|_| {
+                    EngineError::Request(format!(
+                        "{} sensitivities exceed the SUNDIALS index range",
+                        config.n_sens
+                    ))
+                })?;
+                cvode.sens = N_VCloneVectorArray(n_sens, cvode.y);
+                if cvode.sens.is_null() {
+                    return Err(not_created("the vectors of the sensitivities"));
+                }
+                for at in 0..config.n_sens {
+                    values(*cvode.sens.add(at), config.n).fill(0.0);
+                }
+            }
             cvode.mem = match config.method {
                 Method::Ida { n_algebraic, .. } => {
                     cvode.yp = N_VNew_Serial(n, cvode.ctx);
@@ -800,6 +978,19 @@ impl<const DAE: bool, H: crate::delay::Mode> Integrator<DAE, H> {
                     cvode.nonlinear = SUNNonlinSol_FixedPoint(cvode.y, 0, cvode.ctx);
                     if cvode.nonlinear.is_null() {
                         return Err(not_created("the fixed point iteration"));
+                    }
+                    if config.n_sens > 0 {
+                        cvode.sens_nonlinear = SUNNonlinSol_FixedPointSens(
+                            config.n_sens as c_int,
+                            cvode.y,
+                            0,
+                            cvode.ctx,
+                        );
+                        if cvode.sens_nonlinear.is_null() {
+                            return Err(not_created(
+                                "the fixed point iteration of the sensitivities",
+                            ));
+                        }
                     }
                     return Ok(cvode);
                 }
@@ -1031,6 +1222,88 @@ impl<const DAE: bool, H: crate::delay::Mode> Integrator<DAE, H> {
                     IDARootInit(self.mem, nr, (nr > 0).then_some(ida::roots)),
                     t0,
                 )?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Starts the forward sensitivities of a segment at the values `start` (`n_sens` of `n`,
+    /// row major), which are their initial values `dy0/dp` in the first segment and the ones
+    /// of the end of the segment before in the ones after it.
+    ///
+    /// The error control of the steps is the one of the states alone
+    /// (`CVodeSetSensErrCon(0)`, the default of SUNDIALS): a `df/dp` which is a difference
+    /// quotient is accurate to about 1e-8, and a relative tolerance below that would make the
+    /// error test of a sensitivity fail until the step size collapses.
+    ///
+    /// The corrector is the staggered one (`CV_STAGGERED`), which solves the states of a step
+    /// to convergence by themselves and the sensitivities after them, so that the states of a
+    /// run of sensitivities stay the states of the same run without them (1e-11 of them on the
+    /// decay of one state, against 2e-10 for the simultaneous corrector, which carries the
+    /// sensitivities in the Newton iteration of the step). What is left of the difference is
+    /// the bookkeeping of CVODES around the solves of the sensitivities, which moves where a
+    /// step sets up its linear solver again.
+    ///
+    /// CVODES keeps the user data of the sensitivities as it is when they are initialized
+    /// (`cv_fS_data` of `CVodeSensInit`), which [`Integrator::integrate`] sets before every
+    /// call of CVODE and not before this one, so the problem is given here as well.
+    pub fn start_sensitivities(
+        &mut self,
+        problem: &mut Problem<'_>,
+        start: &[f64],
+    ) -> Result<(), EngineError> {
+        let (n, n_sens) = (self.config.n, self.config.n_sens);
+        if n_sens == 0 || self.sens.is_null() {
+            return Err(EngineError::Internal(
+                "the memory has no vectors for the sensitivities of its run".to_string(),
+            ));
+        }
+        assert_eq!(start.len(), n_sens * n, "the sensitivities of the segment");
+        // SAFETY: `sens` is an array of `n_sens` vectors of `n` values owned by this memory;
+        // the memory is initialized (`start` ran before this call).
+        unsafe {
+            for at in 0..n_sens {
+                values(*self.sens.add(at), n).copy_from_slice(&start[at * n..(at + 1) * n]);
+            }
+            let n_sens = n_sens as c_int;
+            problem.mem = self.mem;
+            let data = (problem as *mut Problem<'_>).cast::<c_void>();
+            self.flag(CVodeSetUserData(self.mem, data), f64::NAN)?;
+            if self.sens_initialized {
+                self.flag(CVodeSensReInit(self.mem, CV_STAGGERED, self.sens), f64::NAN)?;
+            } else {
+                self.flag(
+                    CVodeSensInit(self.mem, n_sens, CV_STAGGERED, Some(sens_rhs), self.sens),
+                    f64::NAN,
+                )?;
+                self.sens_initialized = true;
+                if !self.sens_nonlinear.is_null() {
+                    self.flag(
+                        CVodeSetNonlinearSolverSensStg(self.mem, self.sens_nonlinear),
+                        f64::NAN,
+                    )?;
+                }
+                self.flag(CVodeSensEEtolerances(self.mem), f64::NAN)?;
+                self.flag(CVodeSetSensErrCon(self.mem, 0), f64::NAN)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// The forward sensitivities at the time of the last return, into `out` (`n_sens` of `n`,
+    /// row major).
+    pub fn sensitivities(&mut self, out: &mut [f64]) -> Result<(), EngineError> {
+        let (n, n_sens) = (self.config.n, self.config.n_sens);
+        assert_eq!(out.len(), n_sens * n, "the sensitivities of the row");
+        if n_sens == 0 || self.sens.is_null() || !self.sens_initialized {
+            return Ok(());
+        }
+        // SAFETY: as in `start_sensitivities`; `CVodeGetSens` writes the vectors of the array.
+        unsafe {
+            let mut t = 0.0;
+            self.flag(CVodeGetSens(self.mem, &mut t, self.sens), f64::NAN)?;
+            for at in 0..n_sens {
+                out[at * n..(at + 1) * n].copy_from_slice(values(*self.sens.add(at), n));
             }
         }
         Ok(())
@@ -1271,6 +1544,7 @@ mod tests {
         assert!(size_of::<Problem<'_>>() < size_of::<Constraints<'_>>());
         assert!(size_of::<Events<'_, false>>() < size_of::<Constraints<'_>>());
         let cvode = Integrator::<false>::new(Config {
+            n_sens: 0,
             n: 1,
             method: Method::Adams,
         })
@@ -1295,6 +1569,7 @@ mod tests {
         let (mut p, mut y) = (vec![0.0; 3], vec![0.0; 3]);
         model.defaults(&mut p, &mut y);
         let mut cvode = Integrator::<false>::new(Config {
+            n_sens: 0,
             n: 3,
             method: Method::Bdf(linear),
         })
@@ -1306,6 +1581,7 @@ mod tests {
         };
         cvode.start(0.0, &y, 4e10, &settings, 0).unwrap();
         let mut problem = Problem {
+            sensitivity: None,
             n: 3,
             n_model: 3,
             n_algebraic: 0,
@@ -1398,6 +1674,7 @@ mod tests {
     fn chain(linear: Linear, mut difference: Option<Difference>) -> (Vec<f64>, c_long) {
         let pattern = chain_pattern();
         let mut cvode = Integrator::<false>::new(Config {
+            n_sens: 0,
             n: N,
             method: Method::Bdf(linear),
         })
@@ -1409,6 +1686,7 @@ mod tests {
         };
         cvode.start(0.0, &[0.0; N], 10.0, &settings, 0).unwrap();
         let mut problem = Problem {
+            sensitivity: None,
             n: N,
             n_model: N,
             n_algebraic: 0,
@@ -1451,6 +1729,7 @@ mod tests {
         let (mut p, mut y) = (vec![0.0; 3], vec![0.0; 3]);
         model.defaults(&mut p, &mut y);
         let mut cvode = Integrator::<false>::new(Config {
+            n_sens: 0,
             n: 3,
             method: Method::Bdf(Linear::Klu {
                 nnz: pattern.nnz(),
@@ -1477,6 +1756,7 @@ mod tests {
             ..IntegratorSettings::default()
         };
         let mut problem = Problem {
+            sensitivity: None,
             n: 3,
             n_model: 3,
             n_algebraic: 0,
@@ -1521,7 +1801,11 @@ mod tests {
     #[test]
     fn configurations_beyond_the_32_bit_indices_are_refused() {
         let jacobian = Jacobian::Analytic;
-        let config = |n, method| Config { n, method };
+        let config = |n, method| Config {
+            n_sens: 0,
+            n,
+            method,
+        };
         let dense = |n| config(n, Method::Bdf(Linear::Dense { jacobian }));
         let klu = |n, nnz| config(n, Method::Bdf(Linear::Klu { nnz, jacobian }));
         // 46340^2 fits, 46341^2 does not

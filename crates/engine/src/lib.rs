@@ -202,6 +202,8 @@ struct Plan {
     varying: Vec<usize>,
     config: Option<Config>,
     mask: Vec<u8>,
+    /// The targets of the forward sensitivities of the run, resolved, with their ids.
+    sensitivities: Vec<(String, Target)>,
 }
 
 struct RunSettings {
@@ -475,6 +477,8 @@ pub(crate) struct Recorded {
     pub values: Vec<f64>,
     /// The number of slots before the values.
     pub prefix: usize,
+    /// The forward sensitivities of the columns, for a run which asked for them.
+    pub sensitivities: Option<sbmlsim_abi::Sensitivities>,
 }
 
 /// Recorded rows before their caller transfers or clones the resolved column names.
@@ -482,6 +486,7 @@ struct RecordedValues {
     n_rows: usize,
     values: Vec<f64>,
     prefix: usize,
+    sensitivities: Option<sbmlsim_abi::Sensitivities>,
 }
 
 impl RecordedValues {
@@ -490,6 +495,12 @@ impl RecordedValues {
             n_rows: recorder.n_rows,
             values: std::mem::take(&mut recorder.values),
             prefix,
+            sensitivities: recorder.sensitivities.take().map(|sensitivities| {
+                sbmlsim_abi::Sensitivities {
+                    parameters: sensitivities.parameters,
+                    values: sensitivities.values,
+                }
+            }),
         }
     }
 
@@ -499,6 +510,7 @@ impl RecordedValues {
             n_rows: self.n_rows,
             values: self.values,
             prefix: self.prefix,
+            sensitivities: self.sensitivities,
         }
     }
 }
@@ -514,6 +526,7 @@ impl Recorded {
             columns: self.columns,
             n_rows: self.n_rows,
             values,
+            sensitivities: self.sensitivities,
         }
     }
 }
@@ -1009,12 +1022,14 @@ fn prepare(
         };
         slots.push(slot);
     }
+    let sensitivities = sensitivities_of(desc, metadata, req)?;
     let with_events = !desc.events.is_empty() || desc.n_roots > 0;
     let n_cvode = if with_events { n.max(1) } else { n };
     let config = if n_cvode == 0 {
         None
     } else {
         Some(Config {
+            n_sens: sensitivities.len(),
             n: n_cvode,
             method: if desc.n_algebraic > 0 {
                 Method::Ida {
@@ -1075,7 +1090,157 @@ fn prepare(
         varying: slots,
         config,
         mask,
+        sensitivities,
     })
+}
+
+/// The targets of the forward sensitivities of a request, resolved, and what a run which
+/// cannot carry them is refused with.
+///
+/// The sensitivities of a run are the derivatives of its columns in the values of those
+/// targets at the start of the run. What they do not carry yet is refused here and not
+/// answered wrongly: a value which jumps during a run (a change, an event, a discontinuity of
+/// the math), a state which an algebraic rule or a delay determines, a steady state before
+/// the start, and the iterative linear solver, whose callbacks read the memory of CVODE as
+/// their user data instead of the problem.
+fn sensitivities_of(
+    desc: &ModelDescription,
+    metadata: &Metadata,
+    req: &SimulationRequest,
+) -> Result<Vec<(String, Target)>, EngineError> {
+    if req.sensitivities.is_empty() {
+        return Ok(Vec::new());
+    }
+    let refuse = |what: &str| {
+        Err(EngineError::Unsupported(format!(
+            "the forward sensitivities of a simulation of model {} do not carry {what}",
+            desc.id
+        )))
+    };
+    if !desc.events.is_empty() {
+        return refuse("the events of a model");
+    }
+    if desc.n_roots > 0 {
+        return refuse("the discontinuities of the math of a model");
+    }
+    if desc.n_algebraic > 0 {
+        return refuse("the algebraic rules of a model");
+    }
+    if desc.n_delays > 0 {
+        return refuse("the delays of a model");
+    }
+    if !req.changes.is_empty() {
+        return refuse("the changes of a request");
+    }
+    if req.steady_state.is_some() {
+        return refuse("the steady state of a request");
+    }
+    if req.settings.linear_solver == LinearSolver::Gmres {
+        return refuse("the iterative linear solver");
+    }
+    let values: Vec<(String, f64)> = req
+        .sensitivities
+        .iter()
+        .map(|id| (id.clone(), 0.0))
+        .collect();
+    let resolved = changes::resolve_values(&metadata.changes, &values, "in the sensitivities")?;
+    Ok(req
+        .sensitivities
+        .iter()
+        .cloned()
+        .zip(resolved.into_iter().map(|(target, _)| target))
+        .collect())
+}
+
+/// The value a target has in the parameters and the state of a model, which the step of its
+/// difference is relative to: the value of its entity, converted with the size of its
+/// compartment for an amount or a concentration of a species which stores the other one.
+fn target_value(target: &Target, desc: &ModelDescription, p: &[f64], y: &[f64]) -> f64 {
+    let n_params = desc.parameters.len();
+    let value = |index: usize| {
+        if index < n_params {
+            p[index]
+        } else {
+            y[index - n_params]
+        }
+    };
+    let stored = value(target.index());
+    match target.compartment() {
+        None => stored,
+        Some(compartment) => target.read(stored, value(compartment)),
+    }
+}
+
+/// The forward sensitivities of a run, before its integration: the initial values `dy0/dp` of
+/// the sensitivities of the states, what their right hand side needs and the table the rows
+/// are recorded into.
+///
+/// `dy0/dp` is a difference of the initialization of the model, one per target, with that
+/// target fixed at a step above the value it has: a target which the initial assignments of
+/// the model read moves the state at the start, a target which is a state moves it directly,
+/// and a parameter which neither reads moves nothing of it. The step is the one the right
+/// hand side of the sensitivities and the columns of the rows use as well, so what the
+/// derivative of a run is, is one definition and not three.
+fn initial_sensitivities(
+    model: &dyn ModelFns,
+    desc: &ModelDescription,
+    plan: &Plan,
+    scratch: &mut Scratch,
+) -> Result<(segments::Sensitivities, solver::Sensitivity), EngineError> {
+    let (n, n_params) = (desc.states.len(), desc.parameters.len());
+    let k = plan.sensitivities.len();
+    let mut states = vec![0.0; k * n];
+    let mut params = Vec::with_capacity(k);
+    let mut steps = Vec::with_capacity(k);
+    let mut values = Vec::with_capacity(k);
+    let mut perturbed = Scratch::default();
+    for (at, (_, target)) in plan.sensitivities.iter().enumerate() {
+        let base = target_value(target, desc, &scratch.p, &scratch.y);
+        let step = f64::EPSILON.sqrt() * base.abs().max(1.0);
+        let index = target.index();
+        params.push((index < n_params).then_some(index));
+        steps.push(step);
+        values.push(base);
+        if n == 0 {
+            continue;
+        }
+        let mut preinit = plan.preinit.clone();
+        for (slot, _) in plan.varying.iter().zip(0..) {
+            // the values of a prepared request are already in `scratch.preinit`
+            preinit[*slot].1 = scratch.preinit[*slot].1;
+        }
+        match preinit
+            .iter_mut()
+            .find(|(existing, _)| existing.index() == index)
+        {
+            Some(slot) => slot.1 = base + step,
+            None => preinit.push((*target, base + step)),
+        }
+        initial_values(model, desc, &preinit, &mut perturbed)?;
+        model.check_error()?;
+        for state in 0..n {
+            states[at * n + state] = (perturbed.y[state] - scratch.y[state]) / step;
+        }
+    }
+    let n_selections = scratch.selections.len().max(
+        desc.selections
+            .iter()
+            .map(|selection| selection.index as usize + 1)
+            .max()
+            .unwrap_or(0),
+    );
+    let rows = segments::Sensitivities::new(
+        plan.sensitivities
+            .iter()
+            .map(|(id, _)| id.clone())
+            .collect(),
+        params.clone(),
+        steps.clone(),
+        states,
+        scratch.p.len(),
+        n_selections,
+    );
+    Ok((rows, solver::Sensitivity::new(params, &values, n)))
 }
 
 /// A loaded model keeps its solver family across requests. Matching the cache once
@@ -1152,6 +1317,7 @@ fn record_point(
     scratch: &mut Scratch,
     max_output_values: usize,
     prefix: usize,
+    sensitivities: Option<segments::Sensitivities>,
 ) -> Result<RecordedValues, EngineError> {
     if let Some(config) = &plan.config {
         solver::check_index_range(config)?;
@@ -1164,6 +1330,7 @@ fn record_point(
         max_output_values,
         prefix,
     )?;
+    recorder.sensitivities = sensitivities;
     let times = if plan.req.steps {
         std::slice::from_ref(&plan.req.start)
     } else {
@@ -1211,6 +1378,13 @@ fn run_model<const DAE: bool, H: delay::Mode>(
     });
     scratch.preinit = preinit;
     initialized?;
+    // the forward sensitivities of the run, whose initial values are a difference of the
+    // initialization, before the parameters and the state are moved into the problem
+    let sensitivities = if plan.sensitivities.is_empty() {
+        None
+    } else {
+        Some(initial_sensitivities(model, desc, plan, scratch)?)
+    };
     // 2. the initialization
 
     let with_events = !desc.events.is_empty() || desc.n_roots > 0;
@@ -1229,6 +1403,7 @@ fn run_model<const DAE: bool, H: delay::Mode>(
             scratch,
             metadata.max_output_values,
             prefix(names),
+            sensitivities.map(|(rows, _)| rows),
         );
     }
 
@@ -1242,6 +1417,18 @@ fn run_model<const DAE: bool, H: delay::Mode>(
         None
     } else {
         let config = plan.config.expect("nonempty integration");
+        if sensitivities.is_some() && n > 0 && matches!(config.method, Method::Adams) {
+            // the right hand side of the sensitivities applies `df/dy` to them, which the
+            // non-stiff method asks for nowhere else
+            pattern = Some(pattern_of(desc));
+            difference = Some(
+                metadata
+                    .difference
+                    .get_or_insert_with(|| difference_of(desc)),
+            );
+            analytic = matches!(desc.jacobian, JacobianKind::Analytic(_))
+                && req.settings.jacobian != JacobianChoice::DifferenceQuotient;
+        }
         if let Method::Bdf(linear) | Method::Ida { linear, .. } = config.method
             && n > 0
         {
@@ -1288,6 +1475,11 @@ fn run_model<const DAE: bool, H: delay::Mode>(
         metadata.max_output_values,
         prefix,
     )?;
+    let (sensitivities, sensitivity) = match sensitivities {
+        None => (None, None),
+        Some((rows, sensitivity)) => (Some(rows), Some(sensitivity)),
+    };
+    recorder.sensitivities = sensitivities;
     if !req.steps {
         recorder.reserve(times.len())?;
     }
@@ -1316,6 +1508,7 @@ fn run_model<const DAE: bool, H: delay::Mode>(
         difference,
         mem: std::ptr::null_mut(),
         krylov: std::ptr::null_mut(),
+        sensitivity,
         counts: init_callbacks,
         callback_error: None,
     };
@@ -1471,6 +1664,7 @@ mod tests {
             selections: vec![],
             settings: IntegratorSettings::default(),
             seed: 0,
+            sensitivities: vec![],
         };
         let plan = engine.prepare(&req, &["[S]".into()]).unwrap();
         engine.simulate_prepared(&plan, &[2.0]).unwrap();
@@ -1524,6 +1718,7 @@ mod tests {
             selections: selections.iter().map(|s| s.to_string()).collect(),
             settings: IntegratorSettings::default(),
             seed: 0,
+            sensitivities: vec![],
         };
         let model = Decay { k: 0.5 };
         let mut desc = model.description();

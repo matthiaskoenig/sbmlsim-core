@@ -26,6 +26,7 @@ fn main() -> anyhow::Result<()> {
         changes: vec![],
         steady_state: None,
         seed: 0,
+        sensitivities: vec![],
     };
     // the request is validated and resolved once; a point of the scan is the value of `k`
     let prepared = model.prepare(&request, &["k".to_string()])?;

@@ -308,6 +308,7 @@ impl<'a> Constraints<'a> {
                 linear,
                 n_algebraic: desc.n_algebraic as usize,
             },
+            n_sens: 0,
         };
         let mut settings = settings.clone();
         // A strict crossing probe can be only 1e-12 time units beyond its root.
@@ -397,6 +398,7 @@ impl<'a> Constraints<'a> {
             jac_values: std::mem::take(&mut self.jac_values),
             analytic,
             difference: Some(&mut self.difference),
+            sensitivity: None,
             mem: ptr::null_mut(),
             krylov: ptr::null_mut(),
             counts: Counts::default(),
