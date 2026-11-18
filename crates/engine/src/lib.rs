@@ -1187,23 +1187,20 @@ fn initial_sensitivities(
     plan: &Plan,
     scratch: &mut Scratch,
 ) -> Result<(segments::Sensitivities, solver::Sensitivity), EngineError> {
-    let (n, n_params) = (desc.states.len(), desc.parameters.len());
+    let n = desc.states.len();
+    let n_p = scratch.p.len();
     let k = plan.sensitivities.len();
     let mut states = vec![0.0; k * n];
-    let mut params = Vec::with_capacity(k);
+    let mut deltas = vec![0.0; k * n_p];
     let mut steps = Vec::with_capacity(k);
-    let mut values = Vec::with_capacity(k);
     let mut perturbed = Scratch::default();
     for (at, (_, target)) in plan.sensitivities.iter().enumerate() {
         let base = target_value(target, desc, &scratch.p, &scratch.y);
+        // the square root of the rounding, relative to the value: the truncation of the
+        // difference and its rounding are then both about 1e-8 of the derivative
         let step = f64::EPSILON.sqrt() * base.abs().max(1.0);
         let index = target.index();
-        params.push((index < n_params).then_some(index));
         steps.push(step);
-        values.push(base);
-        if n == 0 {
-            continue;
-        }
         let mut preinit = plan.preinit.clone();
         for (slot, _) in plan.varying.iter().zip(0..) {
             // the values of a prepared request are already in `scratch.preinit`
@@ -1221,6 +1218,12 @@ fn initial_sensitivities(
         for state in 0..n {
             states[at * n + state] = (perturbed.y[state] - scratch.y[state]) / step;
         }
+        // what the step of the target moves the parameters by, the target itself and the
+        // values the initial assignments of the model derive from it: the right hand side and
+        // the selections read those and not the target
+        for value in 0..n_p {
+            deltas[at * n_p + value] = perturbed.p[value] - scratch.p[value];
+        }
     }
     let n_selections = scratch.selections.len().max(
         desc.selections
@@ -1234,13 +1237,13 @@ fn initial_sensitivities(
             .iter()
             .map(|(id, _)| id.clone())
             .collect(),
-        params.clone(),
+        deltas.clone(),
         steps.clone(),
         states,
-        scratch.p.len(),
+        n_p,
         n_selections,
     );
-    Ok((rows, solver::Sensitivity::new(params, &values, n)))
+    Ok((rows, solver::Sensitivity::new(deltas, steps, n)))
 }
 
 /// A loaded model keeps its solver family across requests. Matching the cache once

@@ -34,10 +34,11 @@ pub(crate) enum Column {
 pub(crate) struct Sensitivities {
     /// The ids of the parameters, in the order of the sensitivities.
     pub parameters: Vec<String>,
-    /// For every parameter, its index in `p`, or `None` for a target which is no parameter of
-    /// the model (the initial value of a state), which moves no value of `p`.
-    pub params: Vec<Option<usize>>,
-    /// The step of the difference of every parameter, relative to its value at the start.
+    /// For every sensitivity, what its step moves the whole parameter vector by, which is the
+    /// difference of two initializations (`k * n_p`, row major): the step of the target and
+    /// the values the initial assignments of the model derive from it.
+    pub deltas: Vec<f64>,
+    /// The step of the difference of every sensitivity, relative to its value at the start.
     pub steps: Vec<f64>,
     /// The sensitivities of the states at the row which is recorded next, `k * n` row major.
     pub states: Vec<f64>,
@@ -51,11 +52,11 @@ pub(crate) struct Sensitivities {
 
 impl Sensitivities {
     /// The sensitivities of the targets of `parameters`, whose initial values are `states`
-    /// (`k * n` row major), of a model of `n` states, `n_p` values of `p` and `n_selections`
-    /// selections.
+    /// (`k * n` row major) and whose steps move the parameters by `deltas` (`k * n_p`, row
+    /// major), of a model of `n` states, `n_p` values of `p` and `n_selections` selections.
     pub fn new(
         parameters: Vec<String>,
-        params: Vec<Option<usize>>,
+        deltas: Vec<f64>,
         steps: Vec<f64>,
         states: Vec<f64>,
         n_p: usize,
@@ -68,7 +69,7 @@ impl Sensitivities {
         };
         Sensitivities {
             parameters,
-            params,
+            deltas,
             steps,
             states,
             values: Vec::new(),
@@ -107,8 +108,12 @@ impl Sensitivities {
             }
             let n_p = self.p.len();
             self.p.copy_from_slice(&p[..n_p]);
-            if let Some(index) = self.params[parameter] {
-                self.p[index] += step;
+            for (slot, delta) in self
+                .p
+                .iter_mut()
+                .zip(&self.deltas[parameter * n_p..(parameter + 1) * n_p])
+            {
+                *slot += delta;
             }
             // the constants of the model behind its parameters are the ones of the moved
             // parameter, which `assign` recomputes (it writes the targets of the assignment

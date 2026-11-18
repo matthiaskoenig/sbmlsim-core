@@ -210,6 +210,23 @@ def main() -> None:
         assert objective.jacobian_of == "sensitivities", objective.jacobian_of
         assert differences.jacobian_of == "difference_quotient", differences.jacobian_of
 
+        # the two jacobians of the same point are the same derivative, so they agree to
+        # about the error of the differences (1e-3 of themselves); a column which is
+        # structurally wrong, a parameter the right hand side reads only through an initial
+        # assignment of the model, is a difference of one instead
+        by_sensitivities = objective.jacobian(start)
+        by_differences = differences.jacobian(start)
+        scale = numpy.maximum(
+            numpy.abs(by_sensitivities), numpy.abs(by_differences)
+        ).max()
+        apart = float(numpy.abs(by_sensitivities - by_differences).max() / scale)
+        print(f"the two jacobians of the start are {apart:.2e} apart")
+        if apart > 2e-2:
+            raise SystemExit(
+                "the jacobian of the sensitivities and the one of the differences are"
+                f" {apart:.2e} apart, which is no error of a difference"
+            )
+
         # the rounds take turns, so a load of the machine is spread over the rows
         python: list[float] = []
         rust: list[float] = []

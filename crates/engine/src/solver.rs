@@ -215,10 +215,18 @@ struct SensData {
 /// a forward difference of the right hand side in the parameter otherwise, which reuses the
 /// right hand side CVODES passes and so costs one evaluation per parameter and step.
 pub(crate) struct Sensitivity {
-    /// For every sensitivity, the index of its parameter in `p`, or `None` for the initial
-    /// value of a state, which the right hand side does not see.
-    pub params: Vec<Option<usize>>,
-    /// The step of the difference quotient of every parameter.
+    /// For every sensitivity, what its step moves the whole parameter vector by: the step of
+    /// the target itself and what the initial assignments of the model derive from it, which
+    /// is the difference of two initializations (`k * p.len()`, row major).
+    ///
+    /// The right hand side of a model reads the derived value and not the target a fit varies
+    /// (`Vli = BW * f_li` of a PBPK model is an initial assignment), so the difference quotient
+    /// of `df/dp` is the one along this direction and not the one of the target alone.
+    pub deltas: Vec<f64>,
+    /// Whether the delta of a sensitivity moves any value of `p` at all: the initial value of
+    /// a state no initial assignment reads has no `df/dp`.
+    pub derives: Vec<bool>,
+    /// The step of the difference quotient of every sensitivity.
     pub steps: Vec<f64>,
     /// The right hand side at a perturbed parameter.
     pub f: Vec<f64>,
@@ -232,24 +240,20 @@ pub(crate) struct Sensitivity {
 }
 
 impl Sensitivity {
-    /// The sensitivities of the targets, whose steps are relative to the values they have at
-    /// the start of the run.
-    pub fn new(params: Vec<Option<usize>>, values: &[f64], n: usize) -> Sensitivity {
-        let steps = params
-            .iter()
-            .zip(values)
-            .map(|(param, value)| {
-                if param.is_some() {
-                    // the square root of the rounding, relative to the value: the truncation
-                    // of the difference and its rounding are then both about 1e-8 of `df/dp`
-                    f64::EPSILON.sqrt() * value.abs().max(1.0)
-                } else {
-                    0.0
-                }
-            })
+    /// The sensitivities whose steps move the parameters by `deltas` (`k * n_p`, row major).
+    pub fn new(deltas: Vec<f64>, steps: Vec<f64>, n: usize) -> Sensitivity {
+        let n_p = if steps.is_empty() {
+            0
+        } else {
+            deltas.len() / steps.len()
+        };
+        let derives = deltas
+            .chunks(n_p.max(1))
+            .map(|delta| delta.iter().any(|value| *value != 0.0))
             .collect();
         Sensitivity {
-            params,
+            deltas,
+            derives,
             steps,
             f: vec![0.0; n],
             y: vec![0.0; n],
@@ -653,20 +657,28 @@ unsafe extern "C" fn sens_rhs(
                         out[pattern.row_idx[k] as usize] += problem.jac_values[k] * factor;
                     }
                 }
-                // `df/dp`, the forward difference of the right hand side in the parameter
+                // `df/dp`, the forward difference of the right hand side along the delta of
+                // the sensitivity
                 let Some(sensitivity) = &problem.sensitivity else {
                     return -1;
                 };
-                let Some(index) = sensitivity.params[at] else {
+                if !sensitivity.derives[at] {
                     continue;
-                };
+                }
                 let step = sensitivity.steps[at];
                 let mut sensitivity = problem.sensitivity.take().expect("the sensitivity");
-                if sensitivity.p.len() != problem.p.len() {
-                    sensitivity.p.resize(problem.p.len(), 0.0);
+                let n_p = problem.p.len();
+                if sensitivity.p.len() != n_p {
+                    sensitivity.p.resize(n_p, 0.0);
                 }
                 sensitivity.p.copy_from_slice(&problem.p);
-                problem.p[index] += step;
+                for (slot, delta) in problem
+                    .p
+                    .iter_mut()
+                    .zip(&sensitivity.deltas[at * n_p..(at + 1) * n_p])
+                {
+                    *slot += delta;
+                }
                 sensitivity.y.copy_from_slice(values(y, n));
                 problem.model.assign(t, &mut sensitivity.y, &mut problem.p);
                 problem

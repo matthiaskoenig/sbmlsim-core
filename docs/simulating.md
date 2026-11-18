@@ -168,6 +168,15 @@ difference of the right hand side of the model in the parameter and the sensitiv
 column which is no state is one of its value, so a sensitivity is accurate to about 1e-8 of
 itself, against 1e-3 for a difference of whole simulations at the default tolerances.
 
+A step of a target moves everything the initialization of the model derives from it, not the
+target alone: `Vli = BW * f_li` of a PBPK model is an initial assignment, so the right hand
+side reads `Vli` and never `BW`. The engine therefore takes the difference of two
+initializations once per target at the start of a run, which gives both the initial values of
+the sensitivities (`dy0/dp`) and the direction `dp/dp_j` the difference quotients of `df/dp`
+and of the columns move the parameters along. A target whose initialization derives nothing,
+and which the right hand side does not read either, has no `df/dp` at all and costs nothing
+per step.
+
 What a run of sensitivities does not carry is refused and not answered wrongly: the events of
 a model, a discontinuity of its math, an algebraic rule, a delay, the `changes` of a request,
 its `steady_state` and the iterative linear solver. `engine.wasm` refuses them as well (its

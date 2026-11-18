@@ -14,7 +14,7 @@
 use sbmlsim_abi::{
     IntegratorSettings, Output, SIMULATION_CONTRACT, SimulationRequest, SimulationResult,
 };
-use sbmlsim_engine::model::{Decay, EventModel, TestEvent};
+use sbmlsim_engine::model::{Decay, Derived, EventModel, TestEvent};
 use sbmlsim_engine::{Engine, EngineError, simulate};
 
 /// The rate of the data and the initial value of `y`.
@@ -267,6 +267,51 @@ fn an_engine_which_ran_a_sensitivity_runs_a_simulation_after_it() {
         assert!(
             (one - other).abs() / scale < 1e-8,
             "the value {at} of the run of sensitivities is {one} and of the run without it {other}"
+        );
+    }
+}
+
+#[test]
+fn the_sensitivity_of_a_parameter_an_initial_assignment_reads_is_the_one_of_the_chain() {
+    // `y' = -a y` with the initial assignment `a = 2 k`: the right hand side does not read `k`
+    // at all, so `df/dk` is nothing and the whole sensitivity of `k` is the one `a` carries,
+    // `dy/dk = da/dk * dy/da = 2 * (-t y)`. The initialization of the run is what knows
+    // `da/dk`, the same difference the initial values of the sensitivities are taken from.
+    let model = Derived { k: K };
+    let mut engine = Engine::new(Box::new(model), model.description()).unwrap();
+    let mut request = request(&["k"], true);
+    request.selections = vec!["time".to_string(), "y".to_string()];
+
+    let result = engine.simulate(&request).unwrap();
+
+    for row in 0..result.n_rows {
+        let t = time(&result, row);
+        let wanted = -2.0 * t * (-2.0 * K * t).exp();
+        let found = sensitivity(&result, row, "y", 0);
+        assert!(
+            (found - wanted).abs() < 1e-6 * wanted.abs().max(1e-3),
+            "dy/dk at {t} is {found} and not {wanted}"
+        );
+    }
+}
+
+#[test]
+fn the_sensitivity_of_a_selection_an_initial_assignment_derives_is_the_one_of_the_chain() {
+    // the selection `a` of the same model is no state, so its sensitivity is a difference of
+    // `model_selections` along what the step of `k` moves the parameters by, `da/dk = 2`; the
+    // step of `k` alone would move nothing of `a`, which no assignment rule recomputes
+    let model = Derived { k: K };
+    let mut engine = Engine::new(Box::new(model), model.description()).unwrap();
+    let mut request = request(&["k"], true);
+    request.selections = vec!["time".to_string(), "y".to_string(), "a".to_string()];
+
+    let result = engine.simulate(&request).unwrap();
+
+    for row in 0..result.n_rows {
+        let found = sensitivity(&result, row, "a", 0);
+        assert!(
+            (found - 2.0).abs() < 1e-6,
+            "da/dk of the row {row} is {found} and not 2"
         );
     }
 }
