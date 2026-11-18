@@ -333,3 +333,45 @@ fn a_fit_without_the_block_of_the_identifiability_walks_no_profile() {
     assert!(written.get("profiles").is_none(), "{written}");
     assert!(written.get("fisher").is_none(), "{written}");
 }
+
+#[test]
+fn a_fit_of_no_iteration_profiles_the_point_it_was_given() {
+    // a caller which has the optimum of a fit already walks the profiles around it: the fit
+    // of the request takes no step, so its answer is that point, and the points of the
+    // profiles fit the other parameters with an optimizer of their own
+    let mut request = pair();
+    request["starts"] = json!([[K, 1.0]]);
+    request["optimizer"] = json!({"max_iterations": 0});
+    request["identifiability"] = json!({
+        "parameters": ["k"],
+        "walk": {"points": 4, "step": 0.1},
+        "fisher": false,
+        "optimizer": {"max_iterations": 50},
+    });
+
+    let answer = run(request).unwrap();
+
+    // the start itself, up to the round trip through the space it is searched in
+    for (parameter, start) in answer.parameters.iter().zip([K, 1.0]) {
+        assert!(
+            (parameter.value - start).abs() < 1e-12,
+            "the fit moved {} from {start} to {}",
+            parameter.id,
+            parameter.value
+        );
+    }
+    assert_eq!(answer.runs[0].iterations, 0);
+    let profile = &answer.profiles[0];
+    assert!((profile.at - K).abs() < 1e-12, "the profile is at {}", profile.at);
+    assert_eq!(profile.cost, answer.cost);
+    // the other parameter is fitted again at every point, which an optimizer of no iteration
+    // would leave at the value of the point before it
+    for point in &profile.points {
+        assert!(
+            point.status != "MaxIter",
+            "the point {} took no iteration: {}",
+            point.value,
+            point.status
+        );
+    }
+}

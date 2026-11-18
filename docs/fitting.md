@@ -155,6 +155,11 @@ well it does run on the batch of the fit itself:
   and run next to each other on the threads of the batch, which is what fills a pool a fit of
   few conditions leaves idle: the profiles of three parameters of a fit of two conditions are
   2.2 times faster that way on 20 threads.
+A caller which has the optimum of a fit already, e.g. the best run of a fit which ran
+before, walks the profiles around that point: the fit of the request starts there and runs
+`max_iterations: 0`, so it takes no step and its answer is that point, and the `optimizer`
+of the identifiability fits the other parameters at the points of the profiles.
+
 - **The Fisher information** is `JᵀJ` of the residuals at the optimum, one Jacobian and the
   linear algebra of a `parameters x parameters` matrix. Its inverse is the covariance of the
   parameters, its diagonal their standard errors and its scaled form their correlations, in
@@ -165,6 +170,7 @@ well it does run on the batch of the fit itself:
 |---|---|---|
 | `parameters` | every parameter | the ids to profile, in the order of the profiles |
 | `walk` | `{"points": 50, "step": 0.1, "min_step": 0.01, "max_step": 1.0, "factor": 2.0, "rise": 0.2, "delta": 1.9207...}` | what a profile walks, above |
+| `optimizer` | the one of the fit | the optimizer of the points of a profile, which fit the other parameters |
 | `profiles` | true | whether the profiles are walked at all, which is a fit per point of every one of them |
 | `fisher` | true | whether the Fisher information is computed, which is one Jacobian |
 
