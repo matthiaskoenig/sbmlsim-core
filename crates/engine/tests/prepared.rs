@@ -250,6 +250,35 @@ fn event_engine() -> Engine {
 }
 
 #[test]
+fn gmres_prepared_replay_applies_delayed_events_and_changes() {
+    let mut engine = event_engine();
+    let mut req = request();
+    req.settings.linear_solver = LinearSolver::Gmres;
+    req.selections = vec!["y".into()];
+    req.changes = vec![Change {
+        time: 2.0,
+        values: vec![("y".into(), 4.0)],
+        increments: vec![],
+    }];
+    let plan = engine.prepare(&req, &["delay".into()]).unwrap();
+    for delay in [0.2, 1.5, 0.2] {
+        let result = engine.simulate_prepared(&plan, &[delay]).unwrap();
+        let mut direct = req.clone();
+        direct.settings.linear_solver = LinearSolver::Dense;
+        direct.preinit = vec![("delay".into(), delay)];
+        let expected = event_engine().simulate(&direct).unwrap();
+        assert_eq!(result.columns, expected.columns);
+        assert_eq!(result.n_rows, expected.n_rows);
+        for (v, r) in result.values.iter().zip(&expected.values) {
+            assert!((v - r).abs() < 1e-8, "{v} versus {r}");
+        }
+        let last = *result.values.last().unwrap();
+        let expected_last = if delay < 1.0 { 5.0 } else { 7.5 };
+        assert!((last - expected_last).abs() < 1e-8);
+    }
+}
+
+#[test]
 fn a_prepared_ode_probes_all_differential_states_without_consistency_steps() {
     let mut event = TestEvent::new("crossing", |_, y, _| y[1] > 0.0, vec![|_, y, _| y[1]]);
     event.assignments = vec![(Target::State(0), |_, _, p| p[0])];

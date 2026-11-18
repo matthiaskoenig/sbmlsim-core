@@ -201,6 +201,26 @@ def test_stats_counts_the_steps(decay):
     assert instance.stats()["steps"] > 0
 
 
+def test_gmres_matches_decay_and_reports_iterative_counts(decay):
+    instance = decay.instance()
+    req = request(end=10.0, steps=10, linear_solver="gmres", relative_tolerance=1e-9)
+    result = instance.simulate(req)
+    expected = decay.instance().simulate(
+        request(end=10.0, steps=10, relative_tolerance=1e-9)
+    )
+    numpy.testing.assert_allclose(result.values, expected.values, rtol=1e-7, atol=1e-10)
+    stats = instance.stats()
+    for name in (
+        "linear_iterations",
+        "jacobian_vector_evals",
+        "preconditioner_evals",
+        "preconditioner_solves",
+    ):
+        assert stats[name] > 0
+    assert instance.simulate(req).values.tobytes() == result.values.tobytes()
+    assert instance.stats() == stats
+
+
 def test_a_reused_instance_gives_the_bits_of_a_fresh_one(decay):
     reused = decay.instance()
     first = reused.simulate(request(end=10.0, steps=10))

@@ -11,7 +11,7 @@
 //! of its SBML into `model.wasm`), instantiated in the wasmtime host (the median of as many
 //! instantiations: the compilation of `model.wasm` by wasmtime, the instances and the load of
 //! the description; `engine.wasm` and `mathlib.wasm` are compiled once) and simulated in every
-//! configuration of the linear solver (dense, KLU) and the Jacobian (analytic, difference
+//! configuration of the linear solver (dense, KLU, GMRES) and the Jacobian (analytic, difference
 //! quotient), with the output of uniform times and, for a model with `steps = true`, of the
 //! steps of the integrator. A measurement of a configuration is the median of `--reps` timed
 //! simulations after `--warmups` untimed ones, each the wall time of `Instance::simulate` (the
@@ -68,7 +68,7 @@ pub struct BenchArgs {
     /// The compilations and instantiations of a model.
     #[arg(long, default_value_t = 5)]
     pub compile_reps: usize,
-    /// The linear solvers (comma separated: dense, klu).
+    /// The linear solvers (comma separated: dense, klu, gmres).
     #[arg(long, default_value = "dense,klu")]
     pub solvers: String,
     /// The Jacobians (comma separated: analytic, difference).
@@ -164,6 +164,8 @@ pub fn read_models(path: &Path) -> anyhow::Result<Vec<(String, BenchModel)>> {
         })
         .collect()
 }
+
+const SOLVERS: [&str; 3] = ["dense", "klu", "gmres"];
 
 /// A configuration of a simulation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -368,6 +370,7 @@ fn request(
             stiff: true,
             linear_solver: match config.solver {
                 "klu" => LinearSolver::Klu,
+                "gmres" => LinearSolver::Gmres,
                 _ => LinearSolver::Dense,
             },
             jacobian: match config.jacobian {
@@ -434,7 +437,7 @@ pub fn run(args: &BenchArgs) -> anyhow::Result<bool> {
         .as_deref()
         .map(|o| checked_list("--only", o, &names))
         .transpose()?;
-    let solvers = checked_list("--solvers", &args.solvers, &["dense", "klu"])?;
+    let solvers = checked_list("--solvers", &args.solvers, &SOLVERS)?;
     let jacobians = checked_list("--jacobians", &args.jacobians, &["analytic", "difference"])?;
     let host: &'static str = match args.host.as_str() {
         "wasmtime" => "wasmtime",
@@ -511,7 +514,7 @@ pub fn run(args: &BenchArgs) -> anyhow::Result<bool> {
             &["times"]
         };
         for output in outputs {
-            for solver in ["dense", "klu"] {
+            for solver in SOLVERS {
                 for jacobian in ["analytic", "difference"] {
                     if solvers.iter().any(|s| s == solver)
                         && jacobians.iter().any(|j| j == jacobian)
@@ -700,16 +703,15 @@ mod tests {
 
     #[test]
     fn unknown_values_of_a_list_are_refused() {
-        let known = ["dense", "klu"];
         assert_eq!(
-            checked_list("--solvers", "klu, dense", &known).unwrap(),
-            ["klu", "dense"]
+            checked_list("--solvers", "klu, dense, gmres", &SOLVERS).unwrap(),
+            ["klu", "dense", "gmres"]
         );
-        let error = checked_list("--solvers", "dense,KLU", &known).unwrap_err();
+        let error = checked_list("--solvers", "dense,KLU", &SOLVERS).unwrap_err();
         assert!(error.to_string().contains("unknown value KLU"), "{error}");
-        let error = checked_list("--solvers", "dense,kluu", &known).unwrap_err();
+        let error = checked_list("--solvers", "dense,kluu", &SOLVERS).unwrap_err();
         assert!(error.to_string().contains("unknown value kluu"), "{error}");
-        assert!(checked_list("--solvers", " , ", &known).is_err());
+        assert!(checked_list("--solvers", " , ", &SOLVERS).is_err());
     }
 
     #[test]

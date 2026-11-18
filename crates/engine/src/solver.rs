@@ -15,6 +15,8 @@
 //! solver it gives the Jacobian of CVODE's own difference quotient bitwise, with one evaluation
 //! of the right hand side per color instead of per state. CVODE's own difference quotient is
 //! only used for the one state of the rate 0 of a model without states, which has no pattern.
+//! Opt-in GMRES uses CVODE's directional differences for matrix-free Jacobian-vector products
+//! and ILU(0) of the model's sparse Jacobian as a left preconditioner ([`krylov`]).
 //!
 //! An analytic Jacobian with an entry which is not finite (an infinite derivative at a finite
 //! state, e.g. `0.5 * pow(x, -0.5)` of `sqrt(x)` at `x = 0`, or a NaN of `0 * pow(0, -1)` of
@@ -39,6 +41,7 @@ use crate::EngineError;
 use crate::model::ModelFns;
 
 mod ida;
+mod krylov;
 pub(crate) use ida::Constraints;
 
 /// The number of states above which [`LinearSolver::Auto`](sbmlsim_abi::LinearSolver::Auto)
@@ -81,6 +84,8 @@ pub(crate) enum Linear {
         /// The source of the Jacobian.
         jacobian: Jacobian,
     },
+    /// Matrix-free GMRES, preconditioned by ILU(0) of the model Jacobian.
+    Gmres { nnz: usize, jacobian: Jacobian },
 }
 
 /// What the sparse difference quotient needs besides the pattern: the columns of every color
@@ -222,6 +227,8 @@ pub(crate) struct Problem<'a> {
     /// The CVODE memory of the running integration, set by [`Integrator::integrate`] (the sparse
     /// difference quotient reads its error weights and step size).
     pub mem: *mut c_void,
+    /// Integrator-owned GMRES workspace, installed only for the duration of integration.
+    pub krylov: *mut krylov::Preconditioner,
     /// The calls of the model the callbacks of CVODE and the engine made.
     pub counts: Counts,
     /// The first native callback failure, returned after control leaves C.
@@ -274,6 +281,11 @@ pub(crate) struct SolverCounts {
     pub nonlinear_convergence_failures: u64,
     /// The (re)initializations.
     pub integrations: u64,
+    pub linear_iterations: u64,
+    pub linear_convergence_failures: u64,
+    pub jacobian_vector_evals: u64,
+    pub preconditioner_evals: u64,
+    pub preconditioner_solves: u64,
 }
 
 impl SolverCounts {
@@ -287,6 +299,12 @@ impl SolverCounts {
             nonlinear_convergence_failures: self.nonlinear_convergence_failures
                 + other.nonlinear_convergence_failures,
             integrations: self.integrations + other.integrations,
+            linear_iterations: self.linear_iterations + other.linear_iterations,
+            linear_convergence_failures: self.linear_convergence_failures
+                + other.linear_convergence_failures,
+            jacobian_vector_evals: self.jacobian_vector_evals + other.jacobian_vector_evals,
+            preconditioner_evals: self.preconditioner_evals + other.preconditioner_evals,
+            preconditioner_solves: self.preconditioner_solves + other.preconditioner_solves,
         }
     }
 }
@@ -308,6 +326,11 @@ pub(crate) fn stats(counts: &Counts, cvode: &SolverCounts, probe_rhs: u64) -> Si
         integrations: cvode.integrations,
         probe_rhs_evals: probe_rhs,
         steady_state_rhs_evals: counts.steady_state_rhs,
+        linear_iterations: cvode.linear_iterations,
+        linear_convergence_failures: cvode.linear_convergence_failures,
+        jacobian_vector_evals: cvode.jacobian_vector_evals,
+        preconditioner_evals: cvode.preconditioner_evals,
+        preconditioner_solves: cvode.preconditioner_solves,
     }
 }
 
@@ -599,6 +622,7 @@ pub(crate) struct Integrator<const DAE: bool> {
     matrix: SUNMatrix,
     solver: SUNLinearSolver,
     nonlinear: SUNNonlinearSolver,
+    krylov: Option<Box<krylov::Preconditioner>>,
     /// Whether `CVodeInit` succeeded (set right after it); later segments call `CVodeReInit`,
     /// never `CVodeInit` again, which would leak the memory of the first call.
     initialized: bool,
@@ -648,6 +672,7 @@ impl<const DAE: bool> Drop for Integrator<DAE> {
             if !self.matrix.is_null() {
                 SUNMatDestroy(self.matrix);
             }
+            self.krylov = None;
             for v in [self.abstol, self.y, self.yp, self.id] {
                 if !v.is_null() {
                     N_VDestroy(v);
@@ -681,9 +706,9 @@ pub(crate) fn check_index_range(config: &Config) -> Result<(), EngineError> {
             linear: Linear::Dense { .. },
             ..
         } => (n * n, "the dense matrix of the Jacobian"),
-        Method::Bdf(Linear::Klu { nnz, .. })
+        Method::Bdf(Linear::Klu { nnz, .. } | Linear::Gmres { nnz, .. })
         | Method::Ida {
-            linear: Linear::Klu { nnz, .. },
+            linear: Linear::Klu { nnz, .. } | Linear::Gmres { nnz, .. },
             ..
         } => (nnz as u128 + n, "the sparse matrix of the Jacobian"),
     };
@@ -716,6 +741,7 @@ impl<const DAE: bool> Integrator<DAE> {
             matrix: ptr::null_mut(),
             solver: ptr::null_mut(),
             nonlinear: ptr::null_mut(),
+            krylov: None,
             initialized: false,
             attached: false,
             errors: Box::default(),
@@ -776,6 +802,15 @@ impl<const DAE: bool> Integrator<DAE> {
                 }
             };
             match linear {
+                Linear::Gmres { .. } => {
+                    cvode.solver = SUNLinSol_SPGMR(cvode.y, SUN_PREC_LEFT, n.min(30), cvode.ctx);
+                    if !cvode.solver.is_null() {
+                        check(
+                            SUNLinSol_SPGMRSetMaxRestarts(cvode.solver, 2),
+                            "SUNLinSol_SPGMRSetMaxRestarts",
+                        )?;
+                    }
+                }
                 Linear::Dense { .. } => {
                     cvode.matrix = SUNDenseMatrix(n, n, cvode.ctx);
                     if !cvode.matrix.is_null() {
@@ -812,7 +847,9 @@ impl<const DAE: bool> Integrator<DAE> {
                     }
                 }
             }
-            if cvode.matrix.is_null() || cvode.solver.is_null() {
+            if cvode.solver.is_null()
+                || (!matches!(linear, Linear::Gmres { .. }) && cvode.matrix.is_null())
+            {
                 return Err(not_created("the linear solver"));
             }
         }
@@ -843,6 +880,9 @@ impl<const DAE: bool> Integrator<DAE> {
     ) -> Result<(), EngineError> {
         let n = self.config.n;
         self.errors.message.clear();
+        if let Some(preconditioner) = &mut self.krylov {
+            preconditioner.valid = false;
+        }
         if self.live {
             self.totals = self.totals.add(self.current());
         }
@@ -885,14 +925,33 @@ impl<const DAE: bool> Integrator<DAE> {
                     Method::Ida { linear, .. } => {
                         self.flag(IDASetLinearSolver(self.mem, self.solver, self.matrix), t0)?;
                         let jac: IDALsJacFn = match linear {
+                            Linear::Gmres { .. } => unreachable!("GMRES requires CVODE BDF"),
                             Linear::Dense { .. } => Some(ida::dense),
                             Linear::Klu { .. } => Some(ida::sparse),
                         };
                         self.flag(IDASetJacFn(self.mem, jac), t0)?;
                     }
+                    Method::Bdf(Linear::Gmres { .. }) => {
+                        // CVODE captures P_data at attachment. Keep only its stable memory
+                        // there; the callbacks retrieve the current Problem with GetUserData.
+                        self.flag(CVodeSetUserData(self.mem, self.mem), t0)?;
+                        self.flag(
+                            CVodeSetLinearSolver(self.mem, self.solver, ptr::null_mut()),
+                            t0,
+                        )?;
+                        self.flag(
+                            CVodeSetPreconditioner(
+                                self.mem,
+                                Some(krylov::setup),
+                                Some(krylov::solve),
+                            ),
+                            t0,
+                        )?;
+                    }
                     Method::Bdf(linear) => {
                         self.flag(CVodeSetLinearSolver(self.mem, self.solver, self.matrix), t0)?;
                         let jac: CVLsJacFn = match linear {
+                            Linear::Gmres { .. } => unreachable!(),
                             Linear::Dense {
                                 jacobian: Jacobian::Internal,
                             } => None,
@@ -987,6 +1046,7 @@ impl<const DAE: bool> Integrator<DAE> {
         let (mut qlast, mut qcur) = (0, 0);
         let (mut hinused, mut hlast, mut hcur, mut tcur) = (0.0, 0.0, 0.0, 0.0);
         let (mut nni, mut ncfn) = (0, 0);
+        let (mut nli, mut nlcf, mut njv, mut npe, mut nps) = (0, 0, 0, 0, 0);
         if self.initialized {
             // SAFETY: the memory is initialized; every out-pointer is a local
             unsafe {
@@ -1012,6 +1072,16 @@ impl<const DAE: bool> Integrator<DAE> {
                     &mut nni,
                     &mut ncfn
                 );
+                if !DAE
+                    && self.attached
+                    && matches!(self.config.method, Method::Bdf(Linear::Gmres { .. }))
+                {
+                    CVodeGetNumLinIters(self.mem, &mut nli);
+                    CVodeGetNumLinConvFails(self.mem, &mut nlcf);
+                    CVodeGetNumJtimesEvals(self.mem, &mut njv);
+                    CVodeGetNumPrecEvals(self.mem, &mut npe);
+                    CVodeGetNumPrecSolves(self.mem, &mut nps);
+                }
             }
         }
         let count = |x: c_long| x.max(0) as u64;
@@ -1022,6 +1092,11 @@ impl<const DAE: bool> Integrator<DAE> {
             nonlinear_iterations: count(nni),
             nonlinear_convergence_failures: count(ncfn),
             integrations: 0,
+            linear_iterations: count(nli),
+            linear_convergence_failures: count(nlcf),
+            jacobian_vector_evals: count(njv),
+            preconditioner_evals: count(npe),
+            preconditioner_solves: count(nps),
         }
     }
 
@@ -1093,6 +1168,15 @@ impl<const DAE: bool> Integrator<DAE> {
         itask: c_int,
     ) -> Result<(f64, c_int), EngineError> {
         let mut tret = f64::NAN;
+        if matches!(self.config.method, Method::Bdf(Linear::Gmres { .. })) {
+            if self.krylov.is_none() {
+                let pattern = problem
+                    .pattern
+                    .expect("GMRES requires a model Jacobian pattern");
+                self.krylov = Some(Box::new(krylov::Preconditioner::new(pattern, self.ctx)?));
+            }
+            problem.krylov = &mut **self.krylov.as_mut().unwrap();
+        }
         // SAFETY: the user data points to `problem`, which outlives the call of `CVode`.
         unsafe {
             problem.mem = self.mem;
@@ -1192,6 +1276,7 @@ mod tests {
             analytic,
             difference: difference.as_mut(),
             mem: ptr::null_mut(),
+            krylov: ptr::null_mut(),
             counts: Counts::default(),
             callback_error: None,
         };
@@ -1294,6 +1379,7 @@ mod tests {
             analytic: false,
             difference: difference.as_mut(),
             mem: ptr::null_mut(),
+            krylov: ptr::null_mut(),
             counts: Counts::default(),
             callback_error: None,
         };
@@ -1361,6 +1447,7 @@ mod tests {
             analytic: true,
             difference: None,
             mem: ptr::null_mut(),
+            krylov: ptr::null_mut(),
             counts: Counts::default(),
             callback_error: None,
         };

@@ -6,6 +6,8 @@ The models are the ones of `bench/sbmlsim.toml`, which is sbmlsim's own benchmar
 
 ## One simulation
 
+The separate [GMRES machine perfusion evaluation](https://github.com/matthiaskoenig/sbmlsim-core/blob/develop/bench/GMRES.md) compares opt-in, matrix-free GMRES with KLU on the 919-state model. GMRES with ILU(0) completes the workload and agrees with a tighter KLU reference at rtol 1e-12, but takes 1.29-1.32 times the native time and 1.42-1.43 times the Wasmtime time. Automatic solver selection therefore retains KLU for this model. The report includes reproducible commands and raw timing and accuracy measurements.
+
 ![One simulation of each model on each host](images/benchmark-hosts-light.png#only-light)
 ![One simulation of each model on each host](images/benchmark-hosts-dark.png#only-dark)
 

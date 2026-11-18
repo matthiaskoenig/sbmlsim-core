@@ -772,6 +772,7 @@ mod tests {
             analytic: true,
             difference: None,
             mem: std::ptr::null_mut(),
+            krylov: std::ptr::null_mut(),
             counts: crate::solver::Counts::default(),
             callback_error: None,
         };

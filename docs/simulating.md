@@ -124,8 +124,12 @@ The settings of the integrator:
 | `maximum_time_step` | `0.0` | the largest step in time, `0.0` for none |
 | `initial_time_step` | `0.0` | the first step in time, `0.0` for the integrator's choice |
 | `stiff` | `true` | CVODE BDF (`true`) or Adams (`false`); models with algebraic rules always use IDA BDF |
-| `linear_solver` | `"auto"` | `"auto"` (dense up to 12 states, KLU above), `"dense"` or `"klu"` |
+| `linear_solver` | `"auto"` | `"auto"` (dense up to 12 states, KLU above), `"dense"`, `"klu"` or `"gmres"` (stiff ODEs) |
 | `jacobian` | `"auto"` | `"auto"`, `"analytic"` (refused for a model without one) or `"difference_quotient"` (the sparse difference quotient over the colors of the columns of the pattern, also for a model with an analytic Jacobian) |
+
+With `"linear_solver": "gmres"`, CVODE BDF estimates each Jacobian-vector product by differencing the model's right hand side. GMRES uses a left preconditioner obtained by incomplete LU factorization with zero fill (ILU(0)) of the sparse Newton matrix. The `jacobian` setting controls how the engine evaluates the Jacobian for that preconditioner. Simulation statistics report the linear iterations, linear convergence failures, Jacobian-vector products, preconditioner evaluations and preconditioner solves.
+
+The Krylov subspace has at most 30 vectors and allows two restarts per linear solve. The preconditioner retains the Jacobian pattern plus the diagonal without pivoting; a failed pivot lets CVODE refresh the Jacobian or reduce the step. GMRES requires stiff ODEs; algebraic-rule models use IDA with the direct solvers. A model without states keeps the existing zero-rate integration path for its events. `"auto"` retains its dense/KLU selection. See the [machine perfusion evaluation](https://github.com/matthiaskoenig/sbmlsim-core/blob/develop/bench/GMRES.md) for timing and accuracy measurements.
 
 **Initialization.** The model gets its SBML values, then the pre-initialization values of the request and of its steady state, then its initial assignments and the initial values of its assignment rules are evaluated at the time 0, whatever the start of the simulation (as sbmlsim initializes roadrunner at its time 0). A value which carries the concentration of a species which stores its amount, or the amount of a species which stores its concentration, needs the size of its compartment: it is set after that evaluation, with the size the evaluation settled on, and the initial assignments are evaluated once more, so a pre-initialization holds the concentration of a species also when it changes the size of its compartment, directly or through an initial assignment. The integration runs in absolute time from the start, in segments between the changes.
 

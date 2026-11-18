@@ -5,7 +5,7 @@
 // the contract, as the wasmtime host does.
 
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 
@@ -51,15 +51,37 @@ test("another contract is refused by the loader", async () => {
   );
 });
 
+test("GMRES matches wasmtime bitwise and reports iterative counters", async () => {
+  const { dir, wasm, json } = goldenModel();
+  const runtime = await loaderRuntime();
+  const instance = await runtime.instantiate(wasm, json);
+  const request = JSON.parse(readFileSync(path.join(GOLDEN, "request.json"), "utf8"));
+  request.settings.stiff = true;
+  request.settings.linear_solver = "gmres";
+  for (const jacobian of ["analytic", "difference_quotient"]) {
+    request.settings.jacobian = jacobian;
+    const requestPath = path.join(dir, "gmres.json");
+    writeFileSync(requestPath, JSON.stringify(request));
+    const expected = runCli(["simulate", dir, requestPath]).toString();
+    assert.equal(toCsv(instance.simulate(request)), expected);
+    const stats = instance.stats();
+    for (const name of ["linear_iterations", "jacobian_vector_evals", "preconditioner_evals", "preconditioner_solves"]) {
+      assert.ok(stats[name] > 0, name);
+    }
+    assert.equal(toCsv(instance.simulate(request)), expected);
+    assert.deepEqual(instance.stats(), stats);
+  }
+});
+
 test("an engine of another output format is refused by the loader", async () => {
-  assert.equal(ENGINE_OUTPUT_FORMAT, 1);
+  assert.equal(ENGINE_OUTPUT_FORMAT, 2);
   const { engine, mathlib } = runtimeBytes();
-  const needle = Buffer.from('"output_format":1}');
+  const needle = Buffer.from('"output_format":2}');
   const at = engine.indexOf(needle);
   assert.ok(at > 0, "engine.wasm declares its output format");
   const other = Buffer.from(engine);
-  other[at + needle.length - 2] = "2".charCodeAt(0);
-  await assert.rejects(createRuntime({ engine: other, mathlib }), /output format 2, this loader reads 1/);
+  other[at + needle.length - 2] = "1".charCodeAt(0);
+  await assert.rejects(createRuntime({ engine: other, mathlib }), /output format 1, this loader reads 2/);
 });
 
 test("a model without a function of the contract is refused as in the wasmtime host", async () => {

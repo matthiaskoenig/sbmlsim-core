@@ -14,7 +14,7 @@ Documentation: https://matthiaskoenig.github.io/sbmlsim-core/ (built from `docs/
 ## What the core is
 
 - The compiler (`crates/compiler`, built on `sbml`, `ir` and `codegen`) turns an SBML Level 3 Version 2 core model (flat, no required package but `distrib`, whose uncertainties annotate and are ignored) into `model.wasm`, with analytic sparse Jacobians, and `model.json`, its description.
-- The engine (`crates/engine`, `engine.wasm`, wasm32-wasip1) is Rust with CVODE and IDA 7.9 and KLU. It runs a request on a compiled model: changes, events, steady states, dense or KLU linear solver (`KLU_THRESHOLD` 12 states).
+- The engine (`crates/engine`, `engine.wasm`, wasm32-wasip1) is Rust with CVODE and IDA 7.9 and KLU. It runs a request on a compiled model: changes, events, steady states, dense or KLU linear solvers (dense through 12 states by default), and opt-in preconditioned GMRES for stiff ODEs.
 - The hosts run the same `engine.wasm`, `mathlib.wasm` and `model.wasm` with bitwise identical results: wasmtime (`crates/host`, the command line `sbmlsim-core`) and Node and browsers (`js/loader.mjs`).
 - It is the simulation core of sbmlsim's web apps; the semantics are those of sbmlsim (PEtab v2), the integrator and the solvers those of roadrunner.
 

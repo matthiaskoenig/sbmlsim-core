@@ -377,6 +377,7 @@ impl<'a> Constraints<'a> {
             analytic,
             difference: Some(&mut self.difference),
             mem: ptr::null_mut(),
+            krylov: ptr::null_mut(),
             counts: Counts::default(),
             callback_error: None,
         };

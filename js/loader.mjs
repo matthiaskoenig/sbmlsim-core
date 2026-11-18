@@ -49,7 +49,7 @@ export const MAX_MEMORY_PAGES = 32768;
 export const ENGINE_SECTION = "sbmlsim.engine";
 
 /** The version of the output of `engine.wasm` this loader reads (`ENGINE_OUTPUT_FORMAT`). */
-export const ENGINE_OUTPUT_FORMAT = 1;
+export const ENGINE_OUTPUT_FORMAT = 2;
 
 const WASI = "wasi_snapshot_preview1";
 
@@ -81,6 +81,11 @@ export const STATS_NAMES = [
   "integrations",
   "probe_rhs_evals",
   "steady_state_rhs_evals",
+  "linear_iterations",
+  "linear_convergence_failures",
+  "jacobian_vector_evals",
+  "preconditioner_evals",
+  "preconditioner_solves",
 ];
 
 const LITTLE_ENDIAN = new Uint8Array(new Uint16Array([1]).buffer)[0] === 1;
