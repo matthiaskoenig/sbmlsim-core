@@ -60,6 +60,10 @@ required-features = ["native"]
 name = "native"
 required-features = ["native"]
 
+[[test]]
+name = "sensitivity_jac_p"
+required-features = ["native"]
+
 [[example]]
 name = "ode_performance"
 required-features = ["native"]

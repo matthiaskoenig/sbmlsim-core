@@ -1,12 +1,14 @@
 """sbmlsim-core: compile SBML models to WebAssembly and simulate them."""
 
 from sbmlsim_core._core import (
+    FIT_CONTRACT,
     MODEL_CONTRACT,
     SIMULATION_CONTRACT,
     THIRD_PARTY,
     BatchExecutor,
     CompiledModel,
     CompileError,
+    FitProblem,
     Instance,
     IntegrationError,
     InternalError,
@@ -27,12 +29,14 @@ from sbmlsim_core._core import (
 from sbmlsim_core.batch import simulate_stream
 
 __all__ = [
+    "FIT_CONTRACT",
     "MODEL_CONTRACT",
     "SIMULATION_CONTRACT",
     "THIRD_PARTY",
     "BatchExecutor",
     "CompileError",
     "CompiledModel",
+    "FitProblem",
     "Instance",
     "IntegrationError",
     "InternalError",

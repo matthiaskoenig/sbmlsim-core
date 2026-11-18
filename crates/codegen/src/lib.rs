@@ -3,7 +3,8 @@
 //!
 //! [`emit`] translates an [`sbmlsim_ir::Model`] into a WebAssembly module of the contract
 //! `model/2` (see `sbmlsim_abi`): it imports the memory of the engine as `env.memory` and the
-//! functions of mathlib it calls as `math.*`, and exports the fourteen functions of the contract.
+//! functions of mathlib it calls as `math.*`, and exports the fourteen functions of the contract
+//! and `model_jac_p` where the model has one.
 //! The expressions are emitted as written, without fast math, reassociation or folding of
 //! constants (`q / 49` is one `f64.div` by `49`), with the meaning libroadrunner gives every
 //! operator (see `math.rs`). [`emit_optimized`] emits the programs of the optimizer of
@@ -25,6 +26,13 @@
 //!   ([`JacobianIr::Analytic`]) into locals in their order, then the entries of the Jacobian in
 //!   the CSC order of its pattern. For a model without an analytic Jacobian (the description
 //!   gives a colored difference quotient, which the engine computes) it traps.
+//! - `model_jac_p` evaluates the assignment rules into locals, then branches on the parameter:
+//!   the derivatives of the rules which read it into locals, then the entries of its column in
+//!   the order of the rows of [`ParameterPattern`](sbmlsim_abi::ParameterPattern). A parameter
+//!   no rate reads writes nothing. A model whose math has an operator without a derivative,
+//!   which reads its history, or whose column is above the limits of a function carries the
+//!   export not at all, and its description no pattern: it is the one function of the contract
+//!   which is optional (the engine takes a difference quotient of `model_rhs` without it).
 //! - `model_roots` evaluates the assignment rules into locals, then the root functions of the
 //!   triggers ([`sbmlsim_ir::Event::root_functions`]) in the order of the events, then those of
 //!   the discontinuities of the math ([`sbmlsim_ir::Model::discontinuity_roots`]).
@@ -154,27 +162,62 @@ fn emit_limited(
             reason: "the model reads its history".into(),
         }
     };
-    let wasm = if optimized && history.sites.is_empty() {
-        // the common subexpressions add locals: without them when a function is above the
-        // limits with them, and as written when it is above them still (the folding of a
-        // literal boolean may add bytes), whose model_jac is known to be within them
-        let plan = |cse| optimize::plan(model, &jacobian, d, cse);
-        let within =
-            |result: Result<(Vec<u8>, u32), CompileError>, next: &dyn Fn() -> _| match result {
-                Err(error) if wasm::is_above_the_limits(&error) => next(),
-                other => other,
-            };
-        within(
-            module(model, &jacobian, d, &history, limits, Some(&plan(true))),
-            &|| {
-                within(
-                    module(model, &jacobian, d, &history, limits, Some(&plan(false))),
-                    &|| module(model, &jacobian, d, &history, limits, None),
-                )
-            },
-        )?
+    // the Jacobian of the right hand side in the parameters, which `model_jac_p` evaluates
+    // column by column: the forward sensitivities of the engine take a difference quotient of
+    // the right hand side without it, so a model which has none (an operator without a
+    // derivative, a budget, a history) carries the export not at all
+    let parameters = if history.sites.is_empty() {
+        derive::parameter_jacobian(model).ok()
     } else {
-        module(model, &jacobian, d, &history, limits, None)?
+        None
+    };
+    let emit = |parameters: Option<&derive::ParameterJacobianIr>| {
+        if optimized && history.sites.is_empty() {
+            // the common subexpressions add locals: without them when a function is above the
+            // limits with them, and as written when it is above them still (the folding of a
+            // literal boolean may add bytes), whose model_jac is known to be within them
+            let plan = |cse| optimize::plan(model, &jacobian, parameters, d, cse);
+            let within =
+                |result: Result<(Vec<u8>, u32), CompileError>, next: &dyn Fn() -> _| match result {
+                    Err(error) if wasm::is_above_the_limits(&error) => next(),
+                    other => other,
+                };
+            within(
+                module(
+                    model,
+                    &jacobian,
+                    parameters,
+                    d,
+                    &history,
+                    limits,
+                    Some(&plan(true)),
+                ),
+                &|| {
+                    within(
+                        module(
+                            model,
+                            &jacobian,
+                            parameters,
+                            d,
+                            &history,
+                            limits,
+                            Some(&plan(false)),
+                        ),
+                        &|| module(model, &jacobian, parameters, d, &history, limits, None),
+                    )
+                },
+            )
+        } else {
+            module(model, &jacobian, parameters, d, &history, limits, None)
+        }
+    };
+    // a `model_jac_p` above the limits is left out, as the only function of the module which
+    // is optional at all
+    let (wasm, parameters) = match emit(parameters.as_ref()) {
+        Err(error) if wasm::is_above_the_limits(&error) && parameters.is_some() => {
+            (emit(None)?, None)
+        }
+        other => (other?, parameters),
     };
     let (wasm, n_constants) = wasm;
     Ok((
@@ -182,6 +225,7 @@ fn emit_limited(
         description(
             model,
             jacobian,
+            parameters.map(|parameters| parameters.pattern),
             d,
             n_constants,
             history.queries.len() as u32,
@@ -222,6 +266,56 @@ fn written_jac(
         }
         JacobianIr::ColoredDifference { .. } => trap(m, abi::JAC),
     }
+}
+
+/// Adds `model_jac_p(j, t, y, p, values)` as written to the module: the rules any column
+/// reads, then the column of every parameter, the derivatives of its rules and its entries.
+fn written_jac_p(
+    m: &mut ModuleBuilder,
+    model: &Model,
+    parameters: &derive::ParameterJacobianIr,
+) -> Result<(), CompileError> {
+    let branches: Vec<Option<Branch<'_>>> = parameters
+        .columns
+        .iter()
+        .map(|column| {
+            if column.entries.is_empty() {
+                return None;
+            }
+            let mut stmts: Vec<Stmt<'_>> = column
+                .derivatives
+                .iter()
+                .enumerate()
+                .map(|(k, d)| Stmt::Let(Symbol::Derivative(k as u32), d))
+                .collect();
+            stmts.extend(
+                column
+                    .entries
+                    .iter()
+                    .enumerate()
+                    .map(|(k, e)| Stmt::StoreAt {
+                        ptr: 4,
+                        k: k as u32,
+                        expr: e,
+                    }),
+            );
+            Some(Branch::Program {
+                stmts,
+                end: End::Return,
+            })
+        })
+        .collect();
+    let prefix: Vec<Stmt<'_>> = if parameters.pattern.nnz() == 0 {
+        Vec::new()
+    } else {
+        rule_lets(model).collect()
+    };
+    m.indexed(
+        &sig(abi::JAC_P, &[I32, F64, I32, I32, I32], &[], INDEXED),
+        &prefix,
+        &branches,
+        Tail::Nothing,
+    )
 }
 
 /// A function of `(t, y, p, out)` which traps (`model_jac` of the difference quotient).
@@ -348,13 +442,14 @@ fn returning<'e>(program: &'e Program, end: fn(&'e Expr) -> End<'e>) -> Branch<'
 fn module(
     model: &Model,
     jacobian: &JacobianIr,
+    parameters: Option<&derive::ParameterJacobianIr>,
     discontinuities: &[Expr],
     history: &probes::HistoryPlan,
     limits: Limits,
     plan: Option<&Plan>,
 ) -> Result<(Vec<u8>, u32), CompileError> {
     if let Some(plan) = plan {
-        let wasm = optimized_module(model, jacobian, discontinuities, limits, plan)?;
+        let wasm = optimized_module(model, jacobian, parameters, discontinuities, limits, plan)?;
         return Ok((wasm, plan.n_constants()));
     }
     let mut m = ModuleBuilder::default();
@@ -392,6 +487,9 @@ fn module(
     m.sequence(&sig(abi::RHS, &[F64, I32, I32, I32], &[], VECTORS), &rhs)?;
 
     written_jac(&mut m, model, jacobian)?;
+    if let Some(parameters) = parameters {
+        written_jac_p(&mut m, model, parameters)?;
+    }
 
     // model_roots(t, y, p, g): the root functions of the triggers, in the order of the events,
     // then those of the discontinuities
@@ -661,6 +759,7 @@ fn size_functions(
 fn optimized_module(
     model: &Model,
     jacobian: &JacobianIr,
+    parameters: Option<&derive::ParameterJacobianIr>,
     discontinuities: &[Expr],
     limits: Limits,
     plan: &Plan,
@@ -704,6 +803,27 @@ fn optimized_module(
 
     // the functions of an event index `i` (the local 0)
     let lets = |program| program_stmts(program, |_, _| unreachable!("a let"));
+
+    // model_jac_p(j, t, y, p, values): the column of the parameter `j`
+    if parameters.is_some() {
+        let branches: Vec<Option<Branch<'_>>> = plan
+            .jac_p
+            .branches
+            .iter()
+            .map(|b| {
+                b.as_ref().map(|b| Branch::Program {
+                    stmts: program_stmts(b, |k, e| Stmt::StoreAt { ptr: 4, k, expr: e }),
+                    end: End::Return,
+                })
+            })
+            .collect();
+        m.indexed(
+            &sig(abi::JAC_P, &[I32, F64, I32, I32, I32], &[], INDEXED),
+            &lets(&plan.jac_p.prefix),
+            &branches,
+            Tail::Nothing,
+        )?;
+    }
 
     // model_trigger(i, t, y, p) -> i32
     let branches: Vec<Option<Branch<'_>>> = plan
@@ -1014,6 +1134,7 @@ pub const COMPILER: &str = concat!("sbmlsim-compiler ", env!("CARGO_PKG_VERSION"
 fn description(
     model: &Model,
     jacobian: JacobianIr,
+    jacobian_p: Option<abi::ParameterPattern>,
     discontinuities: &[Expr],
     n_constants: u32,
     n_delays: u32,
@@ -1044,6 +1165,7 @@ fn description(
         settable: e.settable,
     };
     ModelDescription {
+        jacobian_p,
         contract: MODEL_CONTRACT.to_string(),
         compiler: COMPILER.to_string(),
         id: model.id.clone().unwrap_or_default(),
@@ -1274,7 +1396,7 @@ mod tests {
             written.limits = limits;
             let mut optimized = ModuleBuilder::default();
             optimized.limits = limits;
-            let plan = optimize::plan(&m, &analytic, &m.discontinuity_roots(), true);
+            let plan = optimize::plan(&m, &analytic, None, &m.discontinuity_roots(), true);
             let program = plan.jac.as_ref().unwrap();
             let out = |k, e| Stmt::StoreAt { ptr: 3, k, expr: e };
             let jac = sig(abi::JAC, &[F64, I32, I32, I32], &[], VECTORS);

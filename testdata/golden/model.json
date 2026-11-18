@@ -107,6 +107,21 @@
       ]
     }
   },
+  "jacobian_p": {
+    "rows": 3,
+    "col_ptr": [
+      0,
+      2,
+      4,
+      4
+    ],
+    "row_idx": [
+      1,
+      2,
+      1,
+      2
+    ]
+  },
   "events": [
     {
       "id": "redose",
@@ -120,7 +135,7 @@
   ],
   "n_roots": 2,
   "n_discontinuity_roots": 1,
-  "n_constants": 3,
+  "n_constants": 4,
   "units": {
     "C": "litre",
     "P": "mole",

@@ -47,6 +47,7 @@ mod tests {
             f64::NEG_INFINITY,
         ];
         let result = SimulationResult {
+            sensitivities: None,
             columns: vec!["time".to_string()],
             n_rows: values.len(),
             values: values.clone(),

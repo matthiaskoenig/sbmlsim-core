@@ -86,6 +86,20 @@ pub(crate) fn batch_error(error: BatchError) -> PyErr {
     }
 }
 
+/// The exception of a fit which cannot run: a request which does not resolve, a definition
+/// which cannot be fitted, a pool which does not start or a failure of the engine.
+pub(crate) fn fit_error(error: sbmlsim_fit::FitError) -> PyErr {
+    let message = error.to_string();
+    match error {
+        sbmlsim_fit::FitError::Engine(error) => simulation_error(error),
+        sbmlsim_fit::FitError::Pool(error) => batch_error(error),
+        sbmlsim_fit::FitError::Point(_) => InternalError::new_err(message),
+        // the request of the fit, which a caller writes: its parameters, its conditions, its
+        // curves, its starts and its optimizer
+        _ => PyValueError::new_err(message),
+    }
+}
+
 /// The error of an instance whose lock a panic poisoned.
 pub(crate) fn poisoned<T>(_: PoisonError<T>) -> EngineError {
     EngineError::Internal("the instance panicked before and is not used again".into())

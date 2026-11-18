@@ -931,6 +931,9 @@ fn read_output(bytes: &[u8]) -> Result<Output, EngineError> {
                 columns,
                 n_rows,
                 values,
+                // the output of engine.wasm carries no table of sensitivities, and a request
+                // which asks for them is refused by the module
+                sensitivities: None,
             }))
         }
     }
@@ -988,6 +991,28 @@ impl PreparedSimulation {
     /// Number of values supplied per point, in the order of the varying targets.
     pub fn n_values(&self) -> usize {
         self.inner.n_values
+    }
+
+    /// A request the native engine validated, for one `engine.wasm` does not carry: the
+    /// forward sensitivities of a run, whose table its output format has no room for. An
+    /// instance of `engine.wasm` which is handed such a request refuses it as it is.
+    #[cfg(feature = "native")]
+    pub(crate) fn of_native(
+        model: Arc<()>,
+        request: &SimulationRequest,
+        varying: &[String],
+    ) -> Result<PreparedSimulation, EngineError> {
+        let input = serde_json::to_vec(&PrepareInput { request, varying })
+            .map_err(|error| internal(format!("prepared request serialization failed: {error}")))?;
+        Ok(PreparedSimulation {
+            inner: Arc::new(PreparedInner {
+                model,
+                input,
+                n_values: varying.len(),
+                request: request.clone(),
+                varying: varying.to_vec(),
+            }),
+        })
     }
 }
 

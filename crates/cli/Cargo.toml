@@ -18,13 +18,16 @@ path = "src/main.rs"
 
 [features]
 default = []
-native = ["sbmlsim-host/native"]
+# the native engine, and the fit of a model on its batch (`sbmlsim-core fit`)
+native = ["sbmlsim-host/native", "dep:sbmlsim-fit"]
 
 [dependencies]
 anyhow = "1"
 clap = { version = "4.5", features = ["derive"] }
 sbmlsim-abi = { path = "../abi" }
 sbmlsim-compiler = { path = "../compiler" }
+# the fit of a model, which needs the native engine of its batch
+sbmlsim-fit = { path = "../fit", optional = true }
 sbmlsim-host = { path = "../host" }
 rayon = "1.10"
 serde.workspace = true

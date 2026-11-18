@@ -71,7 +71,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::derive::JacobianIr;
+use crate::derive::{JacobianIr, ParameterJacobianIr};
 use crate::eval::{eval, eval_bool, is_boolean};
 use crate::{Assignment, Event, Expr, Model, Op, Symbol, index, is_boolean_valued};
 
@@ -114,6 +114,10 @@ pub struct Plan {
     pub rhs: Program,
     /// `model_jac`: the entries of an analytic Jacobian.
     pub jac: Option<Program>,
+    /// `model_jac_p`: the entries of the column of every parameter of the Jacobian of the
+    /// right hand side in the parameters, `None` for a column without an entry and no branch
+    /// at all for a model without that Jacobian.
+    pub jac_p: Branches,
     /// `model_roots`: the root functions of the triggers, then those of the discontinuities
     /// ([`Model::discontinuity_roots`]).
     pub roots: Program,
@@ -143,7 +147,13 @@ pub struct Plan {
 /// ([`Event::root_functions`] of a folded trigger may be fewer), then `discontinuities`, the
 /// root functions of the discontinuities of the model ([`Model::discontinuity_roots`], folded
 /// already), which the caller computes once for the module and its description.
-pub fn plan(model: &Model, jacobian: &JacobianIr, discontinuities: &[Expr], cse: bool) -> Plan {
+pub fn plan(
+    model: &Model,
+    jacobian: &JacobianIr,
+    parameters: Option<&ParameterJacobianIr>,
+    discontinuities: &[Expr],
+    cse: bool,
+) -> Plan {
     let rules = &model.assignment_rules;
     let mut constants = Constants::new(model);
     let mut init_commons = 0;
@@ -170,6 +180,9 @@ pub fn plan(model: &Model, jacobian: &JacobianIr, discontinuities: &[Expr], cse:
         }
         JacobianIr::ColoredDifference { .. } => None,
     };
+    let jac_p = parameters.map_or_else(Branches::default, |parameters| {
+        columns(rules, parameters, cse, &mut constants)
+    });
     let roots: Vec<Expr> = model
         .events
         .iter()
@@ -199,6 +212,7 @@ pub fn plan(model: &Model, jacobian: &JacobianIr, discontinuities: &[Expr], cse:
         init,
         rhs,
         jac,
+        jac_p,
         roots,
         trigger,
         priority,
@@ -247,6 +261,55 @@ pub fn program(lets: &[Assignment], outputs: &[Expr], cse: bool, commons: &mut u
 /// per event its outputs, each a scope of common subexpressions of its own.
 pub fn branches(lets: &[Assignment], outputs: &[Option<Vec<Expr>>], cse: bool) -> Branches {
     branches_with(lets, outputs, cse, None)
+}
+
+/// The programs of `model_jac_p` ([`Branches`]): the assignment rules any column reads, then
+/// per parameter the derivatives of the rules its entries read as lets and the entries as its
+/// outputs, each a scope of common subexpressions of its own. A column without an entry is
+/// `None`, which is no branch of the function.
+fn columns(
+    rules: &[Assignment],
+    parameters: &ParameterJacobianIr,
+    cse: bool,
+    constants: &mut Constants,
+) -> Branches {
+    let mut commons = 0;
+    let mut symbols = HashMap::new();
+    // every expression any column reads, for the rules the prefix keeps
+    let all: Vec<Expr> = parameters
+        .columns
+        .iter()
+        .flat_map(|column| column.derivatives.iter().chain(&column.entries))
+        .map(fold)
+        .collect();
+    let prefix = constants.hoist_roots(live(rules, &all), &mut symbols);
+    let prefix = common_subexpressions(prefix, cse, &mut commons);
+    let branches = parameters
+        .columns
+        .iter()
+        .map(|column| {
+            if column.entries.is_empty() {
+                return None;
+            }
+            let roots: Vec<Root> = column
+                .derivatives
+                .iter()
+                .enumerate()
+                .map(|(k, d)| Root::Let(Symbol::Derivative(index(k)), fold(d)))
+                .chain(column.entries.iter().map(|e| Root::Output(fold(e))))
+                .collect();
+            // the derivative of a rule is a let of this column alone: the one of the same rule
+            // in another parameter is another value, and a column whose let is a constant must
+            // not reach the column after it (which may keep its own, a value of a state)
+            // the derivative of a rule is a let of this column alone: the one of the same rule
+            // in another parameter is another value, and a column whose let is a constant must
+            // not reach the column after it (which may keep its own, a value of a state)
+            let mut of_the_column = symbols.clone();
+            let roots = constants.hoist_roots(roots, &mut of_the_column);
+            Some(common_subexpressions(roots, cse, &mut commons))
+        })
+        .collect();
+    Branches { prefix, branches }
 }
 
 /// [`branches`], with the constants of the model read from `constants` when given.

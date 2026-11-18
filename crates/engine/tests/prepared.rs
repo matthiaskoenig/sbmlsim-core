@@ -8,6 +8,7 @@ use sbmlsim_engine::{Engine, EngineError};
 
 fn request() -> SimulationRequest {
     SimulationRequest {
+        sensitivities: vec![],
         contract: SIMULATION_CONTRACT.into(),
         start: 0.0,
         end: 3.0,

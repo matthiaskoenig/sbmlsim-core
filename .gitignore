@@ -13,3 +13,7 @@ __pycache__/
 
 # the lock of the python tooling of the scripts, which is not part of the package
 uv.lock
+
+# the design documents and plans of coding agents, no pages of the site
+.superpowers/
+docs/superpowers/

@@ -4,7 +4,7 @@
 //! `sundials_nvector.h`, `nvector_serial.h`, `sundials_matrix.h`, `sunmatrix_dense.h`,
 //! `sunmatrix_sparse.h`, `sundials_linearsolver.h`, `sunlinsol_dense.h`, `sunlinsol_klu.h`,
 //! `sunlinsol_spgmr.h`,
-//! `sundials_nonlinearsolver.h`, `sunnonlinsol_fixedpoint.h`, `cvode.h`, `cvode_ls.h`, `ida.h`, `ida_ls.h`) as this
+//! `sundials_nonlinearsolver.h`, `sunnonlinsol_fixedpoint.h`, `cvodes.h`, `cvodes_ls.h`, `ida.h`, `ida_ls.h`) as this
 //! crate configures them: `sunrealtype` is `double`,
 //! `sunindextype` is `int32_t`, the counters are `long int` (32 bits on wasm32) and `SUNComm` is
 //! `int` (no MPI). The functions with the prefix `sbmlsim_` are the C sources of this crate.
@@ -87,6 +87,40 @@ pub type CVLsJacFn = Option<
     ) -> c_int,
 >;
 
+/// The right hand side of every forward sensitivity at once:
+/// `ySdot_i = df/dy yS_i + df/dp_i` for `i < Ns`, with `ydot = f(t, y)` given.
+///
+/// One call of this computes what the whole sensitivity system needs of a step, so a caller
+/// which has an analytic `df/dy` evaluates it once per call and not once per sensitivity.
+pub type CVSensRhsFn = Option<
+    unsafe extern "C" fn(
+        Ns: c_int,
+        t: sunrealtype,
+        y: N_Vector,
+        ydot: N_Vector,
+        yS: *mut N_Vector,
+        ySdot: *mut N_Vector,
+        user_data: *mut c_void,
+        tmp1: N_Vector,
+        tmp2: N_Vector,
+    ) -> c_int,
+>;
+/// The right hand side of one forward sensitivity, `iS` of `Ns`.
+pub type CVSensRhs1Fn = Option<
+    unsafe extern "C" fn(
+        Ns: c_int,
+        t: sunrealtype,
+        y: N_Vector,
+        ydot: N_Vector,
+        iS: c_int,
+        yS: N_Vector,
+        ySdot: N_Vector,
+        user_data: *mut c_void,
+        tmp1: N_Vector,
+        tmp2: N_Vector,
+    ) -> c_int,
+>;
+
 /// Set up a preconditioner for `I - gamma J`, optionally reusing its saved Jacobian.
 pub type CVLsPrecSetupFn = Option<
     unsafe extern "C" fn(
@@ -144,6 +178,17 @@ pub const CV_TSTOP_RETURN: c_int = 1;
 pub const CV_ROOT_RETURN: c_int = 2;
 /// `CVode` took `mxstep` steps before reaching `tout`.
 pub const CV_TOO_MUCH_WORK: c_int = -1;
+/// The states and their sensitivities are corrected together by one nonlinear solve
+/// (`ism` of `CVodeSensInit`).
+pub const CV_SIMULTANEOUS: c_int = 1;
+/// The states are corrected first and the sensitivities after them, all at once.
+pub const CV_STAGGERED: c_int = 2;
+/// The states are corrected first and every sensitivity after them on its own.
+pub const CV_STAGGERED1: c_int = 3;
+/// The difference quotient of `df/dp` of CVODES is centered (`DQtype`).
+pub const CV_CENTERED: c_int = 1;
+/// The difference quotient of `df/dp` of CVODES is forward.
+pub const CV_FORWARD: c_int = 2;
 /// A sparse matrix in compressed sparse column format (`SUN_CSC_MAT`).
 pub const CSC_MAT: c_int = 0;
 /// A sparse matrix in compressed sparse row format (`SUN_CSR_MAT`).
@@ -200,6 +245,10 @@ unsafe extern "C" {
     pub fn N_VGetArrayPointer_Serial(v: N_Vector) -> *mut sunrealtype;
     /// The weighted root mean square norm `sqrt(sum((x_i * w_i)^2) / n)`.
     pub fn N_VWrmsNorm(x: N_Vector, w: N_Vector) -> sunrealtype;
+    /// An array of `count` vectors of the shape of `w`, for the forward sensitivities.
+    pub fn N_VCloneVectorArray(count: c_int, w: N_Vector) -> *mut N_Vector;
+    pub fn N_VDestroyVectorArray(vs: *mut N_Vector, count: c_int);
+    pub fn N_VConst(c: sunrealtype, z: N_Vector);
 
     // matrices
     pub fn SUNDenseMatrix(m: sunindextype, n: sunindextype, sunctx: SUNContext) -> SUNMatrix;
@@ -258,6 +307,16 @@ unsafe extern "C" {
     /// The fixed point (functional) iteration with `m` acceleration vectors (0 is none).
     pub fn SUNNonlinSol_FixedPoint(y: N_Vector, m: c_int, sunctx: SUNContext)
     -> SUNNonlinearSolver;
+    /// The same iteration for `count` sensitivity vectors of the shape of `y`, which the
+    /// staggered forward sensitivities of a non-stiff method need: the Newton iteration
+    /// `CVodeSensInit` attaches by default calls the linear solver, which a run of the Adams
+    /// method has not got.
+    pub fn SUNNonlinSol_FixedPointSens(
+        count: c_int,
+        y: N_Vector,
+        m: c_int,
+        sunctx: SUNContext,
+    ) -> SUNNonlinearSolver;
     pub fn SUNNonlinSolFree(nls: SUNNonlinearSolver) -> SUNErrCode;
 
     // CVODE
@@ -337,7 +396,79 @@ unsafe extern "C" {
         nniters: *mut c_long,
         nncfails: *mut c_long,
     ) -> c_int;
+    pub fn CVodeGetNumRhsEvals(cvode_mem: *mut c_void, nfevals: *mut c_long) -> c_int;
     pub fn CVodeFree(cvode_mem: *mut *mut c_void);
+
+    // CVODES, the forward sensitivities: `Ns` of them, `ism` one of [`CV_SIMULTANEOUS`],
+    // [`CV_STAGGERED`] and [`CV_STAGGERED1`], and `yS0` their initial values (`dy0/dp`).
+    // Without a right hand side of the caller (`None`), CVODES differences the one of the
+    // model in the parameters [`CVodeSetSensParams`] gave it.
+    pub fn CVodeSensInit(
+        cvode_mem: *mut c_void,
+        Ns: c_int,
+        ism: c_int,
+        fS: CVSensRhsFn,
+        yS0: *mut N_Vector,
+    ) -> c_int;
+    pub fn CVodeSensInit1(
+        cvode_mem: *mut c_void,
+        Ns: c_int,
+        ism: c_int,
+        fS1: CVSensRhs1Fn,
+        yS0: *mut N_Vector,
+    ) -> c_int;
+    pub fn CVodeSensReInit(cvode_mem: *mut c_void, ism: c_int, yS0: *mut N_Vector) -> c_int;
+    /// The tolerances of the sensitivities from the ones of the states and the scaling of the
+    /// parameters, which is what a caller without a tolerance of its own wants.
+    pub fn CVodeSensEEtolerances(cvode_mem: *mut c_void) -> c_int;
+    /// The nonlinear solver of the staggered sensitivities, which replaces the Newton
+    /// iteration `CVodeSensInit` attaches; the caller owns the solver it passes.
+    pub fn CVodeSetNonlinearSolverSensStg(cvode_mem: *mut c_void, nls: SUNNonlinearSolver)
+    -> c_int;
+    pub fn CVodeSensSStolerances(
+        cvode_mem: *mut c_void,
+        reltolS: sunrealtype,
+        abstolS: *mut sunrealtype,
+    ) -> c_int;
+    /// Whether the sensitivities take part in the error control of a step (1 by default).
+    pub fn CVodeSetSensErrCon(cvode_mem: *mut c_void, errconS: sunbooleantype) -> c_int;
+    /// The difference quotient of CVODES: [`CV_CENTERED`] or [`CV_FORWARD`] and the ratio at
+    /// which it switches to the one of the simultaneous increments.
+    pub fn CVodeSetSensDQMethod(
+        cvode_mem: *mut c_void,
+        DQtype: c_int,
+        DQrhomax: sunrealtype,
+    ) -> c_int;
+    /// The parameters the sensitivities are of: `p` the values the right hand side reads,
+    /// which the difference quotient of CVODES perturbs in place, `pbar` their scaling and
+    /// `plist` which of them (`null` for the first `Ns`).
+    pub fn CVodeSetSensParams(
+        cvode_mem: *mut c_void,
+        p: *mut sunrealtype,
+        pbar: *mut sunrealtype,
+        plist: *mut c_int,
+    ) -> c_int;
+    pub fn CVodeSensToggleOff(cvode_mem: *mut c_void) -> c_int;
+    /// The sensitivities at the time the last [`CVode`] reached.
+    pub fn CVodeGetSens(
+        cvode_mem: *mut c_void,
+        tret: *mut sunrealtype,
+        ySout: *mut N_Vector,
+    ) -> c_int;
+    pub fn CVodeGetSens1(
+        cvode_mem: *mut c_void,
+        tret: *mut sunrealtype,
+        is: c_int,
+        ySout: N_Vector,
+    ) -> c_int;
+    /// The evaluations of the sensitivity right hand side.
+    pub fn CVodeGetSensNumRhsEvals(cvode_mem: *mut c_void, nfSevals: *mut c_long) -> c_int;
+    /// The evaluations of the right hand side of the model the sensitivities took, which is
+    /// what the difference quotient of CVODES costs.
+    pub fn CVodeGetNumRhsEvalsSens(cvode_mem: *mut c_void, nfevalsS: *mut c_long) -> c_int;
+    pub fn CVodeGetSensNumErrTestFails(cvode_mem: *mut c_void, nSetfails: *mut c_long) -> c_int;
+    pub fn CVodeGetSensNumLinSolvSetups(cvode_mem: *mut c_void, nlinsetupsS: *mut c_long) -> c_int;
+    pub fn CVodeSensFree(cvode_mem: *mut c_void);
 
     // IDA
     pub fn IDASStolerances(ida_mem: *mut c_void, reltol: sunrealtype, abstol: sunrealtype)

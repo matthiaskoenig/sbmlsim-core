@@ -47,6 +47,7 @@ fn step(c: &str) -> String {
 
 fn request(end: f64, output: Output) -> SimulationRequest {
     SimulationRequest {
+        sensitivities: vec![],
         contract: SIMULATION_CONTRACT.to_string(),
         start: 0.0,
         end,

@@ -27,6 +27,10 @@
 //! - `model_jac(t, y, p, values)` writes the analytic Jacobian `d(f,g)/dy` in CSC order of
 //!   the pattern. It traps for a model of a colored difference quotient. The solver supplies
 //!   the derivative of the `-y′` term on differential rows of a DAE.
+//! - `model_jac_p(j, t, y, p, values)` writes the column of the parameter `j` of the Jacobian
+//!   `d(f,g)/dp`, the entries of that column of [`ModelDescription::jacobian_p`] in its order.
+//!   A model carries it only where the description has that pattern, and only its columns which
+//!   hold an entry are called (the others are nothing).
 //! - `model_roots(t, y, p, g)` writes the [`ModelDescription::n_roots`] root functions of the
 //!   triggers: one per comparison of each trigger (`a - b` of `a > b` and `a >= b`, `b - a` of
 //!   `a < b` and `a <= b`, `a - b` of `a == b` and `a != b`, every adjacent pair of a chain) and
@@ -93,7 +97,9 @@
 //! is absent ([`DEFAULT_SEED`]), set before the contracts were frozen (no version change).
 //! Additions of `simulation/1` since its release, which a request of a release before reads
 //! as it did: the `increments` of a [`Change`] (0.6.0), absent and empty by default, which an
-//! engine before 0.6.0 refuses as an unknown field.
+//! engine before 0.6.0 refuses as an unknown field, and the `sensitivities` of a
+//! [`SimulationRequest`] (0.12.0) with the `sensitivities` of a [`SimulationResult`], both
+//! absent by default, which an engine before 0.12.0 refuses the same way.
 //!
 //! `engine.wasm` carries the custom section [`ENGINE_SECTION`] with the JSON
 //! `{"memory_minimum_pages":n,"output_format":k}`: the minimum of the memory it imports and
@@ -132,6 +138,9 @@ pub const INIT: &str = "model_init";
 pub const RHS: &str = "model_rhs";
 /// Export name of `model_jac`.
 pub const JAC: &str = "model_jac";
+/// Export name of `model_jac_p`, which a model carries only with
+/// [`ModelDescription::jacobian_p`].
+pub const JAC_P: &str = "model_jac_p";
 /// Export name of `model_roots`.
 pub const ROOTS: &str = "model_roots";
 /// Export name of `model_trigger`.
@@ -211,6 +220,12 @@ pub struct ModelDescription {
     pub selections: Vec<Selection>,
     /// The Jacobian of the model.
     pub jacobian: JacobianKind,
+    /// The pattern of `model_jac_p`, the Jacobian of the right hand side in the parameters,
+    /// which a model carries where every rate has a derivative in them and the function is
+    /// within the limits; the engine takes a difference quotient of the right hand side
+    /// without it. It is the `df/dp` of the forward sensitivities and of nothing else.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jacobian_p: Option<ParameterPattern>,
     /// The events of the model.
     pub events: Vec<EventInfo>,
     /// The number of root functions `model_roots` writes.
@@ -423,6 +438,59 @@ pub struct SparsityPattern {
     pub row_idx: Vec<u32>,
 }
 
+/// The sparsity pattern of the Jacobian of the right hand side in the parameters of a model
+/// (`model_jac_p`), in compressed sparse column form: one column per parameter of the model,
+/// the rows of a column the rates which depend on it.
+///
+/// The matrix is `states x parameters` and not square, so it is no [`SparsityPattern`]. A
+/// parameter which is the target of an assignment rule has no column of its own (the rule is
+/// evaluated at every step, and what it reads carries its chain), and neither has one no rate
+/// depends on: both are empty columns.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ParameterPattern {
+    /// The rows of the matrix, the states of the model.
+    pub rows: u32,
+    /// The start of every column in `row_idx`, one per parameter and one more.
+    pub col_ptr: Vec<u32>,
+    /// The row of every entry.
+    pub row_idx: Vec<u32>,
+}
+
+impl ParameterPattern {
+    /// The number of entries.
+    pub fn nnz(&self) -> usize {
+        self.row_idx.len()
+    }
+
+    /// The number of columns, the parameters of the model.
+    pub fn columns(&self) -> usize {
+        self.col_ptr.len().saturating_sub(1)
+    }
+
+    /// The rows of the entries of the column `j`.
+    ///
+    /// # Panics
+    ///
+    /// For a column out of range or a pattern which is not a CSC pattern.
+    pub fn rows(&self, j: usize) -> &[u32] {
+        &self.row_idx[self.col_ptr[j] as usize..self.col_ptr[j + 1] as usize]
+    }
+
+    /// Whether the pattern is a CSC pattern of `rows` states and `columns` parameters: the
+    /// column pointers from 0, not decreasing, to the number of entries, and every row below
+    /// `rows`.
+    pub fn is_csc_of(&self, rows: usize, columns: usize) -> bool {
+        self.rows as usize == rows
+            && self.col_ptr.len() == columns + 1
+            && self.col_ptr[0] == 0
+            && self.col_ptr.windows(2).all(|w| w[0] <= w[1])
+            && self.col_ptr[columns] as usize == self.row_idx.len()
+            && self.row_idx.iter().all(|&row| (row as usize) < rows)
+            && (0..columns).all(|j| self.rows(j).windows(2).all(|w| w[0] < w[1]))
+    }
+}
+
 impl SparsityPattern {
     /// The number of entries.
     pub fn nnz(&self) -> usize {
@@ -624,6 +692,7 @@ mod tests {
                 jacobian: JacobianChoice::DifferenceQuotient,
             },
             seed: 42,
+            sensitivities: vec!["k".to_string(), "V".to_string()],
         }
     }
 
@@ -645,7 +714,7 @@ mod tests {
     }
 
     #[test]
-    fn historical_stats_default_the_krylov_counters_to_zero() {
+    fn historical_stats_default_the_counters_after_them_to_zero() {
         let words = std::array::from_fn(|i| i as u64 + 1);
         let stats = SimulationStats::from_words(words);
         assert_eq!(stats.words(), words);
@@ -659,7 +728,7 @@ mod tests {
         }
         let historical: SimulationStats = serde_json::from_value(json).unwrap();
         assert_eq!(historical.words()[..13], words[..13]);
-        assert_eq!(historical.words()[13..], [0; 5]);
+        assert_eq!(historical.words()[13..], [0; SimulationStats::WORDS - 13]);
     }
 
     #[test]
@@ -727,6 +796,7 @@ mod tests {
     #[test]
     fn description_roundtrips_as_json() {
         let d = ModelDescription {
+            jacobian_p: None,
             contract: MODEL_CONTRACT.to_string(),
             compiler: "sbmlsim-compiler 0.1.0".to_string(),
             id: "m".to_string(),

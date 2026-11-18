@@ -11,6 +11,7 @@ use sbmlsim_engine::{Engine, EngineError, MAX_OUTPUT_VALUES, simulate};
 /// A request from `start` to `end` with the given output, all selections, the default settings.
 fn request(start: f64, end: f64, output: Output) -> SimulationRequest {
     SimulationRequest {
+        sensitivities: vec![],
         contract: SIMULATION_CONTRACT.to_string(),
         start,
         end,

@@ -355,6 +355,7 @@ fn request(
         .chain(desc.states.iter().map(|s| s.id.clone()))
         .collect();
     SimulationRequest {
+        sensitivities: vec![],
         contract: SIMULATION_CONTRACT.to_string(),
         start: 0.0,
         end: model.end,

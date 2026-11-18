@@ -21,6 +21,7 @@ fn main() -> anyhow::Result<()> {
         changes: vec![],
         steady_state: None,
         seed: 0,
+        sensitivities: vec![],
     };
     let result = instance.simulate(&request)?;
 

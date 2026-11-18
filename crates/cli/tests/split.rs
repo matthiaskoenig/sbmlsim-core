@@ -99,7 +99,7 @@ fn compare(
     dir: &Path,
     optimize: bool,
     limits: Limits,
-) -> Result<(Option<String>, Vec<String>), String> {
+) -> Result<(Option<String>, Vec<String>, bool), String> {
     let cid = dir.file_name().unwrap().to_string_lossy().into_owned();
     let settings: CaseSettings =
         serde_json::from_slice(&std::fs::read(dir.join("case.json")).unwrap()).unwrap();
@@ -113,13 +113,16 @@ fn compare(
     )
     .unwrap();
     let whole_functions = defined_functions(&whole.wasm);
+    // the exports of the contract: fourteen, and the Jacobian in the parameters of a model
+    // which carries one
+    let exports = 14 + usize::from(whole.description.jacobian_p.is_some());
     let history_helpers = if whole.description.n_delays == 0 {
-        assert_eq!(whole_functions, 14, "{cid}");
+        assert_eq!(whole_functions, exports, "{cid}");
         0
     } else {
-        // History lookup/interpolation and operand helpers precede the fourteen exports.
-        assert!(whole_functions >= 17, "{cid}");
-        whole_functions - 14
+        // History lookup/interpolation and operand helpers precede the exports.
+        assert!(whole_functions >= exports + 3, "{cid}");
+        whole_functions - exports
     };
     // the Jacobian of the module as one (a model_jac whose entry is above the low limits would
     // otherwise be the difference quotient)
@@ -143,20 +146,28 @@ fn compare(
         "{cid}"
     );
     let json = |d| serde_json::to_string(d).unwrap();
-    if json(&whole.description) != json(&split.description) {
-        return Ok((Some(format!("{cid}: the descriptions differ")), is_split));
+    // `model_jac_p` is the one export of the contract which is optional: a branch of it above
+    // the limits leaves it out of the module, and with it the constants of its own, which the
+    // description of the split module says. Such a case compares its values alone.
+    let dropped = whole.description.jacobian_p.is_some() && split.description.jacobian_p.is_none();
+    if !dropped && json(&whole.description) != json(&split.description) {
+        return Ok((
+            Some(format!("{cid}: the descriptions differ")),
+            is_split,
+            dropped,
+        ));
     }
     let mut req = case_request(&settings);
     req.selections = std::iter::once("time".to_string())
         .chain(whole.description.selections.iter().map(|s| s.id.clone()))
         .collect();
-    let run = |wasm: &[u8]| {
-        runtime()
-            .instantiate(wasm, &whole.description)
-            .unwrap()
-            .simulate(&req)
+    let run = |wasm: &[u8], desc: &sbmlsim_abi::ModelDescription| {
+        runtime().instantiate(wasm, desc).unwrap().simulate(&req)
     };
-    let difference = match (run(&whole.wasm), run(&split.wasm)) {
+    let difference = match (
+        run(&whole.wasm, &whole.description),
+        run(&split.wasm, &split.description),
+    ) {
         (Ok(a), Ok(b)) => {
             repeat_difference(&a, &b, "the split model").map(|d| format!("{cid}: {d}"))
         }
@@ -167,7 +178,7 @@ fn compare(
             b.err().map(|e| e.to_string())
         )),
     };
-    Ok((difference, is_split))
+    Ok((difference, is_split, dropped))
 }
 
 #[test]
@@ -188,13 +199,17 @@ fn split_bits_equal() {
     ] {
         for optimize in [true, false] {
             let (split, refused) = (AtomicUsize::new(0), AtomicUsize::new(0));
+            let without_jac_p = AtomicUsize::new(0);
             let exports = std::sync::Mutex::new(std::collections::BTreeMap::<String, usize>::new());
             let failures: Vec<String> = dirs
                 .par_iter()
                 .filter_map(|dir| match compare(dir, optimize, limits) {
-                    Ok((difference, split_exports)) => {
+                    Ok((difference, split_exports, dropped)) => {
                         if !split_exports.is_empty() {
                             split.fetch_add(1, Ordering::Relaxed);
+                        }
+                        if dropped {
+                            without_jac_p.fetch_add(1, Ordering::Relaxed);
                         }
                         let mut exports = exports.lock().unwrap();
                         for name in split_exports {
@@ -209,10 +224,12 @@ fn split_bits_equal() {
                 })
                 .collect();
             let (split, refused) = (split.into_inner(), refused.into_inner());
+            let without_jac_p = without_jac_p.into_inner();
             let exports = exports.into_inner().unwrap();
             eprintln!(
                 "optimize {optimize}, {limits:?}: {} cases, {split} split, {refused} with a \
-                 statement above the limits; split functions: {exports:?}",
+                 statement above the limits, {without_jac_p} without the Jacobian in the \
+                 parameters; split functions: {exports:?}",
                 dirs.len()
             );
             assert!(

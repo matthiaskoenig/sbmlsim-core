@@ -28,6 +28,7 @@ fn load(body: &str, options: CompileOptions) -> LoadedModel {
 
 fn request(end: f64, output: Output, selections: &[&str]) -> SimulationRequest {
     SimulationRequest {
+        sensitivities: vec![],
         contract: SIMULATION_CONTRACT.to_string(),
         start: 0.0,
         end,

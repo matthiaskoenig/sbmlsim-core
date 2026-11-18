@@ -80,6 +80,30 @@ impl NativeInstance {
         self.engine.simulate_prepared(&plan, values)
     }
 
+    /// Validates a request in the native engine and gives the handle a batch runs it with,
+    /// for a request `engine.wasm` does not carry: the forward sensitivities of a run.
+    ///
+    /// [`crate::LoadedModel::prepare`], which every other prepared request goes through,
+    /// validates it in an instance of `engine.wasm`, whose output format carries the values of
+    /// a table and nothing else, so it refuses the sensitivities of a run. The plan of this
+    /// instance is kept as if the request had been run on it.
+    ///
+    /// # Errors
+    ///
+    /// If the engine refuses the request, e.g. the sensitivities of a model with events.
+    pub fn prepare(
+        &mut self,
+        request: &SimulationRequest,
+        varying: &[String],
+    ) -> Result<crate::PreparedSimulation, EngineError> {
+        let plan = self.engine.prepare(request, varying)?;
+        let prepared =
+            crate::PreparedSimulation::of_native(self.identity.clone(), request, varying)?;
+        let (key, owner) = prepared.cache_entry();
+        self.prepared.insert(key, CachedPrepared { owner, plan });
+        Ok(prepared)
+    }
+
     /// The plan of a prepared request in this engine, resolved once per instance.
     fn plan_of(
         &mut self,
@@ -206,6 +230,13 @@ fn native_instance(
         get(abi::SIZES)?,
         get(abi::EVENT_SIZES)?,
     );
+    // the only export of the contract a model may leave out, which the description says
+    let jac_p = get(abi::JAC_P).ok();
+    anyhow::ensure!(
+        jac_p.is_some() || desc.jacobian_p.is_none(),
+        "model.wasm does not export {} of the Jacobian in the parameters of its description",
+        abi::JAC_P
+    );
     let functions = Functions {
         defaults: defaults.typed(&store)?,
         init: init.typed(&store)?,
@@ -219,6 +250,10 @@ fn native_instance(
         event_apply: event_apply.typed(&store)?,
         selections: selections.typed(&store)?,
         assign: assign.typed(&store)?,
+        jac_p: match jac_p {
+            Some(jac_p) => Some(jac_p.typed(&store)?),
+            None => None,
+        },
         sizes: sizes.typed(&store)?,
         event_sizes: event_sizes.typed(&store)?,
     };
@@ -249,11 +284,16 @@ fn native_instance(
 const PAGE: usize = 65536;
 
 /// The typed exports of a model.
+/// A function of the contract of the form `f(index, t, y, p, out)`.
+type Indexed = TypedFunc<(i32, f64, i32, i32, i32), ()>;
+
 struct Functions {
     defaults: TypedFunc<(i32, i32), ()>,
     init: TypedFunc<(f64, i32, i32, i32), ()>,
     rhs: TypedFunc<(f64, i32, i32, i32), ()>,
     jac: TypedFunc<(f64, i32, i32, i32), ()>,
+    /// `model_jac_p`, which a model carries only with a pattern in its description.
+    jac_p: Option<Indexed>,
     roots: TypedFunc<(f64, i32, i32, i32), ()>,
     trigger: TypedFunc<(i32, f64, i32, i32), i32>,
     priority: TypedFunc<(i32, f64, i32, i32), f64>,
@@ -285,7 +325,8 @@ impl Layout {
         let np = sizes.parameters as usize + sizes.constants as usize;
         let assignments = sizes.assignments.iter().copied().max().unwrap_or(0) as usize;
         // the outputs: ydot, the Jacobian, the root functions, the selections, the event values
-        // and the words of the sizes (as many as the events, at least the words)
+        // and the words of the sizes (as many as the events, at least the words); a column of
+        // the Jacobian in the parameters holds at most one entry per state, so `n` covers it
         let out = [
             n,
             sizes.jacobian_entries as usize,
@@ -508,6 +549,16 @@ impl ModelFns for WasmModel {
         let args = (t, ptr(l.y), ptr(l.p), ptr(l.out));
         self.ok(self.functions.jac.call(&mut m.store, args));
         m.get(l.out, values);
+    }
+    fn jac_p(&self, at: usize, t: f64, y: &[f64], p: &[f64], values: &mut [f64]) -> bool {
+        let Some(jac_p) = self.functions.jac_p.as_ref() else {
+            return false;
+        };
+        let (mut m, l) = self.enter(y, p);
+        let args = (at as i32, t, ptr(l.y), ptr(l.p), ptr(l.out));
+        self.ok(jac_p.call(&mut m.store, args));
+        m.get(l.out, values);
+        true
     }
     fn roots(&self, t: f64, y: &[f64], p: &[f64], g: &mut [f64]) {
         let (mut m, l) = self.enter(y, p);

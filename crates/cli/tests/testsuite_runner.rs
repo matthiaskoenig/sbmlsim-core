@@ -15,6 +15,7 @@ use sbmlsim_cli::testsuite::{
 
 fn result(columns: &[&str], rows: &[&[f64]]) -> SimulationResult {
     SimulationResult {
+        sensitivities: None,
         columns: columns.iter().map(|c| c.to_string()).collect(),
         n_rows: rows.len(),
         values: rows.iter().flat_map(|r| r.iter().copied()).collect(),

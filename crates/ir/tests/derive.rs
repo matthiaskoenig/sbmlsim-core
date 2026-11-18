@@ -5,7 +5,7 @@
 use std::path::Path;
 
 use sbmlsim_abi::SparsityPattern;
-use sbmlsim_ir::derive::{JacobianIr, jacobian};
+use sbmlsim_ir::derive::{JacobianIr, jacobian, parameter_jacobian};
 use sbmlsim_ir::{Assignment, Entity, EntityKind, Expr, Model, Op, Symbol, build};
 
 /// A random generator of the tests (xorshift64*), seeded.
@@ -742,5 +742,184 @@ fn the_pattern_of_the_suite_is_sparse() {
     }
     if !models.is_empty() {
         assert!(entries < dense / 2, "{entries} entries of {dense}");
+    }
+}
+
+/// The parameter `j` of a model.
+fn param(j: u32) -> Expr {
+    Expr::Symbol(Symbol::Param(j))
+}
+
+#[test]
+fn the_columns_of_the_parameter_jacobian_are_the_rates_which_read_them() {
+    // x' = -(k x), y' = c, with the parameter `rest` no rate reads
+    let rates = vec![
+        ap(Op::Minus, vec![ap(Op::Times, vec![param(0), x()])]),
+        param(1),
+    ];
+    let m = model(&["x", "y"], &["k", "c", "rest"], vec![], rates);
+
+    let jacobian = parameter_jacobian(&m).unwrap();
+
+    assert_eq!(jacobian.pattern.rows, 2);
+    assert_eq!(jacobian.pattern.col_ptr, [0, 1, 2, 2]);
+    assert_eq!(jacobian.pattern.row_idx, [0, 1]);
+    // d x'/dk = -x and d y'/dc = 1, each the only entry of its column
+    assert_eq!(jacobian.columns[0].entries, [ap(Op::Minus, vec![x()])]);
+    assert_eq!(jacobian.columns[1].entries, [n(1.0)]);
+    assert!(jacobian.columns[2].entries.is_empty());
+}
+
+#[test]
+fn a_parameter_a_rate_reads_through_an_assignment_rule_chains() {
+    // x' = -(a x) with the rule a = 2 k: `a` is recomputed at every step, so it is no variable
+    // of the jacobian and its column is empty, while the column of `k` is the chain
+    // d x'/dk = -(da/dk x) = -(2 x)
+    let rules = vec![Assignment {
+        target: Symbol::Param(1),
+        expr: ap(Op::Times, vec![n(2.0), param(0)]),
+    }];
+    let rates = vec![ap(Op::Minus, vec![ap(Op::Times, vec![param(1), x()])])];
+    let m = model(&["x"], &["k", "a"], rules, rates);
+
+    let jacobian = parameter_jacobian(&m).unwrap();
+
+    assert_eq!(jacobian.pattern.col_ptr, [0, 1, 1]);
+    assert_eq!(jacobian.pattern.row_idx, [0]);
+    assert_eq!(
+        jacobian.columns[0].entries,
+        [ap(Op::Minus, vec![ap(Op::Times, vec![n(2.0), x()])])]
+    );
+    assert!(jacobian.columns[1].entries.is_empty());
+}
+
+#[test]
+fn the_entries_of_the_parameter_jacobian_are_the_derivatives_of_the_rates() {
+    // x' = k exp(-(d x)) + c x / (k + x), y' = sin(k y) * c, numerically against a central
+    // difference of the rate in the parameter
+    let (k, c, d) = (param(0), param(1), param(2));
+    let rates = vec![
+        ap(
+            Op::Plus,
+            vec![
+                ap(
+                    Op::Times,
+                    vec![
+                        k.clone(),
+                        ap(
+                            Op::Exp,
+                            vec![ap(Op::Minus, vec![ap(Op::Times, vec![d, x()])])],
+                        ),
+                    ],
+                ),
+                ap(
+                    Op::Divide,
+                    vec![
+                        ap(Op::Times, vec![c.clone(), x()]),
+                        ap(Op::Plus, vec![k.clone(), x()]),
+                    ],
+                ),
+            ],
+        ),
+        ap(
+            Op::Times,
+            vec![ap(Op::Sin, vec![ap(Op::Times, vec![k, y()])]), c],
+        ),
+    ];
+    let m = model(&["x", "y"], &["k", "c", "d"], vec![], rates.clone());
+
+    let jacobian = parameter_jacobian(&m).unwrap();
+
+    let state = [0.7, 1.3];
+    let p = [0.4, 1.1, 2.3];
+    for (column, parameter) in jacobian.columns.iter().enumerate() {
+        let mut derivatives: Vec<f64> = Vec::new();
+        for expr in &parameter.derivatives {
+            let value = eval(expr, &state, &p, &derivatives);
+            derivatives.push(value);
+        }
+        for (at, row) in jacobian.pattern.rows(column).iter().enumerate() {
+            let found = eval(&parameter.entries[at], &state, &p, &derivatives);
+            let step = 1e-6;
+            let (mut below, mut above) = (p, p);
+            below[column] -= step;
+            above[column] += step;
+            let rate = &rates[*row as usize];
+            let wanted =
+                (eval(rate, &state, &above, &[]) - eval(rate, &state, &below, &[])) / (2.0 * step);
+            assert!(
+                (found - wanted).abs() < 1e-6 * wanted.abs().max(1e-6),
+                "d rate {row} / d p{column} is {found} and not {wanted}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_rate_whose_parameter_has_no_derivative_has_no_parameter_jacobian() {
+    let rates = vec![ap(Op::Times, vec![ap(Op::Factorial, vec![param(0)]), x()])];
+    let m = model(&["x"], &["k"], vec![], rates);
+
+    let refusal = parameter_jacobian(&m).unwrap_err();
+
+    assert!(refusal.contains("factorial"), "{refusal}");
+    assert!(refusal.contains("the rate of x"), "{refusal}");
+}
+
+#[test]
+fn a_rule_chain_of_a_parameter_is_differentiated_rule_by_rule() {
+    // x' = -(a x) with the rules b = exp(k) + c and a = b * b: `d a/dk` reads `d b/dk`, which
+    // is a derivative of its own, and the entry of the column of `k` reads that one
+    let (k, c, b) = (param(0), param(1), param(3));
+    let rules = vec![
+        Assignment {
+            target: Symbol::Param(3),
+            expr: ap(Op::Plus, vec![ap(Op::Exp, vec![k]), c]),
+        },
+        Assignment {
+            target: Symbol::Param(2),
+            expr: ap(Op::Times, vec![b.clone(), b]),
+        },
+    ];
+    let rates = vec![ap(Op::Minus, vec![ap(Op::Times, vec![param(2), x()])])];
+    let m = model(&["x"], &["k", "c", "a", "b"], rules, rates.clone());
+
+    let jacobian = parameter_jacobian(&m).unwrap();
+
+    // the columns of `k` and of `c` hold the rate of `x`, the ones of the rule targets nothing
+    assert_eq!(jacobian.pattern.col_ptr, [0, 1, 2, 2, 2]);
+    assert!(!jacobian.columns[0].derivatives.is_empty());
+    // the value against a central difference of the rate, with the rules evaluated into `p`
+    let state = [0.7];
+    let values = |p: &[f64]| {
+        let mut p = p.to_vec();
+        p[3] = p[0].exp() + p[1];
+        p[2] = p[3] * p[3];
+        p
+    };
+    for column in [0usize, 1] {
+        let p = values(&[0.4, 1.1, 0.0, 0.0]);
+        let mut derivatives: Vec<f64> = Vec::new();
+        for expr in &jacobian.columns[column].derivatives {
+            let value = eval(expr, &state, &p, &derivatives);
+            derivatives.push(value);
+        }
+        let found = eval(
+            &jacobian.columns[column].entries[0],
+            &state,
+            &p,
+            &derivatives,
+        );
+        let step = 1e-6;
+        let (mut below, mut above) = ([0.4, 1.1, 0.0, 0.0], [0.4, 1.1, 0.0, 0.0]);
+        below[column] -= step;
+        above[column] += step;
+        let wanted = (eval(&rates[0], &state, &values(&above), &[])
+            - eval(&rates[0], &state, &values(&below), &[]))
+            / (2.0 * step);
+        assert!(
+            (found - wanted).abs() < 1e-6 * wanted.abs().max(1e-6),
+            "d x'/d p{column} is {found} and not {wanted}"
+        );
     }
 }

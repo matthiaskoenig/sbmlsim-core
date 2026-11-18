@@ -37,6 +37,23 @@ pub struct SimulationRequest {
     /// ([`DEFAULT_SEED`]).
     #[serde(default = "default_seed")]
     pub seed: u64,
+    /// The ids whose forward sensitivities the run computes, in the order of the parameters of
+    /// [`Sensitivities`]; none of them when it is empty, which is the default.
+    ///
+    /// An id is a target of a pre-initialization, without the concentration form: a parameter
+    /// of the model, the amount of a species, the size of a compartment. The sensitivity of a
+    /// state is the one of its initial value.
+    ///
+    /// The forward sensitivities of a run are the derivatives of its columns in those values,
+    /// which CVODES integrates along with the states: one run of `k` sensitivities answers
+    /// what `k + 1` runs of a finite difference answer, and to the tolerance of the
+    /// integration instead of the step of the difference.
+    ///
+    /// A run which cannot carry them is refused ([`crate::SimulationResult::sensitivities`]
+    /// says which): a model of events, of algebraic rules or of delays, and a request of
+    /// changes or of a steady state.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sensitivities: Vec<String>,
 }
 
 /// The seed of a request without one.
@@ -210,6 +227,31 @@ pub struct SimulationResult {
     pub n_rows: usize,
     /// `n_rows * columns.len()` values, row major.
     pub values: Vec<f64>,
+    /// The forward sensitivities of the columns, when the request asked for them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sensitivities: Option<Sensitivities>,
+}
+
+/// The forward sensitivities of the columns of a result.
+///
+/// The derivative of every column of every row in every parameter of the request, in the
+/// order of the columns of the result and of the parameters of the request: the sensitivity
+/// of the column `c` of the row `r` to the parameter `j` is
+/// `values[(r * columns.len() + c) * parameters.len() + j]`. The column `time` is no function
+/// of a parameter, so its sensitivities are 0.
+///
+/// The sensitivity of a column which is a state is the one CVODES integrated. The one of a
+/// column which is not (a concentration, an assignment rule, a constant of the model) is the
+/// derivative of its value along the sensitivity of the states and of the parameter, a
+/// difference of one evaluation of the selections of the model, which is exact where the
+/// column is a state and of the order of the square root of the rounding otherwise.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Sensitivities {
+    /// The ids of the parameters, the `sensitivities` of the request.
+    pub parameters: Vec<String>,
+    /// `n_rows * columns.len() * parameters.len()` values, row major.
+    pub values: Vec<f64>,
 }
 
 /// The counters of the last simulation of an engine: diagnostics of the work of the
@@ -269,11 +311,24 @@ pub struct SimulationStats {
     /// The applications of the GMRES preconditioner.
     #[serde(default)]
     pub preconditioner_solves: u64,
+    /// The calls of the right hand side of the forward sensitivities by CVODES, one per
+    /// nonlinear iteration of the sensitivities of a step.
+    #[serde(default)]
+    pub sensitivity_rhs_evals: u64,
+    /// The calls of the right hand side of the model by the difference quotient of `df/dp`,
+    /// one per parameter of the sensitivities and call of their right hand side.
+    #[serde(default)]
+    pub sensitivity_model_rhs_evals: u64,
+    /// The calls of `model_jac_p`, the analytic `df/dp` of a model which carries it: one per
+    /// column of the chain of a parameter of the sensitivities and call of their right hand
+    /// side, where the difference quotient of `df/dp` would take one right hand side.
+    #[serde(default)]
+    pub sensitivity_jac_p_evals: u64,
 }
 
 impl SimulationStats {
     /// The number of counters, the `u64` words of `engine_stats_ptr`.
-    pub const WORDS: usize = 18;
+    pub const WORDS: usize = 21;
 
     /// The names of the counters in the order of [`SimulationStats::words`] (the fields).
     pub const NAMES: [&'static str; Self::WORDS] = [
@@ -295,6 +350,9 @@ impl SimulationStats {
         "jacobian_vector_evals",
         "preconditioner_evals",
         "preconditioner_solves",
+        "sensitivity_rhs_evals",
+        "sensitivity_model_rhs_evals",
+        "sensitivity_jac_p_evals",
     ];
 
     /// The counters in the order of the fields.
@@ -318,6 +376,9 @@ impl SimulationStats {
             self.jacobian_vector_evals,
             self.preconditioner_evals,
             self.preconditioner_solves,
+            self.sensitivity_rhs_evals,
+            self.sensitivity_model_rhs_evals,
+            self.sensitivity_jac_p_evals,
         ]
     }
 
@@ -342,6 +403,9 @@ impl SimulationStats {
             jacobian_vector_evals: w[15],
             preconditioner_evals: w[16],
             preconditioner_solves: w[17],
+            sensitivity_rhs_evals: w[18],
+            sensitivity_model_rhs_evals: w[19],
+            sensitivity_jac_p_evals: w[20],
         }
     }
 

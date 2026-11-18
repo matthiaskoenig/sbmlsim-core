@@ -23,6 +23,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 mod compile;
 mod errors;
+mod fit;
 mod runtime;
 mod simulate;
 
@@ -47,6 +48,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     drop(numpy::PyArray1::<f64>::zeros(m.py(), 0, false));
     m.add("MODEL_CONTRACT", MODEL_CONTRACT)?;
     m.add("SIMULATION_CONTRACT", SIMULATION_CONTRACT)?;
+    m.add("FIT_CONTRACT", sbmlsim_fit::FIT_CONTRACT)?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add("THIRD_PARTY", sbmlsim_host::THIRD_PARTY_NOTICES)?;
     m.add("SbmlsimCoreError", m.py().get_type::<SbmlsimCoreError>())?;
@@ -60,6 +62,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<CompiledModel>()?;
     m.add_class::<Runtime>()?;
     m.add_class::<LoadedModel>()?;
+    m.add_class::<fit::FitProblem>()?;
     m.add_class::<simulate::BatchExecutor>()?;
     m.add_class::<simulate::PreparedSimulation>()?;
     m.add_class::<Instance>()?;

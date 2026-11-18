@@ -52,16 +52,24 @@ const SUNDIALS_SOURCES: &[&str] = &[
     "sundials/sundials_stepper.c",
     "sundials/sundials_profiler.c",
     "sundials/sundials_version.c",
-    // CVODE, `cvode_SOURCES` without the band preconditioners `cvode_bandpre.c` and
-    // `cvode_bbdpre.c`, which need the band matrix and are for the iterative linear solvers
-    "cvode/cvode.c",
-    "cvode/cvode_cli.c",
-    "cvode/cvode_diag.c",
-    "cvode/cvode_io.c",
-    "cvode/cvode_ls.c",
-    "cvode/cvode_nls.c",
-    "cvode/cvode_proj.c",
-    "cvode/cvode_resize.c",
+    // CVODES, `cvodes_SOURCES` without the band preconditioners `cvodes_bandpre.c` and
+    // `cvodes_bbdpre.c`, which need the band matrix and are for the iterative linear
+    // solvers. CVODES is CVODE of the same release
+    // with the forward sensitivities added, and it carries the same public symbols
+    // (`CVodeCreate`, `CVode`), so the two cannot be linked together and this is the one
+    // which is linked: a run which asks for no sensitivity is the run of CVODE.
+    "cvodes/cvodes.c",
+    "cvodes/cvodea.c",
+    "cvodes/cvodea_io.c",
+    "cvodes/cvodes_cli.c",
+    "cvodes/cvodes_diag.c",
+    "cvodes/cvodes_io.c",
+    "cvodes/cvodes_ls.c",
+    "cvodes/cvodes_nls.c",
+    "cvodes/cvodes_nls_sim.c",
+    "cvodes/cvodes_nls_stg.c",
+    "cvodes/cvodes_nls_stg1.c",
+    "cvodes/cvodes_proj.c",
     // IDA with serial direct linear solvers (no band-block preconditioner).
     "ida/ida.c",
     "ida/ida_cli.c",

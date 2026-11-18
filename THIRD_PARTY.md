@@ -4,7 +4,7 @@ The code of sbmlsim-core is MIT licensed (`LICENSE`). `engine.wasm`, which `sbml
 
 | Library | Version | Submodule and commit | License |
 |---|---|---|---|
-| SUNDIALS (CVODE, IDA and their vectors, matrices and linear solvers) | 7.9.0 | `third_party/sundials`, tag v7.9.0, commit 312fc0f3684f27209ca9dc9249d194436eb41a7a | BSD-3-Clause |
+| SUNDIALS (CVODES, IDA and their vectors, matrices and linear solvers) | 7.9.0 | `third_party/sundials`, tag v7.9.0, commit 312fc0f3684f27209ca9dc9249d194436eb41a7a | BSD-3-Clause |
 | KLU (SuiteSparse) | 2.3.6 | `third_party/SuiteSparse`, tag v7.14.1, commit e202a5bcef55f5a780c26830ebd6ff13af193baf | LGPL-2.1-or-later |
 | BTF (SuiteSparse) | 2.3.3 | the same | LGPL-2.1-or-later |
 | AMD (SuiteSparse) | 3.3.4 | the same | BSD-3-Clause |

@@ -8,6 +8,7 @@ from typing import Any
 import numpy
 import numpy.typing
 
+FIT_CONTRACT: str
 MODEL_CONTRACT: str
 SIMULATION_CONTRACT: str
 THIRD_PARTY: str
@@ -120,6 +121,22 @@ class LoadedModel:
     ) -> PreparedSimulation:
         """Validates the request and ordered varying input IDs once."""
 
+    def fit(
+        self,
+        request: dict[str, Any],
+        *,
+        threads: int | None = None,
+    ) -> dict[str, Any]:
+        """Fits the parameters of the model to data with a request of the contract `fit/1`."""
+
+    def fit_problem(
+        self,
+        request: dict[str, Any],
+        *,
+        threads: int | None = None,
+    ) -> FitProblem:
+        """The problem of a fit of `fit/1`, for an optimizer which stays in python."""
+
     def batch_executor(self, *, threads: int | None = None) -> BatchExecutor:
         """Creates a reusable pool with lazy workers and retained instances."""
 
@@ -130,6 +147,52 @@ class LoadedModel:
         threads: int | None = None,
     ) -> list[SimulationOutput | PointError]:
         """Simulates every request on `threads` threads, in the order of the requests."""
+
+class FitProblem:
+    """The objective of a fit of the engine: the residuals and the jacobian of a point."""
+
+    @property
+    def parameters(self) -> list[str]:
+        """The ids of the parameters an optimizer searches, in the order of the point."""
+
+    @property
+    def n_residuals(self) -> int:
+        """The number of residuals of one evaluation."""
+
+    @property
+    def threads(self) -> int:
+        """The threads of the batch of an evaluation."""
+
+    @property
+    def start(self) -> list[float]:
+        """The start of the fit, in the space an optimizer searches."""
+
+    @property
+    def bounds(self) -> tuple[list[float], list[float]]:
+        """The bounds of the parameters in that space."""
+
+    @property
+    def jacobian_of(self) -> str:
+        """Where the jacobian comes from: `sensitivities` or `difference_quotient`."""
+
+    @property
+    def simulations(self) -> int:
+        """The simulations the problem has run since it was built."""
+
+    def values(self, x: Sequence[float]) -> list[float]:
+        """The values of the parameters at a point, on the linear scale."""
+
+    def step(self, at: int, x: Sequence[float]) -> float:
+        """The relative step the jacobian of that parameter takes at a point."""
+
+    def residuals(self, x: Sequence[float]) -> numpy.typing.NDArray[numpy.float64]:
+        """The residuals at a point, one batch of the engine."""
+
+    def cost(self, x: Sequence[float]) -> float:
+        """Half the sum of the squares of those residuals."""
+
+    def jacobian(self, x: Sequence[float]) -> numpy.typing.NDArray[numpy.float64]:
+        """The jacobian at a point, `(n_residuals, parameters)`, one batch of the engine."""
 
 class BatchExecutor:
     """A reusable batch pool. Concurrent calls raise RuntimeError."""

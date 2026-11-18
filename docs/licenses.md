@@ -6,7 +6,7 @@ The code of sbmlsim-core is MIT licensed (`LICENSE`, Copyright (c) 2026 Matthias
 
 | library | version | license |
 |---|---|---|
-| SUNDIALS (CVODE and its vectors, matrices and linear solvers) | 7.9.0 | BSD-3-Clause |
+| SUNDIALS (CVODES and its vectors, matrices and linear solvers) | 7.9.0 | BSD-3-Clause |
 | KLU (SuiteSparse 7.14.1) | 2.3.6 | LGPL-2.1-or-later |
 | BTF (SuiteSparse 7.14.1) | 2.3.3 | LGPL-2.1-or-later |
 | AMD (SuiteSparse 7.14.1) | 3.3.4 | BSD-3-Clause |

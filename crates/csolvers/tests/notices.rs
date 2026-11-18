@@ -74,7 +74,7 @@ fn the_versions_are_the_ones_of_the_submodules() {
         );
     };
     row(
-        "SUNDIALS (CVODE, IDA and their vectors, matrices and linear solvers)",
+        "SUNDIALS (CVODES, IDA and their vectors, matrices and linear solvers)",
         &sundials,
     );
     let ss = "third_party/SuiteSparse";

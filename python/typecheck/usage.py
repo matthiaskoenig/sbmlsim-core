@@ -18,6 +18,7 @@ import sbmlsim_core
 from sbmlsim_core import (
     CompiledModel,
     CompileError,
+    FitProblem,
     Instance,
     IntegrationError,
     InternalError,
@@ -34,11 +35,12 @@ from sbmlsim_core import (
 )
 
 
-def use(sbml: str, request: dict[str, Any]) -> None:
+def use(sbml: str, request: dict[str, Any], fit: dict[str, Any]) -> None:
     """Calls every function and member of the package."""
     contract: str = sbmlsim_core.MODEL_CONTRACT
     version: str = sbmlsim_core.__version__
     simulation: str = sbmlsim_core.SIMULATION_CONTRACT
+    fitting: str = sbmlsim_core.FIT_CONTRACT
 
     compiled: CompiledModel = sbmlsim_core.compile_sbml(sbml)
     sbmlsim_core.compile_sbml(sbml, optimize=False, jacobian="difference_quotient")
@@ -65,6 +67,24 @@ def use(sbml: str, request: dict[str, Any]) -> None:
     n_values: int = prepared.n_values
     instance.simulate_prepared(prepared, [0.5])
     instance.simulate_prepared(model.prepare(request))
+
+    answer: dict[str, Any] = model.fit(fit)
+    model.fit(fit, threads=2)
+    model.fit(fit, threads=None)
+
+    objective: FitProblem = model.fit_problem(fit, threads=2)
+    searched: list[str] = objective.parameters
+    residuals_of: int = objective.n_residuals
+    on: int = objective.threads
+    from_point: list[float] = objective.start
+    bounds: tuple[list[float], list[float]] = objective.bounds
+    at_point: list[float] = objective.values(from_point)
+    relative: float = objective.step(0, from_point)
+    r: numpy.typing.NDArray[numpy.float64] = objective.residuals(from_point)
+    c: float = objective.cost(from_point)
+    j: numpy.typing.NDArray[numpy.float64] = objective.jacobian(from_point)
+    of: str = objective.jacobian_of
+    ran: int = objective.simulations
 
     results: list[SimulationOutput | PointError] = model.simulate_many([request])
     model.simulate_many([request], threads=4)
