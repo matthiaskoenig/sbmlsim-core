@@ -130,3 +130,23 @@ pub fn one_point(scale: Scale) -> Definition {
     definition.curves[0].noise = Some(vec![NOISE]);
     definition
 }
+
+/// Asserts that a run of the chains of a piece of work took less than the chains themselves,
+/// which is what it takes when they run one after the other.
+///
+/// A chain is work whose steps wait for each other, a side of a profile or a run of a start,
+/// and the seconds of the chains are the ones their own steps report. A run of them next to
+/// each other takes the longest chain of them and a run of them one after the other all of
+/// them, so the assertion is that at least half of what the shorter ones add is gone. That
+/// holds whatever the machine of the test is: a pool of fewer threads than chains stretches
+/// the seconds of every chain which shares a thread as much as it stretches the whole run.
+pub fn next_to_each_other(took: f64, chains: &[f64], what: &str) {
+    let all: f64 = chains.iter().sum();
+    let longest = chains.iter().copied().fold(0.0, f64::max);
+    assert!(
+        took < all - 0.5 * (all - longest),
+        "{what} took {took:.4} s, its {} chains {all:.4} s of the threads \
+         and the longest of them {longest:.4} s",
+        chains.len()
+    );
+}

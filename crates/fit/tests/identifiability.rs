@@ -11,7 +11,7 @@ use sbmlsim_fit::{
 #[path = "support/fixture.rs"]
 mod fixture;
 
-use fixture::{K, model, one_point, pair};
+use fixture::{K, model, next_to_each_other, one_point, pair};
 
 /// The problem of the fit of `k` and `y` and the optimum of that fit.
 fn fitted(scale: Scale) -> (Problem, Vec<f64>) {
@@ -256,8 +256,8 @@ fn the_fisher_information_of_a_parameter_the_data_does_not_determine_is_singular
 #[test]
 fn the_profiles_of_the_parameters_of_a_fit_run_on_the_threads_of_its_batch() {
     // the profiles of both parameters of the fit, every point of them a fit of the other one:
-    // the two profiles run next to each other and the two sides of a profile as well, so the
-    // seconds of the points are more than the ones of the whole walk
+    // the chains of the walk are the two sides of each of the two profiles, four of them, and
+    // they run next to each other
     let (problem, at) = fitted(Scale::Log10);
 
     let began = std::time::Instant::now();
@@ -273,21 +273,24 @@ fn the_profiles_of_the_parameters_of_a_fit_run_on_the_threads_of_its_batch() {
     let took = began.elapsed().as_secs_f64();
 
     assert_eq!(walked.len(), 2);
-    let points: f64 = walked
-        .iter()
-        .flat_map(|profile| profile.points.iter().map(|point| point.seconds))
-        .sum();
-    assert!(
-        points > 2.0 * took,
-        "the points of the profiles took {points:.4} s of the threads in {took:.4} s"
-    );
-    // the sides of one profile run next to each other as well
+    let chains: Vec<f64> = walked.iter().flat_map(sides).collect();
+    assert_eq!(chains.len(), 4);
+    next_to_each_other(took, &chains, "the walk of the two profiles");
+    // the two sides of one profile run next to each other as well
     let one = &walked[0];
-    let sides: f64 = one.points.iter().map(|point| point.seconds).sum();
-    assert!(
-        sides > 1.5 * one.seconds,
-        "the points of the profile of {} took {sides:.4} s of the threads in {:.4} s",
-        one.id,
-        one.seconds
+    next_to_each_other(
+        one.seconds,
+        &sides(one),
+        &format!("the profile of {}", one.id),
     );
+}
+
+/// The seconds of the points below the optimum and the ones above it, the two chains of a
+/// profile: the fit of a point starts at the optimum of the point before it on its own side.
+fn sides(profile: &Profile) -> [f64; 2] {
+    let mut sides = [0.0; 2];
+    for point in &profile.points {
+        sides[usize::from(point.value > profile.at)] += point.seconds;
+    }
+    sides
 }
