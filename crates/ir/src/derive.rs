@@ -73,7 +73,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use sbmlsim_abi::SparsityPattern;
+use sbmlsim_abi::{ParameterPattern, SparsityPattern};
 
 use crate::{Expr, Model, Op, Symbol, index};
 
@@ -147,12 +147,158 @@ pub fn pattern(model: &Model) -> SparsityPattern {
     pattern_of(model, &Rules::of(model))
 }
 
-/// The assignment rules by target, with the states each depends on.
+/// The Jacobian of the right hand side of a model in its parameters, `d rate_i / d p_j`.
+///
+/// `model_jac_p` of the contract evaluates one column of it, the derivatives of the rates in
+/// one parameter, which the forward sensitivities of the engine need as `df/dp`. A model whose
+/// rate depends on a parameter through an operator without a derivative has none at all (the
+/// engine falls back to a difference quotient of the right hand side), so this is a `Result`
+/// of the whole matrix and not a fallback per column.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParameterJacobianIr {
+    /// The pattern of the matrix: one column per parameter of the model.
+    pub pattern: ParameterPattern,
+    /// One entry per column of the pattern, in its order.
+    pub columns: Vec<ParameterColumn>,
+}
+
+/// The column of one parameter of a [`ParameterJacobianIr`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParameterColumn {
+    /// The derivatives of the assignment rules the entries of this column read, in this order,
+    /// the derivative of index `k` as [`Symbol::Derivative`]`(k)`; one may read those before
+    /// it. The indices are the ones of this column alone, which is a function of its own.
+    pub derivatives: Vec<Expr>,
+    /// The entries of the column, in the order of the rows of the pattern.
+    pub entries: Vec<Expr>,
+}
+
+/// The Jacobian of the right hand side of a model in its parameters, or why it has none.
+pub fn parameter_jacobian(model: &Model) -> Result<ParameterJacobianIr, String> {
+    let rules = Rules::of(model);
+    let n_params = model.parameters.len();
+    // the pattern: the rows of the column of a parameter are the rates which depend on it
+    let mut columns: Vec<Vec<u32>> = vec![Vec::new(); n_params];
+    for (i, rate) in model.rates.iter().enumerate() {
+        for j in params_read(rate, &rules.position, &rules.param_deps) {
+            columns[j as usize].push(index(i));
+        }
+    }
+    let mut col_ptr = Vec::with_capacity(n_params + 1);
+    col_ptr.push(0u32);
+    let mut row_idx = Vec::new();
+    for rows in &columns {
+        row_idx.extend(rows.iter().copied());
+        col_ptr.push(index(row_idx.len()));
+    }
+    let pattern = ParameterPattern {
+        rows: index(model.states.len()),
+        col_ptr,
+        row_idx,
+    };
+
+    // the rules a rate reads, directly or through other rules, which are the ones to
+    // differentiate (the same closure as the Jacobian of the states)
+    let mut needed = vec![false; model.assignment_rules.len()];
+    let mark = |e: &Expr, needed: &mut Vec<bool>| {
+        e.visit_symbols(&mut |s| {
+            if let Some(&r) = rules.position.get(&s) {
+                needed[r] = true;
+            }
+        })
+    };
+    for rate in &model.rates {
+        mark(rate, &mut needed);
+    }
+    for r in (0..model.assignment_rules.len()).rev() {
+        if needed[r] {
+            mark(&model.assignment_rules[r].expr, &mut needed);
+        }
+    }
+
+    let budget = DerivativeBudget {
+        remaining: std::cell::Cell::new(MAX_DERIVATIVE_NODES),
+        entry: std::cell::Cell::new(MAX_DERIVATIVE_ENTRY_NODES),
+    };
+    let mut out = Vec::with_capacity(n_params);
+    for (j, rows) in columns.iter().enumerate() {
+        let parameter = index(j);
+        // the derivative of the target of every rule the rates read, in the order of the
+        // rules, which is their order of dependency
+        let mut known: HashMap<usize, Expr> = HashMap::new();
+        let mut derivatives: Vec<Expr> = Vec::new();
+        if !rows.is_empty() {
+            for (r, a) in model.assignment_rules.iter().enumerate() {
+                if !needed[r] || !rules.param_deps[r].contains(&parameter) {
+                    continue;
+                }
+                let wrt = |s: Symbol| param_derivative(s, parameter, &rules, &known);
+                budget.entry.set(MAX_DERIVATIVE_ENTRY_NODES);
+                let d = derivative_bounded(&a.expr, &wrt, Some(&budget)).map_err(|error| {
+                    error.reason(&format!(
+                        "the assignment rule of {}",
+                        model.entity(a.target).id
+                    ))
+                })?;
+                let Some(d) = d else { continue };
+                let d = match d {
+                    Expr::Number(_) | Expr::Symbol(_) => d,
+                    _ => {
+                        derivatives.push(d);
+                        Expr::Symbol(Symbol::Derivative(index(derivatives.len() - 1)))
+                    }
+                };
+                known.insert(r, d);
+            }
+        }
+        let mut entries = Vec::with_capacity(rows.len());
+        for &i in rows {
+            let wrt = |s: Symbol| param_derivative(s, parameter, &rules, &known);
+            budget.entry.set(MAX_DERIVATIVE_ENTRY_NODES);
+            let d = derivative_bounded(&model.rates[i as usize], &wrt, Some(&budget)).map_err(
+                |error| error.reason(&format!("the rate of {}", model.states[i as usize].id)),
+            )?;
+            entries.push(d.unwrap_or(Expr::Number(0.0)));
+        }
+        out.push(ParameterColumn {
+            derivatives,
+            entries,
+        });
+    }
+    Ok(ParameterJacobianIr {
+        pattern,
+        columns: out,
+    })
+}
+
+/// The derivative of a symbol in the parameter `j`: the parameter itself, the chain of an
+/// assignment rule, and nothing for a state (`df/dp` is the derivative at a fixed state, the
+/// sensitivity vector carries `dy/dp`) or for the time.
+fn param_derivative(
+    s: Symbol,
+    j: u32,
+    rules: &Rules,
+    known: &HashMap<usize, Expr>,
+) -> Option<Expr> {
+    match s {
+        Symbol::Param(k) => match rules.position.get(&s) {
+            Some(&r) => known.get(&r).cloned(),
+            None if k == j => Some(Expr::Number(1.0)),
+            None => None,
+        },
+        _ => None,
+    }
+}
+
+/// The assignment rules by target, with the states and the parameters each depends on.
 struct Rules {
     /// The position of the rule of a target.
     position: HashMap<Symbol, usize>,
     /// The states every rule depends on, ascending.
     deps: Vec<Vec<u32>>,
+    /// The parameters every rule depends on, ascending, the targets of the rules excluded
+    /// (what their own rules read stands for them).
+    param_deps: Vec<Vec<u32>>,
 }
 
 impl Rules {
@@ -164,12 +310,17 @@ impl Rules {
             .map(|(r, a)| (a.target, r))
             .collect();
         let mut deps: Vec<Vec<u32>> = Vec::with_capacity(model.assignment_rules.len());
+        let mut param_deps: Vec<Vec<u32>> = Vec::with_capacity(model.assignment_rules.len());
         for a in &model.assignment_rules {
             // the rules come in their order of dependency: a rule reads only those before it
-            let d = states_read(&a.expr, &position, &deps);
-            deps.push(d);
+            deps.push(states_read(&a.expr, &position, &deps));
+            param_deps.push(params_read(&a.expr, &position, &param_deps));
         }
-        Rules { position, deps }
+        Rules {
+            position,
+            deps,
+            param_deps,
+        }
     }
 }
 
@@ -186,6 +337,31 @@ fn states_read(e: &Expr, position: &HashMap<Symbol, usize>, deps: &[Vec<u32>]) -
             }
         }
         Symbol::Time | Symbol::Derivative(_) => {}
+        Symbol::Common(_) | Symbol::Constant(_) => {
+            unreachable!("the symbols of the optimizer are only in its programs")
+        }
+    });
+    out.into_iter().collect()
+}
+
+/// The parameters an expression depends on, directly or through the rules before, ascending.
+///
+/// The target of an assignment rule is no parameter of the Jacobian: its value is recomputed at
+/// every step, so what its rule reads is what the expression depends on.
+fn params_read(e: &Expr, position: &HashMap<Symbol, usize>, deps: &[Vec<u32>]) -> Vec<u32> {
+    let mut out = BTreeSet::new();
+    e.visit_symbols(&mut |s| match s {
+        Symbol::Param(j) => match position.get(&s) {
+            Some(&r) => {
+                if let Some(d) = deps.get(r) {
+                    out.extend(d.iter().copied());
+                }
+            }
+            None => {
+                out.insert(j);
+            }
+        },
+        Symbol::State(_) | Symbol::Time | Symbol::Derivative(_) => {}
         Symbol::Common(_) | Symbol::Constant(_) => {
             unreachable!("the symbols of the optimizer are only in its programs")
         }

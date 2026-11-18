@@ -425,6 +425,59 @@ pub struct SparsityPattern {
     pub row_idx: Vec<u32>,
 }
 
+/// The sparsity pattern of the Jacobian of the right hand side in the parameters of a model
+/// (`model_jac_p`), in compressed sparse column form: one column per parameter of the model,
+/// the rows of a column the rates which depend on it.
+///
+/// The matrix is `states x parameters` and not square, so it is no [`SparsityPattern`]. A
+/// parameter which is the target of an assignment rule has no column of its own (the rule is
+/// evaluated at every step, and what it reads carries its chain), and neither has one no rate
+/// depends on: both are empty columns.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ParameterPattern {
+    /// The rows of the matrix, the states of the model.
+    pub rows: u32,
+    /// The start of every column in `row_idx`, one per parameter and one more.
+    pub col_ptr: Vec<u32>,
+    /// The row of every entry.
+    pub row_idx: Vec<u32>,
+}
+
+impl ParameterPattern {
+    /// The number of entries.
+    pub fn nnz(&self) -> usize {
+        self.row_idx.len()
+    }
+
+    /// The number of columns, the parameters of the model.
+    pub fn columns(&self) -> usize {
+        self.col_ptr.len().saturating_sub(1)
+    }
+
+    /// The rows of the entries of the column `j`.
+    ///
+    /// # Panics
+    ///
+    /// For a column out of range or a pattern which is not a CSC pattern.
+    pub fn rows(&self, j: usize) -> &[u32] {
+        &self.row_idx[self.col_ptr[j] as usize..self.col_ptr[j + 1] as usize]
+    }
+
+    /// Whether the pattern is a CSC pattern of `rows` states and `columns` parameters: the
+    /// column pointers from 0, not decreasing, to the number of entries, and every row below
+    /// `rows`.
+    pub fn is_csc_of(&self, rows: usize, columns: usize) -> bool {
+        self.rows as usize == rows
+            && self.col_ptr.len() == columns + 1
+            && self.col_ptr[0] == 0
+            && self.col_ptr.windows(2).all(|w| w[0] <= w[1])
+            && self.col_ptr[columns] as usize == self.row_idx.len()
+            && self.row_idx.iter().all(|&row| (row as usize) < rows)
+            && (0..columns).all(|j| self.rows(j).windows(2).all(|w| w[0] < w[1]))
+    }
+}
+
 impl SparsityPattern {
     /// The number of entries.
     pub fn nnz(&self) -> usize {
