@@ -7,7 +7,7 @@ use sbmlsim_fit::{FIT_CONTRACT, FitAnswer, FitRequest, fit};
 #[path = "support/fixture.rs"]
 mod fixture;
 
-use fixture::{K, data, model, request};
+use fixture::{K, data, model, next_to_each_other, request};
 
 /// The request of the fit of `k` of the decay model, as a host writes it.
 fn json(start: f64) -> Value {
@@ -169,12 +169,8 @@ fn the_starts_of_a_fit_run_on_the_threads_of_its_batch() {
     let answer = run(request).unwrap();
 
     assert_eq!(answer.runs.len(), 4);
-    let sum: f64 = answer.runs.iter().map(|run| run.seconds).sum();
-    assert!(
-        sum > 2.0 * answer.seconds,
-        "the four runs took {sum:.4} s of the threads in {:.4} s of the fit",
-        answer.seconds
-    );
+    let chains: Vec<f64> = answer.runs.iter().map(|run| run.seconds).collect();
+    next_to_each_other(answer.seconds, &chains, "the fit of the four starts");
     // and every one of them is the same fit, which no thread of the others disturbed
     let costs: Vec<f64> = answer.runs.iter().map(|run| run.cost).collect();
     assert!(
