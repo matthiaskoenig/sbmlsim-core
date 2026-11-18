@@ -329,7 +329,7 @@ threads, and the answer is the same one on one thread and on twenty.
 
 One Jacobian of a fit of hydrochlorothiazide (28 states, 20 conditions, 10 parameters, 220
 simulations) is 7.7 ms on 20 threads, a fit of ten iterations of that model 0.26 s, and a
-profile of one of its parameters, 8 points of a fit of the other nine, 1.52 s. The same
+profile of one of its parameters, 8 points of a fit of the other nine, 0.91 s. The same
 Jacobian out of the forward sensitivities is 20 simulations and 9.7 ms, and the same fit of
 them 0.28 s and 800 simulations against 2960. A fit of few conditions does not fill a pool of
 20 threads by itself (two conditions keep about five of them busy), which is why the starts and
