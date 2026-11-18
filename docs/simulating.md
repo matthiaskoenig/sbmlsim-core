@@ -172,10 +172,20 @@ A step of a target moves everything the initialization of the model derives from
 target alone: `Vli = BW * f_li` of a PBPK model is an initial assignment, so the right hand
 side reads `Vli` and never `BW`. The engine therefore takes the difference of two
 initializations once per target at the start of a run, which gives both the initial values of
-the sensitivities (`dy0/dp`) and the direction `dp/dp_j` the difference quotients of `df/dp`
-and of the columns move the parameters along. A target whose initialization derives nothing,
-and which the right hand side does not read either, has no `df/dp` at all and costs nothing
-per step.
+the sensitivities (`dy0/dp`) and the direction `dp/dp_j` the `df/dp` of a step moves the
+parameters along. A target whose initialization derives nothing, and which the right hand side
+does not read either, has no `df/dp` at all and costs nothing per step.
+
+`df/dp` itself is `model_jac_p` where the model carries it: the compiler differentiates the
+rates of the model in its parameters, column by column, and `jacobian_p` of the description
+holds the pattern of those columns. The `df/dp` of a target is then the sum of the columns of
+its direction, `d f/dp_c * dp_c/dp_j`, which is one call of `model_jac_p` per column the
+direction touches and no call of the right hand side at all. A model whose math has an
+operator without a derivative, which reads its history, or whose column of a parameter is
+above the limits of a WebAssembly function carries no `model_jac_p`; the engine then takes the
+forward difference of the right hand side along the direction, one call per target and step.
+`sensitivity_jac_p_evals` and `sensitivity_model_rhs_evals` of the counters say which of the
+two a run took.
 
 What a run of sensitivities does not carry is refused and not answered wrongly: the events of
 a model, a discontinuity of its math, an algebraic rule, a delay, the `changes` of a request,
@@ -190,7 +200,7 @@ call as a library.
 
 An error of the engine has a kind: `load` (the description is refused), `request` (the request is invalid, e.g. a tolerance which is not positive or an output beyond the limit of the values of a result), `unsupported`, `integration` (CVODE or IDA failed, with its `flag` and the `time`), or, in the hosts, `internal` (a trap of the engine or the model). The command line prints it, e.g. `integration failed at t = 0 (flag -4): ...`; the JavaScript loader throws an `EngineError`.
 
-The counters of the integrator of the last simulation (steps, calls of the right hand side and of the Jacobian, setups of the linear solver, error test and convergence failures, calls of the root functions, (re)initializations of the integrator, the calls of the probes of the triggers and of the criterion of a steady state, the calls of the right hand side of the forward sensitivities and of the difference quotient of `df/dp` inside it) are `Instance::stats` in wasmtime and `instance.stats()` in JavaScript; they are diagnostics, no part of a result.
+The counters of the integrator of the last simulation (steps, calls of the right hand side and of the Jacobian, setups of the linear solver, error test and convergence failures, calls of the root functions, (re)initializations of the integrator, the calls of the probes of the triggers and of the criterion of a steady state, the calls of the right hand side of the forward sensitivities and, inside it, of the analytic `df/dp` of the model or of the difference quotient which stands in for it) are `Instance::stats` in wasmtime and `instance.stats()` in JavaScript; they are diagnostics, no part of a result.
 
 The engine bounds delayed-event storage independently of the numerical settings:
 65,536 pending executions and 1,048,576 retained assignment values (8 MiB) by default.
@@ -213,6 +223,7 @@ cached per engine and reused across compatible simulations.
 | `parameters` | the parameters (with the compartments, the species which are not states and the species references), in the order of the parameter vector |
 | `selections` | the ids a request can select, `{"id", "index"}`; `[S]` is the concentration of a species |
 | `jacobian` | `{"analytic": pattern}` or `{"colored_difference": {"pattern", "colors", "reason"}}`; a pattern is compressed sparse column (`n`, `col_ptr`, `row_idx`) |
+| `jacobian_p` | the pattern of the Jacobian of the right hand side in the parameters (`rows`, `col_ptr`, `row_idx`: a column per parameter, a row per state), omitted by a model without `model_jac_p` |
 | `events` | per event `id` (empty for an event without one), `has_delay`, `has_priority`, `persistent`, `initial_value`, `use_values_from_trigger_time`, `n_assignments` |
 | `n_roots` | the number of root functions of the model, those of the triggers first |
 | `n_discontinuity_roots` | the number of root functions of math discontinuities and delayed history crossings, the last of the `n_roots` |
@@ -247,7 +258,7 @@ algebraic unknowns contribute to per-state tolerance vectors and to the Jacobian
 An ODE description omits this optional field. Older ODE models continue to load;
 a runtime predating DAE support refuses descriptions containing `n_algebraic`.
 
-The exports of `model.wasm` (`model_defaults`, `model_init`, `model_rhs`, `model_jac`, `model_roots`, `model_trigger`, `model_priority`, `model_delay`, `model_event_values`, `model_event_apply`, `model_selections`, `model_assign`, `model_sizes`, `model_event_sizes`) and their arguments are documented in `crates/abi/src/lib.rs`; the exports of `engine.wasm` and the layout of its output in `crates/engine/src/exports.rs`.
+The exports of `model.wasm` (`model_defaults`, `model_init`, `model_rhs`, `model_jac`, `model_jac_p` (only with `jacobian_p` in the description), `model_roots`, `model_trigger`, `model_priority`, `model_delay`, `model_event_values`, `model_event_apply`, `model_selections`, `model_assign`, `model_sizes`, `model_event_sizes`) and their arguments are documented in `crates/abi/src/lib.rs`; the exports of `engine.wasm` and the layout of its output in `crates/engine/src/exports.rs`.
 
 ## Reusing Python batch workers
 

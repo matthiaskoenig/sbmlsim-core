@@ -605,6 +605,16 @@ fn check_description(desc: &ModelDescription) -> Result<(), EngineError> {
             desc.id
         )));
     }
+    if let Some(parameters) = &desc.jacobian_p
+        && !parameters.is_csc_of(n, desc.parameters.len())
+    {
+        return Err(request(format!(
+            "the pattern of the Jacobian of model {} in its parameters is not a CSC pattern \
+             of {n} states and {} parameters",
+            desc.id,
+            desc.parameters.len()
+        )));
+    }
     if let JacobianKind::ColoredDifference { colors, .. } = &desc.jacobian {
         pattern.check_colors(colors).map_err(|e| {
             request(format!(
@@ -1243,7 +1253,10 @@ fn initial_sensitivities(
         n_p,
         n_selections,
     );
-    Ok((rows, solver::Sensitivity::new(deltas, steps, n)))
+    Ok((
+        rows,
+        solver::Sensitivity::new(deltas, steps, desc.jacobian_p.as_ref(), n),
+    ))
 }
 
 /// A loaded model keeps its solver family across requests. Matching the cache once
@@ -1507,6 +1520,7 @@ fn run_model<const DAE: bool, H: delay::Mode>(
         p: std::mem::take(&mut scratch.p),
         pattern,
         jac_values: std::mem::take(&mut scratch.jac_values),
+        jacobian_p: desc.jacobian_p.as_ref(),
         analytic,
         difference,
         mem: std::ptr::null_mut(),

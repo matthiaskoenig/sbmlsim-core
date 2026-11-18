@@ -154,6 +154,7 @@ pub(crate) fn consistent(
         row_idx,
     };
     let description = ModelDescription {
+        jacobian_p: None,
         states: desc.states[differential..].to_vec(),
         parameters: Vec::new(),
         selections: Vec::new(),

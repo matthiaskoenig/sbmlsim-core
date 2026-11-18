@@ -25,6 +25,14 @@ pub trait ModelFns {
     fn rhs(&self, t: f64, y: &[f64], p: &[f64], ydot: &mut [f64]);
     /// The values of the Jacobian, in the CSC order of the pattern of the description.
     fn jac(&self, t: f64, y: &[f64], p: &[f64], values: &mut [f64]);
+    /// The values of the column of the parameter `at` of the Jacobian of the right hand side
+    /// in the parameters, in the order of the rows of that column of
+    /// [`ModelDescription::jacobian_p`](sbmlsim_abi::ModelDescription::jacobian_p); `false`
+    /// for a model without `model_jac_p`, whose `df/dp` is a difference quotient of the right
+    /// hand side instead.
+    fn jac_p(&self, _at: usize, _t: f64, _y: &[f64], _p: &[f64], _values: &mut [f64]) -> bool {
+        false
+    }
     /// The root functions of the triggers of the events, then those of the discontinuities of
     /// the math.
     fn roots(&self, t: f64, y: &[f64], p: &[f64], g: &mut [f64]);
@@ -124,6 +132,7 @@ mod test_models {
         pattern: SparsityPattern,
     ) -> ModelDescription {
         ModelDescription {
+            jacobian_p: None,
             contract: MODEL_CONTRACT.to_string(),
             compiler: "native test model".to_string(),
             id: id.to_string(),
@@ -630,6 +639,7 @@ mod test_models {
                 .map(|(id, _)| *id)
                 .collect();
             ModelDescription {
+                jacobian_p: None,
                 contract: MODEL_CONTRACT.to_string(),
                 compiler: "native test model".to_string(),
                 id: "events".to_string(),

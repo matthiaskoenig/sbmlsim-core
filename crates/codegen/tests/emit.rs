@@ -237,9 +237,10 @@ fn imports_only_memory_and_math() {
         assert_eq!(t.results(), [ValType::F64], "{name}");
         names.push(name.as_str());
     }
-    // only what the model calls: exp, sin (rhs and selections) and nothing else
+    // only what the model calls: exp, sin (rhs and selections) and the cos of `d sin(q)/dq`
+    // of the Jacobian in the parameters, and nothing else
     names.sort();
-    assert_eq!(names, ["math_exp", "math_sin"]);
+    assert_eq!(names, ["math_cos", "math_exp", "math_sin"]);
     assert_eq!((p.memories, p.globals, p.data, p.start), (0, 0, 0, false));
 }
 
@@ -247,11 +248,12 @@ fn imports_only_memory_and_math() {
 fn exports_model_2_functions() {
     use ValType::{F64, I32};
     let p = parse(&wasm_of(&small()));
-    let expected: [(&str, &[ValType], &[ValType]); 14] = [
+    let expected: [(&str, &[ValType], &[ValType]); 15] = [
         (abi::DEFAULTS, &[I32, I32], &[]),
         (abi::INIT, &[F64, I32, I32, I32], &[]),
         (abi::RHS, &[F64, I32, I32, I32], &[]),
         (abi::JAC, &[F64, I32, I32, I32], &[]),
+        (abi::JAC_P, &[I32, F64, I32, I32, I32], &[]),
         (abi::ROOTS, &[F64, I32, I32, I32], &[]),
         (abi::TRIGGER, &[I32, F64, I32, I32], &[I32]),
         (abi::PRIORITY, &[I32, F64, I32, I32], &[F64]),

@@ -34,7 +34,9 @@
 use std::ffi::{CStr, c_char, c_int, c_long, c_void};
 use std::ptr;
 
-use sbmlsim_abi::{IntegratorSettings, SimulationStats, SparsityPattern, Tolerance};
+use sbmlsim_abi::{
+    IntegratorSettings, ParameterPattern, SimulationStats, SparsityPattern, Tolerance,
+};
 use sbmlsim_csolvers::ffi::*;
 
 use crate::EngineError;
@@ -226,6 +228,14 @@ pub(crate) struct Sensitivity {
     /// Whether the delta of a sensitivity moves any value of `p` at all: the initial value of
     /// a state no initial assignment reads has no `df/dp`.
     pub derives: Vec<bool>,
+    /// For every sensitivity, the columns of the analytic `df/dp` its delta reads and what
+    /// they weigh: the parameter of the target with the weight 1 and every parameter the
+    /// initialization derives from it with `dp_c/dp_j`, both only where the column holds an
+    /// entry. Empty for a model without `model_jac_p`, whose `df/dp` is a difference quotient.
+    pub chains: Vec<Vec<(usize, f64)>>,
+    /// The column of the analytic `df/dp` of one parameter, as long as the longest column of
+    /// the pattern.
+    pub column: Vec<f64>,
     /// The step of the difference quotient of every sensitivity.
     pub steps: Vec<f64>,
     /// The right hand side at a perturbed parameter.
@@ -240,20 +250,51 @@ pub(crate) struct Sensitivity {
 }
 
 impl Sensitivity {
-    /// The sensitivities whose steps move the parameters by `deltas` (`k * n_p`, row major).
-    pub fn new(deltas: Vec<f64>, steps: Vec<f64>, n: usize) -> Sensitivity {
+    /// The sensitivities whose steps move the parameters by `deltas` (`k * n_p`, row major),
+    /// with the columns of the analytic `df/dp` of `parameters` where the model carries it.
+    pub fn new(
+        deltas: Vec<f64>,
+        steps: Vec<f64>,
+        parameters: Option<&ParameterPattern>,
+        n: usize,
+    ) -> Sensitivity {
         let n_p = if steps.is_empty() {
             0
         } else {
             deltas.len() / steps.len()
         };
-        let derives = deltas
+        let derives: Vec<bool> = deltas
             .chunks(n_p.max(1))
             .map(|delta| delta.iter().any(|value| *value != 0.0))
             .collect();
+        // the chain of every sensitivity: `dp_c/dp_j` of the columns which hold an entry
+        let chains = parameters.map_or_else(Vec::new, |parameters| {
+            deltas
+                .chunks(n_p.max(1))
+                .zip(&steps)
+                .map(|(delta, step)| {
+                    (0..parameters.columns())
+                        .filter(|&slot| {
+                            !parameters.rows(slot).is_empty()
+                                && delta.get(slot).is_some_and(|value| *value != 0.0)
+                        })
+                        .map(|slot| (slot, delta[slot] / step))
+                        .collect()
+                })
+                .collect()
+        });
+        let column = vec![
+            0.0;
+            parameters.map_or(0, |parameters| (0..parameters.columns())
+                .map(|slot| parameters.rows(slot).len())
+                .max()
+                .unwrap_or(0))
+        ];
         Sensitivity {
             deltas,
             derives,
+            chains,
+            column,
             steps,
             f: vec![0.0; n],
             y: vec![0.0; n],
@@ -288,6 +329,9 @@ pub(crate) struct Problem<'a> {
     pub pattern: Option<&'a SparsityPattern>,
     /// The values of the Jacobian in the CSC order of the pattern.
     pub jac_values: Vec<f64>,
+    /// The pattern of the Jacobian of the right hand side in the parameters, `None` for a model
+    /// without `model_jac_p`, whose `df/dp` is a difference quotient of the right hand side.
+    pub jacobian_p: Option<&'a ParameterPattern>,
     /// Whether the Jacobian is the analytic one of the model (with the sparse difference
     /// quotient for a call with an entry which is not finite), else the sparse difference
     /// quotient.
@@ -329,6 +373,8 @@ pub(crate) struct Counts {
     pub sensitivity_rhs: u64,
     /// The calls of the right hand side of the model by the difference quotient of `df/dp`.
     pub sensitivity_model_rhs: u64,
+    /// The calls of `model_jac_p`, the analytic `df/dp` of a model which carries it.
+    pub sensitivity_jac_p: u64,
 }
 
 impl Counts {
@@ -342,6 +388,7 @@ impl Counts {
             steady_state_rhs: self.steady_state_rhs + other.steady_state_rhs,
             sensitivity_rhs: self.sensitivity_rhs + other.sensitivity_rhs,
             sensitivity_model_rhs: self.sensitivity_model_rhs + other.sensitivity_model_rhs,
+            sensitivity_jac_p: self.sensitivity_jac_p + other.sensitivity_jac_p,
         }
     }
 }
@@ -413,6 +460,7 @@ pub(crate) fn stats(counts: &Counts, cvode: &SolverCounts, probe_rhs: u64) -> Si
         preconditioner_solves: cvode.preconditioner_solves,
         sensitivity_rhs_evals: counts.sensitivity_rhs,
         sensitivity_model_rhs_evals: counts.sensitivity_model_rhs,
+        sensitivity_jac_p_evals: counts.sensitivity_jac_p,
     }
 }
 
@@ -657,14 +705,39 @@ unsafe extern "C" fn sens_rhs(
                         out[pattern.row_idx[k] as usize] += problem.jac_values[k] * factor;
                     }
                 }
-                // `df/dp`, the forward difference of the right hand side along the delta of
-                // the sensitivity
                 let Some(sensitivity) = &problem.sensitivity else {
                     return -1;
                 };
                 if !sensitivity.derives[at] {
                     continue;
                 }
+                // `df/dp` of a model which carries it: the columns of the chain of this
+                // sensitivity, each weighed by what its step moves that parameter by
+                if let Some(parameters) = problem.jacobian_p {
+                    let mut sensitivity = problem.sensitivity.take().expect("the sensitivity");
+                    let mut ok = true;
+                    for &(slot, weight) in &sensitivity.chains[at] {
+                        let rows = parameters.rows(slot);
+                        let column = &mut sensitivity.column[..rows.len()];
+                        ok = problem
+                            .model
+                            .jac_p(slot, t, values(y, n), &problem.p, column);
+                        if !ok {
+                            break;
+                        }
+                        problem.counts.sensitivity_jac_p += 1;
+                        for (&row, value) in rows.iter().zip(column) {
+                            out[row as usize] += weight * *value;
+                        }
+                    }
+                    problem.sensitivity = Some(sensitivity);
+                    if !ok {
+                        return -1;
+                    }
+                    continue;
+                }
+                // `df/dp`, the forward difference of the right hand side along the delta of
+                // the sensitivity
                 let step = sensitivity.steps[at];
                 let mut sensitivity = problem.sensitivity.take().expect("the sensitivity");
                 let n_p = problem.p.len();
@@ -1649,6 +1722,7 @@ mod tests {
             p,
             pattern: Some(desc.jacobian.pattern()),
             jac_values: vec![0.0; desc.jacobian.pattern().nnz()],
+            jacobian_p: None,
             analytic,
             difference: difference.as_mut(),
             mem: ptr::null_mut(),
@@ -1754,6 +1828,7 @@ mod tests {
             p: vec![],
             pattern: Some(&pattern),
             jac_values: vec![0.0; pattern.nnz()],
+            jacobian_p: None,
             analytic: false,
             difference: difference.as_mut(),
             mem: ptr::null_mut(),
@@ -1824,6 +1899,7 @@ mod tests {
             p,
             pattern: Some(pattern),
             jac_values: vec![0.0; pattern.nnz()],
+            jacobian_p: None,
             analytic: true,
             difference: None,
             mem: ptr::null_mut(),

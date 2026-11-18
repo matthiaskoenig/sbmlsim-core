@@ -396,6 +396,7 @@ impl<'a> Constraints<'a> {
             p: std::mem::take(&mut self.parameters),
             pattern: Some(self.desc.jacobian.pattern()),
             jac_values: std::mem::take(&mut self.jac_values),
+            jacobian_p: None,
             analytic,
             difference: Some(&mut self.difference),
             sensitivity: None,

@@ -230,6 +230,13 @@ fn native_instance(
         get(abi::SIZES)?,
         get(abi::EVENT_SIZES)?,
     );
+    // the only export of the contract a model may leave out, which the description says
+    let jac_p = get(abi::JAC_P).ok();
+    anyhow::ensure!(
+        jac_p.is_some() || desc.jacobian_p.is_none(),
+        "model.wasm does not export {} of the Jacobian in the parameters of its description",
+        abi::JAC_P
+    );
     let functions = Functions {
         defaults: defaults.typed(&store)?,
         init: init.typed(&store)?,
@@ -243,6 +250,10 @@ fn native_instance(
         event_apply: event_apply.typed(&store)?,
         selections: selections.typed(&store)?,
         assign: assign.typed(&store)?,
+        jac_p: match jac_p {
+            Some(jac_p) => Some(jac_p.typed(&store)?),
+            None => None,
+        },
         sizes: sizes.typed(&store)?,
         event_sizes: event_sizes.typed(&store)?,
     };
@@ -273,11 +284,16 @@ fn native_instance(
 const PAGE: usize = 65536;
 
 /// The typed exports of a model.
+/// A function of the contract of the form `f(index, t, y, p, out)`.
+type Indexed = TypedFunc<(i32, f64, i32, i32, i32), ()>;
+
 struct Functions {
     defaults: TypedFunc<(i32, i32), ()>,
     init: TypedFunc<(f64, i32, i32, i32), ()>,
     rhs: TypedFunc<(f64, i32, i32, i32), ()>,
     jac: TypedFunc<(f64, i32, i32, i32), ()>,
+    /// `model_jac_p`, which a model carries only with a pattern in its description.
+    jac_p: Option<Indexed>,
     roots: TypedFunc<(f64, i32, i32, i32), ()>,
     trigger: TypedFunc<(i32, f64, i32, i32), i32>,
     priority: TypedFunc<(i32, f64, i32, i32), f64>,
@@ -532,6 +548,16 @@ impl ModelFns for WasmModel {
         let args = (t, ptr(l.y), ptr(l.p), ptr(l.out));
         self.ok(self.functions.jac.call(&mut m.store, args));
         m.get(l.out, values);
+    }
+    fn jac_p(&self, at: usize, t: f64, y: &[f64], p: &[f64], values: &mut [f64]) -> bool {
+        let Some(jac_p) = self.functions.jac_p.as_ref() else {
+            return false;
+        };
+        let (mut m, l) = self.enter(y, p);
+        let args = (at as i32, t, ptr(l.y), ptr(l.p), ptr(l.out));
+        self.ok(jac_p.call(&mut m.store, args));
+        m.get(l.out, values);
+        true
     }
     fn roots(&self, t: f64, y: &[f64], p: &[f64], g: &mut [f64]) {
         let (mut m, l) = self.enter(y, p);

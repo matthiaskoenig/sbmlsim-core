@@ -27,6 +27,10 @@
 //! - `model_jac(t, y, p, values)` writes the analytic Jacobian `d(f,g)/dy` in CSC order of
 //!   the pattern. It traps for a model of a colored difference quotient. The solver supplies
 //!   the derivative of the `-y′` term on differential rows of a DAE.
+//! - `model_jac_p(j, t, y, p, values)` writes the column of the parameter `j` of the Jacobian
+//!   `d(f,g)/dp`, the entries of that column of [`ModelDescription::jacobian_p`] in its order.
+//!   A model carries it only where the description has that pattern, and only its columns which
+//!   hold an entry are called (the others are nothing).
 //! - `model_roots(t, y, p, g)` writes the [`ModelDescription::n_roots`] root functions of the
 //!   triggers: one per comparison of each trigger (`a - b` of `a > b` and `a >= b`, `b - a` of
 //!   `a < b` and `a <= b`, `a - b` of `a == b` and `a != b`, every adjacent pair of a chain) and
@@ -134,6 +138,9 @@ pub const INIT: &str = "model_init";
 pub const RHS: &str = "model_rhs";
 /// Export name of `model_jac`.
 pub const JAC: &str = "model_jac";
+/// Export name of `model_jac_p`, which a model carries only with
+/// [`ModelDescription::jacobian_p`].
+pub const JAC_P: &str = "model_jac_p";
 /// Export name of `model_roots`.
 pub const ROOTS: &str = "model_roots";
 /// Export name of `model_trigger`.
@@ -213,6 +220,12 @@ pub struct ModelDescription {
     pub selections: Vec<Selection>,
     /// The Jacobian of the model.
     pub jacobian: JacobianKind,
+    /// The pattern of `model_jac_p`, the Jacobian of the right hand side in the parameters,
+    /// which a model carries where every rate has a derivative in them and the function is
+    /// within the limits; the engine takes a difference quotient of the right hand side
+    /// without it. It is the `df/dp` of the forward sensitivities and of nothing else.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jacobian_p: Option<ParameterPattern>,
     /// The events of the model.
     pub events: Vec<EventInfo>,
     /// The number of root functions `model_roots` writes.
@@ -783,6 +796,7 @@ mod tests {
     #[test]
     fn description_roundtrips_as_json() {
         let d = ModelDescription {
+            jacobian_p: None,
             contract: MODEL_CONTRACT.to_string(),
             compiler: "sbmlsim-compiler 0.1.0".to_string(),
             id: "m".to_string(),

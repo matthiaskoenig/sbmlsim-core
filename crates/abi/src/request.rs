@@ -319,11 +319,16 @@ pub struct SimulationStats {
     /// one per parameter of the sensitivities and call of their right hand side.
     #[serde(default)]
     pub sensitivity_model_rhs_evals: u64,
+    /// The calls of `model_jac_p`, the analytic `df/dp` of a model which carries it: one per
+    /// column of the chain of a parameter of the sensitivities and call of their right hand
+    /// side, where the difference quotient of `df/dp` would take one right hand side.
+    #[serde(default)]
+    pub sensitivity_jac_p_evals: u64,
 }
 
 impl SimulationStats {
     /// The number of counters, the `u64` words of `engine_stats_ptr`.
-    pub const WORDS: usize = 20;
+    pub const WORDS: usize = 21;
 
     /// The names of the counters in the order of [`SimulationStats::words`] (the fields).
     pub const NAMES: [&'static str; Self::WORDS] = [
@@ -347,6 +352,7 @@ impl SimulationStats {
         "preconditioner_solves",
         "sensitivity_rhs_evals",
         "sensitivity_model_rhs_evals",
+        "sensitivity_jac_p_evals",
     ];
 
     /// The counters in the order of the fields.
@@ -372,6 +378,7 @@ impl SimulationStats {
             self.preconditioner_solves,
             self.sensitivity_rhs_evals,
             self.sensitivity_model_rhs_evals,
+            self.sensitivity_jac_p_evals,
         ]
     }
 
@@ -398,6 +405,7 @@ impl SimulationStats {
             preconditioner_solves: w[17],
             sensitivity_rhs_evals: w[18],
             sensitivity_model_rhs_evals: w[19],
+            sensitivity_jac_p_evals: w[20],
         }
     }
 

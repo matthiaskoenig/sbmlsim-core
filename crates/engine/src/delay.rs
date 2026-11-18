@@ -859,6 +859,9 @@ impl ModelFns for DelayedModel<'_> {
     fn jac(&self, t: f64, y: &[f64], p: &[f64], out: &mut [f64]) {
         self.base.jac(t, y, p, out);
     }
+    fn jac_p(&self, at: usize, t: f64, y: &[f64], p: &[f64], out: &mut [f64]) -> bool {
+        self.base.jac_p(at, t, y, p, out)
+    }
     fn roots(&self, t: f64, y: &[f64], p: &[f64], out: &mut [f64]) {
         self.base.roots(t, y, p, out);
     }

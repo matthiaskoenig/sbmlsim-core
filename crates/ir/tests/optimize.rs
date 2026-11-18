@@ -440,6 +440,7 @@ fn unread_rules_are_not_computed() {
     let plan = plan(
         &model,
         &jacobian(&model),
+        None,
         &model.discontinuity_roots(),
         true,
     );
@@ -500,7 +501,7 @@ fn subtrees_of_the_parameters_alone_are_constants() {
         selections: vec![],
     };
     // without the common subexpressions, which would share `k * V * b` in the constants
-    let plan = plan(&model, &jacobian(&model), &[], false);
+    let plan = plan(&model, &jacobian(&model), None, &[], false);
     // the rule b is the constant 0, the leading factors `k * V * b` another (and the entry of
     // the Jacobian, of the parameters alone, a third); the rule r is a let of the state;
     // `x * k * V` is `(x * k) * V` and stays
@@ -565,6 +566,6 @@ fn a_parameter_of_a_rule_of_the_time_is_no_constant() {
         events: vec![],
         selections: vec![],
     };
-    let plan = plan(&model, &jacobian(&model), &[], true);
+    let plan = plan(&model, &jacobian(&model), None, &[], true);
     assert_eq!(plan.n_constants(), 0, "{:?}", plan.constants);
 }

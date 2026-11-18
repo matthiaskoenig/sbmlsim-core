@@ -20,6 +20,7 @@ fn runtime() -> &'static Runtime {
 /// optimizer computes: the descriptions of a model with and without it are otherwise equal.
 fn but_constants(desc: &sbmlsim_abi::ModelDescription) -> String {
     let desc = sbmlsim_abi::ModelDescription {
+        jacobian_p: None,
         n_constants: 0,
         ..desc.clone()
     };
