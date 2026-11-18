@@ -152,7 +152,8 @@ pub struct FitAnswer {
     pub evaluations: u64,
     /// The jacobians it took.
     pub jacobians: u64,
-    /// The time every run of the fit took together.
+    /// The time every run of the fit took together, without the identifiability of its
+    /// optimum, which every profile of [`FitAnswer::profiles`] carries its own share of.
     pub seconds: f64,
     /// The residuals of the optimum, in the order of the curves of the request.
     pub residuals: Vec<f64>,
@@ -216,6 +217,34 @@ pub fn fit(
     fit_with(request, model, threads, &Stop::new())
 }
 
+/// The problem of a fit of the contract `fit/1`, resolved against a model and the pool of
+/// its batch, for a caller whose optimizer is its own ([`Problem::residuals`],
+/// [`Problem::jacobian`]).
+///
+/// The starts and the identifiability of the request are none of it: they belong to a run of
+/// the fit, which [`fit`] does.
+///
+/// # Errors
+///
+/// As [`fit`], without the ones of a run.
+pub fn problem_of(
+    request: &FitRequest,
+    model: Arc<LoadedModel>,
+    threads: Option<usize>,
+) -> Result<Problem, FitError> {
+    if request.contract != FIT_CONTRACT {
+        return Err(FitError::Request(format!(
+            "is of the contract {} and not of {FIT_CONTRACT}",
+            request.contract
+        )));
+    }
+    let definition = definition_of(request)?;
+    let threads = threads
+        .or(request.threads)
+        .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, Into::into));
+    Problem::new(definition, model, threads)
+}
+
 /// Runs a fit of the contract `fit/1` until a caller stops it, see [`fit`] and [`Stop`].
 ///
 /// # Errors
@@ -227,17 +256,7 @@ pub fn fit_with(
     threads: Option<usize>,
     stop: &Stop,
 ) -> Result<FitAnswer, FitError> {
-    if request.contract != FIT_CONTRACT {
-        return Err(FitError::Request(format!(
-            "is of the contract {} and not of {FIT_CONTRACT}",
-            request.contract
-        )));
-    }
-    let definition = definition_of(request)?;
-    let threads = threads
-        .or(request.threads)
-        .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, Into::into));
-    let problem = Problem::new(definition, model, threads)?;
+    let problem = problem_of(request, model, threads)?;
     let starts = starts_of(request, &problem)?;
     let began = std::time::Instant::now();
     let mut runs: Vec<RunAnswer> = Vec::with_capacity(starts.len());
@@ -262,6 +281,7 @@ pub fn fit_with(
         }
     }
     let best = best.ok_or_else(|| FitError::Request("has no start to run".to_string()))?;
+    let ran = began.elapsed().as_secs_f64();
     // how well the data determines the optimum of the best run, when the fit asks for it
     let (walked, information) = match &request.identifiability {
         None => (Vec::new(), None),
@@ -305,7 +325,7 @@ pub fn fit_with(
         iterations: best.iterations,
         evaluations: best.evaluations,
         jacobians: best.jacobians,
-        seconds: began.elapsed().as_secs_f64(),
+        seconds: ran,
         residuals: best.residuals,
         runs,
         profiles: walked,

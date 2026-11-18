@@ -142,6 +142,32 @@ fn the_profile_of_a_parameter_brackets_it_at_the_threshold() {
 }
 
 #[test]
+fn the_interval_of_a_profile_is_the_error_of_the_fisher_information() {
+    // where the cost is a parabola around the optimum, the two ways of bounding a parameter
+    // are the same one: the threshold of the profile is `1.96` standard errors
+    let (problem, at) = fitted(Scale::Log10);
+    let walk = Walk {
+        points: 6,
+        span: 0.3,
+        delta: DELTA_95,
+    };
+
+    let walked = profile(&problem, &Settings::default(), &at, 0, &walk, &Stop::new()).unwrap();
+    let information = fisher(&problem, &at).unwrap();
+
+    let error = information.errors.unwrap()[0];
+    let expected = (2.0 * DELTA_95).sqrt() * error;
+    let (lower, upper) = (walked.lower.unwrap(), walked.upper.unwrap());
+    let (below, above) = (at[0] - lower.log10(), upper.log10() - at[0]);
+    for side in [below, above] {
+        assert!(
+            (side / expected - 1.0).abs() < 0.1,
+            "the profile bounds the parameter at {side} and the information at {expected}"
+        );
+    }
+}
+
+#[test]
 fn the_profile_of_a_parameter_the_data_does_not_determine_is_flat() {
     // one measurement at the start of the simulation tells `y` and nothing about `k`
     let problem = Problem::new(one_point(Scale::Log10), model(), 4).unwrap();

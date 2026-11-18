@@ -265,26 +265,35 @@ pub fn profiles(
     Ok(profiles)
 }
 
-/// The value where the cost of a walk reaches the threshold, interpolated linearly between
-/// the point below it and the one above it in the space of the search.
+/// The value where the cost of a walk reaches the threshold, interpolated between the point
+/// below it and the one above it in the space of the search.
+///
+/// The interpolation runs on the square root of the rise of the cost, which is a line in the
+/// parameter wherever the cost is a parabola around the optimum, so a grid of a few points
+/// per side gives the crossing of a quadratic profile exactly. On the cost itself the same
+/// grid would cut the interval in half: between a point of a rise of 8 and the optimum, a
+/// line reaches a threshold of 1.92 at a quarter of the step, where the parabola reaches it
+/// at a half.
 fn crossing(
     from: (f64, f64),
     walk: impl Iterator<Item = (f64, f64)>,
     threshold: f64,
     scale: Scale,
 ) -> Option<f64> {
-    let mut last = from;
-    for point in walk {
-        if point.1 >= threshold {
-            let ((x, cost), (next, risen)) = (last, point);
-            let share = if (risen - cost).abs() > 0.0 {
-                (threshold - cost) / (risen - cost)
+    let (optimum, cost) = from;
+    let target = (threshold - cost).max(0.0).sqrt();
+    let mut last = (optimum, 0.0);
+    for (x, at) in walk {
+        let rise = (at - cost).max(0.0).sqrt();
+        if at >= threshold {
+            let share = if rise > last.1 {
+                (target - last.1) / (rise - last.1)
             } else {
                 0.0
             };
-            return Some(scale.to_model(x + share * (next - x)));
+            return Some(scale.to_model(last.0 + share * (x - last.0)));
         }
-        last = point;
+        last = (x, rise);
     }
     None
 }
