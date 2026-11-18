@@ -164,15 +164,19 @@ impl<'a> Recorder<'a> {
             });
         }
         self.model
-            .selections(t, y, p, &self.mask, &mut self.selections);
-        self.model.check_error()?;
+            .checked_selections(t, y, p, &self.mask, &mut self.selections)?;
         self.grow(k)?;
-        for column in self.columns.iter() {
-            self.values.push(match column {
+        let len = self.values.len();
+        let row = &mut self.values.spare_capacity_mut()[..k];
+        for (slot, column) in row.iter_mut().zip(self.columns.iter()) {
+            slot.write(match column {
                 Column::Time => t,
                 Column::Selection(index) => self.selections[*index],
             });
         }
+        // SAFETY: grow(k) reserved these slots. Both slices have length k, so every
+        // slot in the new row contains an initialized f64 before it becomes visible.
+        unsafe { self.values.set_len(len + k) };
         self.n_rows += 1;
         Ok(())
     }
