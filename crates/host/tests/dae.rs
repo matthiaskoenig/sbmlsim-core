@@ -599,10 +599,6 @@ fn a_change_refreshes_the_assignment_rules_the_projection_reads() {
     }];
     let result = loaded.instantiate().unwrap().simulate(&req).unwrap();
     assert_eq!(result.columns, ["time", "k", "q", "z"]);
-    for row in result.values.as_chunks::<4>().0 {
-        let [time, k, q, z] = *row;
-        println!("t={time} k={k} q={q} z={z}");
-    }
     let last = *result.values.as_chunks::<4>().0.last().unwrap();
     close(last[2], 10.0);
     close(last[3], 10.0);
@@ -616,4 +612,36 @@ fn a_change_refreshes_the_assignment_rules_the_projection_reads() {
         .expect("a row after the change");
     close(after[2], 10.0);
     close(after[3], 10.0);
+}
+
+/// The constraint of an algebraic rule determines its unknown, so neither the pre-initialization
+/// nor a change can set it. The refusal names the rule which determines the entity.
+#[test]
+fn the_unknown_of_an_algebraic_rule_is_not_settable() {
+    let loaded = decay(CompileOptions::default());
+    let mut engine = loaded.instantiate().unwrap();
+    let base = request(1.0, Output::IntegratorSteps, &["time", "x", "z"]);
+    let mut set = base.clone();
+    set.preinit = vec![("z".to_string(), 1.0)];
+    let mut changed = base.clone();
+    changed.changes = vec![Change {
+        time: 0.5,
+        values: vec![("z".to_string(), 1.0)],
+        increments: vec![],
+    }];
+    for req in [set, changed] {
+        let error = engine.simulate(&req).unwrap_err();
+        let EngineError::Request(message) = &error else {
+            panic!("expected a request error, got {error:?}");
+        };
+        assert_eq!(
+            message,
+            "z of model dae is not settable: its algebraic rule determines it"
+        );
+    }
+    // the independent variable of the same model stays settable
+    let mut set = base;
+    set.preinit = vec![("x".to_string(), 2.0)];
+    let result = engine.simulate(&set).unwrap();
+    close(result.values[1], 2.0);
 }

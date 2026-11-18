@@ -181,7 +181,7 @@ cached per engine and reused across compatible simulations.
 | `n_delays` | optional historical query slot count, omitted for ordinary ODEs; see [Delay equations](delays.md) |
 | `units` | the unit expression of every entity id |
 
-An entity of `states` and `parameters` is `{"id", "kind", "initial", "settable"}`: its SBML id; its kind, `"compartment"`, `"parameter"`, `"species_reference"` or `{"species": {"compartment", "has_only_substance_units", "stores_concentration"}}`; its initial value as loaded (a value which is not finite is the string `"NaN"`, `"inf"` or `"-inf"`, since JSON has no such numbers); and whether a change may set it (the target of an assignment rule may not).
+An entity of `states` and `parameters` is `{"id", "kind", "initial", "settable"}`: its SBML id; its kind, `"compartment"`, `"parameter"`, `"species_reference"` or `{"species": {"compartment", "has_only_substance_units", "stores_concentration"}}`; its initial value as loaded (a value which is not finite is the string `"NaN"`, `"inf"` or `"-inf"`, since JSON has no such numbers); and whether a change or the pre-initialization may set it (the target of an assignment rule and the unknown of an algebraic rule may not, and the refusal names the rule which determines the entity).
 
 ```json
 {
