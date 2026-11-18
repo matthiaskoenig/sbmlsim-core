@@ -2183,6 +2183,7 @@ name = "sbmlsim-fit"
 version = "0.11.0"
 dependencies = [
  "basin",
+ "rayon",
  "sbmlsim-abi",
  "sbmlsim-batch",
  "sbmlsim-host",
