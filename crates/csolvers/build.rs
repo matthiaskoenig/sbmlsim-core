@@ -77,6 +77,7 @@ const SUNDIALS_SOURCES: &[&str] = &[
     "sunmatrix/sparse/sunmatrix_sparse.c",
     "sunlinsol/dense/sunlinsol_dense.c",
     "sunlinsol/klu/sunlinsol_klu.c",
+    "sunlinsol/spgmr/sunlinsol_spgmr.c",
     "sunnonlinsol/newton/sunnonlinsol_newton.c",
     "sunnonlinsol/fixedpoint/sunnonlinsol_fixedpoint.c",
 ];

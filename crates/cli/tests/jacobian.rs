@@ -499,7 +499,7 @@ fn falls_back(sbml: &str, selections: &[&str]) {
             .simulate(&req)
             .unwrap()
     };
-    for solver in [LinearSolver::Dense, LinearSolver::Klu] {
+    for solver in [LinearSolver::Dense, LinearSolver::Klu, LinearSolver::Gmres] {
         let (a, d) = (simulate(&analytic, solver), simulate(&difference, solver));
         assert_eq!(a.n_rows, 11);
         for (x, y) in a.values.iter().zip(&d.values) {

@@ -375,6 +375,7 @@ fn an_engine_works_after_an_integration_error() {
     for solver in [
         sbmlsim_abi::LinearSolver::Dense,
         sbmlsim_abi::LinearSolver::Klu,
+        sbmlsim_abi::LinearSolver::Gmres,
     ] {
         let (mut good, mut bad) = (good.clone(), bad.clone());
         good.settings.linear_solver = solver;
@@ -396,6 +397,20 @@ fn an_engine_works_after_an_integration_error() {
         assert_eq!(bits(&engine.simulate(&good).unwrap()), bits(&reference));
     }
     assert_eq!(fresh.n_rows, 5);
+}
+
+#[test]
+fn gmres_requires_the_stiff_method() {
+    let model = Decay { k: 0.5 };
+    let mut req = request(0.0, 1.0, Output::Uniform { steps: 2 });
+    req.settings.stiff = false;
+    req.settings.linear_solver = sbmlsim_abi::LinearSolver::Gmres;
+    match simulate(&model, &model.description(), &req) {
+        Err(EngineError::Request(message)) => {
+            assert!(message.to_ascii_lowercase().contains("gmres"), "{message}");
+        }
+        other => panic!("expected a request error for GMRES with Adams, got {other:?}"),
+    }
 }
 
 #[test]
@@ -530,6 +545,14 @@ fn dae_failure_leaves_the_engine_reusable() {
         Err(EngineError::Integration { .. })
     ));
     req.preinit = vec![("valid".into(), 1.0)];
+    req.settings.linear_solver = sbmlsim_abi::LinearSolver::Gmres;
+    match engine.simulate(&req) {
+        Err(EngineError::Request(message)) => {
+            assert!(message.to_ascii_lowercase().contains("gmres"), "{message}");
+        }
+        other => panic!("expected a request error for GMRES on a DAE, got {other:?}"),
+    }
+    req.settings.linear_solver = sbmlsim_abi::LinearSolver::Auto;
     let result = engine.simulate(&req).unwrap();
     assert!((result.values.last().unwrap() - 2.0).abs() < 1e-7);
     let repeat = engine.simulate(&req).unwrap();

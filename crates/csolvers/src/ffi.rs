@@ -3,6 +3,7 @@
 //! The signatures are the ones of the headers of SUNDIALS v7.9.0 (`sundials_context.h`,
 //! `sundials_nvector.h`, `nvector_serial.h`, `sundials_matrix.h`, `sunmatrix_dense.h`,
 //! `sunmatrix_sparse.h`, `sundials_linearsolver.h`, `sunlinsol_dense.h`, `sunlinsol_klu.h`,
+//! `sunlinsol_spgmr.h`,
 //! `sundials_nonlinearsolver.h`, `sunnonlinsol_fixedpoint.h`, `cvode.h`, `cvode_ls.h`, `ida.h`, `ida_ls.h`) as this
 //! crate configures them: `sunrealtype` is `double`,
 //! `sunindextype` is `int32_t`, the counters are `long int` (32 bits on wasm32) and `SUNComm` is
@@ -86,6 +87,33 @@ pub type CVLsJacFn = Option<
     ) -> c_int,
 >;
 
+/// Set up a preconditioner for `I - gamma J`, optionally reusing its saved Jacobian.
+pub type CVLsPrecSetupFn = Option<
+    unsafe extern "C" fn(
+        sunrealtype,
+        N_Vector,
+        N_Vector,
+        sunbooleantype,
+        *mut sunbooleantype,
+        sunrealtype,
+        *mut c_void,
+    ) -> c_int,
+>;
+/// Solve the preconditioner system `P z = r`.
+pub type CVLsPrecSolveFn = Option<
+    unsafe extern "C" fn(
+        sunrealtype,
+        N_Vector,
+        N_Vector,
+        N_Vector,
+        N_Vector,
+        sunrealtype,
+        sunrealtype,
+        c_int,
+        *mut c_void,
+    ) -> c_int,
+>;
+
 /// An error handler of a context: the line, the function and the file of the error, its message,
 /// its code, the user data given to [`SUNContext_PushErrHandler`] and the context.
 pub type SUNErrHandlerFn = Option<
@@ -123,6 +151,8 @@ pub const CSR_MAT: c_int = 1;
 /// The fill-reducing ordering AMD of KLU (`SUNLinSol_KLUSetOrdering`); 1 is COLAMD, the
 /// default of `SUNLinSol_KLU`, 2 is the ordering of the user.
 pub const SUNKLU_ORDERING_AMD: c_int = 0;
+/// Left preconditioning of an iterative linear solver (`sundials_iterative.h`).
+pub const SUN_PREC_LEFT: c_int = 1;
 
 /// IDA residual F(t, y, yp) and root callbacks.
 pub type IDAResFn =
@@ -215,6 +245,14 @@ unsafe extern "C" {
         reuses: *mut c_long,
     ) -> SUNErrCode;
     pub fn SUNLinSolFree(s: SUNLinearSolver) -> SUNErrCode;
+    /// Scaled preconditioned GMRES; `maxl` is the Krylov subspace dimension.
+    pub fn SUNLinSol_SPGMR(
+        y: N_Vector,
+        pretype: c_int,
+        maxl: c_int,
+        sunctx: SUNContext,
+    ) -> SUNLinearSolver;
+    pub fn SUNLinSol_SPGMRSetMaxRestarts(s: SUNLinearSolver, maxrs: c_int) -> SUNErrCode;
 
     // nonlinear solvers
     /// The fixed point (functional) iteration with `m` acceleration vectors (0 is none).
@@ -237,6 +275,7 @@ unsafe extern "C" {
         abstol: N_Vector,
     ) -> c_int;
     pub fn CVodeSetUserData(cvode_mem: *mut c_void, user_data: *mut c_void) -> c_int;
+    pub fn CVodeGetUserData(cvode_mem: *mut c_void, user_data: *mut *mut c_void) -> c_int;
     pub fn CVodeSetMaxOrd(cvode_mem: *mut c_void, maxord: c_int) -> c_int;
     pub fn CVodeSetMaxNumSteps(cvode_mem: *mut c_void, mxsteps: c_long) -> c_int;
     pub fn CVodeSetMaxStep(cvode_mem: *mut c_void, hmax: sunrealtype) -> c_int;
@@ -248,6 +287,16 @@ unsafe extern "C" {
     -> c_int;
     pub fn CVodeSetNonlinearSolver(cvode_mem: *mut c_void, nls: SUNNonlinearSolver) -> c_int;
     pub fn CVodeSetJacFn(cvode_mem: *mut c_void, jac: CVLsJacFn) -> c_int;
+    pub fn CVodeSetPreconditioner(
+        cvode_mem: *mut c_void,
+        setup: CVLsPrecSetupFn,
+        solve: CVLsPrecSolveFn,
+    ) -> c_int;
+    pub fn CVodeGetNumLinIters(cvode_mem: *mut c_void, n: *mut c_long) -> c_int;
+    pub fn CVodeGetNumLinConvFails(cvode_mem: *mut c_void, n: *mut c_long) -> c_int;
+    pub fn CVodeGetNumJtimesEvals(cvode_mem: *mut c_void, n: *mut c_long) -> c_int;
+    pub fn CVodeGetNumPrecEvals(cvode_mem: *mut c_void, n: *mut c_long) -> c_int;
+    pub fn CVodeGetNumPrecSolves(cvode_mem: *mut c_void, n: *mut c_long) -> c_int;
     pub fn CVode(
         cvode_mem: *mut c_void,
         tout: sunrealtype,

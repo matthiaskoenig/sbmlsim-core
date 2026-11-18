@@ -27,7 +27,7 @@ fn the_native_engine_agrees_with_engine_wasm() {
         .instantiate_native(&compiled.wasm, &compiled.description)
         .unwrap();
     let base: SimulationRequest = serde_json::from_str(&golden("request.json")).unwrap();
-    for solver in [LinearSolver::Dense, LinearSolver::Klu] {
+    for solver in [LinearSolver::Dense, LinearSolver::Klu, LinearSolver::Gmres] {
         let mut req = base.clone();
         req.settings.linear_solver = solver;
         req.settings.stiff = true;

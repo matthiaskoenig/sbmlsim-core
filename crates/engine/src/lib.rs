@@ -630,6 +630,11 @@ fn linear_of(
     desc: &ModelDescription,
     settings: &IntegratorSettings,
 ) -> Result<Linear, EngineError> {
+    if settings.linear_solver == LinearSolver::Gmres && (desc.n_algebraic > 0 || !settings.stiff) {
+        return Err(request(
+            "GMRES is supported only for stiff ODE models (CVODE BDF)",
+        ));
+    }
     let jacobian = match (&desc.jacobian, settings.jacobian) {
         (_, JacobianChoice::DifferenceQuotient) => Jacobian::Difference,
         (JacobianKind::ColoredDifference { reason, .. }, JacobianChoice::Analytic) => {
@@ -648,6 +653,10 @@ fn linear_of(
     Ok(match settings.linear_solver {
         LinearSolver::Dense => Linear::Dense { jacobian },
         LinearSolver::Klu => klu,
+        LinearSolver::Gmres => Linear::Gmres {
+            nnz: pattern_of(desc).nnz(),
+            jacobian,
+        },
         LinearSolver::Auto if desc.states.len() > KLU_THRESHOLD => klu,
         LinearSolver::Auto => Linear::Dense { jacobian },
     })
@@ -671,6 +680,11 @@ fn difference_of(desc: &ModelDescription) -> Difference {
 /// is the pure relative error), but a relative tolerance of 0 needs every absolute tolerance
 /// above 0, else the error weights vanish where the state does and no step could be accepted.
 fn check_settings(settings: &IntegratorSettings, n: usize) -> Result<(), EngineError> {
+    if settings.linear_solver == LinearSolver::Gmres && !settings.stiff {
+        return Err(request(
+            "GMRES is supported only for stiff ODE models (CVODE BDF)",
+        ));
+    }
     let valid = |x: f64| x.is_finite() && x >= 0.0;
     let rtol = settings.relative_tolerance;
     if !valid(rtol) {
@@ -1188,6 +1202,9 @@ fn run_model<const DAE: bool>(
                 } | Linear::Klu {
                     jacobian: Jacobian::Analytic,
                     ..
+                } | Linear::Gmres {
+                    jacobian: Jacobian::Analytic,
+                    ..
                 }
             );
         }
@@ -1241,6 +1258,7 @@ fn run_model<const DAE: bool>(
         analytic,
         difference,
         mem: std::ptr::null_mut(),
+        krylov: std::ptr::null_mut(),
         counts: init_callbacks,
         callback_error: None,
     };

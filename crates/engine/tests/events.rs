@@ -2,7 +2,8 @@
 //! or at the execution, the event at the end, the order of ties and the limit of executions.
 
 use sbmlsim_abi::{
-    IntegratorSettings, Output, SIMULATION_CONTRACT, SimulationRequest, SimulationResult,
+    IntegratorSettings, LinearSolver, Output, SIMULATION_CONTRACT, SimulationRequest,
+    SimulationResult,
 };
 use sbmlsim_engine::model::{EventModel, Fun, Target, TestEvent};
 use sbmlsim_engine::{DELAY_FLAG, EVENT_LIMIT_FLAG, Engine, EngineError, simulate};
@@ -341,10 +342,14 @@ fn a_model_without_states_locates_its_triggers() {
         events: vec![event],
         discontinuities: vec![],
     };
-    let r = run(&model, &request(0.0, 2.0, Output::Uniform { steps: 4 }, 1));
-    let x = column(&r, "x");
-    assert_eq!(&x[..3], [0.0, 0.0, 0.0]);
-    assert!((x[3] - 1.0).abs() < 1e-9 && x[3] == x[4], "{x:?}");
+    let mut req = request(0.0, 2.0, Output::Uniform { steps: 4 }, 1);
+    for solver in [LinearSolver::Auto, LinearSolver::Gmres] {
+        req.settings.linear_solver = solver;
+        let r = run(&model, &req);
+        let x = column(&r, "x");
+        assert_eq!(&x[..3], [0.0, 0.0, 0.0]);
+        assert!((x[3] - 1.0).abs() < 1e-9 && x[3] == x[4], "{x:?}");
+    }
 }
 
 #[test]

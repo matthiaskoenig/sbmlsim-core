@@ -135,9 +135,9 @@ fn another_contract_is_refused_by_the_engine_and_the_host() {
     }
 }
 
-/// `engine.wasm` with its output format `1` replaced by `format` (one digit).
+/// `engine.wasm` with its output format `2` replaced by `format` (one digit).
 fn engine_with_format(format: u8) -> Vec<u8> {
-    let needle = br#""output_format":1}"#;
+    let needle = br#""output_format":2}"#;
     let mut bytes = sbmlsim_host::ENGINE_WASM.to_vec();
     let at = bytes
         .windows(needle.len())
@@ -150,18 +150,18 @@ fn engine_with_format(format: u8) -> Vec<u8> {
 #[test]
 fn an_engine_of_another_output_format_is_refused() {
     let mathlib = sbmlsim_host::MATHLIB_WASM;
-    Runtime::new(&engine_with_format(b'1'), mathlib).unwrap();
-    let message = Runtime::new(&engine_with_format(b'2'), mathlib)
+    Runtime::new(&engine_with_format(b'2'), mathlib).unwrap();
+    let message = Runtime::new(&engine_with_format(b'1'), mathlib)
         .err()
         .unwrap()
         .to_string();
     assert!(
-        message.contains("output format 2") && message.contains("reads 1"),
+        message.contains("output format 1") && message.contains("reads 2"),
         "{message}"
     );
     // a second section of the name: refused as well
     let mut twice = sbmlsim_host::ENGINE_WASM.to_vec();
-    let payload = br#"{"memory_minimum_pages":17,"output_format":1}"#;
+    let payload = br#"{"memory_minimum_pages":17,"output_format":2}"#;
     let name = sbmlsim_abi::ENGINE_SECTION.as_bytes();
     twice.push(0);
     twice.push((1 + name.len() + payload.len()) as u8);

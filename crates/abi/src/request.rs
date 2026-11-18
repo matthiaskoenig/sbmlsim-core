@@ -144,9 +144,11 @@ pub enum LinearSolver {
     Dense,
     /// Sparse (KLU).
     Klu,
+    /// Matrix-free, preconditioned GMRES for ODE models.
+    Gmres,
 }
 
-/// How the integrator gets the Jacobian.
+/// How the integrator gets the Jacobian for a direct solve or the GMRES preconditioner.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum JacobianChoice {
@@ -236,7 +238,7 @@ pub struct SimulationStats {
     /// The calls of the analytic Jacobian with an entry which is not finite, which the sparse
     /// difference quotient replaced.
     pub jacobian_fallbacks: u64,
-    /// The setups of the linear solver (ODE or DAE Newton matrix factorizations).
+    /// The setups of the linear solver, including GMRES preconditioner setups.
     pub linear_setups: u64,
     /// The failures of the local error test.
     pub error_test_failures: u64,
@@ -252,11 +254,26 @@ pub struct SimulationStats {
     pub probe_rhs_evals: u64,
     /// The calls of the right hand side by the criterion of the steady state.
     pub steady_state_rhs_evals: u64,
+    /// The iterations of GMRES.
+    #[serde(default)]
+    pub linear_iterations: u64,
+    /// The convergence failures of GMRES.
+    #[serde(default)]
+    pub linear_convergence_failures: u64,
+    /// The Jacobian-vector products evaluated by CVODE for GMRES.
+    #[serde(default)]
+    pub jacobian_vector_evals: u64,
+    /// The preconditioner evaluations that refresh the Jacobian approximation.
+    #[serde(default)]
+    pub preconditioner_evals: u64,
+    /// The applications of the GMRES preconditioner.
+    #[serde(default)]
+    pub preconditioner_solves: u64,
 }
 
 impl SimulationStats {
     /// The number of counters, the `u64` words of `engine_stats_ptr`.
-    pub const WORDS: usize = 13;
+    pub const WORDS: usize = 18;
 
     /// The names of the counters in the order of [`SimulationStats::words`] (the fields).
     pub const NAMES: [&'static str; Self::WORDS] = [
@@ -273,6 +290,11 @@ impl SimulationStats {
         "integrations",
         "probe_rhs_evals",
         "steady_state_rhs_evals",
+        "linear_iterations",
+        "linear_convergence_failures",
+        "jacobian_vector_evals",
+        "preconditioner_evals",
+        "preconditioner_solves",
     ];
 
     /// The counters in the order of the fields.
@@ -291,6 +313,11 @@ impl SimulationStats {
             self.integrations,
             self.probe_rhs_evals,
             self.steady_state_rhs_evals,
+            self.linear_iterations,
+            self.linear_convergence_failures,
+            self.jacobian_vector_evals,
+            self.preconditioner_evals,
+            self.preconditioner_solves,
         ]
     }
 
@@ -310,6 +337,11 @@ impl SimulationStats {
             integrations: w[10],
             probe_rhs_evals: w[11],
             steady_state_rhs_evals: w[12],
+            linear_iterations: w[13],
+            linear_convergence_failures: w[14],
+            jacobian_vector_evals: w[15],
+            preconditioner_evals: w[16],
+            preconditioner_solves: w[17],
         }
     }
 

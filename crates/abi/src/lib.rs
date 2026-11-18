@@ -121,7 +121,7 @@ pub const ENGINE_SECTION: &str = "sbmlsim.engine";
 /// the JSON header, the header, the values) and of `engine_stats_ptr` (the words of
 /// [`SimulationStats`]), as `crates/engine/src/exports.rs` documents them. A host refuses an
 /// `engine.wasm` of another version.
-pub const ENGINE_OUTPUT_FORMAT: u32 = 1;
+pub const ENGINE_OUTPUT_FORMAT: u32 = 2;
 
 /// Export name of `model_defaults`.
 pub const DEFAULTS: &str = "model_defaults";
@@ -633,6 +633,24 @@ mod tests {
                 serde_json::from_str(&serde_json::to_string(&r).unwrap()).unwrap();
             assert_eq!(r, back);
         }
+    }
+
+    #[test]
+    fn historical_stats_default_the_krylov_counters_to_zero() {
+        let words = std::array::from_fn(|i| i as u64 + 1);
+        let stats = SimulationStats::from_words(words);
+        assert_eq!(stats.words(), words);
+        let mut json = serde_json::to_value(stats).unwrap();
+        let fields = json.as_object_mut().unwrap();
+        for (index, name) in SimulationStats::NAMES.iter().enumerate() {
+            assert_eq!(fields[*name], words[index]);
+        }
+        for name in &SimulationStats::NAMES[13..] {
+            fields.remove(*name);
+        }
+        let historical: SimulationStats = serde_json::from_value(json).unwrap();
+        assert_eq!(historical.words()[..13], words[..13]);
+        assert_eq!(historical.words()[13..], [0; 5]);
     }
 
     #[test]

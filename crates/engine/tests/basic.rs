@@ -2,8 +2,8 @@
 //! the pre-initialization, the reuse of an engine and the errors.
 
 use sbmlsim_abi::{
-    IntegratorSettings, JacobianKind, LinearSolver, MODEL_CONTRACT, Output, SIMULATION_CONTRACT,
-    SimulationRequest, SimulationResult, Tolerance,
+    IntegratorSettings, JacobianChoice, JacobianKind, LinearSolver, MODEL_CONTRACT, Output,
+    SIMULATION_CONTRACT, SimulationRequest, SimulationResult, Tolerance,
 };
 use sbmlsim_engine::model::{Decay, Robertson};
 use sbmlsim_engine::{Engine, EngineError, simulate};
@@ -186,6 +186,63 @@ fn dense_and_klu_same_result() {
     for y in [&yd, &yk] {
         assert!(relative(y[0], 5.2083e-08) < 1e-4, "y1(4e10) = {:e}", y[0]);
     }
+}
+
+#[test]
+fn gmres_agrees_with_dense_on_stiff_robertson() {
+    let times = vec![0.0, 1e-4, 0.04, 4.0, 400.0, 4e4];
+    let end = *times.last().unwrap();
+    let reference = robertson(LinearSolver::Dense, end, times.clone());
+    let mut req = request(0.0, end, Output::Times(times), &[]);
+    let atol = [1e-12, 1e-14, 1e-10];
+    req.settings = IntegratorSettings {
+        relative_tolerance: 1e-8,
+        absolute_tolerance: Tolerance::PerState(atol.to_vec()),
+        linear_solver: LinearSolver::Gmres,
+        ..IntegratorSettings::default()
+    };
+    let mut engine = Engine::new(Box::new(Robertson), Robertson.description()).unwrap();
+    for choice in [JacobianChoice::Analytic, JacobianChoice::DifferenceQuotient] {
+        req.settings.jacobian = choice;
+        let result = engine.simulate(&req).unwrap();
+        assert_eq!(result.columns, reference.columns);
+        assert_eq!(result.n_rows, reference.n_rows);
+        for (row, expected) in result
+            .values
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(reference.values.as_chunks::<4>().0)
+        {
+            assert_eq!(row[0], expected[0]);
+            for ((v, r), a) in row[1..].iter().zip(&expected[1..]).zip(atol) {
+                assert!(
+                    (v - r).abs() < 50.0 * (1e-8 * r.abs() + a),
+                    "{choice:?} at t={}: {v:e} versus {r:e}",
+                    row[0]
+                );
+            }
+        }
+        let stats = engine.stats();
+        assert!(stats.steps > 0 && stats.rhs_evals > 0 && stats.linear_setups > 0);
+        assert!(stats.jacobian_evals > 0);
+        assert!(stats.linear_iterations > 0 && stats.jacobian_vector_evals > 0);
+        assert!(stats.preconditioner_evals > 0 && stats.preconditioner_solves > 0);
+        assert_eq!(
+            stats.jacobian_rhs_evals > 0,
+            choice == JacobianChoice::DifferenceQuotient
+        );
+        assert_eq!(engine.simulate(&req).unwrap(), result);
+        assert_eq!(engine.stats(), stats);
+    }
+    req.settings.linear_solver = LinearSolver::Dense;
+    engine.simulate(&req).unwrap();
+    let direct = engine.stats();
+    assert_eq!(direct.linear_iterations, 0);
+    assert_eq!(direct.linear_convergence_failures, 0);
+    assert_eq!(direct.jacobian_vector_evals, 0);
+    assert_eq!(direct.preconditioner_evals, 0);
+    assert_eq!(direct.preconditioner_solves, 0);
 }
 
 #[test]
