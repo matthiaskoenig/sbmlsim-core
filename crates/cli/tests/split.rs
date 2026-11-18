@@ -56,7 +56,7 @@ fn defined_functions(wasm: &[u8]) -> usize {
 }
 
 /// The exports of a module which call helper functions (which are split).
-fn split_exports(wasm: &[u8]) -> Vec<String> {
+fn split_exports(wasm: &[u8], history_helpers: u32) -> Vec<String> {
     let mut imports = 0;
     let mut exports: Vec<(u32, String)> = Vec::new();
     let mut bodies = Vec::new();
@@ -86,7 +86,7 @@ fn split_exports(wasm: &[u8]) -> Vec<String> {
                 .get_operators_reader()
                 .unwrap()
                 .into_iter()
-                .any(|op| matches!(op.unwrap(), wasmparser::Operator::Call { function_index } if function_index >= imports))
+                .any(|op| matches!(op.unwrap(), wasmparser::Operator::Call { function_index } if function_index >= imports + history_helpers))
         })
         .map(|(_, name)| name)
         .collect()
@@ -112,7 +112,15 @@ fn compare(
         },
     )
     .unwrap();
-    assert_eq!(defined_functions(&whole.wasm), 14, "{cid}");
+    let whole_functions = defined_functions(&whole.wasm);
+    let history_helpers = if whole.description.n_delays == 0 {
+        assert_eq!(whole_functions, 14, "{cid}");
+        0
+    } else {
+        // History lookup/interpolation and operand helpers precede the fourteen exports.
+        assert!(whole_functions >= 17, "{cid}");
+        whole_functions - 14
+    };
     // the Jacobian of the module as one (a model_jac whose entry is above the low limits would
     // otherwise be the difference quotient)
     let jacobian = match whole.description.jacobian {
@@ -128,9 +136,9 @@ fn compare(
     wasmparser::Validator::new()
         .validate_all(&split.wasm)
         .unwrap_or_else(|e| panic!("{cid}: {e}"));
-    let is_split = split_exports(&split.wasm);
+    let is_split = split_exports(&split.wasm, history_helpers as u32);
     assert_eq!(
-        defined_functions(&split.wasm) > 14,
+        defined_functions(&split.wasm) > whole_functions,
         !is_split.is_empty(),
         "{cid}"
     );

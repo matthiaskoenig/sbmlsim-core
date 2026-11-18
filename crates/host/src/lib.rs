@@ -307,7 +307,7 @@ impl Runtime {
     /// compiles `model.wasm` once, so that every [`LoadedModel::instantiate`] reuses the module.
     pub fn load(&self, model_wasm: &[u8], desc: &ModelDescription) -> anyhow::Result<LoadedModel> {
         check_contract(&desc.contract, MODEL_CONTRACT)?;
-        check_model_sections(model_wasm)?;
+        check_model_sections(model_wasm, desc.n_delays)?;
         let model_module = Module::new(&self.engine, model_wasm)
             .map_err(anyhow::Error::from)
             .context("model.wasm does not compile")?;
@@ -504,7 +504,7 @@ impl LoadedModel {
             free: engine.get_typed_func(&mut store, "engine_free")?,
             load: engine.get_typed_func(&mut store, "engine_load")?,
             simulate: engine.get_typed_func(&mut store, "engine_simulate")?,
-            initial_values: if desc.n_algebraic == 0 {
+            initial_values: if desc.n_algebraic == 0 && desc.n_delays == 0 {
                 None
             } else {
                 engine
@@ -547,7 +547,7 @@ impl LoadedModel {
     /// `model_sizes` differ from the description.
     pub fn initial_selections(&self) -> anyhow::Result<Vec<f64>> {
         let desc = &self.desc;
-        if desc.n_algebraic > 0 {
+        if desc.n_algebraic > 0 || desc.n_delays > 0 {
             return Ok(self.instantiate()?.initial_selections()?);
         }
         let (np, ns, nsel) = (
@@ -640,6 +640,10 @@ impl Runtime {
         model_wasm: &[u8],
         desc: &ModelDescription,
     ) -> anyhow::Result<ModelFunctions> {
+        ensure!(
+            desc.n_delays == 0,
+            "direct model functions require an instantaneous model; simulate a delay model with an instance and its continuous history"
+        );
         let module = self.load(model_wasm, desc)?.model_module;
         let Linked {
             mut store,
@@ -764,9 +768,21 @@ impl ModelFunctions {
 
 /// Checks that a model defines no memory, no mutable global, no data segment and no start
 /// function.
-fn check_model_sections(model_wasm: &[u8]) -> anyhow::Result<()> {
+fn check_model_sections(model_wasm: &[u8], n_delays: u32) -> anyhow::Result<()> {
+    let mut history = None;
     for payload in Parser::new(0).parse_all(model_wasm) {
         match payload.context("model.wasm is not a WebAssembly module")? {
+            Payload::CustomSection(section) if section.name() == sbmlsim_abi::history::SECTION => {
+                ensure!(history.is_none(), "model.wasm repeats its history metadata");
+                let bytes = section.data();
+                ensure!(bytes.len() == 8, "model.wasm has invalid history metadata");
+                let version = u32::from_le_bytes(bytes[..4].try_into().unwrap());
+                ensure!(
+                    version == sbmlsim_abi::history::VERSION,
+                    "model.wasm has unsupported history version {version}"
+                );
+                history = Some(u32::from_le_bytes(bytes[4..].try_into().unwrap()));
+            }
             Payload::DataSection(section) if section.count() > 0 => {
                 bail!("model.wasm has a data segment, it has no memory content of its own")
             }
@@ -792,6 +808,10 @@ fn check_model_sections(model_wasm: &[u8]) -> anyhow::Result<()> {
             _ => {}
         }
     }
+    ensure!(
+        history.unwrap_or(0) == n_delays,
+        "model.wasm history sites differ from its description"
+    );
     Ok(())
 }
 

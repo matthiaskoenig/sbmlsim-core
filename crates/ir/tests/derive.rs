@@ -157,7 +157,9 @@ fn eval(e: &Expr, y: &[f64], p: &[f64], d: &[f64]) -> f64 {
                 Op::And => f64::from(u8::from(args.iter().all(b))),
                 Op::Or => f64::from(u8::from(args.iter().any(b))),
                 Op::Not => f64::from(u8::from(!b(&args[0]))),
-                Op::Xor | Op::Implies | Op::XorSign => unimplemented!(),
+                Op::Xor | Op::Implies | Op::XorSign | Op::Delay | Op::HistoryQuery => {
+                    unimplemented!()
+                }
             }
         }
     }

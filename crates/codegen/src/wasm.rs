@@ -13,6 +13,9 @@
 
 use std::collections::{BTreeMap, HashMap};
 
+mod history;
+pub(crate) use history::{closure, delay_sites, live_assignments};
+
 use sbmlsim_ir::{Assignment, CompileError, Expr, Op, Symbol};
 use wasm_encoder::{
     BlockType, CodeSection, EntityType, ExportKind, ExportSection, Function, FunctionSection,
@@ -120,6 +123,8 @@ pub(crate) struct ModuleBuilder {
     pub limits: Limits,
     /// The slot of the first constant in `p` (`Symbol::Constant`): the number of parameters.
     pub constants: u32,
+    delay_indices: HashMap<String, u32>,
+    pub history_slots: u32,
 }
 
 /// A function the module defines: a function of `model/2` it exports, or a helper function of a
@@ -128,6 +133,7 @@ struct DefinedFunction {
     export: Option<&'static str>,
     ty: u32,
     locals: u32,
+    integers: u32,
     code: Vec<u8>,
     /// The calls of helper functions: the offset of the padded index in the code and the
     /// position of the callee among the defined functions.
@@ -198,6 +204,7 @@ impl ModuleBuilder {
             module: self,
             export,
             ty,
+            integers: 0,
             n_params: params.len() as u32,
             n_locals: 0,
             free: Vec::new(),
@@ -254,7 +261,11 @@ impl ModuleBuilder {
                 }
                 f.code[offset + CALL_INDEX_BYTES - 1] &= 0x7f;
             }
-            let mut body = Function::new([(f.locals, ValType::F64)]);
+            let mut body = if f.integers == 0 {
+                Function::new([(f.locals, ValType::F64)])
+            } else {
+                Function::new([(f.integers, ValType::I32), (f.locals, ValType::F64)])
+            };
             body.raw(f.code.iter().copied());
             code.function(&body);
         }
@@ -265,6 +276,16 @@ impl ModuleBuilder {
             .section(&functions)
             .section(&exports)
             .section(&code);
+        if self.history_slots > 0 {
+            use sbmlsim_abi::history;
+            let mut data = [0_u8; 8];
+            data[..4].copy_from_slice(&history::VERSION.to_le_bytes());
+            data[4..].copy_from_slice(&self.history_slots.to_le_bytes());
+            module.section(&wasm_encoder::CustomSection {
+                name: history::SECTION.into(),
+                data: data.as_slice().into(),
+            });
+        }
         module.finish()
     }
 }
@@ -284,6 +305,7 @@ pub(crate) struct Body<'b> {
     export: Option<&'static str>,
     ty: u32,
     n_params: u32,
+    integers: u32,
     n_locals: u32,
     free: Vec<u32>,
     code: Vec<u8>,
@@ -362,12 +384,17 @@ impl Body<'_> {
 
     /// The size of the encoded body if the function were finished now.
     pub(crate) fn size(&self) -> usize {
-        body_size(self.n_locals, self.code.len())
+        let integer_declaration = if self.integers == 0 {
+            0
+        } else {
+            leb_len(u64::from(self.integers)) + 1
+        };
+        body_size(self.n_locals, self.code.len()) + integer_declaration
     }
 
     /// The number of locals with the parameters.
     pub(crate) fn locals(&self) -> usize {
-        (self.n_params + self.n_locals) as usize
+        (self.n_params + self.integers + self.n_locals) as usize
     }
 
     /// The value of an expression into a local (one given back before, or a new one), which
@@ -398,6 +425,10 @@ impl Body<'_> {
         for i in 0..self.n_params {
             self.sink().local_get(i);
         }
+        self.call_defined(callee);
+    }
+
+    fn call_defined(&mut self, callee: u32) {
         self.code.push(0x10);
         self.calls.push((self.code.len(), callee));
         self.code.extend_from_slice(&[0; CALL_INDEX_BYTES]);
@@ -414,7 +445,7 @@ impl Body<'_> {
 
     /// A new `f64` local.
     fn local(&mut self) -> u32 {
-        let index = self.n_params + self.n_locals;
+        let index = self.n_params + self.integers + self.n_locals;
         self.n_locals += 1;
         index
     }
@@ -667,6 +698,7 @@ impl Body<'_> {
             export: self.export,
             ty: self.ty,
             locals: self.n_locals,
+            integers: self.integers,
             code: self.code,
             calls: self.calls,
         });
@@ -868,6 +900,8 @@ impl Body<'_> {
     /// An arithmetic operator or a function.
     fn apply(&mut self, op: Op, args: &[Expr]) {
         match op {
+            Op::Delay => self.history_call(args),
+            Op::HistoryQuery => self.query_clock(&args[0]),
             Op::Plus | Op::Times => match args.split_first() {
                 None => {
                     let identity = if op == Op::Plus { 0.0 } else { 1.0 };

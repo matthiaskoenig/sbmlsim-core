@@ -15,6 +15,7 @@ Documentation: https://matthiaskoenig.github.io/sbmlsim-core/ (built from `docs/
 
 - The compiler (`crates/compiler`, built on `sbml`, `ir` and `codegen`) turns an SBML Level 3 Version 2 core model (flat, no required package but `distrib`, whose uncertainties annotate and are ignored) into `model.wasm`, with analytic sparse Jacobians, and `model.json`, its description.
 - The engine (`crates/engine`, `engine.wasm`, wasm32-wasip1) is Rust with CVODE and IDA 7.9 and KLU. It runs a request on a compiled model: changes, events, steady states, dense or KLU linear solvers (dense through 12 states by default), and opt-in preconditioned GMRES for stiff ODEs.
+- [Delay differential equations](docs/delays.md) support SBML prehistory, nested and variable delays, and delayed discontinuities. Ordinary ODEs retain their compiled modules and solver path.
 - The hosts run the same `engine.wasm`, `mathlib.wasm` and `model.wasm` with bitwise identical results: wasmtime (`crates/host`, the command line `sbmlsim-core`) and Node and browsers (`js/loader.mjs`).
 - It is the simulation core of sbmlsim's web apps; the semantics are those of sbmlsim (PEtab v2), the integrator and the solvers those of roadrunner.
 
@@ -164,11 +165,10 @@ Errors derive from `SbmlsimCoreError`: `CompileError`, `LoadError` (a runtime wh
 
 `sbmlsim-core testsuite testdata/cases` compiles and simulates the cases of the SBML Test Suite (prepared with `uv run scripts/prepare_testsuite.py --out testdata/cases`) and compares them with the baseline `testdata/testsuite_baseline.json`; `--write-baseline` writes the baseline from a run. In every mode (analytic and difference Jacobian, optimizer on and off) each passing case is simulated again to check that it repeats bitwise.
 
-Measured in this repository: 1701 of 1789 cases pass, including 120 algebraic-rule cases integrated with IDA. The baseline records the 88 expected failures as `not_compiled`, with reasons from preparation or compilation.
+Measured in this repository: 1754 of 1789 cases pass, including all 53 delay cases and 123 algebraic-rule cases. The baseline records the 35 expected failures as `not_compiled`, with reasons from preparation or compilation.
 
 | reason | cases |
 |---|---:|
-| delay csymbol is not supported | 53 |
 | not converted: fast reaction (libsbml conversion refuses a fast reaction) | 35 |
 
 ## Benchmark

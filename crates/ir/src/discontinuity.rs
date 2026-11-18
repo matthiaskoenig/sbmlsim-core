@@ -255,6 +255,18 @@ fn varies(e: &Expr, varying: &[bool]) -> bool {
 fn branches(e: &Expr, out: &mut Vec<Expr>) {
     match e {
         Expr::Number(_) | Expr::Bool(_) | Expr::Symbol(_) => {}
+        Expr::Apply {
+            op: Op::Delay,
+            args,
+        } => {
+            let first = out.len();
+            branches(&args[0], out);
+            for root in &mut out[first..] {
+                let historical = std::mem::replace(root, Expr::Number(0.));
+                *root = Expr::apply(Op::Delay, vec![historical, args[1].clone()]);
+            }
+            branches(&args[1], out);
+        }
         Expr::Apply { args, .. } => args.iter().for_each(|a| branches(a, out)),
         Expr::Piecewise { pieces, otherwise } => {
             for i in 0..pieces.len() {

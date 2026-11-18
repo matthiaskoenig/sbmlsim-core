@@ -100,6 +100,7 @@
 //! [`ENGINE_OUTPUT_FORMAT`], the version of the layout of its output and its counters, which
 //! the hosts check before they use it.
 
+pub mod history;
 mod request;
 
 use std::collections::BTreeMap;
@@ -196,6 +197,9 @@ pub struct ModelDescription {
     /// The number of trailing states determined by algebraic residuals.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub n_algebraic: u32,
+    /// Number of historical query slots. The final constant slot holds the history header address.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub n_delays: u32,
     /// The parameters, in the order of the parameter vector.
     pub parameters: Vec<Entity>,
     /// The values `model_selections` writes, in its order.
@@ -754,6 +758,7 @@ mod tests {
             n_roots: 3,
             n_discontinuity_roots: 1,
             n_constants: 2,
+            n_delays: 0,
             units: BTreeMap::new(),
         };
         let sizes = ModelSizes::of(&d);

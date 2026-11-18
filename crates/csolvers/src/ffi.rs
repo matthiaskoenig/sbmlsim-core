@@ -306,6 +306,13 @@ unsafe extern "C" {
     ) -> c_int;
     pub fn CVodeGetRootInfo(cvode_mem: *mut c_void, rootsfound: *mut c_int) -> c_int;
     pub fn CVodeGetDky(cvode_mem: *mut c_void, t: sunrealtype, k: c_int, dky: N_Vector) -> c_int;
+    pub fn CVodeGetLastOrder(cvode_mem: *mut c_void, q: *mut c_int) -> c_int;
+    pub fn CVodeGetLastStep(cvode_mem: *mut c_void, h: *mut f64) -> c_int;
+    pub fn CVodeGetCurrentTime(cvode_mem: *mut c_void, t: *mut f64) -> c_int;
+    pub fn IDAGetDky(ida_mem: *mut c_void, t: f64, k: c_int, dky: N_Vector) -> c_int;
+    pub fn IDAGetLastOrder(ida_mem: *mut c_void, q: *mut c_int) -> c_int;
+    pub fn IDAGetLastStep(ida_mem: *mut c_void, h: *mut f64) -> c_int;
+    pub fn IDAGetCurrentTime(ida_mem: *mut c_void, t: *mut f64) -> c_int;
     pub fn CVodeGetNumSteps(cvode_mem: *mut c_void, nsteps: *mut c_long) -> c_int;
     /// The step size of the step being attempted (`cv_next_h`, which is `cv_h` while CVODE
     /// sets up the linear solver).

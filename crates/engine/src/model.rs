@@ -49,6 +49,32 @@ pub trait ModelFns {
     /// The sizes of the model (`model_sizes` and `model_event_sizes`), which the engine compares
     /// with the description.
     fn sizes(&self) -> ModelSizes;
+
+    /// Publish a relocatable delay history; return its address in the model's memory.
+    /// Ordinary models never call this method. The address is derived directly from the
+    /// owning buffer, independently of the borrowed read-only bytes.
+    fn set_history(
+        &self,
+        _data: &[u8],
+        _updates: &[(usize, usize)],
+        _address: usize,
+    ) -> Result<u32, crate::EngineError> {
+        Err(crate::EngineError::Unsupported(
+            "model bridge does not support delay history".into(),
+        ))
+    }
+    /// Read diagnostic words written by delay lookups in a separate model memory.
+    fn read_history_status(&self, _data: &mut [u8]) -> Result<bool, crate::EngineError> {
+        Ok(false)
+    }
+    /// Read query times from a separate model memory; false means memory is shared.
+    fn read_history_queries(
+        &self,
+        _offset: usize,
+        _out: &mut [f64],
+    ) -> Result<bool, crate::EngineError> {
+        Ok(false)
+    }
 }
 
 #[cfg(any(test, feature = "test-models"))]
@@ -109,6 +135,7 @@ mod test_models {
             n_roots: 0,
             n_discontinuity_roots: 0,
             n_algebraic: 0,
+            n_delays: 0,
             n_constants: 0,
             units: BTreeMap::new(),
         }
@@ -639,6 +666,7 @@ mod test_models {
                     })
                     .collect(),
                 n_algebraic: 0,
+                n_delays: 0,
                 n_roots: self
                     .events
                     .iter()

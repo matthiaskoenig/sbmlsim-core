@@ -118,6 +118,16 @@ struct ImportedModel {
 // which `Engine::new` checked to be the sizes of the model, so the imported function reads and
 // writes within them.
 impl ModelFns for ImportedModel {
+    fn set_history(
+        &self,
+        _data: &[u8],
+        _updates: &[(usize, usize)],
+        address: usize,
+    ) -> Result<u32, EngineError> {
+        u32::try_from(address).map_err(|_| {
+            EngineError::Internal("delay history address exceeds linear memory".into())
+        })
+    }
     fn defaults(&self, p: &mut [f64], y: &mut [f64]) {
         unsafe { imports::model_defaults(p.as_mut_ptr(), y.as_mut_ptr()) }
     }

@@ -6,11 +6,10 @@
   <p class="suite-fallback">The grid of the cases needs JavaScript; the counts and the reasons are in the tables below.</p>
 </div>
 
-The engine passes 1701 of 1789 cases, including 120 algebraic-rule cases integrated with IDA. Every case the compiler accepts passes. The remaining 88 cases are reported as `not_compiled` when preparation or compilation refuses an unsupported feature. Three of the cases with algebraic rules also use the unsupported MathML `delay` csymbol.
+The engine passes 1754 of 1789 cases, including all 53 delay cases and 123 algebraic-rule cases. Every case the compiler accepts passes. The remaining 35 cases are reported as `not_compiled` when preparation or compilation refuses an unsupported feature.
 
 | reason | cases |
 |---|---:|
-| delay csymbol is not supported | 53 |
 | not converted: fast reaction (libsbml conversion refuses a fast reaction) | 35 |
 
 ## Running the suite

@@ -207,8 +207,8 @@ pub(crate) fn too_close(t0: f64, t: f64) -> bool {
 /// of the output. The stop time of CVODE is the end of the segment, so the integration never
 /// passes it; with [`SegmentOutput::Times`] it ends at the last time of the output.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn integrate<const DAE: bool>(
-    mut cvode: Option<&mut Integrator<DAE>>,
+pub(crate) fn integrate<const DAE: bool, H: crate::delay::Mode>(
+    mut cvode: Option<&mut Integrator<DAE, H>>,
     problem: &mut Problem<'_>,
     settings: &IntegratorSettings,
     t0: f64,
@@ -542,8 +542,8 @@ impl Outputs<'_> {
 /// `cvode` is the memory of `problem.n` states; a model without states has `problem.n_model`
 /// 0 and one state of the rate 0.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn integrate_events<const DAE: bool>(
-    cvode: &mut Integrator<DAE>,
+pub(crate) fn integrate_events<const DAE: bool, H: crate::delay::Mode>(
+    cvode: &mut Integrator<DAE, H>,
     problem: &mut Problem<'_>,
     settings: &IntegratorSettings,
     start: f64,

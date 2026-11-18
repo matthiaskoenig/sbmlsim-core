@@ -69,6 +69,7 @@
 //!   to the time half way between them for a model with events.
 
 mod changes;
+mod delay;
 mod events;
 #[cfg(all(target_arch = "wasm32", feature = "exports"))]
 mod exports;
@@ -289,6 +290,9 @@ impl Engine {
         self.ensure_ready()?;
         let model = &*self.model;
         let mut initialize = || {
+            if let SolverCache::Delayed(cache) = &mut self.cache {
+                return cache.initial_values(model, &self.desc, &mut self.scratch);
+            }
             initial_values(model, &self.desc, &[], &mut self.scratch)?;
             if self.desc.n_algebraic > 0 {
                 initial::consistent(
@@ -573,6 +577,9 @@ fn pattern_of(desc: &ModelDescription) -> &SparsityPattern {
 /// difference quotient, that the columns of a color share no row (else the difference quotient
 /// would mix the entries of two columns).
 fn check_description(desc: &ModelDescription) -> Result<(), EngineError> {
+    if desc.n_delays > 0 && desc.n_constants != 1 {
+        return Err(request("a delay model requires one reserved history slot"));
+    }
     check_contract(&desc.contract, MODEL_CONTRACT).map_err(|e| request(e.to_string()))?;
     let n = desc.states.len();
     if desc.n_algebraic as usize > n {
@@ -1052,11 +1059,14 @@ fn prepare(
 enum SolverCache {
     Ode(Option<Integrator<false>>),
     Dae(Option<Integrator<true>>),
+    Delayed(Box<delay::Cache>),
 }
 
 impl SolverCache {
     fn new(desc: &ModelDescription) -> Self {
-        if desc.n_algebraic == 0 {
+        if desc.n_delays > 0 {
+            Self::Delayed(Box::new(delay::Cache::new(desc)))
+        } else if desc.n_algebraic == 0 {
             Self::Ode(None)
         } else {
             Self::Dae(None)
@@ -1083,11 +1093,32 @@ fn run(
 ) -> Result<RecordedValues, EngineError> {
     match cache {
         SolverCache::Ode(cache) => run_model(
-            model, desc, metadata, cache, plan, values, scratch, prefix, stats,
+            model,
+            desc,
+            metadata,
+            cache,
+            plan,
+            values,
+            scratch,
+            prefix,
+            stats,
+            delay::NoHistory,
         ),
         SolverCache::Dae(cache) => run_model(
-            model, desc, metadata, cache, plan, values, scratch, prefix, stats,
+            model,
+            desc,
+            metadata,
+            cache,
+            plan,
+            values,
+            scratch,
+            prefix,
+            stats,
+            delay::NoHistory,
         ),
+        SolverCache::Delayed(cache) => {
+            cache.run(model, desc, metadata, plan, values, scratch, prefix, stats)
+        }
     }
 }
 
@@ -1122,16 +1153,17 @@ fn record_point(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn run_model<const DAE: bool>(
+fn run_model<const DAE: bool, H: delay::Mode>(
     model: &dyn ModelFns,
     desc: &ModelDescription,
     metadata: &mut Metadata,
-    cache: &mut Option<Integrator<DAE>>,
+    cache: &mut Option<Integrator<DAE, H>>,
     plan: &Plan,
     values: &[f64],
     scratch: &mut Scratch,
     prefix: &dyn Fn(&[String]) -> usize,
     stats: &mut SimulationStats,
+    history: H,
 ) -> Result<RecordedValues, EngineError> {
     *stats = SimulationStats::default();
     let req = &plan.req;
@@ -1214,6 +1246,7 @@ fn run_model<const DAE: bool>(
         }
         let cvode = cache.as_mut();
         if let Some(cvode) = cvode {
+            cvode.history = history.clone();
             // the counters of the memory start with this simulation
             cvode.begin();
             Some(cvode)
@@ -1302,6 +1335,11 @@ fn run_model<const DAE: bool>(
                         &mut scratch.steady_rates,
                         None,
                     )?;
+                    if H::ENABLED {
+                        let mut state = history.shared().unwrap().borrow_mut();
+                        state.rebase(start);
+                        state.sync(model, &mut problem.p)?;
+                    }
                 }
                 if DAE && let Some(projection) = &mut events.constraints {
                     projection.project(start, &mut y0, &problem.p)?;
@@ -1341,6 +1379,11 @@ fn run_model<const DAE: bool>(
                         &mut scratch.steady_rates,
                         constraints.as_deref_mut(),
                     )?;
+                    if H::ENABLED {
+                        let mut state = history.shared().unwrap().borrow_mut();
+                        state.rebase(start);
+                        state.sync(model, &mut problem.p)?;
+                    }
                 }
                 if DAE && let Some(projection) = &mut constraints {
                     projection.project(start, &mut y0, &problem.p)?;

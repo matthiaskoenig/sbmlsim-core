@@ -89,6 +89,9 @@ impl<'m> Builder<'m> {
             reaction_rates: HashMap::new(),
             state_rates: HashMap::new(),
             busy: Vec::new(),
+            prehistory: false,
+            delay_seen: false,
+            rate_of_seen: false,
         })
     }
 

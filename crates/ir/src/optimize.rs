@@ -442,7 +442,7 @@ impl Constants {
 }
 
 /// A key of a tree which tells apart the bits of its numbers (also NaNs of other payloads).
-fn tree_key(e: &Expr) -> String {
+pub fn tree_key(e: &Expr) -> String {
     fn write(e: &Expr, out: &mut String) {
         use std::fmt::Write;
         match e {
@@ -578,6 +578,9 @@ pub fn fold(e: &Expr) -> Expr {
 
 /// An operator of folded arguments, folded.
 fn fold_apply(op: Op, mut args: Vec<Expr>) -> Expr {
+    if matches!(op, Op::Delay | Op::HistoryQuery) {
+        return Expr::apply(op, args);
+    }
     if args.iter().all(is_literal) {
         return literal(op, args);
     }

@@ -1,7 +1,7 @@
 {
   "suite_commit": "bbcbc80c4daec79fea301299f981746408a1742b",
   "n_cases": 1789,
-  "n_passed": 1701,
+  "n_passed": 1754,
   "expected_failures": {
     "00870": {
       "status": "not_compiled",
@@ -27,54 +27,6 @@
       "status": "not_compiled",
       "reason": "not converted: fast reaction reaction1: refused (fast reactions are out of scope; L3V2 has no fast attribute)"
     },
-    "00937": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (assignmentRule #1 (y))"
-    },
-    "00938": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (assignmentRule #0 (y))"
-    },
-    "00939": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (assignmentRule #0 (y))"
-    },
-    "00940": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (assignmentRule #0 (y))"
-    },
-    "00941": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (assignmentRule #0 (y))"
-    },
-    "00942": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (assignmentRule #0 (y))"
-    },
-    "00943": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (assignmentRule #0 (y))"
-    },
-    "00981": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (assignmentRule #1 (y))"
-    },
-    "00982": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (assignmentRule #2 (y))"
-    },
-    "00983": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (assignmentRule #2 (y))"
-    },
-    "00984": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (assignmentRule #0 (y))"
-    },
-    "00985": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (assignmentRule #0 (z))"
-    },
     "00986": {
       "status": "not_compiled",
       "reason": "not converted: fast reaction fast: refused (fast reactions are out of scope; L3V2 has no fast attribute)"
@@ -99,34 +51,6 @@
       "status": "not_compiled",
       "reason": "not converted: fast reaction reaction1: refused (fast reactions are out of scope; L3V2 has no fast attribute)"
     },
-    "01142": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (assignmentRule #1 (t3))"
-    },
-    "01173": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (assignmentRule #1 (t3))"
-    },
-    "01174": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (algebraicRule #0)"
-    },
-    "01176": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (kineticLaw of sub1__J0)"
-    },
-    "01318": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (assignmentRule #1 (p3))"
-    },
-    "01319": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (assignmentRule #1 (p3))"
-    },
-    "01320": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (assignmentRule #0 (p2))"
-    },
     "01396": {
       "status": "not_compiled",
       "reason": "not converted: fast reaction J0: refused (fast reactions are out of scope; L3V2 has no fast attribute)"
@@ -142,134 +66,6 @@
     "01399": {
       "status": "not_compiled",
       "reason": "not converted: fast reaction J0: refused (fast reactions are out of scope; L3V2 has no fast attribute)"
-    },
-    "01400": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (assignmentRule #1 (P1))"
-    },
-    "01401": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (assignmentRule #2 (P1))"
-    },
-    "01403": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (assignmentRule #1 (P1))"
-    },
-    "01404": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (assignmentRule #0 (P0))"
-    },
-    "01406": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (assignmentRule #1 (P1))"
-    },
-    "01407": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (assignmentRule #0 (P0))"
-    },
-    "01409": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (assignmentRule #1 (P1))"
-    },
-    "01410": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (assignmentRule #0 (P0))"
-    },
-    "01411": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (assignmentRule #0 (P1))"
-    },
-    "01412": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (assignmentRule #0 (P1))"
-    },
-    "01413": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (assignmentRule #0 (P1))"
-    },
-    "01414": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (kineticLaw of J0)"
-    },
-    "01415": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (kineticLaw of J0)"
-    },
-    "01416": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (assignmentRule #1 (P1))"
-    },
-    "01417": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (assignmentRule #0 (P1))"
-    },
-    "01418": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (assignmentRule #0 (P1))"
-    },
-    "01419": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (assignmentRule #0 (P1))"
-    },
-    "01454": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (assignmentRule #2 (x))"
-    },
-    "01480": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (assignmentRule #0 (S1_sr))"
-    },
-    "01481": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (assignmentRule #0 (S1_sr))"
-    },
-    "01518": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (trigger of E0)"
-    },
-    "01519": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (trigger of E0)"
-    },
-    "01520": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (trigger of E0)"
-    },
-    "01521": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (priority of E0)"
-    },
-    "01522": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (trigger of E0)"
-    },
-    "01523": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (eventAssignment #0 (P2) of E0)"
-    },
-    "01524": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (eventAssignment #0 (P2) of E0)"
-    },
-    "01534": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (assignmentRule #0 (P0))"
-    },
-    "01535": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (assignmentRule #0 (P0))"
-    },
-    "01536": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (eventAssignment #0 (S1_stoich) of _E0)"
-    },
-    "01537": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (assignmentRule #0 (P1))"
-    },
-    "01538": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (assignmentRule #1 (P1))"
     },
     "01539": {
       "status": "not_compiled",
@@ -346,14 +142,6 @@
     "01572": {
       "status": "not_compiled",
       "reason": "not converted: fast reaction J0: refused (fast reactions are out of scope; L3V2 has no fast attribute)"
-    },
-    "01592": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (eventAssignment #1 (Q) of Qinc)"
-    },
-    "01593": {
-      "status": "not_compiled",
-      "reason": "delay csymbol is not supported (assignmentRule #1 (S2))"
     }
   }
 }

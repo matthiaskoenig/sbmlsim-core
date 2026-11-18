@@ -49,6 +49,7 @@
 //! The crate does no file system or OS access, so it builds for `wasm32-unknown-unknown`.
 
 mod math;
+mod probes;
 mod split;
 mod wasm;
 
@@ -133,14 +134,27 @@ fn emit_limited(
     limits: Limits,
     optimized: bool,
 ) -> Result<(Vec<u8>, ModelDescription), CompileError> {
-    // the kind of the Jacobian and its reason are those of the model as written, with and
-    // without the optimizer
-    let jacobian = choose_jacobian(model, choice, limits)?;
-    // the root functions of the discontinuities, computed once for every function of the module
-    // and the description
+    // Discover delay operands in generated event and discontinuity roots as well as SBML math.
     let discontinuities = model.try_discontinuity_roots()?;
     let d = &discontinuities;
-    let wasm = if optimized {
+    let history = probes::HistoryPlan::build(model, root_functions(model, d))?;
+    let jacobian = if history.sites.is_empty() {
+        choose_jacobian(model, choice, limits)?
+    } else {
+        if choice == JacobianChoice::Analytic {
+            return Err(CompileError::Unsupported {
+                feature: "an analytic Jacobian of a delay model".into(),
+                element: model.id.clone().unwrap_or_default(),
+            });
+        }
+        let pattern = derive::pattern(model);
+        JacobianIr::ColoredDifference {
+            colors: pattern.greedy_colors(),
+            pattern,
+            reason: "the model reads its history".into(),
+        }
+    };
+    let wasm = if optimized && history.sites.is_empty() {
         // the common subexpressions add locals: without them when a function is above the
         // limits with them, and as written when it is above them still (the folding of a
         // literal boolean may add bytes), whose model_jac is known to be within them
@@ -151,19 +165,28 @@ fn emit_limited(
                 other => other,
             };
         within(
-            module(model, &jacobian, d, limits, Some(&plan(true))),
+            module(model, &jacobian, d, &history, limits, Some(&plan(true))),
             &|| {
                 within(
-                    module(model, &jacobian, d, limits, Some(&plan(false))),
-                    &|| module(model, &jacobian, d, limits, None),
+                    module(model, &jacobian, d, &history, limits, Some(&plan(false))),
+                    &|| module(model, &jacobian, d, &history, limits, None),
                 )
             },
         )?
     } else {
-        module(model, &jacobian, d, limits, None)?
+        module(model, &jacobian, d, &history, limits, None)?
     };
     let (wasm, n_constants) = wasm;
-    Ok((wasm, description(model, jacobian, d, n_constants)))
+    Ok((
+        wasm,
+        description(
+            model,
+            jacobian,
+            d,
+            n_constants,
+            history.queries.len() as u32,
+        ),
+    ))
 }
 
 /// Adds `model_jac(t, y, p, values)` as written to the module: the rules, their derivatives, the
@@ -325,6 +348,7 @@ fn module(
     model: &Model,
     jacobian: &JacobianIr,
     discontinuities: &[Expr],
+    history: &probes::HistoryPlan,
     limits: Limits,
     plan: Option<&Plan>,
 ) -> Result<(Vec<u8>, u32), CompileError> {
@@ -335,6 +359,9 @@ fn module(
     let mut m = ModuleBuilder::default();
     m.limits = limits;
 
+    let n_constants = u32::from(!history.sites.is_empty());
+    m.history_slots = history.queries.len() as u32;
+    m.history(model, &history.sites)?;
     defaults(&mut m, model)?;
 
     // model_init(t, p, y, fixed): fixed has a byte per parameter, then per state
@@ -350,7 +377,17 @@ fn module(
     m.sequence(&sig(abi::INIT, &[F64, I32, I32, I32], &[], INIT), &init)?;
 
     // model_rhs(t, y, p, ydot)
-    let rhs: Vec<Stmt<'_>> = rule_lets(model).chain(outputs(3, &model.rates)).collect();
+    let lets_for = |operands: &[Expr]| -> Vec<Stmt<'_>> {
+        if n_constants == 0 {
+            return rule_lets(model).collect();
+        }
+        wasm::live_assignments(&model.assignment_rules, operands.iter())
+            .into_iter()
+            .map(|a| Stmt::Let(a.target, &a.expr))
+            .collect()
+    };
+    let mut rhs = lets_for(&model.rates);
+    rhs.extend(outputs(3, &model.rates));
     m.sequence(&sig(abi::RHS, &[F64, I32, I32, I32], &[], VECTORS), &rhs)?;
 
     written_jac(&mut m, model, jacobian)?;
@@ -359,10 +396,28 @@ fn module(
     // then those of the discontinuities
     let roots = root_functions(model, discontinuities);
     let mut stmts: Vec<Stmt<'_>> = Vec::new();
-    if !roots.is_empty() {
-        stmts.extend(rule_lets(model));
+    if history.queries.is_empty() {
+        if !roots.is_empty() {
+            stmts.extend(lets_for(&roots));
+        }
+    } else {
+        stmts.extend(
+            wasm::live_assignments(
+                &model.assignment_rules,
+                roots.iter().chain(&history.queries),
+            )
+            .into_iter()
+            .map(|a| Stmt::Let(a.target, &a.expr)),
+        );
     }
     stmts.extend(outputs(3, &roots));
+    for (i, query) in history.queries.iter().enumerate() {
+        stmts.push(Stmt::HistoryRoots {
+            index: i as u32,
+            output: (roots.len() + abi::history::ROOTS_PER_QUERY * i) as u32,
+            query,
+        });
+    }
     m.sequence(
         &sig(abi::ROOTS, &[F64, I32, I32, I32], &[], VECTORS),
         &stmts,
@@ -472,8 +527,8 @@ fn module(
         .collect();
     m.sequence(&sig(abi::ASSIGN, &[F64, I32, I32], &[], VECTORS), &assign)?;
 
-    size_functions(&mut m, model, jacobian, discontinuities, 0)?;
-    Ok((m.finish(), 0))
+    size_functions(&mut m, model, jacobian, discontinuities, n_constants)?;
+    Ok((m.finish(), n_constants))
 }
 
 /// The context of `model_init(t, p, y, fixed)`.
@@ -572,7 +627,8 @@ fn size_functions(
     discontinuities: &[Expr],
     n_constants: u32,
 ) -> Result<(), CompileError> {
-    let sizes = sizes(model, jacobian, discontinuities, n_constants);
+    let mut sizes = sizes(model, jacobian, discontinuities, n_constants);
+    sizes.roots += abi::history::ROOTS_PER_QUERY as u32 * m.history_slots;
     let none = Ctx { t: 0, y: 0, p: 0 };
     let words: Vec<Stmt<'_>> = sizes
         .words()
@@ -877,6 +933,17 @@ fn event_apply(model: &Model, e: &Event, f: &mut wasm::Body<'_>) {
 pub fn initial_values(model: &Model) -> (Vec<f64>, Vec<f64>) {
     let mut p: Vec<f64> = model.parameters.iter().map(|e| e.default).collect();
     let mut y: Vec<f64> = model.states.iter().map(|e| e.default).collect();
+    if !wasm::delay_sites(model, &[]).is_empty() {
+        for a in &model.initial {
+            let value = historical_initial(model, &a.expr, 0.0, &y, &p, 0);
+            match a.target {
+                Symbol::State(i) => y[i as usize] = value,
+                Symbol::Param(i) => p[i as usize] = value,
+                _ => unreachable!("only entities take initial values"),
+            }
+        }
+        return (p, y);
+    }
     for a in &model.initial {
         let value = math::eval(&a.expr, &|s| match s {
             Symbol::State(i) => y[i as usize],
@@ -898,6 +965,46 @@ pub fn initial_values(model: &Model) -> (Vec<f64>, Vec<f64>) {
     (p, y)
 }
 
+// The native initial-value metadata follows the same historical dependency closure as Wasm.
+fn historical_initial(
+    model: &Model,
+    expr: &Expr,
+    t: f64,
+    y: &[f64],
+    p: &[f64],
+    depth: usize,
+) -> f64 {
+    sbmlsim_ir::eval::eval_history(
+        expr,
+        &|s| match s {
+            Symbol::Time => t,
+            Symbol::State(i) => y[i as usize],
+            Symbol::Param(i) => p[i as usize],
+            _ => unreachable!("unoptimized initial history"),
+        },
+        &|operand, lag| {
+            if !lag.is_finite() || lag < 0. || depth >= abi::history::MAX_FRAMES {
+                return f64::NAN;
+            }
+            let past = t - lag;
+            if lag == 0.0 {
+                return historical_initial(model, operand, t, y, p, depth + 1);
+            }
+            let mut hy: Vec<_> = model.states.iter().map(|s| s.default).collect();
+            let mut hp: Vec<_> = model.parameters.iter().map(|s| s.default).collect();
+            for a in wasm::closure(&model.initial, operand) {
+                let v = historical_initial(model, &a.expr, past, &hy, &hp, depth + 1);
+                match a.target {
+                    Symbol::State(i) => hy[i as usize] = v,
+                    Symbol::Param(i) => hp[i as usize] = v,
+                    _ => unreachable!("only entities take initial values"),
+                }
+            }
+            historical_initial(model, operand, past, &hy, &hp, depth + 1)
+        },
+    )
+}
+
 /// The compiler and its version which [`ModelDescription::compiler`] records (the version of the
 /// workspace, which the compiler crates share).
 pub const COMPILER: &str = concat!("sbmlsim-compiler ", env!("CARGO_PKG_VERSION"));
@@ -908,9 +1015,11 @@ fn description(
     jacobian: JacobianIr,
     discontinuities: &[Expr],
     n_constants: u32,
+    n_delays: u32,
 ) -> ModelDescription {
-    let n_roots = sizes(model, &jacobian, discontinuities, n_constants).roots;
-    let n_discontinuity_roots = discontinuities.len() as u32;
+    let history_roots = abi::history::ROOTS_PER_QUERY as u32 * n_delays;
+    let n_roots = sizes(model, &jacobian, discontinuities, n_constants).roots + history_roots;
+    let n_discontinuity_roots = discontinuities.len() as u32 + history_roots;
     let (p, y) = initial_values(model);
     let entity = |e: &sbmlsim_ir::Entity, initial: f64| Entity {
         id: e.id.clone(),
@@ -937,6 +1046,7 @@ fn description(
         compiler: COMPILER.to_string(),
         id: model.id.clone().unwrap_or_default(),
         n_algebraic: model.n_algebraic,
+        n_delays,
         states: model
             .states
             .iter()

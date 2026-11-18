@@ -43,8 +43,8 @@ pub const STEADY_STATE_FROM: f64 = 0.0;
 /// `start` and `end` are the times of the simulation which follows: the pending executions are
 /// moved to `start`, the windows of the events are the ones of the simulation again.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn steady_state<'a, const DAE: bool>(
-    mut cvode: Option<&mut Integrator<DAE>>,
+pub(crate) fn steady_state<'a, const DAE: bool, H: crate::delay::Mode>(
+    mut cvode: Option<&mut Integrator<DAE, H>>,
     problem: &mut Problem<'_>,
     settings: &IntegratorSettings,
     start: f64,
@@ -124,8 +124,8 @@ pub(crate) fn steady_state<'a, const DAE: bool>(
 /// of the root functions and stops at every pending execution, the events execute at every stop
 /// ([`Events::execute`], `stop` included) and CVODE starts again after an execution and at a
 /// zero of a root function of a discontinuity.
-fn with_events<const DAE: bool>(
-    cvode: &mut Integrator<DAE>,
+fn with_events<const DAE: bool, H: crate::delay::Mode>(
+    cvode: &mut Integrator<DAE, H>,
     problem: &mut Problem<'_>,
     settings: &IntegratorSettings,
     mut t: f64,

@@ -385,6 +385,17 @@ export async function createRuntime({
       }
       if (!(modelWasm instanceof WebAssembly.Module)) validateModelBytes(modelWasm);
       const modelModule = await toModule(modelWasm, "model.wasm");
+      const history = WebAssembly.Module.customSections(modelModule, "sbmlsim.history");
+      const nDelays = desc.n_delays ?? 0;
+      if (history.length > 1 || (history.length === 0 && nDelays !== 0)) {
+        throw new Error("model.wasm history sites differ from its description");
+      }
+      if (history.length === 1) {
+        const info = new DataView(history[0]);
+        if (info.byteLength !== 8 || info.getUint32(0, true) !== 1 || info.getUint32(4, true) !== nDelays) {
+          throw new Error("model.wasm history metadata differs from its description");
+        }
+      }
       checkModel(modelModule, mathlibModule);
       const memory = new WebAssembly.Memory({ initial: minimum, maximum: maxMemoryPages });
       const wasi = wasiImports(engineModule, () => memory, out);

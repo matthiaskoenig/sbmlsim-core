@@ -221,6 +221,15 @@ fn roots_of(e: &Expr, boolean: bool, out: &mut Vec<Expr>) {
             }
         }
         Expr::Apply { op, args } => match op {
+            Op::Delay => {
+                let start = out.len();
+                roots_of(&args[0], boolean, out);
+                for root in &mut out[start..] {
+                    let historical = std::mem::replace(root, Expr::Number(0.));
+                    *root = Expr::apply(Op::Delay, vec![historical, args[1].clone()]);
+                }
+                roots_of(&args[1], false, out);
+            }
             Op::Eq | Op::Neq | Op::Gt | Op::Geq | Op::Lt | Op::Leq => {
                 for pair in args.windows(2) {
                     let (a, b) = (pair[0].clone(), pair[1].clone());
