@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+import numpy
 import pytest
 import sbmlsim_core
 
@@ -295,3 +296,58 @@ def test_a_fit_without_the_block_of_the_identifiability_answers_without_profiles
 
     assert "profiles" not in answer
     assert "fisher" not in answer
+
+
+def test_the_problem_of_a_fit_answers_the_residuals_and_the_jacobian(decay, data):
+    problem = decay.fit_problem(pair_request(data), threads=2)
+
+    assert problem.parameters == ["k", "y"]
+    assert problem.n_residuals == 11
+    assert problem.threads == 2
+    assert len(problem.start) == 2
+    lower, upper = problem.bounds
+    assert len(lower) == 2 and len(upper) == 2
+    assert all(low < high for low, high in zip(lower, upper, strict=True))
+
+    residuals = problem.residuals(problem.start)
+    assert residuals.shape == (11,)
+    assert problem.cost(problem.start) == pytest.approx(
+        0.5 * float((residuals**2).sum())
+    )
+
+    jacobian = problem.jacobian(problem.start)
+    assert jacobian.shape == (11, 2)
+    # the column of a parameter is the forward difference of the residuals over its step
+    step = problem.step(0, problem.start)
+    moved = list(problem.start)
+    moved[0] += step
+    ahead = problem.residuals(moved)
+    assert jacobian[:, 0].tolist() == ((ahead - residuals) / step).tolist()
+
+
+def test_the_problem_of_a_fit_is_the_objective_of_an_optimizer_of_python(decay, data):
+    # a plain Gauss-Newton of four steps, which is what a caller whose optimizer stays in
+    # python does with the problem: every step is one jacobian of the engine
+    problem = decay.fit_problem(pair_request(data), threads=2)
+    x = numpy.array(problem.start)
+    for _ in range(8):
+        residuals = problem.residuals(x)
+        jacobian = problem.jacobian(x)
+        step, *_ = numpy.linalg.lstsq(jacobian, -residuals, rcond=None)
+        x = x + step
+
+    values = problem.values(x)
+    assert values[0] == pytest.approx(0.3, rel=1e-4)
+    assert values[1] == pytest.approx(1.0, rel=1e-4)
+    assert problem.cost(x) < 1e-6
+
+
+def test_the_problem_of_a_fit_refuses_a_point_which_is_not_its_parameters(decay, data):
+    problem = decay.fit_problem(pair_request(data), threads=2)
+
+    with pytest.raises(ValueError, match="2 parameters"):
+        problem.residuals([1.0])
+    with pytest.raises(ValueError, match="not finite"):
+        problem.cost([1.0, float("nan")])
+    with pytest.raises(ValueError, match="none of them"):
+        problem.step(5, problem.start)

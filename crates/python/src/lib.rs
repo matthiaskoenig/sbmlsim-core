@@ -23,6 +23,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 mod compile;
 mod errors;
+mod fit;
 mod runtime;
 mod simulate;
 
@@ -61,6 +62,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<CompiledModel>()?;
     m.add_class::<Runtime>()?;
     m.add_class::<LoadedModel>()?;
+    m.add_class::<fit::FitProblem>()?;
     m.add_class::<simulate::BatchExecutor>()?;
     m.add_class::<simulate::PreparedSimulation>()?;
     m.add_class::<Instance>()?;

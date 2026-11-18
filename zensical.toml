@@ -16,6 +16,7 @@ nav = [
   { "Installation" = "installation.md" },
   { "Compiling a model" = "compiling.md" },
   { "Simulation" = "simulating.md" },
+  { "Fitting" = "fitting.md" },
   { "Delay equations" = "delays.md" },
   { "Semantics" = "semantics.md" },
   { "Language bindings" = [

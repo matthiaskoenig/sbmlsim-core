@@ -202,6 +202,34 @@ impl LoadedModel {
         pythonize::pythonize(py, &answer).map_err(Into::into)
     }
 
+    /// The problem of a fit of the contract `fit/1`, for an optimizer which stays in python.
+    ///
+    /// The conditions of the request are prepared once and the column and the row of every
+    /// measurement are resolved once, so a call of the problem transfers the values of the
+    /// parameters and nothing else. `FitProblem.residuals` and `FitProblem.jacobian` are one
+    /// batch of the engine each, on `threads` threads (the ones of the request, else every
+    /// CPU of the process), and hold no GIL; `LoadedModel.fit` runs the whole fit instead.
+    ///
+    /// Raises the errors of `LoadedModel.fit`: the starts of the request are not read here.
+    #[pyo3(signature = (request, *, threads=None))]
+    fn fit_problem(
+        &self,
+        py: Python<'_>,
+        request: &Bound<'_, PyAny>,
+        threads: Option<usize>,
+    ) -> PyResult<crate::fit::FitProblem> {
+        let request: sbmlsim_fit::FitRequest =
+            serde_path_to_error::deserialize(&mut pythonize::Depythonizer::from_object(request))
+                .map_err(|error| {
+                    PyValueError::new_err(format!("request: {}: {}", error.path(), error.inner()))
+                })?;
+        let model = self.model.clone();
+        let problem = py
+            .detach(|| sbmlsim_fit::problem_of(&request, model, threads))
+            .map_err(fit_error)?;
+        Ok(crate::fit::FitProblem::new(problem))
+    }
+
     /// A persistent batch executor, with at most eight workers by default.
     #[pyo3(signature = (*, threads=None))]
     fn batch_executor(&self, threads: Option<i64>) -> PyResult<BatchExecutor> {

@@ -6,7 +6,7 @@ The models are the ones of `bench/sbmlsim.toml`, which is sbmlsim's own benchmar
 
 ## One simulation
 
-The separate [cost of a fit](https://github.com/matthiaskoenig/sbmlsim-core/blob/develop/bench/OPTIMIZATION.md) measures the batch problem a parameter fit is, where one evaluation of an objective is a simulation per condition and the Jacobian of a least squares step is that evaluation once per parameter: one batch of plans over the pool is 1.9 to 5.4 times a process pool of the same width and 4.6 to 10.6 times a serial loop, and it reports what a fit which evaluates in Rust is estimated to add.
+The separate [cost of a fit](https://github.com/matthiaskoenig/sbmlsim-core/blob/develop/bench/OPTIMIZATION.md) measures the batch problem a parameter fit is, where one evaluation of an objective is a simulation per condition and the Jacobian of a least squares step is that evaluation once per parameter: one batch of plans over the pool is 1.9 to 5.4 times a process pool of the same width and 4.6 to 10.6 times a serial loop, and the same Jacobian inside the engine ([Fitting](fitting.md)) is 1.07 times the batch of plans, so the host of a fit of this model is a few per cent of it and the rest is the integration and the threads of the machine.
 
 The separate [GMRES machine perfusion evaluation](https://github.com/matthiaskoenig/sbmlsim-core/blob/develop/bench/GMRES.md) compares opt-in, matrix-free GMRES with KLU on the 919-state model. GMRES with ILU(0) completes the workload and agrees with a tighter KLU reference at rtol 1e-12, but takes 1.29-1.32 times the native time and 1.42-1.43 times the Wasmtime time. Automatic solver selection therefore retains KLU for this model. The report includes reproducible commands and raw timing and accuracy measurements.
 
