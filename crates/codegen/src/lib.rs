@@ -185,6 +185,7 @@ fn emit_limited(
             d,
             n_constants,
             history.queries.len() as u32,
+            history.max_delay,
         ),
     ))
 }
@@ -1016,6 +1017,7 @@ fn description(
     discontinuities: &[Expr],
     n_constants: u32,
     n_delays: u32,
+    max_delay: Option<f64>,
 ) -> ModelDescription {
     let history_roots = abi::history::ROOTS_PER_QUERY as u32 * n_delays;
     let n_roots = sizes(model, &jacobian, discontinuities, n_constants).roots + history_roots;
@@ -1047,6 +1049,7 @@ fn description(
         id: model.id.clone().unwrap_or_default(),
         n_algebraic: model.n_algebraic,
         n_delays,
+        max_delay,
         states: model
             .states
             .iter()

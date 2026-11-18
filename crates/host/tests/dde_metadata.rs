@@ -38,3 +38,34 @@ fn rejects_changed_history_site_count_or_version_before_instantiation() {
     let error = runtime.load(&dde.wasm, &dde.description).err().unwrap();
     assert!(error.to_string().contains("history version"), "{error}");
 }
+
+/// The compiler bounds how far back a model can read only when every lag is a constant.
+#[test]
+fn the_description_bounds_the_history_of_constant_lags_only() {
+    let xml = include_str!("decay.xml");
+    let delay = |lag: &str| {
+        xml.replace(
+            "<ci>y</ci>",
+            &format!(
+                r#"<apply><csymbol definitionURL="http://www.sbml.org/sbml/symbols/delay">delay</csymbol><apply><csymbol definitionURL="http://www.sbml.org/sbml/symbols/delay">delay</csymbol><ci>y</ci><cn>2</cn></apply>{lag}</apply>"#
+            ),
+        )
+    };
+    let bound = |body: &str| {
+        compile(body, &CompileOptions::default())
+            .unwrap()
+            .description
+            .max_delay
+    };
+    assert_eq!(bound(xml), None, "a model without a delay has no history");
+    // nested constant lags add up
+    assert_eq!(bound(&delay("<cn>3</cn>")), Some(5.0));
+    // a lag of the state or of the time leaves the reach unbounded
+    assert_eq!(bound(&delay("<ci>y</ci>")), None);
+    assert_eq!(
+        bound(&delay(
+            r#"<csymbol definitionURL="http://www.sbml.org/sbml/symbols/time">t</csymbol>"#
+        )),
+        None
+    );
+}

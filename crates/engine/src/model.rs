@@ -136,6 +136,7 @@ mod test_models {
             n_discontinuity_roots: 0,
             n_algebraic: 0,
             n_delays: 0,
+            max_delay: None,
             n_constants: 0,
             units: BTreeMap::new(),
         }
@@ -667,6 +668,7 @@ mod test_models {
                     .collect(),
                 n_algebraic: 0,
                 n_delays: 0,
+                max_delay: None,
                 n_roots: self
                     .events
                     .iter()

@@ -6,6 +6,9 @@ use std::collections::{HashMap, HashSet};
 pub(crate) struct HistoryPlan {
     pub sites: Vec<Expr>,
     pub queries: Vec<Expr>,
+    /// The largest age any history read of this model can reach, `None` when a lag is not a
+    /// finite nonnegative constant. The engine keeps its history only this far back.
+    pub max_delay: Option<f64>,
 }
 
 impl HistoryPlan {
@@ -15,8 +18,10 @@ impl HistoryPlan {
             return Ok(Self {
                 sites,
                 queries: Vec::new(),
+                max_delay: None,
             });
         }
+        let max_delay = max_delay(model, &roots);
         let mut rules = HashMap::new();
         for a in &model.assignment_rules {
             let queries = collect(&a.expr, &rules)?;
@@ -41,8 +46,66 @@ impl HistoryPlan {
         // The runtime also uses the slot count to bound the scratch needed for nested
         // queries in selections and event assignments, which need no propagation root.
         queries.resize_with(slots, || Expr::Number(f64::NAN));
-        Ok(Self { sites, queries })
+        Ok(Self {
+            sites,
+            queries,
+            max_delay,
+        })
     }
+}
+
+/// The largest age `e` can read, the longest chain of nested constant lags; `None` when a lag
+/// is not a finite nonnegative constant, which leaves the reach of the expression unbounded.
+fn reach(e: &Expr) -> Option<f64> {
+    match e {
+        Expr::Apply {
+            op: Op::Delay,
+            args,
+        } => match &args[1] {
+            Expr::Number(lag) if lag.is_finite() && *lag >= 0.0 => Some(lag + reach(&args[0])?),
+            _ => None,
+        },
+        Expr::Apply { args, .. } => args.iter().try_fold(0.0f64, |a, x| Some(a.max(reach(x)?))),
+        Expr::Piecewise { pieces, otherwise } => {
+            let mut most = 0.0f64;
+            for (value, condition) in pieces {
+                most = most.max(reach(value)?).max(reach(condition)?);
+            }
+            if let Some(value) = otherwise {
+                most = most.max(reach(value)?);
+            }
+            Some(most)
+        }
+        _ => Some(0.0),
+    }
+}
+
+/// The reach of every expression of the model which can read its history.
+fn max_delay(model: &Model, roots: &[Expr]) -> Option<f64> {
+    let mut most = 0.0f64;
+    let mut take = |e: &Expr| -> Option<()> {
+        most = most.max(reach(e)?);
+        Some(())
+    };
+    for a in model.initial.iter().chain(&model.assignment_rules) {
+        take(&a.expr)?;
+    }
+    for e in model.rates.iter().chain(roots) {
+        take(e)?;
+    }
+    for s in &model.selections {
+        take(&s.expr)?;
+    }
+    for e in &model.events {
+        take(&e.trigger)?;
+        for a in &e.assignments {
+            take(&a.value)?;
+        }
+        for x in e.delay.iter().chain(&e.priority) {
+            take(x)?;
+        }
+    }
+    Some(most)
 }
 
 fn deduplicate(queries: &mut Vec<Expr>) -> Result<(), CompileError> {
