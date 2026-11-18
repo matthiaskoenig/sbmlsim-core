@@ -268,7 +268,7 @@ impl Sensitivity {
             .map(|delta| delta.iter().any(|value| *value != 0.0))
             .collect();
         // the chain of every sensitivity: `dp_c/dp_j` of the columns which hold an entry
-        let chains = parameters.map_or_else(Vec::new, |parameters| {
+        let chains: Vec<Vec<(usize, f64)>> = parameters.map_or_else(Vec::new, |parameters| {
             deltas
                 .chunks(n_p.max(1))
                 .zip(&steps)

@@ -298,7 +298,14 @@ fn columns(
                 .map(|(k, d)| Root::Let(Symbol::Derivative(index(k)), fold(d)))
                 .chain(column.entries.iter().map(|e| Root::Output(fold(e))))
                 .collect();
-            let roots = constants.hoist_roots(roots, &mut symbols);
+            // the derivative of a rule is a let of this column alone: the one of the same rule
+            // in another parameter is another value, and a column whose let is a constant must
+            // not reach the column after it (which may keep its own, a value of a state)
+            // the derivative of a rule is a let of this column alone: the one of the same rule
+            // in another parameter is another value, and a column whose let is a constant must
+            // not reach the column after it (which may keep its own, a value of a state)
+            let mut of_the_column = symbols.clone();
+            let roots = constants.hoist_roots(roots, &mut of_the_column);
             Some(common_subexpressions(roots, cse, &mut commons))
         })
         .collect();

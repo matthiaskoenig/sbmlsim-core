@@ -10,10 +10,12 @@ use sbmlsim_host::Runtime;
 
 const MATH: &str = r#"xmlns="http://www.w3.org/1998/Math/MathML""#;
 
-/// A model of the species `S` of the reaction `S -> ` with the rate `kel Vmax S / (Km + S)`,
-/// where `Vmax = 2 w` is an initial assignment and `kel = k / F` an assignment rule: the
-/// sensitivities of `k`, of `w` (which the right hand side reads through `Vmax` alone) and of
-/// `S` itself. The values leave `S` a third of itself at the end of the run.
+/// A model of the species `S` of the reaction `S -> ` with the rate `kel Vmax S / g`, where
+/// `Vmax = 2 w` is an initial assignment, `kel = k / F` an assignment rule whose derivative in
+/// every parameter is a constant and `g = Km + q S` one whose derivative in `q` is a state:
+/// the sensitivities of `k`, of `w` (which the right hand side reads through `Vmax` alone), of
+/// `q` (whose column is the one the derivative of a rule a column before it must not reach)
+/// and of `S` itself. The values leave `S` a third of itself at the end of the run.
 fn sbml() -> String {
     format!(
         r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2"><model id="s">
@@ -26,18 +28,21 @@ fn sbml() -> String {
   <parameter id="Km" value="4" constant="true"/>
   <parameter id="Vmax" value="0" constant="true"/>
   <parameter id="kel" value="0" constant="false"/>
+  <parameter id="q" value="0.25" constant="true"/>
+  <parameter id="g" value="0" constant="false"/>
 </listOfParameters>
 <listOfInitialAssignments>
   <initialAssignment symbol="Vmax"><math {MATH}><apply><times/><cn>2</cn><ci>w</ci></apply></math></initialAssignment>
 </listOfInitialAssignments>
 <listOfRules>
   <assignmentRule variable="kel"><math {MATH}><apply><divide/><ci>k</ci><ci>F</ci></apply></math></assignmentRule>
+  <assignmentRule variable="g"><math {MATH}><apply><plus/><ci>Km</ci><apply><times/><ci>q</ci><ci>S</ci></apply></apply></math></assignmentRule>
 </listOfRules>
 <listOfReactions><reaction id="J" reversible="false">
   <listOfReactants><speciesReference species="S" stoichiometry="1" constant="true"/></listOfReactants>
   <kineticLaw><math {MATH}><apply><divide/>
     <apply><times/><ci>kel</ci><ci>Vmax</ci><ci>S</ci></apply>
-    <apply><plus/><ci>Km</ci><ci>S</ci></apply>
+    <ci>g</ci>
   </apply></math></kineticLaw>
 </reaction></listOfReactions>
 </model></sbml>"#
@@ -53,14 +58,24 @@ fn request(stiff: bool) -> SimulationRequest {
         preinit: vec![],
         changes: vec![],
         steady_state: None,
-        selections: vec!["time".to_string(), "S".to_string(), "kel".to_string()],
+        selections: vec![
+            "time".to_string(),
+            "S".to_string(),
+            "kel".to_string(),
+            "g".to_string(),
+        ],
         settings: IntegratorSettings {
             relative_tolerance: 1e-10,
             stiff,
             ..IntegratorSettings::default()
         },
         seed: 0,
-        sensitivities: vec!["k".to_string(), "w".to_string(), "S".to_string()],
+        sensitivities: vec![
+            "k".to_string(),
+            "w".to_string(),
+            "q".to_string(),
+            "S".to_string(),
+        ],
     }
 }
 
@@ -96,6 +111,7 @@ fn the_analytic_df_dp_gives_the_sensitivities_of_the_difference_quotient() {
     };
     assert_eq!(analytic.rows, 1);
     assert_eq!(analytic.rows(parameter("k")), [0]);
+    assert_eq!(analytic.rows(parameter("q")), [0]);
     assert_eq!(analytic.rows(parameter("Vmax")), [0]);
     assert!(analytic.rows(parameter("kel")).is_empty());
     // `w` is read by no rate: the initialization derives `Vmax` from it
@@ -128,8 +144,8 @@ fn the_analytic_df_dp_gives_the_sensitivities_of_the_difference_quotient() {
 
     assert_eq!(with.n_rows, without.n_rows);
     for row in 0..with.n_rows {
-        for column in ["S", "kel"] {
-            for (at, id) in ["k", "w", "S"].iter().enumerate() {
+        for column in ["S", "kel", "g"] {
+            for (at, id) in ["k", "w", "q", "S"].iter().enumerate() {
                 let (one, other) = (
                     sensitivity(&with, row, column, at),
                     sensitivity(&without, row, column, at),

@@ -569,3 +569,79 @@ fn a_parameter_of_a_rule_of_the_time_is_no_constant() {
     let plan = plan(&model, &jacobian(&model), None, &[], true);
     assert_eq!(plan.n_constants(), 0, "{:?}", plan.constants);
 }
+
+/// The values of the outputs of `programs`, run one after the other over the constants of a
+/// plan: a let defines its symbol for the statements after it, everything else is `read`.
+fn run(constants: &Program, programs: &[&Program], read: &dyn Fn(Symbol) -> f64) -> Vec<f64> {
+    let mut values: std::collections::HashMap<Symbol, f64> = std::collections::HashMap::new();
+    let value = |e: &Expr, values: &std::collections::HashMap<Symbol, f64>| {
+        eval(e, &|s| values.get(&s).copied().unwrap_or_else(|| read(s)))
+    };
+    // the constants of the model first, each reading the parameters and the ones before it
+    for (k, e) in outputs(constants).iter().enumerate() {
+        let constant = value(e, &values);
+        values.insert(Symbol::Constant(k as u32), constant);
+    }
+    let mut out = Vec::new();
+    for program in programs {
+        for statement in &program.statements {
+            match statement {
+                Statement::Let(symbol, e) => {
+                    let defined = value(e, &values);
+                    values.insert(*symbol, defined);
+                }
+                Statement::Output(e) => out.push(value(e, &values)),
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn the_derivative_of_a_rule_of_one_column_is_no_value_of_the_column_before_it() {
+    // the rule `g = Km^2 + q x^2` of the rate `x' = -g`: the derivative of the rule in `Km` is
+    // `2 Km`, a constant of the model which the column of `Km` hoists out and reads from the
+    // parameters, and the one in `q` is `x^2`, which the column of `q` after it keeps as a let
+    // of its own; a column must read the let it keeps and not the constant of the one before it
+    let model = Model {
+        n_algebraic: 0,
+        id: Some("m".to_string()),
+        states: vec![entity("x")],
+        parameters: ["Km", "q", "g"].iter().map(|s| entity(s)).collect(),
+        assignment_rules: vec![Assignment {
+            target: Symbol::Param(2),
+            expr: ap(
+                Op::Plus,
+                vec![
+                    ap(Op::Power, vec![p(0), n(2.0)]),
+                    ap(Op::Times, vec![p(1), ap(Op::Power, vec![x(), n(2.0)])]),
+                ],
+            ),
+        }],
+        initial: vec![],
+        rates: vec![ap(Op::Minus, vec![p(2)])],
+        events: vec![],
+        selections: vec![],
+    };
+    let parameters = sbmlsim_ir::derive::parameter_jacobian(&model).expect("the columns");
+    let plan = plan(&model, &jacobian(&model), Some(&parameters), &[], false);
+
+    // the entries of the two columns at `x = 5`, `Km = 2` and `q = 3`: `-2 Km` and `-x^2`
+    let read = |s: Symbol| match s {
+        Symbol::State(0) => 5.0,
+        Symbol::Param(0) => 2.0,
+        Symbol::Param(1) => 3.0,
+        other => panic!("the program reads {other:?}"),
+    };
+    let prefix = &plan.jac_p.prefix;
+    let column = |at: usize| {
+        let branch = plan.jac_p.branches[at]
+            .as_ref()
+            .unwrap_or_else(|| panic!("the column {at} is empty"));
+        run(&plan.constants, &[prefix, branch], &read)
+    };
+    assert_eq!(column(0), [-4.0], "the column of Km");
+    assert_eq!(column(1), [-25.0], "the column of q");
+    // and the one of the rule target itself is no column at all
+    assert!(plan.jac_p.branches[2].is_none());
+}
