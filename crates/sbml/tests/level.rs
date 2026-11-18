@@ -1,7 +1,14 @@
 use sbmlsim_sbml::{ReadError, read};
 
 fn data(name: &str) -> String {
-    std::fs::read_to_string(format!("{}/tests/data/{name}", env!("CARGO_MANIFEST_DIR"))).unwrap()
+    let path = format!("{}/tests/data/{name}", env!("CARGO_MANIFEST_DIR"));
+    std::fs::read_to_string(&path).unwrap_or_else(|error| {
+        panic!(
+            "the fixture '{path}' of the test is not read: {error} (the directory of the \
+             workspace is {:?})",
+            std::env::current_dir()
+        )
+    })
 }
 
 #[test]
