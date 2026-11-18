@@ -40,6 +40,13 @@ computes only dependencies of the delayed expression. Request pre-initialization
 values override the corresponding initial values. `rateOf` is zero before time
 zero.
 
+Historical algebraic unknowns are reconstructed by solving their dependency-closed
+constraints at the queried time. The projection uses scaled finite differences,
+pivoted elimination, and damped Newton iteration. An infeasible constraint or a
+failure to converge returns flag `-1006`. Projection code must fit the compiler's
+function budgets. Simulations starting before zero use their integrated history
+once the requested time lies inside the retained trajectory.
+
 Events and request changes retain both sides of a history discontinuity. A query
 exactly at the discontinuity uses the updated value. Steady-state phases retain
 their history when the following timecourse resets its clock.
@@ -49,7 +56,7 @@ their history when the following timecourse resets its clock.
 The DDE path retains the CVODE or IDA dense polynomial for each accepted solver
 step, together with parameter epochs. Output grids do not determine history
 resolution. Delayed discontinuities are located with solver roots, including
-variable durations, so a narrow delayed pulse can be resolved even with sparse
+variable and reversing durations, so a narrow delayed pulse can be resolved even with sparse
 requested output times. Discontinuities propagate through derivative order 12.
 
 Queries inside the current trial step use bounded iteration of its continuous
@@ -81,4 +88,5 @@ disabled and with the difference Jacobian option. The complete suite passes
 1,754 of 1,789 cases. The remaining 35 require unsupported fast reactions.
 Additional integration tests cover nested, zero, state-dependent, and tiny
 delays, prehistory, concentrations, events, narrow pulses, prepared replay,
-steady-state phases, invalid durations, and step budgets.
+steady-state phases, negative starts, algebraic prehistory, invalid durations,
+and step budgets, including rejected overlapping trials.

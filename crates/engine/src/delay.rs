@@ -297,7 +297,7 @@ impl History {
         self.put_word(abi::FIXED, f);
         self.put_word(abi::SCRATCH, scratch);
         self.put_word(abi::CAPACITY, self.frames);
-        let targets = self.store_values(&vec![f64::INFINITY; 2 * self.sites])?;
+        let targets = self.store_values(&vec![f64::INFINITY; abi::ROOTS_PER_QUERY * self.sites])?;
         let queries = self.store_values(&vec![f64::NAN; self.sites])?;
         self.put_word(abi::TARGETS, targets);
         self.put_word(abi::QUERIES, queries);
@@ -305,6 +305,7 @@ impl History {
         self.table = self.allocate(self.table_capacity * abi::RECORD_BYTES as usize)?;
         self.put_word(abi::RECORDS, self.table);
         self.put_number(abi::COMMITTED, 0.0);
+        self.put_number(abi::HISTORY_START, 0.0);
         self.put_number(abi::MAX_QUERY, f64::NEG_INFINITY);
         self.put_number(abi::MIN_LAG, f64::INFINITY);
         self.initialized = true;
@@ -338,6 +339,9 @@ impl History {
             abi::DEPTH_EXCEEDED => {
                 Err(self.failure("delay evaluation exceeds the history frame limit"))
             }
+            abi::PROJECTION_FAILED => {
+                Err(self.failure("historical algebraic constraints cannot be resolved"))
+            }
             _ => Ok(()),
         }
     }
@@ -367,6 +371,7 @@ impl History {
         p: &[f64],
     ) -> Result<(), EngineError> {
         let end = end + self.stage_shift;
+        self.put_number(abi::HISTORY_START, self.number(abi::HISTORY_START).min(end));
         while self.records.last().is_some_and(|r| r.end > end) {
             self.records.pop();
         }
@@ -431,7 +436,9 @@ impl History {
     }
 
     pub fn mark_roots(&mut self, roots: &[i32], first: usize) {
-        let original_end = roots.len().saturating_sub(2 * self.sites);
+        let original_end = roots
+            .len()
+            .saturating_sub(abi::ROOTS_PER_QUERY * self.sites);
         let t = self.committed;
         if roots[first.min(original_end)..original_end]
             .iter()
@@ -470,30 +477,38 @@ impl History {
             let tol = 32.0 * f64::EPSILON * query.abs().max(1.0);
             let lower = self.jumps.partition_point(|&jump| jump < query - tol);
             let upper = self.jumps.partition_point(|&jump| jump <= query + tol);
-            let targets = if query.is_finite() {
+            // A query can reverse before reaching either neighbor. Retain the
+            // just-crossed epoch separately so its return crossing stays armed.
+            let indices = if query.is_finite() {
                 [
-                    lower
-                        .checked_sub(1)
-                        .map_or(f64::NEG_INFINITY, |j| self.jumps[j]),
-                    self.jumps.get(upper).copied().unwrap_or(f64::INFINITY),
+                    lower.checked_sub(1),
+                    Some(upper),
+                    (lower < upper).then_some(lower),
                 ]
             } else {
-                [f64::NEG_INFINITY, f64::INFINITY]
+                [None; abi::ROOTS_PER_QUERY]
             };
-            self.target_orders.extend([
-                lower
-                    .checked_sub(1)
-                    .and_then(|i| self.jump_orders.get(i))
+            for (j, index) in indices.into_iter().enumerate() {
+                let target = index
+                    .and_then(|k| self.jumps.get(k))
                     .copied()
-                    .unwrap_or(u32::MAX),
-                self.jump_orders.get(upper).copied().unwrap_or(u32::MAX),
-            ]);
-            for (j, target) in targets.into_iter().enumerate() {
-                self.data[at + (2 * i + j) * 8..at + (2 * i + j + 1) * 8]
+                    .unwrap_or(if j == 0 {
+                        f64::NEG_INFINITY
+                    } else {
+                        f64::INFINITY
+                    });
+                self.target_orders.push(
+                    index
+                        .and_then(|k| self.jump_orders.get(k))
+                        .copied()
+                        .unwrap_or(u32::MAX),
+                );
+                let slot = abi::ROOTS_PER_QUERY * i + j;
+                self.data[at + slot * 8..at + (slot + 1) * 8]
                     .copy_from_slice(&target.to_le_bytes());
             }
         }
-        self.dirty.push((at, 2 * self.sites * 8));
+        self.dirty.push((at, abi::ROOTS_PER_QUERY * self.sites * 8));
         self.sync(model, p)
     }
 

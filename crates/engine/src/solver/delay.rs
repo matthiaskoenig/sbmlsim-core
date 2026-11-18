@@ -58,17 +58,7 @@ pub(super) fn integrate<const DAE: bool, H: Mode>(
     }
     let from = solver.steps();
     loop {
-        let history = shared.borrow();
-        if solver.steps().saturating_sub(from) >= history.step_budget {
-            return Err(EngineError::Integration {
-                flag: CV_TOO_MUCH_WORK,
-                time: history.committed,
-                message: "delay integration exceeded maximum_num_steps before the next output time"
-                    .into(),
-            });
-        }
-        drop(history);
-        let (t, flag) = advance(solver, problem, tout)?;
+        let (t, flag) = advance(solver, problem, tout, from)?;
         let mut history = shared.borrow_mut();
         if itask == CV_ONE_STEP
             || flag == CV_ROOT_RETURN && t <= tout
@@ -210,9 +200,10 @@ fn advance<const DAE: bool, H: Mode>(
     solver: &mut Integrator<DAE, H>,
     problem: &mut Problem<'_>,
     tout: f64,
+    interval_start_steps: u64,
 ) -> Result<(f64, c_int), EngineError> {
     let shared = solver.history.shared().unwrap().clone();
-    let (checkpoint, a, stop) = {
+    let (checkpoint, a, stop, step_budget) = {
         let mut history = shared.borrow_mut();
         let a = history.committed;
         history.evaluate(a, unsafe { values(solver.y, problem.n) })?;
@@ -233,7 +224,7 @@ fn advance<const DAE: bool, H: Mode>(
         }
         history.clear_diagnostics();
         history.sync(problem.model, &mut problem.p)?;
-        (history.checkpoint(), a, history.stop)
+        (history.checkpoint(), a, history.stop, history.step_budget)
     };
     let initial = solver.state().to_vec();
     let derivative = if DAE {
@@ -244,6 +235,15 @@ fn advance<const DAE: bool, H: Mode>(
     let mut trial_stop = stop;
     let mut previous_error = f64::INFINITY;
     for attempt in 0..48 {
+        // A waveform retry takes another solver step from the same committed time.
+        if solver.steps().saturating_sub(interval_start_steps) >= step_budget {
+            return Err(EngineError::Integration {
+                flag: CV_TOO_MUCH_WORK,
+                time: a,
+                message: "delay integration exceeded maximum_num_steps before the next output time"
+                    .into(),
+            });
+        }
         let outcome = solver.integrate_raw(problem, tout.min(trial_stop), CV_ONE_STEP);
         if outcome.is_err() {
             shared.borrow_mut().diagnostics(problem.model)?;

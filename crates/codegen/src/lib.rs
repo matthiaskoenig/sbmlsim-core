@@ -414,7 +414,7 @@ fn module(
     for (i, query) in history.queries.iter().enumerate() {
         stmts.push(Stmt::HistoryRoots {
             index: i as u32,
-            output: (roots.len() + 2 * i) as u32,
+            output: (roots.len() + abi::history::ROOTS_PER_QUERY * i) as u32,
             query,
         });
     }
@@ -628,7 +628,7 @@ fn size_functions(
     n_constants: u32,
 ) -> Result<(), CompileError> {
     let mut sizes = sizes(model, jacobian, discontinuities, n_constants);
-    sizes.roots += 2 * m.history_slots;
+    sizes.roots += abi::history::ROOTS_PER_QUERY as u32 * m.history_slots;
     let none = Ctx { t: 0, y: 0, p: 0 };
     let words: Vec<Stmt<'_>> = sizes
         .words()
@@ -1017,8 +1017,9 @@ fn description(
     n_constants: u32,
     n_delays: u32,
 ) -> ModelDescription {
-    let n_roots = sizes(model, &jacobian, discontinuities, n_constants).roots + 2 * n_delays;
-    let n_discontinuity_roots = discontinuities.len() as u32 + 2 * n_delays;
+    let history_roots = abi::history::ROOTS_PER_QUERY as u32 * n_delays;
+    let n_roots = sizes(model, &jacobian, discontinuities, n_constants).roots + history_roots;
+    let n_discontinuity_roots = discontinuities.len() as u32 + history_roots;
     let (p, y) = initial_values(model);
     let entity = |e: &sbmlsim_ir::Entity, initial: f64| Entity {
         id: e.id.clone(),

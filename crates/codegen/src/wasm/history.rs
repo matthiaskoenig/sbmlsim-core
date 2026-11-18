@@ -7,6 +7,8 @@ use sbmlsim_ir::{Model, optimize::tree_key};
 use std::collections::HashSet;
 use wasm_encoder::ValType::{F64, I32};
 
+mod projection;
+
 const LOCATE: u32 = 0;
 const INTERPOLATE: u32 = 1;
 const FIRST_OPERAND: u32 = 2;
@@ -139,7 +141,7 @@ impl ModuleBuilder {
         interpolate.finish()?;
         for operand in sites {
             let mut f = self.body(None, &[F64, I32, I32, F64], &[F64], VECTORS);
-            f.operand(model, operand);
+            f.operand(model, operand)?;
             f.finish()?;
         }
         Ok(())
@@ -183,8 +185,8 @@ impl Body<'_> {
         self.release(value);
     }
 
-    /// The two signed distances to the surrounding history epochs, held fixed by the
-    /// engine until the next restart. An inactive query contributes constant roots.
+    /// Signed distances to the surrounding and just-crossed history epochs, held
+    /// fixed until the next restart. An inactive query contributes constant roots.
     pub(crate) fn history_roots(&mut self, index: u32, output: u32, expr: &Expr) {
         let query = self.temp();
         let target = self.temp();
@@ -197,14 +199,14 @@ impl Body<'_> {
             .i32_add()
             .local_get(query)
             .f64_store(slot(index));
-        for side in 0..2 {
+        for side in 0..h::ROOTS_PER_QUERY as u32 {
             self.sink().local_get(3);
             self.header_address();
             self.header_address();
             self.sink()
                 .i32_load(byte(h::TARGETS))
                 .i32_add()
-                .f64_load(slot(index * 2 + side))
+                .f64_load(slot(index * h::ROOTS_PER_QUERY as u32 + side))
                 .local_tee(target)
                 .f64_abs()
                 .f64_const(f64c(f64::INFINITY))
@@ -297,7 +299,7 @@ impl Body<'_> {
         self.sink().i32_const(bytes as i32).memory_copy(0, 0);
     }
 
-    fn operand(&mut self, model: &Model, operand: &Expr) {
+    fn operand(&mut self, model: &Model, operand: &Expr) -> Result<(), CompileError> {
         const BASE: u32 = 4;
         const DEPTH: u32 = 5;
         const FIXED: u32 = 6;
@@ -372,7 +374,8 @@ impl Body<'_> {
             .f64_add()
             .local_set(0)
             .local_get(0)
-            .f64_const(f64c(0.))
+            .local_get(BASE)
+            .f64_load(byte(h::HISTORY_START))
             .f64_lt()
             .if_(BlockType::Result(F64));
         self.sink()
@@ -388,6 +391,7 @@ impl Body<'_> {
             .f64_store(slot(np));
         self.address_field(BASE, h::FIXED);
         self.sink().local_set(FIXED);
+        self.project_history(model, operand, BASE, FIXED)?;
         for a in closure(&model.initial, operand) {
             self.if_not_fixed(FIXED, fixed_index(model, a.target));
             self.store(a.target, &a.expr);
@@ -478,6 +482,7 @@ impl Body<'_> {
             .local_get(BASE)
             .local_get(DEPTH)
             .i32_store(byte(h::DEPTH));
+        Ok(())
     }
 
     /// `(query, header) -> record address`, zero if no published predictor is available.

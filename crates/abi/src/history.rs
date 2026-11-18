@@ -7,6 +7,8 @@ pub const SECTION: &str = "sbmlsim.history";
 pub const VERSION: u32 = 1;
 /// Maximum supported historical nesting, including evaluation of initial assignments.
 pub const MAX_FRAMES: usize = 128;
+/// Lower, upper, and just-crossed discontinuity roots for each historical query.
+pub const ROOTS_PER_QUERY: usize = 3;
 
 /// Offset of the contiguous record descriptors.
 pub const RECORDS: u32 = 0;
@@ -36,12 +38,14 @@ pub const MIN_LAG: u32 = 56;
 pub const STAGE_SHIFT: u32 = 64;
 /// History-axis time minus model time in the active evaluation frame (f64).
 pub const ACTIVE_SHIFT: u32 = 72;
-/// Offset of pairs of history-axis discontinuity targets (lower and upper) per probe.
+/// Offset of discontinuity targets (lower, upper, and just crossed) per probe.
 pub const TARGETS: u32 = 80;
 /// Offset of the history-axis query per probe; inactive probes write NaN.
 pub const QUERIES: u32 = 84;
+/// Earliest time on the history axis with a published trajectory (f64).
+pub const HISTORY_START: u32 = 88;
 /// Header length.
-pub const HEADER_BYTES: u32 = 88;
+pub const HEADER_BYTES: u32 = 96;
 /// Record end time (f64).
 pub const END: u32 = 0;
 /// Time scale of the polynomial (f64).
@@ -62,3 +66,5 @@ pub const INVALID_LAG: u32 = 1;
 pub const DEPTH_EXCEEDED: u32 = 2;
 /// Requested time exceeds the published records.
 pub const MISSING_RECORD: u32 = 3;
+/// Historical algebraic constraints could not be resolved.
+pub const PROJECTION_FAILED: u32 = 4;

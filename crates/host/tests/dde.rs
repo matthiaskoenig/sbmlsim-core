@@ -347,3 +347,39 @@ fn a_short_delay_in_a_constant_rhs_finishes_within_the_step_budget() {
         close(result.values[3], 3.);
     });
 }
+
+#[test]
+fn a_reversing_history_query_rearms_the_epoch_it_just_crossed() {
+    // q(t) = t - lag(t) = 1 + (t-2)(2.01-t) crosses the same parameter
+    // jump forward at 2 and backward at 2.01. The lag stays strictly positive.
+    let lag = format!(
+        "<apply><plus/><apply><times/>{TIME}{TIME}</apply><apply><times/><cn>-3.01</cn>{TIME}</apply><cn>3.02</cn></apply>"
+    );
+    let model = load(&format!(
+        r#"<listOfParameters><parameter id="p" value="0" constant="false"/>
+<parameter id="x" value="0" constant="false"/></listOfParameters>
+<listOfRules><rateRule variable="x"><math {MATH}><apply>{DELAY}<ci>p</ci>{lag}</apply></math></rateRule></listOfRules>"#
+    ));
+    let mut req = request(2.1, 1, &["x"]);
+    req.output = Output::IntegratorSteps;
+    // Separate the two crossings so the test isolates rearming, rather than
+    // the documented limit of two unbracketed roots in one solver step.
+    req.settings.maximum_time_step = 0.006;
+    req.changes = vec![Change {
+        time: 1.,
+        values: vec![("p".into(), 1.)],
+        increments: vec![],
+    }];
+    each_host(&model, &req, |result| {
+        close(*result.values.last().unwrap(), 0.01);
+        let rows = result.values.as_chunks::<2>().0;
+        for crossing in [2., 2.01] {
+            assert!(
+                rows.windows(2).any(|pair| {
+                    pair[0][0] == pair[1][0] && (pair[0][0] - crossing).abs() < 1e-8
+                }),
+                "missing delayed discontinuity at {crossing}"
+            );
+        }
+    });
+}
