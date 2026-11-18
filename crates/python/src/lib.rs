@@ -1,7 +1,7 @@
 //! The python bindings of sbmlsim-core: the extension module `sbmlsim_core._core`, which the
 //! package `sbmlsim_core` re-exports.
 
-/// The allocator of the extension module.
+/// The allocator of the extension module on every target but macOS.
 ///
 /// A simulation allocates inside the linear memory of the engine, which no allocator of the host
 /// sees, so it is not the simulation this is for. The compiler of a model and Cranelift do
@@ -18,8 +18,57 @@
 ///
 /// It is set here and not in a crate which is also an rlib, so that it takes the choice away
 /// from no rust caller: a rust program links `sbmlsim-host` and `sbmlsim-compiler` instead.
-#[global_allocator]
-static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+///
+/// On macOS it is not a choice this wheel is allowed to make, and the macOS wheel links no
+/// mimalloc at all. mimalloc keeps the heap of a thread in a thread local, and on macOS, where a
+/// first access to a `__thread` variable can call `malloc` and recurse into the allocator, it
+/// does not use one: it claims two slots of the pthread TLS block by compiled in number (108 and
+/// 109 in mimalloc v3, which is what `mimalloc 0.1` builds unless asked for v2, which claimed
+/// 89) and reads them with inline assembly off `tpidrro_el0`. The slots are process wide and the
+/// numbers are baked into the artifact, so two extension modules which each link a copy of
+/// mimalloc own the same two: every allocation of the one reads the heap the other left in the
+/// slot, takes blocks out of the free lists of pages owned by a heap of the other instance
+/// without a lock, because the heap of a thread needs none, and frees blocks through a page map
+/// which never saw the arena they came from. What follows is heap corruption, and its symptom is
+/// anything at all: an impossible value, a dependency panicking on a state it cannot reach, a
+/// SIGBUS while a backtrace is symbolized. mimalloc's own header says it of the model it picks
+/// there, "This goes wrong though if the OS or a library uses the same fixed slot".
+///
+/// This was observed and not deduced, next to this very wheel. `pkpdutils-core` linked the same
+/// mimalloc as its own `#[global_allocator]`, and the test suite of `sbmlsim`, which imports
+/// both extensions into one interpreter, failed on macOS and only on macOS (sbmlsim#565): 25
+/// failures and 26 errors with both modules loaded, a clean run of the same commit with the
+/// other module held back, and clean runs on linux x86_64, linux aarch64 and windows with both.
+/// That module fixed it on its side first (pkpdutils-core#11), which took the collision out of
+/// that pair; the hazard is a property of this wheel, not of the pair, since any third extension
+/// which links mimalloc v3 brings it back and a wheel cannot know what else an interpreter will
+/// load. The two slot numbers are not reserved either: mimalloc moved from 89 to 108 and 109
+/// between v2 and v3 because 89 "seems used now", so pinning the other major version would only
+/// move the collision to whatever pins that one. On macOS the system allocator it is (#40).
+///
+/// Every other platform keeps mimalloc, because no other platform has the collision: the ELF
+/// targets give each shared object its own initial-exec TLS block and windows allocates a slot
+/// per instance with `TlsAlloc`. What macOS gives up is not measured: the figures above are
+/// against glibc malloc on linux, and macOS allocates through libmalloc, which is another design
+/// with its own per thread caches, so they are no estimate of what the gate costs there.
+///
+/// `sbmlsim_core.__allocator__` reports which of the two a build is, so that the question is
+/// answered by the artifact and not by this comment.
+#[cfg(not(target_os = "macos"))]
+mod allocator {
+    /// The value of `__allocator__` of the module.
+    pub const NAME: &str = "mimalloc";
+
+    #[global_allocator]
+    static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+}
+
+/// The allocator of the extension module on macOS: the system one, for the reason above.
+#[cfg(target_os = "macos")]
+mod allocator {
+    /// The value of `__allocator__` of the module.
+    pub const NAME: &str = "system";
+}
 
 mod compile;
 mod errors;
@@ -50,6 +99,9 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("SIMULATION_CONTRACT", SIMULATION_CONTRACT)?;
     m.add("FIT_CONTRACT", sbmlsim_fit::FIT_CONTRACT)?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
+    // the allocator this build routes its allocations through, which is not the same on
+    // every platform: see `mod allocator`
+    m.add("__allocator__", allocator::NAME)?;
     m.add("THIRD_PARTY", sbmlsim_host::THIRD_PARTY_NOTICES)?;
     m.add("SbmlsimCoreError", m.py().get_type::<SbmlsimCoreError>())?;
     m.add("CompileError", m.py().get_type::<CompileError>())?;

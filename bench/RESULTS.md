@@ -276,6 +276,13 @@ repository the peak resident set size falls rather than rises (the arenas of Cra
 the compiler, which mimalloc reuses better than glibc), where pkpdutils-core measured a third
 more on its own hot shape.
 
+The macOS wheel links no mimalloc (issue #40, the comment on `mod allocator` in
+`crates/python/src/lib.rs`): there mimalloc claims two slots of the pthread TLS block by compiled
+in number, so a second extension module which links a copy of it corrupts both heaps, which is
+what sbmlsim#565 was. The table above is therefore what mimalloc is worth against glibc malloc on
+linux and no estimate of what the gate costs on macOS, whose libmalloc is another design with its
+own per thread caches; measuring that needs a macOS runner and has not been done.
+
 ## Setup
 
 - Machine: Intel Core i7-12700 (8 performance cores with 2 threads, 4 efficiency cores; 20 logical CPUs), Linux 7.0, governor `powersave`, the same machine as the spike. The command line hosts are pinned with `taskset -c 2` (a performance core), Chrome with `taskset -c 4-15`.

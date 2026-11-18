@@ -19,7 +19,7 @@ KLU and BTF are under the GNU Lesser General Public License 2.1 or later and are
 
 Also compiled into the modules, under permissive licenses whose texts are in their sources: the Rust standard library (MIT OR Apache-2.0); in `engine.wasm` the crates serde, serde_json, itoa, rand_core, rand_pcg and thiserror (MIT OR Apache-2.0), memchr (Unlicense OR MIT) and zmij (MIT), and wasi-libc (Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT, with parts of musl under MIT); in `mathlib.wasm` the crate libm (MIT). `model.wasm` contains no third-party code.
 
-The extension module of the python package links one library more, which no wasm module and no other package contains: mimalloc 3.3.2 (MIT, through the crate `libmimalloc-sys`), the allocator of the extension. Its text is in `THIRD_PARTY.md` as well, which the wheel carries.
+The extension module of the python package links one library more, which no wasm module and no other package contains: mimalloc 3.3.2 (MIT, through the crate `libmimalloc-sys`), the allocator of the extension on every target but macOS, whose wheel links none (see [Python](python.md#compile-and-simulate)). Its text is in `THIRD_PARTY.md` as well, which every wheel carries whether or not its platform links it.
 
 The native Wasmtime hosts also link Zstandard 1.5.7 and its Rust wrappers (`zstd`, `zstd-safe`, `zstd-sys`, BSD-3-Clause) for persistent compilation caching. Their notices are in `THIRD_PARTY.md`; they are in no Wasm module or JavaScript package.
 
