@@ -229,6 +229,18 @@ impl Workers {
         })
     }
 
+    /// Runs `work` on the pool of the batch and gives what it answers.
+    ///
+    /// An optimizer which spreads work of its own over rayon (the population of a generation
+    /// of a differential evolution) spreads it over the threads of the pool this way, and not
+    /// over the threads of the machine, which the global pool of rayon has. A batch inside
+    /// `work` runs on the pool as well: the instance of a point is taken while the point
+    /// simulates, so a point of the inner batch takes the instance of the thread it lands on
+    /// and no two points share one.
+    pub fn install<R: Send>(&self, work: impl FnOnce() -> R + Send) -> R {
+        self.pool.install(work)
+    }
+
     /// Simulates every request of a batch and gives one table per request, in their order.
     pub fn simulate(&self, requests: &[SimulationRequest]) -> Vec<Outcome<SimulationResult>> {
         self.map(requests, |instance, request| instance.simulate(request))

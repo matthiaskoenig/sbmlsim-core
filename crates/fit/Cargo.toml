@@ -1,0 +1,28 @@
+[package]
+name = "sbmlsim-fit"
+version.workspace = true
+edition.workspace = true
+# not on crates.io yet, as the rest of the workspace
+publish = false
+# the license of sbmlsim-host, whose engine it simulates on
+license = "MIT AND BSD-3-Clause AND LGPL-2.1-or-later"
+authors.workspace = true
+description = "The parameter fit of sbmlsim-core: the objective of a fit on the batch of the engine, with the optimizers of basin"
+
+[dependencies]
+# the optimizers: trust region reflective and bounded Levenberg-Marquardt for the least
+# squares of a fit, differential evolution for its global search; pure Rust on `Vec<f64>`,
+# no BLAS, see `docs/superpowers/specs` of the design
+# `parallel`: the population of a generation of a differential evolution spreads over
+# rayon, which the fit runs on the pool of the batch (`Workers::install`)
+basin = { version = "3.3", features = ["parallel"] }
+# the pool of the batch, which an evaluation of the objective fans out on
+sbmlsim-batch = { path = "../batch" }
+sbmlsim-abi = { path = "../abi" }
+sbmlsim-host = { path = "../host", features = ["native"] }
+thiserror.workspace = true
+
+[dev-dependencies]
+# the decay model of `crates/host/tests/decay-model`, which the tests fit
+serde_json.workspace = true
+wat = "1"
