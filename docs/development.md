@@ -17,7 +17,7 @@ A release is made from `develop`. Since `develop` only accepts pull requests, th
     | `CORE_VERSION` of `js/panels.mjs` | `js/prepack.mjs` at `npm pack`, which runs only while the tag publishes |
     | the `compiler` of `testdata/golden/model.json` | `cargo test --all-features`, the job `checks` of `ci.yml` |
     | the header and the `CORE_VERSION` of `python/sbmlsim_core/web/sbmlsim-core.js`, the inline build of the JavaScript host | `python/tests/test_web.py`, the job `python-bindings` of `ci.yml` |
-    | the examples: the CDN of `js/README.md` and of `docs/javascript.md`, the compiler of `docs/simulating.md`, the three `tag = "vX.Y.Z"` of the git dependencies of `docs/rust.md` | nothing |
+    | the examples: the CDN of `js/README.md` and of `docs/javascript.md`, the compiler of `docs/simulating.md`, the four `tag = "vX.Y.Z"` of the git dependencies of `docs/rust.md` | nothing |
 
     A version left behind in the golden model fails the job `checks` and with it every job which builds a wheel, so a missed place looks like eight of the fourteen checks red while `testsuite-parity` and `testsuite-cases` stay green, the engine itself being unchanged.
 
