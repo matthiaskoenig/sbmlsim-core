@@ -1,4 +1,6 @@
-# Ordinary ODE performance after adding delay support
+# Ordinary ODE performance of the retained DDE implementation
+
+The retained implementation corresponds to source 019e226. It failed the requirement of no ordinary ODE slowdown. Prepared native Robertson with KLU took 3.90% longer, and prepared WASM Adams took 2.30% longer. A later output recorder experiment was reverted after it produced larger native regressions. [Rejected experiment](results.md)
 
 **Native.** Of 24 scenarios, 7 had a simultaneous 95% interval entirely above 1.000, 2 entirely below, and 15 spanning 1.000. The median of the 24 point estimates was 1.0053×. Individual estimates ranged from 0.9751× (decay / prepared / dense / analytic / times) to 1.0390× (robertson / prepared / klu / DQ / steps). One sham interval excluded 1.000.
 

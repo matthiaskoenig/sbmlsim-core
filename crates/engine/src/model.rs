@@ -75,19 +75,6 @@ pub trait ModelFns {
     ) -> Result<bool, crate::EngineError> {
         Ok(false)
     }
-
-    /// Evaluate one row of selections and propagate any error recorded by the model bridge.
-    fn checked_selections(
-        &self,
-        t: f64,
-        y: &[f64],
-        p: &[f64],
-        mask: &[u8],
-        out: &mut [f64],
-    ) -> Result<(), crate::EngineError> {
-        self.selections(t, y, p, mask, out);
-        self.check_error()
-    }
 }
 
 #[cfg(any(test, feature = "test-models"))]

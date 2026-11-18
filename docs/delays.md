@@ -77,9 +77,12 @@ bytes. The solver selects the DDE path once per model. Ordinary ODE integrators
 use a zero-sized history type, without history allocation, recording, or lookup
 in solver callbacks. The DDE history ABI is an optional model custom section.
 
-The [performance protocol](https://github.com/matthiaskoenig/sbmlsim-core/blob/develop/bench/dde-performance/protocol.md)
-compares ordinary ODE execution against the preceding engine, including native
-and Wasmtime execution, events, prepared requests, and both direct solvers.
+In the fixed comparison against the preceding engine, 10 of 48 ordinary ODE
+workloads showed a slowdown, seven showed a speedup, and 31 were inconclusive.
+The largest measured slowdowns were 3.90% for native prepared Robertson with
+KLU and 2.30% for prepared Adams on WASM. Three baseline controls also showed
+timing differences. The retained implementation did not meet the zero-overhead
+criterion. [Performance results and simultaneous confidence intervals](https://github.com/matthiaskoenig/sbmlsim-core/blob/develop/bench/dde-performance/results-019e226.md)
 
 ## Validation
 

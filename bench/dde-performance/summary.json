@@ -1,0 +1,1647 @@
+{
+  "feature_commit": "f9988f3ff9a3385a862f61d774e33d24bfead32c",
+  "followup_protocol_sha256": "b762c5973b089f8754bdad80b49ddbae89504a30d94b02eb9836923d0e1f6b81",
+  "feature": {
+    "driver": "b5002eba158d14f033b69a7f0f6379d3e72b5905da6696d732c05de9b9cbbf9a",
+    "inputs": "1430faa459633a88310ce74f691f62656c7b2458bdc1a69e36cc17edd2aa4bfc",
+    "runtime": {
+      "engine.wasm": "9485d1654b74452bce74c9574f65cc199bbe43bb60648545592380a7afb14972",
+      "mathlib.wasm": "8f725c0b975e7b2c43a7bd002d4d298c104ef34927e9d669e73e76771bf62a8c"
+    }
+  },
+  "feature_files": {
+    "ode_performance": "b5002eba158d14f033b69a7f0f6379d3e72b5905da6696d732c05de9b9cbbf9a",
+    "runtime/engine.wasm": "9485d1654b74452bce74c9574f65cc199bbe43bb60648545592380a7afb14972",
+    "runtime/mathlib.wasm": "8f725c0b975e7b2c43a7bd002d4d298c104ef34927e9d669e73e76771bf62a8c"
+  },
+  "affinity": {
+    "cpu": 0,
+    "driver_sha256": "b5002eba158d14f033b69a7f0f6379d3e72b5905da6696d732c05de9b9cbbf9a",
+    "verified_child_affinity": [
+      0
+    ]
+  },
+  "host": {
+    "machine": "x86_64",
+    "kernel": "7.0.0-43-generic",
+    "cpu": "Intel Core i7-12700",
+    "governor": "powersave"
+  },
+  "result": {
+    "AA": [
+      {
+        "ci95_simultaneous": [
+          0.9734983136222135,
+          1.010279633253195
+        ],
+        "forward": 0.9904810506709917,
+        "name": "adams/native/ordinary",
+        "ratio": 0.9917184677411496,
+        "reverse": 0.9929574307278138,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9593682033581765,
+          1.1285337398008348
+        ],
+        "forward": 1.0047389570647565,
+        "name": "adams/native/prepared",
+        "ratio": 1.0405188063566226,
+        "reverse": 1.077572815077012,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9934821192463977,
+          1.0118484609533642
+        ],
+        "forward": 0.9932577437146929,
+        "name": "adams/wasm/ordinary",
+        "ratio": 1.0026232359885514,
+        "reverse": 1.0120770361020281,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9819176874718512,
+          1.0184370798624967
+        ],
+        "forward": 1.0009077465919651,
+        "name": "adams/wasm/prepared",
+        "ratio": 1.0000106910899342,
+        "reverse": 0.9991144395666679,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9684934810288033,
+          1.0079063490084785
+        ],
+        "forward": 0.9866037417765015,
+        "name": "decay/native/ordinary/dense/analytic/times",
+        "ratio": 0.9880034051066086,
+        "reverse": 0.9894050540945382,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9666732305637249,
+          1.0042306412921507
+        ],
+        "forward": 0.982593079510698,
+        "name": "decay/native/ordinary/klu/difference_quotient/steps",
+        "ratio": 0.985272996813048,
+        "reverse": 0.9879602233025857,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9828874361096818,
+          1.0177981221822976
+        ],
+        "forward": 0.9981911670805781,
+        "name": "decay/native/prepared/dense/analytic/times",
+        "ratio": 1.0001904752540924,
+        "reverse": 1.0021937879042084,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9784374076569191,
+          1.0117285876015918
+        ],
+        "forward": 0.9936839542264335,
+        "name": "decay/native/prepared/klu/difference_quotient/steps",
+        "ratio": 0.9949437654989842,
+        "reverse": 0.9962051739840447,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9891899389969367,
+          1.010201386056351
+        ],
+        "forward": 1.000204941040729,
+        "name": "decay/wasm/ordinary/dense/analytic/times",
+        "ratio": 0.999640459089018,
+        "reverse": 0.9990762957118918,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9910359194051306,
+          1.0055646929755881
+        ],
+        "forward": 0.9973300021794024,
+        "name": "decay/wasm/ordinary/klu/difference_quotient/steps",
+        "ratio": 0.998273875258889,
+        "reverse": 0.9992186416198253,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9913927620208338,
+          1.0132046573263414
+        ],
+        "forward": 1.0042017573923498,
+        "name": "decay/wasm/prepared/dense/analytic/times",
+        "ratio": 1.0022393744605795,
+        "reverse": 1.0002808263625393,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9525271067594157,
+          1.0175793509170779
+        ],
+        "forward": 0.9833805154538369,
+        "name": "decay/wasm/prepared/klu/difference_quotient/steps",
+        "ratio": 0.9845160816498469,
+        "reverse": 0.9856529591496355,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9896128835674924,
+          1.014959780893129
+        ],
+        "forward": 0.9876443184057343,
+        "name": "events/native/ordinary/dense/analytic/times",
+        "ratio": 1.0022062040691424,
+        "reverse": 1.0169827910274625,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9818570838454876,
+          1.0180922642219299
+        ],
+        "forward": 1.0110699774022234,
+        "name": "events/native/ordinary/klu/difference_quotient/steps",
+        "ratio": 0.9998105328683999,
+        "reverse": 0.9886764753938737,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9822872356538515,
+          1.0010624713722163
+        ],
+        "forward": 0.9965172876065324,
+        "name": "events/native/prepared/dense/analytic/times",
+        "ratio": 0.9916304189167592,
+        "reverse": 0.9867675151756006,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9821650403416264,
+          1.0156913491481043
+        ],
+        "forward": 1.0090693673494306,
+        "name": "events/native/prepared/klu/difference_quotient/steps",
+        "ratio": 0.998787532416524,
+        "reverse": 0.9886104634521504,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9719676505390976,
+          1.0095878750839897
+        ],
+        "forward": 0.998771040140397,
+        "name": "events/wasm/ordinary/dense/analytic/times",
+        "ratio": 0.9905991898634611,
+        "reverse": 0.9824942008933361,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9949599662721236,
+          1.0134746953813116
+        ],
+        "forward": 1.0046651506266342,
+        "name": "events/wasm/ordinary/klu/difference_quotient/steps",
+        "ratio": 1.0041746604720916,
+        "reverse": 1.0036844097810078,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9538772753917455,
+          1.004967399083088
+        ],
+        "forward": 0.9768705874261556,
+        "name": "events/wasm/prepared/dense/analytic/times",
+        "ratio": 0.979089150432638,
+        "reverse": 0.9813127519998849,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9919231218523802,
+          1.0041740665913061
+        ],
+        "forward": 0.9956091026308344,
+        "name": "events/wasm/prepared/klu/difference_quotient/steps",
+        "ratio": 0.998029796657619,
+        "reverse": 1.0004563762870522,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9814671149468511,
+          1.016200046483669
+        ],
+        "forward": 1.0121407084901408,
+        "name": "hctz/native/ordinary/dense/analytic/times",
+        "ratio": 0.9986825961391249,
+        "reverse": 0.9854034320178691,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9142468875056008,
+          1.1073153328668395
+        ],
+        "forward": 1.0588918400666285,
+        "name": "hctz/native/ordinary/klu/difference_quotient/steps",
+        "ratio": 1.0061608204262062,
+        "reverse": 0.9560557162259704,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9667083766663572,
+          0.9974759328915457
+        ],
+        "forward": 0.9855685248977881,
+        "name": "hctz/native/prepared/dense/analytic/times",
+        "ratio": 0.9819716593921366,
+        "reverse": 0.9783879207682178,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.8988625179087801,
+          1.0451409029306282
+        ],
+        "forward": 0.9447304666099309,
+        "name": "hctz/native/prepared/klu/difference_quotient/steps",
+        "ratio": 0.9692460903081738,
+        "reverse": 0.9943978910183325,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9882458439706026,
+          1.0098421421301833
+        ],
+        "forward": 0.9975933613794654,
+        "name": "hctz/wasm/ordinary/dense/analytic/times",
+        "ratio": 0.998985635545639,
+        "reverse": 1.0003798528155148,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9913341896526298,
+          1.0064606926368038
+        ],
+        "forward": 1.0042747669188496,
+        "name": "hctz/wasm/ordinary/klu/difference_quotient/steps",
+        "ratio": 0.9988688077782439,
+        "reverse": 0.9934919486361572,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9978034334435267,
+          1.0066345628036957
+        ],
+        "forward": 0.9962849076187269,
+        "name": "hctz/wasm/prepared/dense/analytic/times",
+        "ratio": 1.0022092710549284,
+        "reverse": 1.0081688634520987,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.991028395561421,
+          1.0104592920569728
+        ],
+        "forward": 0.9996621991691429,
+        "name": "hctz/wasm/prepared/klu/difference_quotient/steps",
+        "ratio": 1.0006966828102064,
+        "reverse": 1.0017322369692956,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9714106430199853,
+          1.0468691657851228
+        ],
+        "forward": 0.9870681993458743,
+        "name": "initial-only/native/ordinary",
+        "ratio": 1.0084343555696234,
+        "reverse": 1.0302630052989685,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9629344126618173,
+          1.0769881770229914
+        ],
+        "forward": 1.0413836049346874,
+        "name": "initial-only/native/prepared",
+        "ratio": 1.0183658368608777,
+        "reverse": 0.9958568319792184,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9729313338200887,
+          1.041607439574524
+        ],
+        "forward": 1.0226557810066599,
+        "name": "initial-only/wasm/ordinary",
+        "ratio": 1.0066839203554256,
+        "reverse": 0.9909615085778013,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9858631197897666,
+          1.0640226430555801
+        ],
+        "forward": 1.0523162361797356,
+        "name": "initial-only/wasm/prepared",
+        "ratio": 1.0241975797714655,
+        "reverse": 0.9968302743459349,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.963728006233353,
+          1.0179984982839962
+        ],
+        "forward": 0.9835301922505119,
+        "name": "midazolam/native/ordinary/dense/analytic/times",
+        "ratio": 0.9904916269710629,
+        "reverse": 0.9975023347833301,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9733541152956967,
+          1.0114187211476526
+        ],
+        "forward": 1.001119781440083,
+        "name": "midazolam/native/ordinary/klu/difference_quotient/steps",
+        "ratio": 0.9922038976521803,
+        "reverse": 0.9833674179327949,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9956466490041266,
+          1.0198995167015474
+        ],
+        "forward": 1.0082362933529436,
+        "name": "midazolam/native/prepared/dense/analytic/times",
+        "ratio": 1.0077001221220647,
+        "reverse": 1.0071642360223507,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9824126131641586,
+          1.0229466993283605
+        ],
+        "forward": 0.9858297378585903,
+        "name": "midazolam/native/prepared/klu/difference_quotient/steps",
+        "ratio": 1.0024748076709087,
+        "reverse": 1.0194009182536738,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9876968679612042,
+          0.9970105783784019
+        ],
+        "forward": 0.9893321662099596,
+        "name": "midazolam/wasm/ordinary/dense/analytic/times",
+        "ratio": 0.9923427964108654,
+        "reverse": 0.9953625882407126,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9896923906620069,
+          0.9999566450129582
+        ],
+        "forward": 0.9932851375380747,
+        "name": "midazolam/wasm/ordinary/klu/difference_quotient/steps",
+        "ratio": 0.9948112798723355,
+        "reverse": 0.9963397670624052,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9914096172390421,
+          1.0042481584527765
+        ],
+        "forward": 0.9996648442893782,
+        "name": "midazolam/wasm/prepared/dense/analytic/times",
+        "ratio": 0.9978082392848238,
+        "reverse": 0.9959550824180753,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.992910302406745,
+          1.0074945518518648
+        ],
+        "forward": 1.0038528878801458,
+        "name": "midazolam/wasm/prepared/klu/difference_quotient/steps",
+        "ratio": 1.000175844615527,
+        "reverse": 0.9965122701044808,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9808861032410229,
+          1.0114954568918604
+        ],
+        "forward": 0.9821415007715931,
+        "name": "robertson/native/ordinary/dense/analytic/times",
+        "ratio": 0.9960732087335021,
+        "reverse": 1.0102025384093734,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9986228580264519,
+          1.0189504121478026
+        ],
+        "forward": 1.0152634770255433,
+        "name": "robertson/native/ordinary/klu/difference_quotient/steps",
+        "ratio": 1.0087354324927176,
+        "reverse": 1.0022493626456623,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9965022268565041,
+          1.0268674766564105
+        ],
+        "forward": 1.0065364252763962,
+        "name": "robertson/native/prepared/dense/analytic/times",
+        "ratio": 1.0115709204868595,
+        "reverse": 1.0166305972420617,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9904111687797741,
+          1.0088366592961928
+        ],
+        "forward": 1.0042966772937443,
+        "name": "robertson/native/prepared/klu/difference_quotient/steps",
+        "ratio": 0.9995814598327768,
+        "reverse": 0.9948883805270046,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9962554293513637,
+          1.0114229629376765
+        ],
+        "forward": 0.9981382990240203,
+        "name": "robertson/wasm/ordinary/dense/analytic/times",
+        "ratio": 1.003810548956975,
+        "reverse": 1.0095150333201017,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9691698841832445,
+          1.0151915003064327
+        ],
+        "forward": 1.0067398617932333,
+        "name": "robertson/wasm/ordinary/klu/difference_quotient/steps",
+        "ratio": 0.9919138212444665,
+        "reverse": 0.9773061205933196,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9779812091842827,
+          1.0068919384298942
+        ],
+        "forward": 0.9900433396022067,
+        "name": "robertson/wasm/prepared/dense/analytic/times",
+        "ratio": 0.9923312931997934,
+        "reverse": 0.9946245341736548,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9897466248309699,
+          1.0026683066395348
+        ],
+        "forward": 0.993316549073285,
+        "name": "robertson/wasm/prepared/klu/difference_quotient/steps",
+        "ratio": 0.9961865148261462,
+        "reverse": 0.9990647727024299,
+        "zero_observed_variation": false
+      }
+    ],
+    "AB": [
+      {
+        "ci95_simultaneous": [
+          1.1957145173153774,
+          1.2338128714298802
+        ],
+        "forward": 1.2007861482234592,
+        "name": "adams/native/ordinary",
+        "ratio": 1.2146143264506966,
+        "reverse": 1.2286017491140617,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          1.2041042010601057,
+          1.2431202656219844
+        ],
+        "forward": 1.2150866605879804,
+        "name": "adams/native/prepared",
+        "ratio": 1.223456715318685,
+        "reverse": 1.2318844266910658,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          1.0150633731582956,
+          1.0332550806876335
+        ],
+        "forward": 1.0245250695661057,
+        "name": "adams/wasm/ordinary",
+        "ratio": 1.0241188346748322,
+        "reverse": 1.0237127608599361,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          1.0119305177778644,
+          1.0259255035672212
+        ],
+        "forward": 1.0200711546471066,
+        "name": "adams/wasm/prepared",
+        "ratio": 1.018903982731589,
+        "reverse": 1.017738146301615,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          1.1220654821830671,
+          1.162692991849441
+        ],
+        "forward": 1.1303723863395982,
+        "name": "decay/native/ordinary/dense/analytic/times",
+        "ratio": 1.1421986134339404,
+        "reverse": 1.1541485693533824,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          1.0299976600209682,
+          1.0505988835198559
+        ],
+        "forward": 1.0410493736850368,
+        "name": "decay/native/ordinary/klu/difference_quotient/steps",
+        "ratio": 1.0402472742795787,
+        "reverse": 1.0394457928692635,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          1.0736085735803749,
+          1.1727358356027457
+        ],
+        "forward": 1.0995341081173962,
+        "name": "decay/native/prepared/dense/analytic/times",
+        "ratio": 1.1220780933821197,
+        "reverse": 1.1450843028451325,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.998451776284273,
+          1.074043583875655
+        ],
+        "forward": 1.0311120205248099,
+        "name": "decay/native/prepared/klu/difference_quotient/steps",
+        "ratio": 1.0355581703252474,
+        "reverse": 1.040023491901064,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          1.011853304821784,
+          1.0308036310537172
+        ],
+        "forward": 1.0224583053498104,
+        "name": "decay/wasm/ordinary/dense/analytic/times",
+        "ratio": 1.021284515061302,
+        "reverse": 1.0201120722934054,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9806126302776772,
+          0.991897069299201
+        ],
+        "forward": 0.9887951452977025,
+        "name": "decay/wasm/ordinary/klu/difference_quotient/steps",
+        "ratio": 0.9862387105007635,
+        "reverse": 0.9836888851202462,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          1.008566956762892,
+          1.0278766839889004
+        ],
+        "forward": 1.0172298072548835,
+        "name": "decay/wasm/prepared/dense/analytic/times",
+        "ratio": 1.0181760452388469,
+        "reverse": 1.019123163423445,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9783100894186142,
+          1.0131878789851902
+        ],
+        "forward": 0.9928498498982828,
+        "name": "decay/wasm/prepared/klu/difference_quotient/steps",
+        "ratio": 0.9955962658065053,
+        "reverse": 0.9983502788356234,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          1.0702146723585289,
+          1.119205544061224
+        ],
+        "forward": 1.0897481840989194,
+        "name": "events/native/ordinary/dense/analytic/times",
+        "ratio": 1.094436016695052,
+        "reverse": 1.099144015210954,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9952370669801924,
+          1.0430423494619117
+        ],
+        "forward": 1.0224353068404461,
+        "name": "events/native/ordinary/klu/difference_quotient/steps",
+        "ratio": 1.018859366455745,
+        "reverse": 1.0152959328277542,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          1.0852824761214843,
+          1.1251977180295336
+        ],
+        "forward": 1.0993650048614214,
+        "name": "events/native/prepared/dense/analytic/times",
+        "ratio": 1.1050598922906107,
+        "reverse": 1.1107842801520382,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          1.0094255812573407,
+          1.0518775414413037
+        ],
+        "forward": 1.0214501130508724,
+        "name": "events/native/prepared/klu/difference_quotient/steps",
+        "ratio": 1.03043296661206,
+        "reverse": 1.0394948173333345,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9958926951553985,
+          1.065274902650357
+        ],
+        "forward": 1.0341231205577242,
+        "name": "events/wasm/ordinary/dense/analytic/times",
+        "ratio": 1.0299997543115575,
+        "reverse": 1.025892829192044,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9674963112775196,
+          0.9870457725489094
+        ],
+        "forward": 0.9763841218894512,
+        "name": "events/wasm/ordinary/klu/difference_quotient/steps",
+        "ratio": 0.9772221569342047,
+        "reverse": 0.9780609112683448,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9967135419148929,
+          1.0202395078330047
+        ],
+        "forward": 1.0113783372101866,
+        "name": "events/wasm/prepared/dense/analytic/times",
+        "ratio": 1.0084079201661107,
+        "reverse": 1.0054462272335678,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9702185540203241,
+          0.9818168653659912
+        ],
+        "forward": 0.976970455168444,
+        "name": "events/wasm/prepared/klu/difference_quotient/steps",
+        "ratio": 0.9760004812643072,
+        "reverse": 0.9750314703876289,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9921676129512756,
+          1.0168366024026236
+        ],
+        "forward": 1.0018142205762142,
+        "name": "hctz/native/ordinary/dense/analytic/times",
+        "ratio": 1.0044263758819243,
+        "reverse": 1.0070453421863215,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9761569511035328,
+          1.0148720156981468
+        ],
+        "forward": 0.9968978320191161,
+        "name": "hctz/native/ordinary/klu/difference_quotient/steps",
+        "ratio": 0.9953262643998699,
+        "reverse": 0.9937571742910591,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9754632230938665,
+          1.0160143572435703
+        ],
+        "forward": 0.996001786904662,
+        "name": "hctz/native/prepared/dense/analytic/times",
+        "ratio": 0.9955323398194837,
+        "reverse": 0.9950631139995367,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9926082482279345,
+          1.0181073985627294
+        ],
+        "forward": 1.0060858005257458,
+        "name": "hctz/native/prepared/klu/difference_quotient/steps",
+        "ratio": 1.00527697745211,
+        "reverse": 1.0044688046160226,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9795963837064389,
+          0.992415574329026
+        ],
+        "forward": 0.9917360982058696,
+        "name": "hctz/wasm/ordinary/dense/analytic/times",
+        "ratio": 0.9859851458042674,
+        "reverse": 0.9802675424494383,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9550716047679023,
+          0.9744364351669114
+        ],
+        "forward": 0.9691902766385194,
+        "name": "hctz/wasm/ordinary/klu/difference_quotient/steps",
+        "ratio": 0.9647054316625236,
+        "reverse": 0.960241339922444,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9678300184803984,
+          1.0066168943578901
+        ],
+        "forward": 0.9799572240113253,
+        "name": "hctz/wasm/prepared/dense/analytic/times",
+        "ratio": 0.9870329515619416,
+        "reverse": 0.9941597690164269,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9469266480655134,
+          0.9675310148942402
+        ],
+        "forward": 0.9613661110693971,
+        "name": "hctz/wasm/prepared/klu/difference_quotient/steps",
+        "ratio": 0.9571733912062261,
+        "reverse": 0.9529989566764454,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9554952978845996,
+          1.005385218361552
+        ],
+        "forward": 0.986897703862402,
+        "name": "initial-only/native/ordinary",
+        "ratio": 0.9801228742903332,
+        "reverse": 0.9733945523912996,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9709152340511532,
+          1.0529149927760215
+        ],
+        "forward": 1.0027234612533773,
+        "name": "initial-only/native/prepared",
+        "ratio": 1.0110841738683776,
+        "reverse": 1.0195145981418074,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.964484119297572,
+          1.0015487604869238
+        ],
+        "forward": 0.9837929434880077,
+        "name": "initial-only/wasm/ordinary",
+        "ratio": 0.9828417340507095,
+        "reverse": 0.9818914443185175,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9707661016112775,
+          1.028335696568538
+        ],
+        "forward": 0.9932747275362158,
+        "name": "initial-only/wasm/prepared",
+        "ratio": 0.9991363447025421,
+        "reverse": 1.0050325530598572,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.959005847416077,
+          1.0025694938774208
+        ],
+        "forward": 0.9884626494608993,
+        "name": "midazolam/native/ordinary/dense/analytic/times",
+        "ratio": 0.9805457700023101,
+        "reverse": 0.9726922990907166,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9806813506720143,
+          1.0110109338059612
+        ],
+        "forward": 1.0000786129084154,
+        "name": "midazolam/native/ordinary/klu/difference_quotient/steps",
+        "ratio": 0.9957306704671723,
+        "reverse": 0.9914016311433727,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.961196281167498,
+          1.0069677914882194
+        ],
+        "forward": 0.9816512009928094,
+        "name": "midazolam/native/prepared/dense/analytic/times",
+        "ratio": 0.9838158854348332,
+        "reverse": 0.9859853433225869,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9630239574734014,
+          1.021614621268136
+        ],
+        "forward": 0.9877919837768101,
+        "name": "midazolam/native/prepared/klu/difference_quotient/steps",
+        "ratio": 0.9918867655061895,
+        "reverse": 0.9959985216974865,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9679690307357711,
+          0.9848007732375162
+        ],
+        "forward": 0.9802647046098597,
+        "name": "midazolam/wasm/ordinary/dense/analytic/times",
+        "ratio": 0.9763486313497636,
+        "reverse": 0.9724482024658306,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9358413517705945,
+          0.9566058514105669
+        ],
+        "forward": 0.9508182871265642,
+        "name": "midazolam/wasm/ordinary/klu/difference_quotient/steps",
+        "ratio": 0.9461666412930259,
+        "reverse": 0.9415377524986122,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9674397060615454,
+          0.9795767345623824
+        ],
+        "forward": 0.9713862962569567,
+        "name": "midazolam/wasm/prepared/dense/analytic/times",
+        "ratio": 0.973489305616533,
+        "reverse": 0.9755968679005057,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9307480434793705,
+          0.9510153434289991
+        ],
+        "forward": 0.9421420341920762,
+        "name": "midazolam/wasm/prepared/klu/difference_quotient/steps",
+        "ratio": 0.9408271202592974,
+        "reverse": 0.9395140415048546,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9998971287071073,
+          1.0669789276769435
+        ],
+        "forward": 1.0244574364022112,
+        "name": "robertson/native/ordinary/dense/analytic/times",
+        "ratio": 1.032893588989284,
+        "reverse": 1.0413992111979766,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          1.0367918120538642,
+          1.0640431633657808
+        ],
+        "forward": 1.0489856649563798,
+        "name": "robertson/native/ordinary/klu/difference_quotient/steps",
+        "ratio": 1.0503291100648091,
+        "reverse": 1.0516742757351294,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          1.0315943459973071,
+          1.0612676470197446
+        ],
+        "forward": 1.0451551482022132,
+        "name": "robertson/native/prepared/dense/analytic/times",
+        "ratio": 1.0463258117123149,
+        "reverse": 1.0474977864660688,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          1.0418936340905907,
+          1.06435327966375
+        ],
+        "forward": 1.0544829828693005,
+        "name": "robertson/native/prepared/klu/difference_quotient/steps",
+        "ratio": 1.053063581416195,
+        "reverse": 1.051646090568114,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9794259330984555,
+          1.0120191901298827
+        ],
+        "forward": 0.9901628996530356,
+        "name": "robertson/wasm/ordinary/dense/analytic/times",
+        "ratio": 0.9955891921904856,
+        "reverse": 1.0010452219062445,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9786920236621736,
+          1.0042139423129315
+        ],
+        "forward": 0.9940864678835767,
+        "name": "robertson/wasm/ordinary/klu/difference_quotient/steps",
+        "ratio": 0.9913708566384288,
+        "reverse": 0.988662663806742,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9902769260162975,
+          1.022643269931846
+        ],
+        "forward": 1.0039272016205671,
+        "name": "robertson/wasm/prepared/dense/analytic/times",
+        "ratio": 1.006329982540202,
+        "reverse": 1.0087385142315446,
+        "zero_observed_variation": false
+      },
+      {
+        "ci95_simultaneous": [
+          0.9628408730199953,
+          1.0093855814127206
+        ],
+        "forward": 0.9898034388973618,
+        "name": "robertson/wasm/prepared/klu/difference_quotient/steps",
+        "ratio": 0.9858385742205564,
+        "reverse": 0.9818895916384051,
+        "zero_observed_variation": false
+      }
+    ],
+    "native_signatures": {
+      "adams/native/ordinary": [
+        "9be992024913e064",
+        [
+          45,
+          79,
+          0,
+          0,
+          0,
+          0,
+          3,
+          76,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      ],
+      "adams/native/prepared": [
+        "9be992024913e064",
+        [
+          45,
+          79,
+          0,
+          0,
+          0,
+          0,
+          3,
+          76,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      ],
+      "decay/native/ordinary/dense/analytic/times": [
+        "908429bde3e46d6d",
+        [
+          66,
+          89,
+          2,
+          0,
+          0,
+          16,
+          4,
+          86,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      ],
+      "decay/native/ordinary/klu/difference_quotient/steps": [
+        "eae010a5b3970ed8",
+        [
+          66,
+          89,
+          2,
+          2,
+          0,
+          16,
+          4,
+          86,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      ],
+      "decay/native/prepared/dense/analytic/times": [
+        "908429bde3e46d6d",
+        [
+          66,
+          89,
+          2,
+          0,
+          0,
+          16,
+          4,
+          86,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      ],
+      "decay/native/prepared/klu/difference_quotient/steps": [
+        "eae010a5b3970ed8",
+        [
+          66,
+          89,
+          2,
+          2,
+          0,
+          16,
+          4,
+          86,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      ],
+      "events/native/ordinary/dense/analytic/times": [
+        "e1d1b7c53a0dc6b1",
+        [
+          3595,
+          4099,
+          65,
+          0,
+          0,
+          434,
+          41,
+          4038,
+          0,
+          3835,
+          21,
+          221,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      ],
+      "events/native/ordinary/klu/difference_quotient/steps": [
+        "e863bfcab37533fb",
+        [
+          3596,
+          4099,
+          65,
+          195,
+          0,
+          434,
+          41,
+          4038,
+          0,
+          3637,
+          21,
+          22,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      ],
+      "events/native/prepared/dense/analytic/times": [
+        "e1d1b7c53a0dc6b1",
+        [
+          3595,
+          4099,
+          65,
+          0,
+          0,
+          434,
+          41,
+          4038,
+          0,
+          3835,
+          21,
+          221,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      ],
+      "events/native/prepared/klu/difference_quotient/steps": [
+        "e863bfcab37533fb",
+        [
+          3596,
+          4099,
+          65,
+          195,
+          0,
+          434,
+          41,
+          4038,
+          0,
+          3637,
+          21,
+          22,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      ],
+      "hctz/native/ordinary/dense/analytic/times": [
+        "877f58096467c289",
+        [
+          334,
+          373,
+          6,
+          0,
+          0,
+          45,
+          2,
+          372,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      ],
+      "hctz/native/ordinary/klu/difference_quotient/steps": [
+        "6779fd44849ff221",
+        [
+          346,
+          402,
+          7,
+          42,
+          0,
+          54,
+          7,
+          401,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      ],
+      "hctz/native/prepared/dense/analytic/times": [
+        "877f58096467c289",
+        [
+          334,
+          373,
+          6,
+          0,
+          0,
+          45,
+          2,
+          372,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      ],
+      "hctz/native/prepared/klu/difference_quotient/steps": [
+        "6779fd44849ff221",
+        [
+          346,
+          402,
+          7,
+          42,
+          0,
+          54,
+          7,
+          401,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      ],
+      "initial-only/native/ordinary": [
+        "acc28807b4eb6fed",
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      ],
+      "initial-only/native/prepared": [
+        "acc28807b4eb6fed",
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      ],
+      "midazolam/native/ordinary/dense/analytic/times": [
+        "dee63ada6b82fba9",
+        [
+          303,
+          336,
+          6,
+          0,
+          0,
+          37,
+          1,
+          333,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      ],
+      "midazolam/native/ordinary/klu/difference_quotient/steps": [
+        "3ac8a30377446f9a",
+        [
+          302,
+          320,
+          6,
+          42,
+          0,
+          36,
+          0,
+          319,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      ],
+      "midazolam/native/prepared/dense/analytic/times": [
+        "dee63ada6b82fba9",
+        [
+          303,
+          336,
+          6,
+          0,
+          0,
+          37,
+          1,
+          333,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      ],
+      "midazolam/native/prepared/klu/difference_quotient/steps": [
+        "3ac8a30377446f9a",
+        [
+          302,
+          320,
+          6,
+          42,
+          0,
+          36,
+          0,
+          319,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      ],
+      "robertson/native/ordinary/dense/analytic/times": [
+        "3e1e15f21167b593",
+        [
+          416,
+          599,
+          8,
+          0,
+          0,
+          81,
+          30,
+          596,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      ],
+      "robertson/native/ordinary/klu/difference_quotient/steps": [
+        "9d01a374341a245e",
+        [
+          383,
+          571,
+          7,
+          21,
+          0,
+          81,
+          31,
+          569,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      ],
+      "robertson/native/prepared/dense/analytic/times": [
+        "3e1e15f21167b593",
+        [
+          416,
+          599,
+          8,
+          0,
+          0,
+          81,
+          30,
+          596,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      ],
+      "robertson/native/prepared/klu/difference_quotient/steps": [
+        "9d01a374341a245e",
+        [
+          383,
+          571,
+          7,
+          21,
+          0,
+          81,
+          31,
+          569,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      ]
+    },
+    "strict_zero_overhead_supported": false
+  }
+}
