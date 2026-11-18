@@ -70,6 +70,25 @@ for a DDE model is rejected. Solver step budgets and execution deadlines still
 apply. History storage is bounded to 1 GiB, and nested evaluation to 128 frames;
 exceeding a history limit returns flag `-1006`.
 
+## Retained history
+
+The compiler bounds how far back a model can read when every duration of a
+`delay` is a finite nonnegative constant: the bound is the longest chain of
+nested durations, `max_delay` of the description. The engine then drops the
+accepted steps older than twice that bound and rebuilds its arena without them,
+so the memory of a run grows with the longest delay and not with the horizon.
+The arena has to double before it is rebuilt again, so the work of the
+compactions of a run stays proportional to its steps.
+
+A duration which depends on the state or on the time has no bound, so such a
+model keeps every accepted step and its history grows with the horizon. Give the
+delays constant durations where the model allows it.
+
+The measured effect on a chain of 20 Mackey-Glass equations with a delay of 2,
+integrated to t = 6400 at `relative_tolerance` 1e-9, is a peak resident size of
+17 MB instead of 1638 MB, and 2.65 s instead of 3.51 s. The same model without
+the bound fails with flag `-1006` once its history outgrows its room.
+
 ## Ordinary ODEs
 
 Models without `delay` keep their existing compiled module and description

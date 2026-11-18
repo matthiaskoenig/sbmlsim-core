@@ -260,11 +260,20 @@ fn preinit_sets_before_init() {
     req.preinit = vec![("y".to_string(), 3.0)];
     let result = decay(0.5, &req).unwrap();
     assert_eq!(column(&result, "y")[0], 3.0);
-    // an entity which is not settable and an unknown one are refused, naming the id
-    for id in ["t_half", "nothing"] {
+    // an entity which is not settable and an unknown one are refused, naming the id and, for
+    // an entity a rule determines, that rule
+    for (id, rule) in [
+        ("t_half", Some("its assignment rule determines it")),
+        ("nothing", None),
+    ] {
         req.preinit = vec![(id.to_string(), 1.0)];
         match decay(0.5, &req) {
-            Err(EngineError::Request(message)) => assert!(message.contains(id), "{message}"),
+            Err(EngineError::Request(message)) => {
+                assert!(message.contains(id), "{message}");
+                if let Some(rule) = rule {
+                    assert!(message.contains(rule), "{message}");
+                }
+            }
             other => panic!("{id}: {other:?}"),
         }
     }

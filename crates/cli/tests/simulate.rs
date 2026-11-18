@@ -131,28 +131,58 @@ fn compile_writes_a_model_which_simulates() {
 }
 
 #[test]
-fn compile_reports_an_overdetermined_algebraic_system() {
+fn compile_separates_an_unsolvable_from_an_overdetermined_algebraic_system() {
     let tmp = Path::new(env!("CARGO_TARGET_TMPDIR"));
-    let sbml = tmp.join("algebraic.xml");
-    std::fs::write(
-        &sbml,
-        r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2"><model><listOfParameters><parameter id="x" value="1" constant="true"/></listOfParameters><listOfRules><algebraicRule><math xmlns="http://www.w3.org/1998/Math/MathML"><ci>x</ci></math></algebraicRule></listOfRules></model></sbml>"#,
-    )
-    .unwrap();
-    let out = tmp.join("algebraic");
-    let output = run(&[
-        "compile".as_ref(),
-        sbml.as_os_str(),
-        "-o".as_ref(),
-        out.as_os_str(),
-    ]);
-    assert_eq!(output.status.code(), Some(1));
-    let stderr = String::from_utf8(output.stderr).unwrap();
-    assert!(
-        stderr.contains("overdetermined algebraic system"),
-        "{stderr}"
+    let model = |parameters: &str, rules: &str| {
+        format!(
+            r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2"><model><listOfParameters>{parameters}</listOfParameters><listOfRules>{rules}</listOfRules></model></sbml>"#
+        )
+    };
+    let rule = |math: &str| {
+        format!(
+            r#"<algebraicRule><math xmlns="http://www.w3.org/1998/Math/MathML">{math}</math></algebraicRule>"#
+        )
+    };
+    let minus =
+        |id: &str, value: &str| format!("<apply><minus/><ci>{id}</ci><cn>{value}</cn></apply>");
+    // the rule reads nothing it could determine, which is not an overdetermined system
+    let unsolvable = model(
+        r#"<parameter id="x" value="1" constant="true"/>"#,
+        &rule("<ci>x</ci>"),
     );
-    assert!(!out.join("model.wasm").exists());
+    // two rules compete for the one variable they both read
+    let overdetermined = model(
+        r#"<parameter id="x" value="1" constant="false"/>"#,
+        &format!("{}{}", rule(&minus("x", "1")), rule(&minus("x", "2"))),
+    );
+    for (case, body, expected) in [
+        (
+            "unsolvable",
+            unsolvable,
+            "algebraicRule #0 determines no variable: every entity it reads is already \
+             determined (x is constant)",
+        ),
+        (
+            "overdetermined",
+            overdetermined,
+            "overdetermined algebraic system: no independent variable for algebraicRule #1, \
+             whose candidates x are taken by the other algebraic rules",
+        ),
+    ] {
+        let sbml = tmp.join(format!("{case}.xml"));
+        std::fs::write(&sbml, body).unwrap();
+        let out = tmp.join(case);
+        let output = run(&[
+            "compile".as_ref(),
+            sbml.as_os_str(),
+            "-o".as_ref(),
+            out.as_os_str(),
+        ]);
+        assert_eq!(output.status.code(), Some(1), "{case}");
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(stderr.contains(expected), "{case}: {stderr}");
+        assert!(!out.join("model.wasm").exists(), "{case}");
+    }
 }
 
 #[test]

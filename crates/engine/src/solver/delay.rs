@@ -205,6 +205,8 @@ fn advance<const DAE: bool, H: Mode>(
     let shared = solver.history.shared().unwrap().clone();
     let (checkpoint, a, stop, step_budget) = {
         let mut history = shared.borrow_mut();
+        // Outside the window of a checkpoint, where the offsets of the arena may move.
+        history.prune()?;
         let a = history.committed;
         history.evaluate(a, unsafe { values(solver.y, problem.n) })?;
         let limit = if history.max_step > 0.0 {
@@ -253,7 +255,6 @@ fn advance<const DAE: bool, H: Mode>(
         let mut history = shared.borrow_mut();
         history.diagnostics(problem.model)?;
         let query = history.number(abi::MAX_QUERY);
-        let lag = history.number(abi::MIN_LAG);
         let error = overlap_error(&history, &polynomial, query)?;
         if error <= 0.1 {
             history.restore(checkpoint);
@@ -267,9 +268,6 @@ fn advance<const DAE: bool, H: Mode>(
             history.committed = t;
             let axis = t + history.stage_shift;
             history.put_number(abi::COMMITTED, axis);
-            if lag.is_finite() && lag > 0.0 {
-                history.lag_limit = lag;
-            }
             history.sync(problem.model, &mut problem.p)?;
             unsafe {
                 solver.flag(

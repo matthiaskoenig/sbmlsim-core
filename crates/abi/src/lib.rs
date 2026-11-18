@@ -200,6 +200,11 @@ pub struct ModelDescription {
     /// Number of historical query slots. The final constant slot holds the history header address.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub n_delays: u32,
+    /// The largest age any history read of the model can reach, when every lag of a `delay` is a
+    /// finite nonnegative constant. The engine keeps its dense history only this far back; without
+    /// it (a lag which depends on the state or the time) the history keeps every accepted step.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_delay: Option<f64>,
     /// The parameters, in the order of the parameter vector.
     pub parameters: Vec<Entity>,
     /// The values `model_selections` writes, in its order.
@@ -759,6 +764,7 @@ mod tests {
             n_discontinuity_roots: 1,
             n_constants: 2,
             n_delays: 0,
+            max_delay: None,
             units: BTreeMap::new(),
         };
         let sizes = ModelSizes::of(&d);

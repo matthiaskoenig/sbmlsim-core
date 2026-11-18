@@ -116,6 +116,10 @@ pub(crate) struct Metadata {
     entities: BTreeMap<String, EntityTarget>,
     rescaled: Arc<[Rescaled]>,
     n_parameters: usize,
+    /// The position of the first algebraic variable: the unknowns of the algebraic rules are the
+    /// last states. They and the targets of the assignment rules are the entities which are not
+    /// settable, so the position names which rule determines one of them.
+    algebraic: usize,
 }
 
 /// The species of a species entity, `None` for another entity.
@@ -169,6 +173,7 @@ impl Metadata {
             entities,
             rescaled: rescaled.into(),
             n_parameters: desc.parameters.len(),
+            algebraic: desc.parameters.len() + desc.states.len() - desc.n_algebraic as usize,
         }
     }
 }
@@ -255,8 +260,15 @@ pub(crate) fn resolve_values(
             (None, None) => Target::Entity(index),
         };
         if !entity.settable {
+            // The targets of the assignment rules and the unknowns of the algebraic rules are
+            // the entities which are not settable (`Entity::settable` of the IR).
+            let rule = if index >= metadata.algebraic {
+                "algebraic"
+            } else {
+                "assignment"
+            };
             return Err(request(format!(
-                "{id} of model {} is not settable",
+                "{id} of model {} is not settable: its {rule} rule determines it",
                 metadata.id
             )));
         }

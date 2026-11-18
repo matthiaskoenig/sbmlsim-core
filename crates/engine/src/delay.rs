@@ -171,7 +171,21 @@ pub(crate) struct History {
     pub settings: sbmlsim_abi::IntegratorSettings,
     pub pending: Option<(f64, i32)>,
     pub new_segment: bool,
-    pub lag_limit: f64,
+    /// The largest age a history read can reach, from the description; `None` leaves the reach
+    /// of a lag unbounded, so every accepted step is kept ([`History::prune`]).
+    max_delay: Option<f64>,
+    /// The end of the fixed vectors of the arena, where the record table and the records of a
+    /// compaction start again.
+    fixed_end: usize,
+    /// The length of the arena after the last compaction; the next one waits for twice it.
+    compacted_at: usize,
+    /// The largest age a probe published, which never raises the floor of a compaction above
+    /// the bound of the description.
+    max_age: f64,
+    /// Reused buffers of the steps and of the compaction.
+    staging: Vec<u8>,
+    probe: Vec<f64>,
+    queries: Vec<f64>,
     current_parameters: Vec<f64>,
     parameter_offset: usize,
     initialized: bool,
@@ -205,6 +219,7 @@ impl History {
             np: desc.parameters.len() + desc.n_constants as usize,
             frames: (desc.n_delays as usize + 2).min(128),
             sites: desc.n_delays as usize,
+            max_delay: desc.max_delay.filter(|d| d.is_finite() && *d >= 0.0),
             tracked_parameters: desc
                 .parameters
                 .iter()
@@ -229,7 +244,9 @@ impl History {
         self.pending = None;
         self.committed = 0.0;
         self.stage_shift = 0.0;
-        self.lag_limit = f64::INFINITY;
+        self.fixed_end = 0;
+        self.compacted_at = 0;
+        self.max_age = 0.0;
     }
 
     pub fn fail(&mut self, error: EngineError) {
@@ -243,13 +260,28 @@ impl History {
         let end = start
             .checked_add(len)
             .filter(|&n| n <= 1 << 30)
-            .ok_or_else(|| self.failure("delay history exceeds 1 GiB"))?;
+            .ok_or_else(|| self.failure(&self.overflow("exceeds 1 GiB")))?;
         self.data
             .try_reserve(end - self.data.len())
-            .map_err(|_| self.failure("delay history does not fit into memory"))?;
+            .map_err(|_| self.failure(&self.overflow("does not fit into memory")))?;
         self.data.resize(end, 0);
         self.dirty.push((start, len));
         Ok(start)
+    }
+
+    /// What a user can do about an arena which outgrew its room. A bounded model keeps only
+    /// twice its longest lag, so only a lag of the state or of the time grows without end.
+    fn overflow(&self, what: &str) -> String {
+        let records = self.records.len();
+        let kept = if self.max_delay.is_some() {
+            "The history keeps twice the longest delay of the model: shorten the delays, raise \
+             the tolerances so the integrator takes longer steps, or reduce the states"
+        } else {
+            "A delay whose duration depends on the state or on the time has no bound, so every \
+             accepted step is kept: give the delays constant durations, raise the tolerances so \
+             the integrator takes longer steps, or shorten the simulation"
+        };
+        format!("the delay history of {records} accepted steps {what}. {kept}")
     }
 
     pub fn failure(&self, message: &str) -> EngineError {
@@ -301,6 +333,7 @@ impl History {
         let queries = self.store_values(&vec![f64::NAN; self.sites])?;
         self.put_word(abi::TARGETS, targets);
         self.put_word(abi::QUERIES, queries);
+        self.fixed_end = self.data.len();
         self.table_capacity = 128;
         self.table = self.allocate(self.table_capacity * abi::RECORD_BYTES as usize)?;
         self.put_word(abi::RECORDS, self.table);
@@ -352,6 +385,118 @@ impl History {
         self.put_number(abi::MIN_LAG, f64::INFINITY);
     }
 
+    /// Writes the descriptor of a record into the slot of `self.records.len()` of the table.
+    fn publish(&mut self, record: &Record, shift: f64) {
+        let at = self.table + self.records.len() * abi::RECORD_BYTES as usize;
+        self.data[at..at + 8].copy_from_slice(&record.end.to_le_bytes());
+        self.data[at + 8..at + 16].copy_from_slice(&record.h.to_le_bytes());
+        self.data[at + 16..at + 20].copy_from_slice(&(record.order as u32).to_le_bytes());
+        self.data[at + 20..at + 24].copy_from_slice(&(record.coefficients as u32).to_le_bytes());
+        self.data[at + 24..at + 28].copy_from_slice(&(record.parameters as u32).to_le_bytes());
+        self.data[at + 32..at + 40].copy_from_slice(&shift.to_le_bytes());
+        self.dirty.push((at, abi::RECORD_BYTES as usize));
+    }
+
+    fn store_bytes(&mut self, bytes: &[u8]) -> Result<usize, EngineError> {
+        let at = self.allocate(bytes.len())?;
+        self.data[at..at + bytes.len()].copy_from_slice(bytes);
+        Ok(at)
+    }
+
+    /// Drops the records and the jumps no history read can reach any more, and rebuilds the
+    /// arena without them.
+    ///
+    /// A model whose every lag of a `delay` is a finite nonnegative constant cannot read further
+    /// back than `max_delay` of its description, and the floor keeps twice it, so no read of a
+    /// retained step, of a rejected trial of one, or of the neighbour of a jump of one can fall
+    /// below the floor. Without that bound (a lag of the state or of the time) nothing is
+    /// dropped. The arena has to double before it is rebuilt again, so the work of the
+    /// compactions of a run stays proportional to the steps of the run.
+    pub(crate) fn prune(&mut self) -> Result<(), EngineError> {
+        /// The newest records, which the interpolation of the committed time and the overlap of
+        /// the next trial need whatever the bound is.
+        const RETAIN: usize = 8;
+        /// Below it a run keeps its history whole: a compaction cannot pay for itself.
+        const THRESHOLD: usize = 1 << 20;
+        let Some(max_delay) = self.max_delay else {
+            return Ok(());
+        };
+        if !self.initialized
+            || self.records.len() <= RETAIN
+            || self.data.len() < THRESHOLD.max(2 * self.compacted_at)
+        {
+            return Ok(());
+        }
+        let reach = max_delay.max(self.max_age);
+        let floor = self.committed + self.stage_shift - 2.0 * reach;
+        let drop = self
+            .records
+            .partition_point(|r| r.end < floor)
+            .min(self.records.len() - RETAIN);
+        if drop == 0 {
+            // Nothing is reclaimable yet; waiting for twice the arena keeps the check amortized.
+            self.compacted_at = self.data.len();
+            return Ok(());
+        }
+        let dropped = self.jumps.partition_point(|&jump| jump < floor);
+        self.jumps.drain(..dropped);
+        self.jump_orders.drain(..dropped);
+        self.compact(drop)
+    }
+
+    fn compact(&mut self, drop: usize) -> Result<(), EngineError> {
+        let np = self.np * 8;
+        let records = std::mem::take(&mut self.records);
+        let mut staging = std::mem::take(&mut self.staging);
+        staging.clear();
+        // The live blocks leave the arena before it is rebuilt over them. A record which shares
+        // the parameters of the one before it keeps sharing them.
+        let mut plan = Vec::with_capacity(records.len() - drop);
+        let mut previous = usize::MAX;
+        for (i, record) in records.iter().enumerate().skip(drop) {
+            let shift = self.number(
+                (self.table + i * abi::RECORD_BYTES as usize + abi::TIME_SHIFT as usize) as u32,
+            );
+            let bytes = (record.order + 1) * self.n * 8;
+            let coefficients = staging.len();
+            staging.extend_from_slice(&self.data[record.coefficients..record.coefficients + bytes]);
+            let parameters = if record.parameters == previous {
+                usize::MAX
+            } else {
+                previous = record.parameters;
+                let at = staging.len();
+                staging.extend_from_slice(&self.data[record.parameters..record.parameters + np]);
+                at
+            };
+            plan.push((record.clone(), shift, coefficients, parameters));
+        }
+        self.data.truncate(self.fixed_end);
+        self.table_capacity = plan.len().next_power_of_two().max(128);
+        self.table = self.allocate(self.table_capacity * abi::RECORD_BYTES as usize)?;
+        let mut parameters = 0;
+        for (mut record, shift, coefficients, at) in plan {
+            if at != usize::MAX {
+                parameters = self.store_bytes(&staging[at..at + np])?;
+            }
+            let bytes = (record.order + 1) * self.n * 8;
+            record.coefficients = self.store_bytes(&staging[coefficients..coefficients + bytes])?;
+            record.parameters = parameters;
+            self.publish(&record, shift);
+            self.records.push(record);
+        }
+        self.parameter_offset = parameters;
+        self.put_word(abi::RECORDS, self.table);
+        self.put_word(abi::N_RECORDS, self.records.len());
+        let start = self.records.first().map_or(f64::INFINITY, |r| r.end);
+        self.put_number(abi::HISTORY_START, start);
+        // The arena moved, so the model reads all of it again.
+        self.dirty.clear();
+        self.dirty.push((0, self.data.len()));
+        self.compacted_at = self.data.len();
+        self.staging = staging;
+        Ok(())
+    }
+
     fn parameters(&mut self, p: &[f64]) -> Result<usize, EngineError> {
         let same = self.same_parameters(p);
         if !same {
@@ -399,14 +544,7 @@ impl History {
             coefficients,
             parameters,
         };
-        let at = self.table + self.records.len() * abi::RECORD_BYTES as usize;
-        self.data[at..at + 8].copy_from_slice(&end.to_le_bytes());
-        self.data[at + 8..at + 16].copy_from_slice(&h.to_le_bytes());
-        self.data[at + 16..at + 20].copy_from_slice(&(order as u32).to_le_bytes());
-        self.data[at + 20..at + 24].copy_from_slice(&(coefficients as u32).to_le_bytes());
-        self.data[at + 24..at + 28].copy_from_slice(&(parameters as u32).to_le_bytes());
-        self.data[at + 32..at + 40].copy_from_slice(&self.stage_shift.to_le_bytes());
-        self.dirty.push((at, abi::RECORD_BYTES as usize));
+        self.publish(&record, self.stage_shift);
         self.records.push(record);
         self.put_word(abi::N_RECORDS, self.records.len());
         Ok(())
@@ -464,13 +602,20 @@ impl History {
         p: &mut [f64],
     ) -> Result<(), EngineError> {
         let at = self.word(abi::QUERIES) as usize;
-        let mut queries: Vec<f64> = self.data[at..at + self.sites * 8]
-            .as_chunks::<8>()
-            .0
-            .iter()
-            .map(|b| f64::from_le_bytes(*b))
-            .collect();
+        let mut queries = std::mem::take(&mut self.queries);
+        queries.clear();
+        queries.extend(
+            self.data[at..at + self.sites * 8]
+                .as_chunks::<8>()
+                .0
+                .iter()
+                .map(|b| f64::from_le_bytes(*b)),
+        );
         model.read_history_queries(at, &mut queries)?;
+        let axis = self.committed + self.stage_shift;
+        for &query in queries.iter().filter(|q| q.is_finite()) {
+            self.max_age = self.max_age.max(axis - query);
+        }
         self.target_orders.clear();
         let at = self.word(abi::TARGETS) as usize;
         for (i, query) in queries.iter().enumerate() {
@@ -509,6 +654,7 @@ impl History {
             }
         }
         self.dirty.push((at, abi::ROOTS_PER_QUERY * self.sites * 8));
+        self.queries = queries;
         self.sync(model, p)
     }
 
@@ -591,17 +737,21 @@ impl History {
         )
     }
 
-    fn changed(&self, t: f64, y: &[f64], p: &[f64]) -> bool {
+    fn changed(&mut self, t: f64, y: &[f64], p: &[f64]) -> bool {
         if !self.same_parameters(p) || self.records.is_empty() {
             return true;
         }
-        let mut expected = vec![0.0; self.n];
-        if self.evaluate(t, &mut expected).is_err() {
-            return true;
-        }
-        expected.iter().zip(y).any(|(a, b)| {
-            (a - b).abs() > 8.0 * f64::EPSILON * (a.abs() + b.abs()).max(f64::MIN_POSITIVE)
-        })
+        let mut expected = std::mem::take(&mut self.probe);
+        expected.clear();
+        expected.resize(self.n, 0.0);
+        let changed = match self.evaluate(t, &mut expected) {
+            Err(_) => true,
+            Ok(()) => expected.iter().zip(y).any(|(a, b)| {
+                (a - b).abs() > 8.0 * f64::EPSILON * (a.abs() + b.abs()).max(f64::MIN_POSITIVE)
+            }),
+        };
+        self.probe = expected;
+        changed
     }
 
     pub fn evaluate(&self, t: f64, out: &mut [f64]) -> Result<(), EngineError> {
@@ -737,5 +887,89 @@ impl ModelFns for DelayedModel<'_> {
     }
     fn sizes(&self) -> ModelSizes {
         self.base.sizes()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A history of one state and one parameter slot (the address of the header).
+    fn history(max_delay: Option<f64>) -> History {
+        let mut history = History {
+            n: 1,
+            np: 1,
+            frames: 3,
+            sites: 1,
+            max_delay,
+            ..History::default()
+        };
+        history.initialize(&[0.0], &[0.0], &[0]).unwrap();
+        history
+    }
+
+    #[test]
+    fn a_bounded_lag_keeps_the_arena_flat_and_its_window_exact() {
+        const STEPS: usize = 40_000;
+        const DT: f64 = 1e-3;
+        let mut sizes = Vec::new();
+        for max_delay in [Some(1.0), None] {
+            let mut history = history(max_delay);
+            for k in 1..=STEPS {
+                let t = k as f64 * DT;
+                // the linear record through (t - DT, t - DT) and (t, t), so every
+                // interpolation of the window returns its own time
+                history.append(t, DT, 1, &[t, DT], &[0.0]).unwrap();
+                history.committed = t;
+                history.prune().unwrap();
+            }
+            let end = STEPS as f64 * DT;
+            let mut out = [0.0];
+            for query in [end, end - 0.5, end - 1.0] {
+                history.evaluate(query, &mut out).unwrap();
+                assert!((out[0] - query).abs() < 1e-9, "{query} gave {}", out[0]);
+            }
+            if max_delay.is_some() {
+                // twice the bound of the lag, so the window of the records is 2 of time
+                assert!(
+                    history.records.len() < STEPS / 4,
+                    "{}",
+                    history.records.len()
+                );
+                assert!(history.data.len() < 1 << 21, "{} bytes", history.data.len());
+            } else {
+                assert_eq!(history.records.len(), STEPS);
+            }
+            sizes.push(history.data.len());
+        }
+        assert!(sizes[0] * 4 < sizes[1], "{sizes:?}");
+    }
+
+    #[test]
+    fn a_compaction_keeps_the_published_table_and_the_arena_consistent() {
+        let mut history = history(Some(0.0));
+        for k in 1..=20_000 {
+            let t = k as f64 * 1e-3;
+            history.append(t, 1e-3, 1, &[t, 1e-3], &[0.0]).unwrap();
+            history.committed = t;
+            history.prune().unwrap();
+        }
+        // every descriptor of the table is the record the engine holds
+        assert_eq!(history.word(abi::N_RECORDS) as usize, history.records.len());
+        let table = history.word(abi::RECORDS) as usize;
+        for (i, record) in history.records.iter().enumerate() {
+            let at = (table + i * abi::RECORD_BYTES as usize) as u32;
+            assert_eq!(history.number(at + abi::END), record.end);
+            assert_eq!(history.number(at + abi::H), record.h);
+            assert_eq!(history.word(at + abi::COEFF) as usize, record.coefficients);
+            assert_eq!(history.word(at + abi::PARAMS) as usize, record.parameters);
+            assert!(record.coefficients + (record.order + 1) * history.n * 8 <= history.data.len());
+            assert!(record.parameters + history.np * 8 <= history.data.len());
+        }
+        assert_eq!(
+            history.number(abi::HISTORY_START),
+            history.records[0].end,
+            "the floor of the retained records is the start of the published history"
+        );
     }
 }

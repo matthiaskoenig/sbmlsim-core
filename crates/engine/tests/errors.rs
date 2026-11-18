@@ -407,7 +407,9 @@ fn gmres_requires_the_stiff_method() {
     req.settings.linear_solver = sbmlsim_abi::LinearSolver::Gmres;
     match simulate(&model, &model.description(), &req) {
         Err(EngineError::Request(message)) => {
-            assert!(message.to_ascii_lowercase().contains("gmres"), "{message}");
+            // the refusal names the fields of the request a user can change
+            assert!(message.contains("settings.linear_solver"), "{message}");
+            assert!(message.contains("settings.stiff"), "{message}");
         }
         other => panic!("expected a request error for GMRES with Adams, got {other:?}"),
     }
@@ -548,7 +550,10 @@ fn dae_failure_leaves_the_engine_reusable() {
     req.settings.linear_solver = sbmlsim_abi::LinearSolver::Gmres;
     match engine.simulate(&req) {
         Err(EngineError::Request(message)) => {
-            assert!(message.to_ascii_lowercase().contains("gmres"), "{message}");
+            // the refusal names the feature of the model and what to set instead
+            assert!(message.contains("settings.linear_solver"), "{message}");
+            assert!(message.contains("algebraic rule"), "{message}");
+            assert!(message.contains("\"klu\""), "{message}");
         }
         other => panic!("expected a request error for GMRES on a DAE, got {other:?}"),
     }

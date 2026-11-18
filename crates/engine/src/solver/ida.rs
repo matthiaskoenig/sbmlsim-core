@@ -42,7 +42,10 @@ pub(super) unsafe extern "C" fn roots(
             return super::roots(t, y, g, data);
         }
         callback(p, |p| {
-            let projection = p.interpolation.as_mut().unwrap();
+            // checked before the callback; a panic would trap the instance on wasm32
+            let Some(projection) = p.interpolation.as_deref_mut() else {
+                return -1;
+            };
             let mut state = std::mem::take(&mut projection.probe);
             state.clear();
             state.extend_from_slice(values(y, p.n));
@@ -64,17 +67,24 @@ pub(super) unsafe extern "C" fn roots(
     }
 }
 
-/// Shared analytic or colored numerical Jacobian of the model's [f, g].
-unsafe fn jacobian(
-    p: &mut Problem<'_>,
+/// Shared analytic or colored numerical Jacobian of the model's [f, g]; the pattern its entries
+/// follow, `None` when the call failed. A panic must not leave a callback of IDA: it traps the
+/// instance on wasm32, where `callback` cannot catch it.
+unsafe fn jacobian<'a>(
+    p: &mut Problem<'a>,
     t: f64,
     y: N_Vector,
     yp: N_Vector,
     weights: N_Vector,
     base: N_Vector,
-) -> c_int {
+) -> Option<&'a SparsityPattern> {
     let n = p.n;
-    let pattern = p.pattern.expect("IDA requires a model pattern");
+    let Some(pattern) = p.pattern else {
+        p.callback_error = Some(EngineError::Internal(
+            "the Jacobian of IDA requires the sparsity pattern of the model".into(),
+        ));
+        return None;
+    };
     p.counts.jacobian += 1;
     // SAFETY: IDA supplies distinct serial work vectors of length n to the Jacobian.
     unsafe {
@@ -82,15 +92,20 @@ unsafe fn jacobian(
         if p.analytic {
             p.model.jac(t, y, &p.p, &mut p.jac_values);
             if p.jac_values.iter().all(|v| v.is_finite()) {
-                return 0;
+                return Some(pattern);
             }
             p.counts.fallbacks += 1;
         }
-        let dq = p.difference.as_mut().expect("IDA difference workspace");
         let mut h = 0.0;
         if IDAGetErrWeights(p.mem, weights) != 0 || IDAGetCurrentStep(p.mem, &mut h) != 0 {
-            return -1;
+            return None;
         }
+        let Some(dq) = p.difference.take() else {
+            p.callback_error = Some(EngineError::Internal(
+                "the Jacobian of IDA requires the workspace of its difference quotient".into(),
+            ));
+            return None;
+        };
         let yp = values(yp, n);
         let weights = values(weights, n);
         for j in 0..n {
@@ -118,8 +133,9 @@ unsafe fn jacobian(
             &mut p.jac_values,
             &mut p.counts,
         );
+        p.difference = Some(dq);
     }
-    0
+    Some(pattern)
 }
 
 pub(super) unsafe extern "C" fn dense(
@@ -137,12 +153,10 @@ pub(super) unsafe extern "C" fn dense(
     // SAFETY: IDA supplies a dense matrix of n*n values and its Jacobian work vectors.
     unsafe {
         callback(problem(data), |p| {
-            let code = jacobian(p, t, y, yp, w, base);
-            if code != 0 {
-                return code;
-            }
+            let Some(pattern) = jacobian(p, t, y, yp, w, base) else {
+                return -1;
+            };
             let n = p.n;
-            let pattern = p.pattern.unwrap();
             let matrix = std::slice::from_raw_parts_mut(SUNDenseMatrix_Data(jac), n * n);
             matrix.fill(0.0);
             for j in 0..n {
@@ -173,13 +187,20 @@ pub(super) unsafe extern "C" fn sparse(
     // SAFETY: new reserves capacity for all model entries plus the differential diagonal.
     unsafe {
         callback(problem(data), |p| {
-            let code = jacobian(p, t, y, yp, w, base);
-            if code != 0 {
-                return code;
-            }
+            let Some(pattern) = jacobian(p, t, y, yp, w, base) else {
+                return -1;
+            };
             let n = p.n;
-            let pattern = p.pattern.unwrap();
             let capacity = SUNSparseMatrix_NNZ(jac) as usize;
+            // Every column writes the entries of the pattern, and a differential one also a
+            // diagonal which the pattern need not hold.
+            let required = pattern.nnz() + n - p.n_algebraic;
+            if capacity < required {
+                p.callback_error = Some(EngineError::Internal(format!(
+                    "the sparse Jacobian of IDA holds {capacity} entries, {required} are needed"
+                )));
+                return -1;
+            }
             let data = std::slice::from_raw_parts_mut(SUNSparseMatrix_Data(jac), capacity);
             let rows = std::slice::from_raw_parts_mut(SUNSparseMatrix_IndexValues(jac), capacity);
             let cols = std::slice::from_raw_parts_mut(SUNSparseMatrix_IndexPointers(jac), n + 1);

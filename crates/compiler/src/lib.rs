@@ -120,7 +120,7 @@ mod tests {
         let error = compile(&algebraic, &CompileOptions::default()).unwrap_err();
         assert_eq!(
             error.to_string(),
-            "overdetermined algebraic system: no independent variable for A"
+            "A determines no variable: every entity it reads is already determined (k is constant)"
         );
     }
 

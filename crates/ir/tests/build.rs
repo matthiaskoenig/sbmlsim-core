@@ -389,7 +389,8 @@ fn an_algebraic_rule_cannot_redetermine_a_reacting_species_or_a_rateof_target() 
     ));
     assert_eq!(
         e.to_string(),
-        "overdetermined algebraic system: no independent variable for algebraicRule #1"
+        "algebraicRule #1 determines no variable: every entity it reads is already determined \
+         (S is a species of a reaction, p is read by rateOf)"
     );
 }
 
