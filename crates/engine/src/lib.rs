@@ -637,10 +637,8 @@ fn linear_of(
     desc: &ModelDescription,
     settings: &IntegratorSettings,
 ) -> Result<Linear, EngineError> {
-    if settings.linear_solver == LinearSolver::Gmres && (desc.n_algebraic > 0 || !settings.stiff) {
-        return Err(request(
-            "GMRES is supported only for stiff ODE models (CVODE BDF)",
-        ));
+    if settings.linear_solver == LinearSolver::Gmres {
+        gmres_applies(desc, settings)?;
     }
     let jacobian = match (&desc.jacobian, settings.jacobian) {
         (_, JacobianChoice::DifferenceQuotient) => Jacobian::Difference,
@@ -669,6 +667,30 @@ fn linear_of(
     })
 }
 
+/// Refuses a request of GMRES for a model or a method which has no preconditioned Newton
+/// iteration of CVODE BDF, naming the field of the request and what to set instead.
+fn gmres_applies(
+    desc: &ModelDescription,
+    settings: &IntegratorSettings,
+) -> Result<(), EngineError> {
+    if desc.n_algebraic > 0 {
+        return Err(request(format!(
+            "settings.linear_solver \"gmres\" is a solver of CVODE, and model {} has {} \
+             algebraic rule(s), which IDA integrates with a direct solver; set \
+             settings.linear_solver \"auto\", \"dense\" or \"klu\"",
+            desc.id, desc.n_algebraic
+        )));
+    }
+    if !settings.stiff {
+        return Err(request(
+            "settings.linear_solver \"gmres\" needs the Newton iteration of CVODE BDF, which \
+             settings.stiff false replaces with the fixed point iteration of Adams; set \
+             settings.stiff true, or settings.linear_solver \"auto\"",
+        ));
+    }
+    Ok(())
+}
+
 /// The sparse difference quotient of a stiff configuration with a pattern: the Jacobian of
 /// [`Jacobian::Difference`], the fallback of [`Jacobian::Analytic`] for a call with an entry
 /// which is not finite; over the colors of the description, or the greedy coloring of the
@@ -689,7 +711,9 @@ fn difference_of(desc: &ModelDescription) -> Difference {
 fn check_settings(settings: &IntegratorSettings, n: usize) -> Result<(), EngineError> {
     if settings.linear_solver == LinearSolver::Gmres && !settings.stiff {
         return Err(request(
-            "GMRES is supported only for stiff ODE models (CVODE BDF)",
+            "settings.linear_solver \"gmres\" needs the Newton iteration of CVODE BDF, which \
+             settings.stiff false replaces with the fixed point iteration of Adams; set \
+             settings.stiff true, or settings.linear_solver \"auto\"",
         ));
     }
     let valid = |x: f64| x.is_finite() && x >= 0.0;
