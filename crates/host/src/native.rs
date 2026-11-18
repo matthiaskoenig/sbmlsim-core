@@ -325,7 +325,8 @@ impl Layout {
         let np = sizes.parameters as usize + sizes.constants as usize;
         let assignments = sizes.assignments.iter().copied().max().unwrap_or(0) as usize;
         // the outputs: ydot, the Jacobian, the root functions, the selections, the event values
-        // and the words of the sizes (as many as the events, at least the words)
+        // and the words of the sizes (as many as the events, at least the words); a column of
+        // the Jacobian in the parameters holds at most one entry per state, so `n` covers it
         let out = [
             n,
             sizes.jacobian_entries as usize,

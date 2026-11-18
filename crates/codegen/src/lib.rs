@@ -3,7 +3,8 @@
 //!
 //! [`emit`] translates an [`sbmlsim_ir::Model`] into a WebAssembly module of the contract
 //! `model/2` (see `sbmlsim_abi`): it imports the memory of the engine as `env.memory` and the
-//! functions of mathlib it calls as `math.*`, and exports the fourteen functions of the contract.
+//! functions of mathlib it calls as `math.*`, and exports the fourteen functions of the contract
+//! and `model_jac_p` where the model has one.
 //! The expressions are emitted as written, without fast math, reassociation or folding of
 //! constants (`q / 49` is one `f64.div` by `49`), with the meaning libroadrunner gives every
 //! operator (see `math.rs`). [`emit_optimized`] emits the programs of the optimizer of
@@ -25,6 +26,13 @@
 //!   ([`JacobianIr::Analytic`]) into locals in their order, then the entries of the Jacobian in
 //!   the CSC order of its pattern. For a model without an analytic Jacobian (the description
 //!   gives a colored difference quotient, which the engine computes) it traps.
+//! - `model_jac_p` evaluates the assignment rules into locals, then branches on the parameter:
+//!   the derivatives of the rules which read it into locals, then the entries of its column in
+//!   the order of the rows of [`ParameterPattern`](sbmlsim_abi::ParameterPattern). A parameter
+//!   no rate reads writes nothing. A model whose math has an operator without a derivative,
+//!   which reads its history, or whose column is above the limits of a function carries the
+//!   export not at all, and its description no pattern: it is the one function of the contract
+//!   which is optional (the engine takes a difference quotient of `model_rhs` without it).
 //! - `model_roots` evaluates the assignment rules into locals, then the root functions of the
 //!   triggers ([`sbmlsim_ir::Event::root_functions`]) in the order of the events, then those of
 //!   the discontinuities of the math ([`sbmlsim_ir::Model::discontinuity_roots`]).
