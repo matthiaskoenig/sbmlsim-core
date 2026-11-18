@@ -1366,6 +1366,11 @@ impl<const DAE: bool, H: crate::delay::Mode> Integrator<DAE, H> {
     /// the bookkeeping of CVODES around the solves of the sensitivities, which moves where a
     /// step sets up its linear solver again.
     ///
+    /// The simultaneous corrector is no faster either: on hydrochlorothiazide with ten
+    /// parameters a jacobian of the sensitivities is 10.05 ms with it and 9.5 ms with the
+    /// staggered one, and its sensitivities are 4e-6 of themselves beside the ones of a
+    /// difference quotient of `df/dp` where the staggered corrector is 3e-7 beside them.
+    ///
     /// CVODES keeps the user data of the sensitivities as it is when they are initialized
     /// (`cv_fS_data` of `CVodeSensInit`), which [`Integrator::integrate`] sets before every
     /// call of CVODE and not before this one, so the problem is given here as well.
