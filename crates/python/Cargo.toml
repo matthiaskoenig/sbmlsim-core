@@ -23,8 +23,9 @@ mimalloc = "0.1"
 numpy = "0.30"
 pyo3 = { version = "0.30", features = ["extension-module", "abi3-py314"] }
 pythonize = "0.30"
-rayon = "1.10"
 sbmlsim-abi = { path = "../abi" }
+# the pool of the threads of a batch, with an engine instance per thread
+sbmlsim-batch = { path = "../batch" }
 sbmlsim-compiler = { path = "../compiler" }
 # The native engine: the integrator compiled for the machine of the wheel (CVODE and KLU built
 # by `crates/csolvers`) with `model.wasm` and `mathlib.wasm` in wasmtime, which simulates about

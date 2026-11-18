@@ -10,6 +10,7 @@ members = [
     "crates/csolvers",
     "crates/engine",
     "crates/host",
+    "crates/batch",
     "crates/cli",
     "crates/python",
 ]
