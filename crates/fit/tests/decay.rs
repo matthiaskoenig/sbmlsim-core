@@ -1,11 +1,11 @@
 //! A fit of the decay model `y' = -k y`: its residuals, its jacobian and its optimum.
 
-use sbmlsim_fit::{Algorithm, Scale, Settings, Stop};
+use sbmlsim_fit::{Algorithm, JacobianChoice, Problem, Scale, Settings, Stop};
 
 #[path = "support/fixture.rs"]
 mod fixture;
 
-use fixture::{K, problem};
+use fixture::{K, definition, model, pair, problem};
 
 #[test]
 fn the_residuals_of_the_values_of_the_data_are_zero() {
@@ -35,7 +35,11 @@ fn the_cost_is_half_the_sum_of_the_squares_of_the_residuals() {
 
 #[test]
 fn the_jacobian_of_one_batch_is_the_one_of_a_column_at_a_time() {
-    let problem = problem(0.5, Scale::Log10, 4);
+    // the jacobian of the finite differences, which the fit of a condition with events or
+    // changes takes; the one of the sensitivities is `tests/sensitivity.rs`
+    let mut definition = definition(0.5, Scale::Log10);
+    definition.jacobian = JacobianChoice::DifferenceQuotient;
+    let problem = Problem::new(definition, model(), 4).unwrap();
     let x = problem.start();
 
     let jacobian = problem.jacobian(&x).unwrap();
@@ -50,6 +54,33 @@ fn the_jacobian_of_one_batch_is_the_one_of_a_column_at_a_time() {
     for (row, (at, ahead)) in residuals.iter().zip(other.iter()).enumerate() {
         assert_eq!(jacobian[row], (ahead - at) / step, "row {row}");
     }
+}
+
+#[test]
+fn a_fit_which_starts_next_to_the_zero_of_its_search_space_finds_the_same_optimum() {
+    // the optimum of a parameter which is 1 on a logarithmic scale is `x = 0`, which a
+    // profile of another parameter re-fits from: the radius of the trust region of the
+    // optimizer is `||x||`, so a start of 1e-16 would take a first step of 1e-16 and the fit
+    // would end where it began
+    let problem = Problem::new(pair(0.5, 2.0, Scale::Log10), model(), 2).unwrap();
+    let held = problem.fixing(&[(0, 0.267375)]).unwrap();
+    let settings = Settings::default();
+
+    let at_zero = held.optimize_from(&settings, &[0.0]).unwrap();
+    let next_to_it = held.optimize_from(&settings, &[1e-16]).unwrap();
+
+    assert!(
+        (next_to_it.cost / at_zero.cost - 1.0).abs() < 1e-9,
+        "the fit from 1e-16 ends at {} and the fit from 0 at {}",
+        next_to_it.cost,
+        at_zero.cost
+    );
+    assert!(
+        (next_to_it.values[0] / at_zero.values[0] - 1.0).abs() < 1e-6,
+        "the fit from 1e-16 finds {} and the fit from 0 {}",
+        next_to_it.values[0],
+        at_zero.values[0]
+    );
 }
 
 #[test]

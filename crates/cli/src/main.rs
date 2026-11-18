@@ -203,9 +203,15 @@ fn fit(
                 })
                 .collect();
             println!(
-                "{} after {} evaluations in {:.3} s, cost {:.6e} ({}): {}",
+                "{} after {} evaluations and {} simulations ({}) in {:.3} s, cost {:.6e} \
+                 ({}): {}",
                 found.join(", "),
                 answer.evaluations,
+                answer.simulations,
+                match answer.jacobian {
+                    sbmlsim_fit::JacobianChoice::DifferenceQuotient => "finite differences",
+                    _ => "sensitivities",
+                },
                 answer.seconds,
                 answer.cost,
                 answer.status,

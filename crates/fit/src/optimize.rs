@@ -19,6 +19,30 @@ use serde::{Deserialize, Serialize};
 
 use crate::problem::{FitError, Problem};
 
+/// The initial radius of the scaled trust region of a fit, `None` for the one the optimizer
+/// takes by itself.
+///
+/// basin takes `||x / sqrt(v)||` for it, which is the radius of scipy, and substitutes one
+/// where that is zero. A start which is not zero but next to it collapses the radius instead:
+/// the optimum of a parameter which is 1 on a logarithmic scale is `x = 1e-16`, the first
+/// step of a fit which starts there is 1e-16 of the parameter, which is below the rounding of
+/// the start, and the fit ends where it began (`NumericalNoProgress` after no iteration). A
+/// profile of another parameter re-fits exactly such a start, so its points next to the
+/// optimum would carry the cost of the optimum and the interval of the profile would be too
+/// narrow by a quarter.
+///
+/// A start whose norm is 1e-6 of the box of the parameters or less takes the radius a start
+/// of zero takes, which is one: the radius is the one of the space the bounds scale, where
+/// one is about half of the box, whatever the parameters measure.
+fn radius(start: &[f64], lower: &[f64], upper: &[f64]) -> Option<f64> {
+    let norm = start.iter().map(|value| value * value).sum::<f64>().sqrt();
+    let span = lower
+        .iter()
+        .chain(upper)
+        .fold(1.0_f64, |most, bound| most.max(bound.abs()));
+    (norm <= 1e-6 * span).then_some(1.0)
+}
+
 /// A flag which stops a fit at its next iteration.
 ///
 /// A fit of a large model runs for minutes, and a caller which cannot wait for it (the Ctrl-C
@@ -260,7 +284,8 @@ pub(crate) fn run(
     }
     let (mut x, mut iterations, mut counts, mut status) = match settings.algorithm {
         Algorithm::TrustRegion => {
-            let mut solver = TrustRegionReflective::new();
+            let mut solver =
+                TrustRegionReflective::new().with_initial_radius(radius(&start, &lower, &upper));
             if let Some(tolerance) = settings.gradient_tolerance {
                 solver = solver.with_absolute_scaled_gradient_tolerance(tolerance);
             }

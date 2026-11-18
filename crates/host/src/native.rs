@@ -80,6 +80,30 @@ impl NativeInstance {
         self.engine.simulate_prepared(&plan, values)
     }
 
+    /// Validates a request in the native engine and gives the handle a batch runs it with,
+    /// for a request `engine.wasm` does not carry: the forward sensitivities of a run.
+    ///
+    /// [`crate::LoadedModel::prepare`], which every other prepared request goes through,
+    /// validates it in an instance of `engine.wasm`, whose output format carries the values of
+    /// a table and nothing else, so it refuses the sensitivities of a run. The plan of this
+    /// instance is kept as if the request had been run on it.
+    ///
+    /// # Errors
+    ///
+    /// If the engine refuses the request, e.g. the sensitivities of a model with events.
+    pub fn prepare(
+        &mut self,
+        request: &SimulationRequest,
+        varying: &[String],
+    ) -> Result<crate::PreparedSimulation, EngineError> {
+        let plan = self.engine.prepare(request, varying)?;
+        let prepared =
+            crate::PreparedSimulation::of_native(self.identity.clone(), request, varying)?;
+        let (key, owner) = prepared.cache_entry();
+        self.prepared.insert(key, CachedPrepared { owner, plan });
+        Ok(prepared)
+    }
+
     /// The plan of a prepared request in this engine, resolved once per instance.
     fn plan_of(
         &mut self,

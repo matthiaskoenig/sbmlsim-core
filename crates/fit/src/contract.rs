@@ -13,9 +13,15 @@ use sbmlsim_host::LoadedModel;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Curve, Definition, Fisher, Fit, FitError, Parameter, Problem, Profile, Scale, Settings, Stop,
-    Walk, fisher, profiles,
+    Curve, Definition, Fisher, Fit, FitError, JacobianChoice, Parameter, Problem, Profile, Scale,
+    Settings, Stop, Walk, fisher, profiles,
 };
+
+/// Whether the jacobian of a request is the one of [`JacobianChoice::Auto`], which its
+/// serialization leaves out.
+fn is_auto(choice: &JacobianChoice) -> bool {
+    *choice == JacobianChoice::Auto
+}
 
 /// The contract of a fit: the version of the schema of a request and of its answer.
 pub const FIT_CONTRACT: &str = "fit/1";
@@ -56,6 +62,13 @@ pub struct FitRequest {
     /// and what the caller gives takes precedence.
     #[serde(default)]
     pub threads: Option<usize>,
+    /// Where the jacobian of a step of the optimizer comes from: `"auto"` what is fastest
+    /// for the model, which is the finite differences of the residuals today,
+    /// `"sensitivities"` the forward sensitivities of the conditions, where a condition which
+    /// does not carry them is refused, `"difference_quotient"` the differences.
+    /// `"auto"` when it is absent.
+    #[serde(default, skip_serializing_if = "is_auto")]
+    pub jacobian: JacobianChoice,
     /// The identifiability of the optimum the fit finds; none of it when the block is absent.
     #[serde(default)]
     pub identifiability: Option<Identifiability>,
@@ -152,6 +165,12 @@ pub struct FitAnswer {
     pub evaluations: u64,
     /// The jacobians it took.
     pub jacobians: u64,
+    /// The simulations every run of the fit ran together, and the ones of the profiles of its
+    /// identifiability: what the fit cost the engine.
+    pub simulations: u64,
+    /// Where the jacobian of a step came from: `"sensitivities"` or `"difference_quotient"`,
+    /// which `"auto"` of the request resolves to.
+    pub jacobian: JacobianChoice,
     /// The time every run of the fit took together, without the identifiability of its
     /// optimum, which every profile of [`FitAnswer::profiles`] carries its own share of.
     pub seconds: f64,
@@ -325,6 +344,8 @@ pub fn fit_with(
         iterations: best.iterations,
         evaluations: best.evaluations,
         jacobians: best.jacobians,
+        simulations: problem.simulations(),
+        jacobian: problem.jacobian_of(),
         seconds: ran,
         residuals: best.residuals,
         runs,
@@ -386,6 +407,7 @@ fn definition_of(request: &FitRequest) -> Result<Definition, FitError> {
         });
     }
     Ok(Definition {
+        jacobian: request.jacobian,
         parameters: request
             .parameters
             .iter()

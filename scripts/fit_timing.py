@@ -155,11 +155,6 @@ def fit_request(
     }
 
 
-def simulations_of(answer: dict[str, Any], conditions: int, k: int) -> int:
-    """The simulations a fit ran: its evaluations and the columns of its Jacobians."""
-    return conditions * (1 + answer["evaluations"] + answer["jacobians"] * (k + 1))
-
-
 def main() -> None:
     """Measures the Jacobian of a fit in python and in rust and prints the table."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -205,13 +200,20 @@ def main() -> None:
                 "fisher": True,
             }
 
-        # one jacobian of the same fit at the same point, inside the engine
-        objective = loaded.fit_problem(request, threads=threads)
+        # one jacobian of the same fit at the same point, inside the engine: out of the
+        # forward sensitivities of the conditions and out of the finite differences
+        objective = loaded.fit_problem(
+            request | {"jacobian": "sensitivities"}, threads=threads
+        )
+        differences = loaded.fit_problem(request, threads=threads)
         start = objective.start
+        assert objective.jacobian_of == "sensitivities", objective.jacobian_of
+        assert differences.jacobian_of == "difference_quotient", differences.jacobian_of
 
         # the rounds take turns, so a load of the machine is spread over the rows
         python: list[float] = []
         rust: list[float] = []
+        sensitivities: list[float] = []
         for round_at in range(args.rounds + 1):
             started = time.perf_counter()
             residuals_in_python(executor, prepared, points, table, noise, 1)
@@ -219,52 +221,84 @@ def main() -> None:
             if round_at:
                 python.append(took)
             started = time.perf_counter()
-            objective.jacobian(start)
+            differences.jacobian(start)
             took = time.perf_counter() - started
             if round_at:
                 rust.append(took)
+            started = time.perf_counter()
+            objective.jacobian(start)
+            took = time.perf_counter() - started
+            if round_at:
+                sensitivities.append(took)
 
-        # and the fit itself once, which has a pool and instances of its own
+        # and the fit itself once per jacobian, which has a pool and instances of its own
         started = time.perf_counter()
-        answer = loaded.fit(request, threads=threads)
+        answer = loaded.fit(request | {"jacobian": "sensitivities"}, threads=threads)
         fit_seconds = time.perf_counter() - started
+        started = time.perf_counter()
+        by_differences = loaded.fit(request, threads=threads)
+        differences_seconds = time.perf_counter() - started
 
     k = len(names)
-    simulations = simulations_of(answer, args.conditions, k)
+    simulations = answer["simulations"]
     per_jacobian = (k + 1) * args.conditions
     # the fastest round of a path is the one a load of the machine disturbed least
     python_ms = min(python) * 1e3
     rust_ms = min(rust) * 1e3
+    sensitivities_ms = min(sensitivities) * 1e3
     spread = (
         f"the spread of the rounds: python {min(python) * 1e3:.2f} to"
-        f" {max(python) * 1e3:.2f} ms, rust {min(rust) * 1e3:.2f} to"
-        f" {max(rust) * 1e3:.2f} ms, the median of each"
-        f" {statistics.median(python) * 1e3:.2f} and"
-        f" {statistics.median(rust) * 1e3:.2f} ms"
+        f" {max(python) * 1e3:.2f} ms, the differences in rust"
+        f" {min(rust) * 1e3:.2f} to {max(rust) * 1e3:.2f} ms, the sensitivities"
+        f" {min(sensitivities) * 1e3:.2f} to {max(sensitivities) * 1e3:.2f} ms,"
+        f" the median of each {statistics.median(python) * 1e3:.2f},"
+        f" {statistics.median(rust) * 1e3:.2f} and"
+        f" {statistics.median(sensitivities) * 1e3:.2f} ms"
     )
     print(
         f"{args.conditions} conditions, {k} parameters, {threads} threads,"
-        f" {args.rounds} rounds of {per_jacobian} simulations per jacobian"
+        f" {args.rounds} rounds"
     )
     print()
-    print("| the jacobian of one step | wall time | ms per simulation | of python |")
-    print("|---|---:|---:|---:|")
     print(
-        f"| plans of one batch, the residuals in python | {python_ms:.2f} ms |"
-        f" {python_ms / per_jacobian:.4f} | 1.00x |"
+        "| the jacobian of one step | simulations | wall time |"
+        " ms per simulation | of python |"
+    )
+    print("|---|---:|---:|---:|---:|")
+    print(
+        f"| plans of one batch, the residuals in python | {per_jacobian} |"
+        f" {python_ms:.2f} ms | {python_ms / per_jacobian:.4f} | 1.00x |"
     )
     print(
-        f"| the objective in rust | {rust_ms:.2f} ms |"
-        f" {rust_ms / per_jacobian:.4f} | {python_ms / rust_ms:.2f}x |"
+        f"| the objective in rust, the differences | {per_jacobian} |"
+        f" {rust_ms:.2f} ms | {rust_ms / per_jacobian:.4f} |"
+        f" {python_ms / rust_ms:.2f}x |"
+    )
+    print(
+        f"| the objective in rust, the sensitivities | {args.conditions} |"
+        f" {sensitivities_ms:.2f} ms |"
+        f" {sensitivities_ms / args.conditions:.4f} |"
+        f" {python_ms / sensitivities_ms:.2f}x |"
     )
     print()
     print(spread)
     runs = answer["seconds"]
     print(
         f"the fit itself: {runs:.3f} s, {answer['iterations']} iterations,"
-        f" {answer['evaluations']} evaluations, {answer['jacobians']} jacobians,"
-        f" {simulations} simulations of {runs * 1e3 / simulations:.4f} ms,"
+        f" {answer['evaluations']} evaluations, {answer['jacobians']} jacobians of"
+        f" {answer['jacobian']}, {simulations} simulations of"
+        f" {runs * 1e3 / simulations:.4f} ms,"
         f" {answer['status']} ({fit_seconds:.3f} s of the call)"
+    )
+    print(
+        f"the same fit of the differences: {by_differences['seconds']:.3f} s,"
+        f" {by_differences['iterations']} iterations,"
+        f" {by_differences['evaluations']} evaluations,"
+        f" {by_differences['jacobians']} jacobians,"
+        f" {by_differences['simulations']} simulations of"
+        f" {by_differences['seconds'] * 1e3 / by_differences['simulations']:.4f} ms,"
+        f" {by_differences['status']} ({differences_seconds:.3f} s of the call),"
+        f" cost {by_differences['cost']:.6e}"
     )
     found = [parameter["value"] for parameter in answer["parameters"]]
     recovered = [
@@ -275,12 +309,16 @@ def main() -> None:
         f" {max(recovered) * 100:.1f} % of the ones of the data"
     )
     if args.profile:
-        walked = answer["profiles"][0]
-        interval = (walked["lower"], walked["upper"])
-        print(
-            f"the profile of {walked['id']}: {len(walked['points'])} points in"
-            f" {walked['seconds']:.3f} s, the interval {interval}"
-        )
+        for of, walked in (
+            ("the sensitivities", answer["profiles"][0]),
+            ("the differences", by_differences["profiles"][0]),
+        ):
+            interval = (walked["lower"], walked["upper"])
+            print(
+                f"the profile of {walked['id']} by {of}:"
+                f" {len(walked['points'])} points in {walked['seconds']:.3f} s,"
+                f" the interval {interval}"
+            )
         fisher = answer["fisher"]
         if fisher["singular"]:
             print(f"the fisher information: {fisher['singular']}")

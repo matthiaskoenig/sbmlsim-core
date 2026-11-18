@@ -992,6 +992,28 @@ impl PreparedSimulation {
     pub fn n_values(&self) -> usize {
         self.inner.n_values
     }
+
+    /// A request the native engine validated, for one `engine.wasm` does not carry: the
+    /// forward sensitivities of a run, whose table its output format has no room for. An
+    /// instance of `engine.wasm` which is handed such a request refuses it as it is.
+    #[cfg(feature = "native")]
+    pub(crate) fn of_native(
+        model: Arc<()>,
+        request: &SimulationRequest,
+        varying: &[String],
+    ) -> Result<PreparedSimulation, EngineError> {
+        let input = serde_json::to_vec(&PrepareInput { request, varying })
+            .map_err(|error| internal(format!("prepared request serialization failed: {error}")))?;
+        Ok(PreparedSimulation {
+            inner: Arc::new(PreparedInner {
+                model,
+                input,
+                n_values: varying.len(),
+                request: request.clone(),
+                varying: varying.to_vec(),
+            }),
+        })
+    }
 }
 
 struct CachedPrepared {

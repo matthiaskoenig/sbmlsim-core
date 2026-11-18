@@ -171,6 +171,14 @@ class FitProblem:
     def bounds(self) -> tuple[list[float], list[float]]:
         """The bounds of the parameters in that space."""
 
+    @property
+    def jacobian_of(self) -> str:
+        """Where the jacobian comes from: `sensitivities` or `difference_quotient`."""
+
+    @property
+    def simulations(self) -> int:
+        """The simulations the problem has run since it was built."""
+
     def values(self, x: Sequence[float]) -> list[float]:
         """The values of the parameters at a point, on the linear scale."""
 

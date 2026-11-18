@@ -79,6 +79,24 @@ impl FitProblem {
         self.problem.bounds()
     }
 
+    /// Where the jacobian of the problem comes from: `"sensitivities"`, one simulation per
+    /// condition with the forward sensitivities of the parameters, or
+    /// `"difference_quotient"`, `(parameters + 1)` simulations per condition.
+    #[getter]
+    fn jacobian_of(&self) -> &'static str {
+        match self.problem.jacobian_of() {
+            sbmlsim_fit::JacobianChoice::DifferenceQuotient => "difference_quotient",
+            _ => "sensitivities",
+        }
+    }
+
+    /// The simulations the problem has run since it was built, over every call of
+    /// `residuals`, `cost` and `jacobian`.
+    #[getter]
+    fn simulations(&self) -> u64 {
+        self.problem.simulations()
+    }
+
     /// The values of the parameters at a point of the search space, on the linear scale.
     fn values(&self, x: Vec<f64>) -> PyResult<Vec<f64>> {
         Ok(self.problem.parameter_values(&self.point(x)?))
@@ -115,8 +133,10 @@ impl FitProblem {
 
     /// The jacobian of the residuals at a point, `(n_residuals, parameters)`.
     ///
-    /// The whole jacobian is one batch of `(parameters + 1) * conditions` simulations, which
-    /// fans out over the threads of the engine at once instead of once per column.
+    /// The whole jacobian is one batch of the engine, which fans out over its threads at
+    /// once: the forward sensitivities of every condition in one simulation per condition,
+    /// or, where a condition does not carry them, `(parameters + 1) * conditions`
+    /// simulations of a finite difference (`jacobian_of`).
     fn jacobian<'py>(&self, py: Python<'py>, x: Vec<f64>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         let x = self.point(x)?;
         let values = py.detach(|| self.problem.jacobian(&x)).map_err(fit_error)?;
@@ -129,10 +149,11 @@ impl FitProblem {
 
     fn __repr__(&self) -> String {
         format!(
-            "FitProblem(parameters={}, residuals={}, threads={})",
+            "FitProblem(parameters={}, residuals={}, threads={}, jacobian={})",
             self.problem.parameters().len(),
             self.problem.n_residuals(),
-            self.problem.threads()
+            self.problem.threads(),
+            self.jacobian_of()
         )
     }
 }

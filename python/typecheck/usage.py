@@ -83,6 +83,8 @@ def use(sbml: str, request: dict[str, Any], fit: dict[str, Any]) -> None:
     r: numpy.typing.NDArray[numpy.float64] = objective.residuals(from_point)
     c: float = objective.cost(from_point)
     j: numpy.typing.NDArray[numpy.float64] = objective.jacobian(from_point)
+    of: str = objective.jacobian_of
+    ran: int = objective.simulations
 
     results: list[SimulationOutput | PointError] = model.simulate_many([request])
     model.simulate_many([request], threads=4)

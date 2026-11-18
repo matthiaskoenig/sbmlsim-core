@@ -45,5 +45,6 @@ pub use identifiability::{
 };
 pub use optimize::{Algorithm, Evolution, Fit, Settings, Stop};
 pub use problem::{
-    Curve, DIFF_STEP, Definition, FAILED_RESIDUAL, FitError, Parameter, Problem, Scale,
+    Curve, DIFF_STEP, Definition, FAILED_RESIDUAL, FitError, JacobianChoice, Parameter, Problem,
+    Scale,
 };

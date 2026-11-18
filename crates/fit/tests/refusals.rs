@@ -39,6 +39,7 @@ fn curve() -> Curve {
 
 fn definition() -> Definition {
     Definition {
+        jacobian: Default::default(),
         parameters: vec![parameter()],
         conditions: vec![request()],
         curves: vec![curve()],

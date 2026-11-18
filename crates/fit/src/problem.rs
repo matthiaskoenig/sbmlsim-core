@@ -1,6 +1,7 @@
 //! The problem of a fit: its definition, its residuals and its jacobian on the batch.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use sbmlsim_abi::{EngineError, Output, SimulationRequest, SimulationResult};
 use sbmlsim_batch::{BatchError, PointFailure, Workers};
@@ -69,6 +70,29 @@ pub enum FitError {
     Request(String),
 }
 
+/// Where the jacobian of the residuals of a fit comes from.
+///
+/// The forward sensitivities of a condition are one simulation per condition and step of an
+/// optimizer instead of one per parameter and condition, and the derivative of a residual
+/// instead of a difference of two of them (1e-8 of itself against [`DIFF_STEP`]). What a run
+/// of sensitivities does not carry (the events of a model, a discontinuity of its math, an
+/// algebraic rule, a delay, the changes of a request, its steady state) is the finite
+/// differences instead.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum JacobianChoice {
+    /// What is fastest for the model, which is the differences today: the difference
+    /// quotient of `df/dp` inside a run of sensitivities costs about as much as the
+    /// integrations the run saves (`bench/OPTIMIZATION.md`), so the sensitivities are worth
+    /// their accuracy and not their time until a model carries an analytic `df/dp`.
+    #[default]
+    Auto,
+    /// The sensitivities, and a condition which does not carry them is refused.
+    Sensitivities,
+    /// The finite differences of the residuals, whatever the conditions carry.
+    DifferenceQuotient,
+}
+
 /// The scale an optimizer searches a parameter on.
 ///
 /// The model always sees the value of the parameter ([`Scale::to_model`]); a parameter whose
@@ -104,6 +128,18 @@ impl Scale {
             Scale::Lin => value,
             Scale::Log => value.ln(),
             Scale::Log10 => value.log10(),
+        }
+    }
+
+    /// The derivative of the value of the parameter in the point `value` of the search space,
+    /// which the jacobian of the sensitivities of a run multiplies by: the chain rule of the
+    /// scale, since a sensitivity is the derivative in the value the model sees.
+    #[must_use]
+    pub fn derivative(self, value: f64) -> f64 {
+        match self {
+            Scale::Lin => 1.0,
+            Scale::Log => value.exp(),
+            Scale::Log10 => 10f64.powf(value) * std::f64::consts::LN_10,
         }
     }
 
@@ -159,6 +195,8 @@ pub struct Definition {
     pub conditions: Vec<SimulationRequest>,
     /// The curves of data of the fit.
     pub curves: Vec<Curve>,
+    /// Where the jacobian of a step of the optimizer comes from.
+    pub jacobian: JacobianChoice,
 }
 
 /// A curve resolved against the simulation of its condition.
@@ -181,6 +219,10 @@ struct Resolved {
 struct Point {
     /// The request of the condition, with the parameters of the fit as its varying targets.
     prepared: PreparedSimulation,
+    /// The same condition with the forward sensitivities of those targets, which give the
+    /// block of the jacobian of the condition in one simulation; `None` for a condition the
+    /// engine does not carry them for.
+    sensitive: Option<PreparedSimulation>,
     /// The number of columns of its table, for the index of a value.
     columns: usize,
     /// The curves which are read off its table.
@@ -204,6 +246,54 @@ impl Point {
             }
         }
         out
+    }
+
+    /// The block of the jacobian of the condition out of the sensitivities of its table: the
+    /// derivative of every residual of its curves in every parameter of the search space,
+    /// `n_residuals * k` row major in the order of its curves.
+    ///
+    /// `factors` is, per varying target of the condition, the parameter of the search space it
+    /// takes its value from and the derivative of that value in it ([`Scale::derivative`]),
+    /// `None` for a target which is held at a value.
+    fn block(
+        &self,
+        table: &SimulationResult,
+        factors: &[Option<(usize, f64)>],
+        k: usize,
+    ) -> Result<Vec<f64>, EngineError> {
+        let Some(sensitivities) = &table.sensitivities else {
+            return Err(EngineError::Internal(
+                "the simulation of a condition of a fit answered no sensitivities".to_string(),
+            ));
+        };
+        let targets = sensitivities.parameters.len();
+        let mut out = vec![0.0; self.n_residuals * k];
+        let mut at = 0;
+        for curve in &self.curves {
+            for (row, scale) in curve.rows.iter().zip(curve.scales.iter()) {
+                let values = &sensitivities.values[(row * self.columns + curve.column) * targets..]
+                    [..targets];
+                for (value, factor) in values.iter().zip(factors) {
+                    if let Some((parameter, factor)) = factor {
+                        out[at * k + parameter] = value * scale * factor;
+                    }
+                }
+                at += 1;
+            }
+        }
+        Ok(out)
+    }
+
+    /// Writes the block of the jacobian of the condition into the one of the fit.
+    fn write_block(&self, into: &mut [f64], block: &[f64], k: usize) {
+        let mut at = 0;
+        for curve in &self.curves {
+            for row in 0..curve.rows.len() {
+                let (from, to) = ((at + row) * k, (curve.offset + row) * k);
+                into[to..to + k].copy_from_slice(&block[from..from + k]);
+            }
+            at += curve.rows.len();
+        }
     }
 
     /// Writes the residuals of the condition into the vector of the fit.
@@ -240,6 +330,12 @@ pub struct Problem {
     /// fix a parameter of it.
     points: Arc<Vec<Point>>,
     n_residuals: usize,
+    /// Where the jacobian of a step comes from: [`JacobianChoice::Sensitivities`] or
+    /// [`JacobianChoice::DifferenceQuotient`], resolved once for the whole problem.
+    jacobian: JacobianChoice,
+    /// The simulations the problem ran, shared with the problems which fix a parameter of it
+    /// so that a profile counts the simulations of its fits as well.
+    simulations: Arc<AtomicU64>,
     /// The pool of the batch, shared with those problems as well: the instance of a thread is
     /// made once, whatever is fitted on it.
     workers: Arc<Workers>,
@@ -291,6 +387,7 @@ impl Problem {
             parameters,
             conditions,
             curves,
+            jacobian,
         } = definition;
         check_parameters(&parameters)?;
         if conditions.is_empty() {
@@ -318,6 +415,15 @@ impl Problem {
                 }
             })?);
         }
+        let (sensitive, jacobian) = if jacobian == JacobianChoice::Sensitivities {
+            let prepared = sensitive_conditions(&workers, &conditions, &varying)?;
+            (prepared, JacobianChoice::Sensitivities)
+        } else {
+            (
+                conditions.iter().map(|_| None).collect(),
+                JacobianChoice::DifferenceQuotient,
+            )
+        };
         // the table of every condition at the start, which the curves are resolved against
         let start: Vec<f64> = parameters
             .iter()
@@ -326,9 +432,11 @@ impl Problem {
         let tables = simulate(&workers, &prepared, &start)?;
         let mut points: Vec<Point> = prepared
             .into_iter()
+            .zip(sensitive)
             .zip(tables.iter())
-            .map(|(prepared, table)| Point {
+            .map(|((prepared, sensitive), table)| Point {
                 prepared,
+                sensitive,
                 columns: table.columns.len(),
                 curves: Vec::new(),
                 n_residuals: 0,
@@ -360,6 +468,8 @@ impl Problem {
             free: parameters,
             points: Arc::new(points),
             n_residuals,
+            jacobian,
+            simulations: Arc::new(AtomicU64::new(0)),
             workers: Arc::new(workers),
         })
     }
@@ -432,6 +542,8 @@ impl Problem {
             slots,
             points: self.points.clone(),
             n_residuals: self.n_residuals,
+            jacobian: self.jacobian,
+            simulations: self.simulations.clone(),
             workers: self.workers.clone(),
         })
     }
@@ -602,17 +714,101 @@ impl Problem {
         if x[k] + step > upper { -step } else { step }
     }
 
-    /// The jacobian of the residuals at a point of the search space, row major.
-    ///
-    /// `n_residuals * parameters` values: the column of a parameter is the forward difference
-    /// of the residuals over [`Problem::step`]. The whole jacobian is one batch of the
-    /// engine, `(parameters + 1) * conditions` points which do not depend on each other, so
-    /// it fans out over the threads at once instead of once per column.
+    /// Where the jacobian of the problem comes from, resolved: the sensitivities of its
+    /// conditions or the finite differences of its residuals.
+    #[must_use]
+    pub fn jacobian_of(&self) -> JacobianChoice {
+        self.jacobian
+    }
+
+    /// The simulations the problem ran, and the ones of the problems which hold a parameter
+    /// of it ([`Problem::fixing`]): what a fit costs, which the rate of an evaluation does
+    /// not say once the jacobian of a step is one simulation per condition.
+    #[must_use]
+    pub fn simulations(&self) -> u64 {
+        self.simulations.load(Ordering::Relaxed)
+    }
+
+    /// The jacobian of the residuals at a point of the search space, row major
+    /// (`n_residuals * parameters`), of [`Problem::jacobian_of`].
     ///
     /// # Errors
     ///
     /// As [`Problem::residuals`].
     pub fn jacobian(&self, x: &[f64]) -> Result<Vec<f64>, FitError> {
+        match self.jacobian {
+            JacobianChoice::DifferenceQuotient => self.jacobian_of_differences(x),
+            _ => self.jacobian_of_sensitivities(x),
+        }
+    }
+
+    /// The jacobian out of the forward sensitivities of the conditions: one simulation per
+    /// condition, whatever the number of the parameters, and the derivative of a residual
+    /// instead of a difference of two of them.
+    ///
+    /// The sensitivities of a condition are the derivatives of its columns in the values of
+    /// its varying targets, which the scale of a parameter turns into the derivative in the
+    /// point of the search space ([`Scale::derivative`]). The block of a condition is reduced
+    /// on the thread which simulated it, as its residuals are, so the sensitivities of a
+    /// table never leave it either.
+    ///
+    /// # Errors
+    ///
+    /// As [`Problem::residuals`].
+    fn jacobian_of_sensitivities(&self, x: &[f64]) -> Result<Vec<f64>, FitError> {
+        let k = self.free.len();
+        let values = self.values(x);
+        let factors: Vec<Option<(usize, f64)>> = self
+            .slots
+            .iter()
+            .map(|slot| match slot {
+                Slot::Free { at, scale } => Some((*at, scale.derivative(x[*at]))),
+                Slot::Fixed(_) => None,
+            })
+            .collect();
+        let shots: Vec<Shot<'_>> = self
+            .points
+            .iter()
+            .map(|point| Shot {
+                point,
+                values: &values,
+            })
+            .collect();
+        self.simulations
+            .fetch_add(shots.len() as u64, Ordering::Relaxed);
+        let outcomes = self.workers.map(&shots, |instance, shot| {
+            let Some(prepared) = &shot.point.sensitive else {
+                return Err(EngineError::Internal(
+                    "a condition of the fit carries no sensitivities".to_string(),
+                ));
+            };
+            let table = instance.simulate_prepared(prepared, shot.values)?;
+            shot.point.block(&table, &factors, k)
+        });
+        let mut jacobian = vec![0.0; self.n_residuals * k];
+        for (shot, outcome) in shots.iter().zip(outcomes) {
+            match outcome {
+                Ok(block) => shot.point.write_block(&mut jacobian, &block, k),
+                // a failed integration is a point of the search space the fit may not take:
+                // its residuals are `FAILED_RESIDUAL` and its block of the jacobian says
+                // nothing, so the optimizer rejects the step by its cost
+                Err(PointFailure::Engine(EngineError::Integration { .. })) => {}
+                Err(PointFailure::Engine(err)) => return Err(FitError::Engine(err)),
+                Err(PointFailure::Internal(message)) => return Err(FitError::Point(message)),
+            }
+        }
+        Ok(jacobian)
+    }
+
+    /// The jacobian by the finite differences of the residuals: the column of a parameter is
+    /// the forward difference of the residuals over [`Problem::step`]. The whole jacobian is
+    /// one batch of the engine, `(parameters + 1) * conditions` points which do not depend on
+    /// each other, so it fans out over the threads at once instead of once per column.
+    ///
+    /// # Errors
+    ///
+    /// As [`Problem::residuals`].
+    fn jacobian_of_differences(&self, x: &[f64]) -> Result<Vec<f64>, FitError> {
         let k = self.free.len();
         let steps: Vec<f64> = (0..k).map(|column| self.step(column, x)).collect();
         // the values of the base point and of every column of the difference
@@ -656,6 +852,8 @@ impl Problem {
     /// The residuals of a point whose integration failed are [`FAILED_RESIDUAL`]; any other
     /// failure of the engine is an error of the fit.
     fn run(&self, shots: &[Shot<'_>]) -> Result<Vec<Vec<f64>>, FitError> {
+        self.simulations
+            .fetch_add(shots.len() as u64, Ordering::Relaxed);
         let outcomes = self.workers.map(shots, |instance, shot| {
             let table = instance.simulate_prepared(&shot.point.prepared, shot.values)?;
             Ok(shot.point.residuals(&table))
@@ -674,6 +872,43 @@ impl Problem {
         }
         Ok(residuals)
     }
+}
+
+/// Every condition of a fit prepared with its forward sensitivities.
+///
+/// A condition which carries none is refused: the jacobian of a fit is the one of the
+/// sensitivities or the one of the differences, and never a mixture of the two, which would
+/// be a jacobian of two accuracies.
+fn sensitive_conditions(
+    workers: &Workers,
+    conditions: &[SimulationRequest],
+    varying: &[String],
+) -> Result<Vec<Option<PreparedSimulation>>, FitError> {
+    let mut instance = workers
+        .model()
+        .instantiate_native()
+        .map_err(|error| FitError::Request(format!("cannot be instantiated: {error}")))?;
+    let mut prepared = Vec::with_capacity(conditions.len());
+    for (at, request) in conditions.iter().enumerate() {
+        let mut request = request.clone();
+        request.sensitivities = varying.to_vec();
+        match instance.prepare(&request, varying) {
+            Ok(sensitive) => prepared.push(Some(sensitive)),
+            Err(EngineError::Unsupported(message)) => {
+                return Err(FitError::Condition {
+                    at,
+                    message: format!("carries no forward sensitivities: {message}"),
+                });
+            }
+            Err(error) => {
+                return Err(FitError::Condition {
+                    at,
+                    message: format!("cannot be prepared with its sensitivities: {error}"),
+                });
+            }
+        }
+    }
+    Ok(prepared)
 }
 
 /// Simulates every prepared condition once at the values of the parameters.

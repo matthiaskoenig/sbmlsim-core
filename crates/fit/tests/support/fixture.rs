@@ -55,6 +55,7 @@ pub fn data(k: f64) -> (Vec<f64>, Vec<f64>) {
 pub fn definition(start: f64, scale: Scale) -> Definition {
     let (times, values) = data(K);
     Definition {
+        jacobian: Default::default(),
         parameters: vec![Parameter {
             id: "k".to_string(),
             start,
@@ -91,6 +92,7 @@ pub fn pair(k: f64, y: f64, scale: Scale) -> Definition {
     let (times, values) = data(K);
     let noise = Some(vec![NOISE; values.len()]);
     Definition {
+        jacobian: Default::default(),
         parameters: vec![
             Parameter {
                 id: "k".to_string(),

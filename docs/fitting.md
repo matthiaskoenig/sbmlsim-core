@@ -67,6 +67,7 @@ k = 0.300000 [0.283746, 0.316945], y = 1.000000 [0.966070, 1.032069] after 8 eva
 | `optimizer` | which optimizer runs and for how long, below |
 | `starts` | the starts to run, each a value per parameter on the linear scale; the `start` of every parameter when it is empty. Every start is run and the best of them is the answer |
 | `threads` | the threads of the batch of an evaluation; the CPUs of the machine when it is absent, and what a caller gives takes precedence |
+| `jacobian` | where the jacobian of a step comes from: `"auto"` (the default, below), `"sensitivities"` or `"difference_quotient"` |
 | `identifiability` | how well the data determines the optimum, below; nothing of it when it is absent |
 
 The parameters:
@@ -157,6 +158,36 @@ well it does run on the batch of the fit itself:
 | `profiles` | true | whether the profiles are walked at all, which is a fit per point of every one of them |
 | `fisher` | true | whether the Fisher information is computed, which is one Jacobian |
 
+## The jacobian of a step
+
+An optimizer of least squares needs the derivative of every residual with respect to every
+parameter, and the engine has two ways of giving it:
+
+- **The finite differences** (`"difference_quotient"`) are one simulation per parameter
+  besides the one of the residuals: `k + 1` simulations of every condition, which the batch
+  runs on every thread at once. A column is a forward difference over a relative step of
+  `1e-7` of the parameter, so it carries about 1e-3 of itself in error, and every condition of
+  a fit can be differenced, whatever its request holds.
+- **The forward sensitivities** (`"sensitivities"`) are one simulation per condition, which
+  integrates `dy/dp` along with `y` ([forward
+  sensitivities](simulating.md#forward-sensitivities)) and gives the derivative of a residual
+  instead of a difference of two of them, accurate to about 1e-8. A condition whose
+  sensitivities the engine refuses (events, a delay, an algebraic rule, the changes of a
+  request, a steady state, a concentration or a parameter which is no parameter of the model)
+  is refused with the condition and the reason, because a jacobian of two accuracies is worse
+  than either of them.
+
+`"auto"`, the default, takes what is fastest for the model, which is **the differences**: the
+sensitivities of a model are one integration instead of `k + 1`, but `df/dp` inside them is a
+difference quotient of the right hand side of the model, one per parameter and step of the
+integrator, which costs about as much as the integrations the run saves. On
+hydrochlorothiazide with ten parameters a run of sensitivities costs about seven plain
+simulations, so a whole fit of the sensitivities runs 5.7 times fewer simulations and takes
+1.3 times the time of one of the differences
+([bench/OPTIMIZATION.md](https://github.com/matthiaskoenig/sbmlsim-core/blob/main/bench/OPTIMIZATION.md)).
+Ask for `"sensitivities"` where the accuracy of the jacobian is what matters, which is the
+Fisher information of an optimum and a profile of a parameter the data barely determines.
+
 ## The answer
 
 ```json
@@ -168,6 +199,8 @@ well it does run on the batch of the fit itself:
   "iterations": 7,
   "evaluations": 8,
   "jacobians": 8,
+  "simulations": 24,
+  "jacobian": "difference_quotient",
   "seconds": 0.013,
   "residuals": [0.0, -1.2e-9],
   "runs": [{ "start": [0.5], "values": [0.3], "cost": 9.510899176032252e-18, "status": "SolverConverged", "iterations": 7, "evaluations": 8, "jacobians": 8, "seconds": 0.013 }]
@@ -179,7 +212,10 @@ well it does run on the batch of the fit itself:
 termination codes of basin. `parameters` carries the `value` of every parameter on the linear
 scale and the `x` it has in the space it was searched, `residuals` the residuals of the
 optimum in the order of the curves, and `runs` one entry per start, in the order of the starts.
-`seconds` is what the runs took, without the identifiability of the optimum.
+`seconds` is what the runs took, without the identifiability of the optimum. `simulations` is
+what the fit cost the engine, the simulations of every run and of every profile together, and
+`jacobian` where the jacobian of a step came from, which is what `"auto"` of the request
+resolved to.
 
 A fit which asked for the identifiability answers with `profiles` and `fisher` as well:
 
@@ -285,8 +321,10 @@ differential evolution spreads over the threads of the engine and not over a poo
 ## What a fit costs
 
 One Jacobian of a fit of hydrochlorothiazide (28 states, 20 conditions, 10 parameters, 220
-simulations) is 7.7 ms on 20 threads, and a fit of six iterations of that model 0.13 s. A
-profile of one of its parameters, 8 points of a fit of the other nine, is 1.07 s.
+simulations) is 7.7 ms on 20 threads, a fit of ten iterations of that model 0.26 s, and a
+profile of one of its parameters, 8 points of a fit of the other nine, 1.52 s. The same
+Jacobian out of the forward sensitivities is 20 simulations and 12.0 ms, and the same fit of
+them 0.29 s and 520 simulations against 2960.
 `scripts/fit_timing.py` measures it against the same Jacobian through the python bindings, and
 [bench/OPTIMIZATION.md](https://github.com/matthiaskoenig/sbmlsim-core/blob/main/bench/OPTIMIZATION.md)
 says what the numbers mean: a fit of many conditions is bound by the integration and by how

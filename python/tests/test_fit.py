@@ -157,6 +157,10 @@ def test_a_fit_finds_the_parameter_of_the_data(decay, data):
     assert answer["cost"] < 1e-12
     assert len(answer["residuals"]) == 11
     assert answer["evaluations"] > 0 and answer["jacobians"] > 0
+    # the jacobian of a step is the one of the finite differences, which a fit takes by
+    # itself, and the answer says so
+    assert answer["jacobian"] == "difference_quotient"
+    assert answer["simulations"] >= answer["evaluations"]
     assert answer["seconds"] > 0.0
     assert len(answer["runs"]) == 1
     assert answer["runs"][0]["start"] == [3.0]
@@ -299,7 +303,7 @@ def test_a_fit_without_the_block_of_the_identifiability_answers_without_profiles
 
 
 def test_the_problem_of_a_fit_answers_the_residuals_and_the_jacobian(decay, data):
-    problem = decay.fit_problem(pair_request(data), threads=2)
+    problem = decay.fit_problem(pair_request(data, jacobian="sensitivities"), threads=2)
 
     assert problem.parameters == ["k", "y"]
     assert problem.n_residuals == 11
@@ -315,9 +319,36 @@ def test_the_problem_of_a_fit_answers_the_residuals_and_the_jacobian(decay, data
         0.5 * float((residuals**2).sum())
     )
 
+    # the jacobian of the forward sensitivities of the condition, one simulation of it
+    assert problem.jacobian_of == "sensitivities"
+    before = problem.simulations
     jacobian = problem.jacobian(problem.start)
+    assert problem.simulations - before == 1
     assert jacobian.shape == (11, 2)
-    # the column of a parameter is the forward difference of the residuals over its step
+    # which is the derivative of the residuals: a central difference of them, which is
+    # accurate to about 1e-9 of itself, is the same jacobian
+    for column in range(2):
+        step = 1e-6
+        below, above = list(problem.start), list(problem.start)
+        below[column] -= step
+        above[column] += step
+        central = (problem.residuals(above) - problem.residuals(below)) / (2.0 * step)
+        assert jacobian[:, column] == pytest.approx(central, rel=1e-5, abs=1e-9)
+
+
+def test_the_jacobian_of_the_differences_is_the_one_of_a_column_at_a_time(decay, data):
+    # the finite differences, which a fit of a condition the sensitivities do not carry
+    # takes: the column of a parameter is the forward difference over its step
+    problem = decay.fit_problem(
+        pair_request(data, jacobian="difference_quotient"), threads=2
+    )
+
+    assert problem.jacobian_of == "difference_quotient"
+    residuals = problem.residuals(problem.start)
+    before = problem.simulations
+    jacobian = problem.jacobian(problem.start)
+    assert problem.simulations - before == 3
+
     step = problem.step(0, problem.start)
     moved = list(problem.start)
     moved[0] += step
