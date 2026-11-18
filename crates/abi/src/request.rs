@@ -311,11 +311,19 @@ pub struct SimulationStats {
     /// The applications of the GMRES preconditioner.
     #[serde(default)]
     pub preconditioner_solves: u64,
+    /// The calls of the right hand side of the forward sensitivities by CVODES, one per
+    /// nonlinear iteration of the sensitivities of a step.
+    #[serde(default)]
+    pub sensitivity_rhs_evals: u64,
+    /// The calls of the right hand side of the model by the difference quotient of `df/dp`,
+    /// one per parameter of the sensitivities and call of their right hand side.
+    #[serde(default)]
+    pub sensitivity_model_rhs_evals: u64,
 }
 
 impl SimulationStats {
     /// The number of counters, the `u64` words of `engine_stats_ptr`.
-    pub const WORDS: usize = 18;
+    pub const WORDS: usize = 20;
 
     /// The names of the counters in the order of [`SimulationStats::words`] (the fields).
     pub const NAMES: [&'static str; Self::WORDS] = [
@@ -337,6 +345,8 @@ impl SimulationStats {
         "jacobian_vector_evals",
         "preconditioner_evals",
         "preconditioner_solves",
+        "sensitivity_rhs_evals",
+        "sensitivity_model_rhs_evals",
     ];
 
     /// The counters in the order of the fields.
@@ -360,6 +370,8 @@ impl SimulationStats {
             self.jacobian_vector_evals,
             self.preconditioner_evals,
             self.preconditioner_solves,
+            self.sensitivity_rhs_evals,
+            self.sensitivity_model_rhs_evals,
         ]
     }
 
@@ -384,6 +396,8 @@ impl SimulationStats {
             jacobian_vector_evals: w[15],
             preconditioner_evals: w[16],
             preconditioner_solves: w[17],
+            sensitivity_rhs_evals: w[18],
+            sensitivity_model_rhs_evals: w[19],
         }
     }
 

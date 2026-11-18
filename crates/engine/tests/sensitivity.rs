@@ -214,6 +214,42 @@ fn a_sensitivity_of_a_model_with_events_is_refused() {
 }
 
 #[test]
+fn an_engine_runs_one_sensitivity_after_another() {
+    // the memory of the integrator is kept across the simulations of an engine, and CVODES
+    // keeps the user data of the sensitivities as it is when they are initialized: the
+    // problem of the first simulation must not be the one of the second
+    let model = Decay { k: K };
+    let mut engine = Engine::new(Box::new(model), model.description()).unwrap();
+    let request = request(&["k"], true);
+
+    let first = engine.simulate(&request).unwrap();
+    // the second one from a deeper stack, where the problem of the simulation is at another
+    // address than the one of the first: a user data which is the problem of the simulation
+    // which initialized the sensitivities points at nothing here
+    let second = deeper(24, &mut || engine.simulate(&request).unwrap());
+
+    let (first, second) = (first.sensitivities.unwrap(), second.sensitivities.unwrap());
+    assert_eq!(
+        first.values, second.values,
+        "the second run of sensitivities on the engine"
+    );
+}
+
+/// Runs `what` behind `frames` frames of the stack, each of them a page of its own, so that
+/// what it calls does not reuse the stack of the call before it.
+fn deeper<T>(frames: usize, what: &mut impl FnMut() -> T) -> T {
+    let mut page = [0u64; 512];
+    page[frames % page.len()] = frames as u64;
+    let out = if frames == 0 {
+        what()
+    } else {
+        deeper(frames - 1, what)
+    };
+    std::hint::black_box(&page);
+    out
+}
+
+#[test]
 fn an_engine_which_ran_a_sensitivity_runs_a_simulation_after_it() {
     let model = Decay { k: K };
     let mut engine = Engine::new(Box::new(model), model.description()).unwrap();

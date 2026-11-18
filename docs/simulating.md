@@ -181,7 +181,7 @@ call as a library.
 
 An error of the engine has a kind: `load` (the description is refused), `request` (the request is invalid, e.g. a tolerance which is not positive or an output beyond the limit of the values of a result), `unsupported`, `integration` (CVODE or IDA failed, with its `flag` and the `time`), or, in the hosts, `internal` (a trap of the engine or the model). The command line prints it, e.g. `integration failed at t = 0 (flag -4): ...`; the JavaScript loader throws an `EngineError`.
 
-The counters of the integrator of the last simulation (steps, calls of the right hand side and of the Jacobian, setups of the linear solver, error test and convergence failures, calls of the root functions, (re)initializations of the integrator, the calls of the probes of the triggers and of the criterion of a steady state) are `Instance::stats` in wasmtime and `instance.stats()` in JavaScript; they are diagnostics, no part of a result.
+The counters of the integrator of the last simulation (steps, calls of the right hand side and of the Jacobian, setups of the linear solver, error test and convergence failures, calls of the root functions, (re)initializations of the integrator, the calls of the probes of the triggers and of the criterion of a steady state, the calls of the right hand side of the forward sensitivities and of the difference quotient of `df/dp` inside it) are `Instance::stats` in wasmtime and `instance.stats()` in JavaScript; they are diagnostics, no part of a result.
 
 The engine bounds delayed-event storage independently of the numerical settings:
 65,536 pending executions and 1,048,576 retained assignment values (8 MiB) by default.

@@ -196,6 +196,18 @@ pub(crate) struct Config {
     pub n_sens: usize,
 }
 
+/// What CVODES keeps as the user data of the right hand side of the forward sensitivities:
+/// the problem of the simulation which runs.
+///
+/// `CVodeSensInit` copies the user data of CVODE into `cv_fS_data` and keeps it as it is;
+/// `CVodeSetUserData` and `CVodeSensReInit` do not touch it again. The problem of a
+/// simulation lives as long as that simulation, and the memory of the integrator is kept for
+/// the ones after it, so the sensitivities get this box instead, which the integrator owns
+/// and which does not move: every segment writes the problem of its simulation into it.
+struct SensData {
+    problem: *mut c_void,
+}
+
 /// What the right hand side of the forward sensitivities needs besides the problem itself.
 ///
 /// `d/dt (dy/dp_j) = df/dy (dy/dp_j) + df/dp_j`: the first term is the jacobian of the model
@@ -213,6 +225,10 @@ pub(crate) struct Sensitivity {
     /// A copy of the state, which [`ModelFns::assign`] writes the targets of the assignment
     /// rules of the model into while it refreshes the constants behind the parameters.
     pub y: Vec<f64>,
+    /// A copy of the parameters, which the difference of one of them is restored from: a
+    /// second [`ModelFns::assign`] would cost as much as the right hand side itself on a
+    /// model whose constants are many.
+    pub p: Vec<f64>,
 }
 
 impl Sensitivity {
@@ -237,6 +253,7 @@ impl Sensitivity {
             steps,
             f: vec![0.0; n],
             y: vec![0.0; n],
+            p: Vec::new(),
         }
     }
 }
@@ -390,6 +407,8 @@ pub(crate) fn stats(counts: &Counts, cvode: &SolverCounts, probe_rhs: u64) -> Si
         jacobian_vector_evals: cvode.jacobian_vector_evals,
         preconditioner_evals: cvode.preconditioner_evals,
         preconditioner_solves: cvode.preconditioner_solves,
+        sensitivity_rhs_evals: counts.sensitivity_rhs,
+        sensitivity_model_rhs_evals: counts.sensitivity_model_rhs,
     }
 }
 
@@ -439,6 +458,16 @@ unsafe fn values<'a>(v: N_Vector, n: usize) -> &'a mut [f64] {
 /// `data` is the pointer to the `Problem` [`Integrator::integrate`] set, which lives during the call.
 unsafe fn problem<'a>(data: *mut c_void) -> &'a mut Problem<'a> {
     unsafe { &mut *(data as *mut Problem<'a>) }
+}
+
+/// The problem behind the user data of the forward sensitivities, which is the [`SensData`]
+/// of the integrator and not the problem itself.
+///
+/// # Safety
+/// `data` is the box [`Integrator::start_sensitivities`] gave CVODES, whose problem is the one
+/// of the simulation which runs.
+unsafe fn sens_problem<'a>(data: *mut c_void) -> &'a mut Problem<'a> {
+    unsafe { problem((*(data as *mut SensData)).problem) }
 }
 
 /// Contains native implementation panics before they can cross the C ABI.
@@ -590,7 +619,7 @@ unsafe extern "C" fn sens_rhs(
     _tmp2: N_Vector,
 ) -> c_int {
     unsafe {
-        let problem = problem(data);
+        let problem = sens_problem(data);
         callback(problem, |problem| {
             problem.counts.sensitivity_rhs += 1;
             let Some(pattern) = problem.pattern else {
@@ -633,15 +662,17 @@ unsafe extern "C" fn sens_rhs(
                 };
                 let step = sensitivity.steps[at];
                 let mut sensitivity = problem.sensitivity.take().expect("the sensitivity");
-                let base = problem.p[index];
-                problem.p[index] = base + step;
+                if sensitivity.p.len() != problem.p.len() {
+                    sensitivity.p.resize(problem.p.len(), 0.0);
+                }
+                sensitivity.p.copy_from_slice(&problem.p);
+                problem.p[index] += step;
                 sensitivity.y.copy_from_slice(values(y, n));
                 problem.model.assign(t, &mut sensitivity.y, &mut problem.p);
                 problem
                     .model
                     .rhs(t, values(y, n), &problem.p, &mut sensitivity.f);
-                problem.p[index] = base;
-                problem.model.assign(t, &mut sensitivity.y, &mut problem.p);
+                problem.p.copy_from_slice(&sensitivity.p);
                 problem.counts.sensitivity_model_rhs += 1;
                 let f = values(ydot, n);
                 for (row, out) in out.iter_mut().enumerate() {
@@ -789,6 +820,9 @@ pub(crate) struct Integrator<const DAE: bool, H: crate::delay::Mode = crate::del
     /// Newton iteration of CVODES: it would call the linear solver the Adams method has not
     /// got. Null for a method which has one.
     sens_nonlinear: SUNNonlinearSolver,
+    /// The user data of the right hand side of the sensitivities, which CVODES keeps as it is
+    /// and which this memory owns, see [`SensData`].
+    sens_data: Box<SensData>,
 }
 
 // These SUNDIALS calls share signatures across CVODE and IDA.
@@ -914,6 +948,9 @@ impl<const DAE: bool, H: crate::delay::Mode> Integrator<DAE, H> {
             sens: ptr::null_mut(),
             sens_initialized: false,
             sens_nonlinear: ptr::null_mut(),
+            sens_data: Box::new(SensData {
+                problem: ptr::null_mut(),
+            }),
         };
         let n = config.n as sunindextype;
         // SAFETY: the objects are created in the context and owned by `cvode`, which frees them
@@ -1268,14 +1305,22 @@ impl<const DAE: bool, H: crate::delay::Mode> Integrator<DAE, H> {
             let n_sens = n_sens as c_int;
             problem.mem = self.mem;
             let data = (problem as *mut Problem<'_>).cast::<c_void>();
-            self.flag(CVodeSetUserData(self.mem, data), f64::NAN)?;
+            // the problem of this simulation, which the box of the sensitivities carries and
+            // the user data of CVODE is until the next call of `CVodeSetUserData`
+            self.sens_data.problem = data;
             if self.sens_initialized {
                 self.flag(CVodeSensReInit(self.mem, CV_STAGGERED, self.sens), f64::NAN)?;
             } else {
-                self.flag(
+                // `CVodeSensInit` keeps the user data of CVODE as the one of the
+                // sensitivities, so it is the box while it runs and the problem after it
+                let slot = (&raw mut *self.sens_data).cast::<c_void>();
+                self.flag(CVodeSetUserData(self.mem, slot), f64::NAN)?;
+                let initialized = self.flag(
                     CVodeSensInit(self.mem, n_sens, CV_STAGGERED, Some(sens_rhs), self.sens),
                     f64::NAN,
-                )?;
+                );
+                self.flag(CVodeSetUserData(self.mem, data), f64::NAN)?;
+                initialized?;
                 self.sens_initialized = true;
                 if !self.sens_nonlinear.is_null() {
                     self.flag(

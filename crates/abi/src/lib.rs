@@ -648,7 +648,7 @@ mod tests {
     }
 
     #[test]
-    fn historical_stats_default_the_krylov_counters_to_zero() {
+    fn historical_stats_default_the_counters_after_them_to_zero() {
         let words = std::array::from_fn(|i| i as u64 + 1);
         let stats = SimulationStats::from_words(words);
         assert_eq!(stats.words(), words);
@@ -662,7 +662,7 @@ mod tests {
         }
         let historical: SimulationStats = serde_json::from_value(json).unwrap();
         assert_eq!(historical.words()[..13], words[..13]);
-        assert_eq!(historical.words()[13..], [0; 5]);
+        assert_eq!(historical.words()[13..], [0; SimulationStats::WORDS - 13]);
     }
 
     #[test]
