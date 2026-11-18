@@ -1209,12 +1209,16 @@ impl<const DAE: bool, H: crate::delay::Mode> Integrator<DAE, H> {
         let mut tret = f64::NAN;
         if matches!(self.config.method, Method::Bdf(Linear::Gmres { .. })) {
             if self.krylov.is_none() {
-                let pattern = problem
-                    .pattern
-                    .expect("GMRES requires a model Jacobian pattern");
+                let Some(pattern) = problem.pattern else {
+                    return Err(EngineError::Internal(
+                        "GMRES requires the sparsity pattern of the Jacobian of the model".into(),
+                    ));
+                };
                 self.krylov = Some(Box::new(krylov::Preconditioner::new(pattern, self.ctx)?));
             }
-            problem.krylov = &mut **self.krylov.as_mut().unwrap();
+            if let Some(krylov) = self.krylov.as_mut() {
+                problem.krylov = &mut **krylov;
+            }
         }
         // SAFETY: the user data points to `problem`, which outlives the call of `CVode`.
         unsafe {
