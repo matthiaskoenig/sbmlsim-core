@@ -178,12 +178,12 @@ parameter, and the engine has two ways of giving it:
   than either of them.
 
 `"auto"`, the default, takes what is fastest for the model, which is **the differences**: the
-sensitivities of a model are one integration instead of `k + 1`, but `df/dp` inside them is a
-difference quotient of the right hand side of the model, one per parameter and step of the
-integrator, which costs about as much as the integrations the run saves. On
-hydrochlorothiazide with ten parameters a run of sensitivities costs about seven plain
-simulations, so a whole fit of the sensitivities runs 5.7 times fewer simulations and takes
-1.3 times the time of one of the differences
+sensitivities of a model are one integration instead of `k + 1`, and `df/dp` inside them is
+the analytic `model_jac_p` of the compiler where the model carries it, but a step of the
+staggered corrector still solves one system per parameter. On hydrochlorothiazide a jacobian
+of the sensitivities is 1.2 times the time of one of the differences, at five, ten, twenty and
+forty parameters alike, and a whole fit of them runs 3.7 times fewer simulations in about the
+same time
 ([bench/OPTIMIZATION.md](https://github.com/matthiaskoenig/sbmlsim-core/blob/main/bench/OPTIMIZATION.md)).
 Ask for `"sensitivities"` where the accuracy of the jacobian is what matters, which is the
 Fisher information of an optimum and a profile of a parameter the data barely determines.
@@ -323,8 +323,8 @@ differential evolution spreads over the threads of the engine and not over a poo
 One Jacobian of a fit of hydrochlorothiazide (28 states, 20 conditions, 10 parameters, 220
 simulations) is 7.7 ms on 20 threads, a fit of ten iterations of that model 0.26 s, and a
 profile of one of its parameters, 8 points of a fit of the other nine, 1.52 s. The same
-Jacobian out of the forward sensitivities is 20 simulations and 12.0 ms, and the same fit of
-them 0.29 s and 520 simulations against 2960.
+Jacobian out of the forward sensitivities is 20 simulations and 9.7 ms, and the same fit of
+them 0.28 s and 800 simulations against 2960.
 `scripts/fit_timing.py` measures it against the same Jacobian through the python bindings, and
 [bench/OPTIMIZATION.md](https://github.com/matthiaskoenig/sbmlsim-core/blob/main/bench/OPTIMIZATION.md)
 says what the numbers mean: a fit of many conditions is bound by the integration and by how
