@@ -18,16 +18,24 @@
 //!   fan out per column: the residuals of a point are computed on the thread of the point,
 //!   so a point costs one integration and nothing of a host crosses a thread.
 //! - [`Problem::optimize`] runs the optimizers of [basin](https://basin.rs) over it: trust
-//!   region reflective and the bounded Levenberg-Marquardt of a least squares fit.
+//!   region reflective and the bounded Levenberg-Marquardt of a least squares fit, and the
+//!   differential evolution of its global search.
+//! - [`fit`] runs a fit of the contract [`FIT_CONTRACT`], which is a definition, its
+//!   optimizer and its starts as a file: what a host hands over and reads back.
 //!
 //! The parameters live on a scale ([`Scale`]): an optimizer searches the logarithm of a
 //! parameter whose bounds span decades, which is what a fit of a PBPK model does, and the
 //! model always sees the value itself.
 
+mod contract;
 mod optimize;
 mod problem;
 
-pub use optimize::{Algorithm, Evolution, Fit, Settings};
+pub use contract::{
+    ConditionRequest, CurveRequest, FIT_CONTRACT, FitAnswer, FitRequest, FittedParameter,
+    ParameterRequest, RunAnswer, fit, fit_with,
+};
+pub use optimize::{Algorithm, Evolution, Fit, Settings, Stop};
 pub use problem::{
     Curve, DIFF_STEP, Definition, FAILED_RESIDUAL, FitError, Parameter, Problem, Scale,
 };

@@ -5,6 +5,8 @@
 //! optimizers themselves are basin's: `TrustRegionReflective`, the `trf` of
 //! `scipy.optimize.least_squares` of sbmlsim, and the Levenberg-Marquardt of a box.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use basin::{
@@ -13,10 +15,40 @@ use basin::{
     PopulationProgress, Residual, TrustRegionReflective,
 };
 
+use serde::{Deserialize, Serialize};
+
 use crate::problem::{FitError, Problem};
 
+/// A flag which stops a fit at its next iteration.
+///
+/// A fit of a large model runs for minutes, and a caller which cannot wait for it (the Ctrl-C
+/// of a notebook, the budget of a web request) sets the flag instead of killing the thread:
+/// the optimizer stops where it is and the fit answers with the best point it reached.
+#[derive(Clone, Debug, Default)]
+pub struct Stop(Arc<AtomicBool>);
+
+impl Stop {
+    /// A flag which is not set.
+    #[must_use]
+    pub fn new() -> Stop {
+        Stop::default()
+    }
+
+    /// Stops the fits which hold the flag at their next iteration.
+    pub fn stop(&self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+
+    /// Whether the flag is set.
+    #[must_use]
+    pub fn stopped(&self) -> bool {
+        self.0.load(Ordering::Relaxed)
+    }
+}
+
 /// Which optimizer runs a fit.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Algorithm {
     /// Trust region reflective, the `trf` of `scipy.optimize.least_squares`, which keeps its
     /// steps inside the bounds by reflecting them.
@@ -35,7 +67,8 @@ pub enum Algorithm {
 /// The defaults are basin's: a population of `max(4, 10 * parameters)`, the factor of the
 /// mutation dithered between 0.5 and 1.0 per generation and a crossover of 0.9, which are the
 /// ones of `scipy.optimize.differential_evolution` as well.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct Evolution {
     /// The seed of the population, which repeats a run bit for bit.
     pub seed: u64,
@@ -64,7 +97,8 @@ impl Default for Evolution {
 }
 
 /// What an optimizer may spend and when it stops.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct Settings {
     /// The optimizer of the fit.
     pub algorithm: Algorithm,
@@ -178,7 +212,12 @@ fn fault(error: ConstraintSolveError<FitError>) -> FitError {
 ///
 /// The point is the start of the parameters of the problem for a fit, the best member of a
 /// population for the polish of an evolution and the optimum of a fit for a step of a profile.
-pub(crate) fn run(problem: &Problem, settings: &Settings, from: &[f64]) -> Result<Fit, FitError> {
+pub(crate) fn run(
+    problem: &Problem,
+    settings: &Settings,
+    from: &[f64],
+    stop: &Stop,
+) -> Result<Fit, FitError> {
     let (lower, upper) = problem.bounds();
     let start: Vec<f64> = from.to_vec();
     if start.len() != problem.parameters().len() {
@@ -189,9 +228,16 @@ pub(crate) fn run(problem: &Problem, settings: &Settings, from: &[f64]) -> Resul
         )));
     }
     let began = Instant::now();
-    let deadline = settings
-        .max_seconds
-        .map(|seconds| began + Duration::from_secs_f64(seconds));
+    // the time of a fit is the limit of the optimizer itself (`MaxTime`), the flag of a
+    // caller which stops it is one check per iteration
+    let budget = settings.max_seconds.map(Duration::from_secs_f64);
+    let halt = {
+        let stop = stop.clone();
+        move || -> Option<ApplicationStop> {
+            stop.stopped()
+                .then(|| ApplicationStop::new("the fit was stopped"))
+        }
+    };
     // the two optimizers are two types, and their driver is the same five lines
     macro_rules! drive {
         ($solver:expr) => {{
@@ -200,13 +246,12 @@ pub(crate) fn run(problem: &Problem, settings: &Settings, from: &[f64]) -> Resul
                 lower: lower.clone(),
                 upper: upper.clone(),
             };
+            let halt = halt.clone();
             let mut executor = Executor::from_start(least_squares, $solver, start.clone())
-                .max_iter(settings.max_iterations);
-            if let Some(deadline) = deadline {
-                executor = executor.stop_when(move |_| {
-                    (Instant::now() >= deadline)
-                        .then(|| ApplicationStop::new("the time of the fit is up"))
-                });
+                .max_iter(settings.max_iterations)
+                .stop_when(move |_| halt());
+            if let Some(budget) = budget {
+                executor = executor.max_time(budget);
             }
             executor.run().map_err(fault)?
         }};
@@ -269,12 +314,10 @@ pub(crate) fn run(problem: &Problem, settings: &Settings, from: &[f64]) -> Resul
                     };
                     let mut executor =
                         Executor::new(least_squares, solver, PopulationProgress::empty())
-                            .max_iter(max_iterations);
-                    if let Some(deadline) = deadline {
-                        executor = executor.stop_when(move |_| {
-                            (Instant::now() >= deadline)
-                                .then(|| ApplicationStop::new("the time of the fit is up"))
-                        });
+                            .max_iter(max_iterations)
+                            .stop_when(move |_| halt());
+                    if let Some(budget) = budget {
+                        executor = executor.max_time(budget);
                     }
                     executor.run()
                 })
@@ -298,6 +341,7 @@ pub(crate) fn run(problem: &Problem, settings: &Settings, from: &[f64]) -> Resul
                 ..settings.clone()
             },
             &x,
+            stop,
         )?;
         status = format!("{status}, polish {}", polished.status);
         iterations += polished.iterations;

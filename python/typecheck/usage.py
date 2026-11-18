@@ -34,11 +34,12 @@ from sbmlsim_core import (
 )
 
 
-def use(sbml: str, request: dict[str, Any]) -> None:
+def use(sbml: str, request: dict[str, Any], fit: dict[str, Any]) -> None:
     """Calls every function and member of the package."""
     contract: str = sbmlsim_core.MODEL_CONTRACT
     version: str = sbmlsim_core.__version__
     simulation: str = sbmlsim_core.SIMULATION_CONTRACT
+    fitting: str = sbmlsim_core.FIT_CONTRACT
 
     compiled: CompiledModel = sbmlsim_core.compile_sbml(sbml)
     sbmlsim_core.compile_sbml(sbml, optimize=False, jacobian="difference_quotient")
@@ -65,6 +66,10 @@ def use(sbml: str, request: dict[str, Any]) -> None:
     n_values: int = prepared.n_values
     instance.simulate_prepared(prepared, [0.5])
     instance.simulate_prepared(model.prepare(request))
+
+    answer: dict[str, Any] = model.fit(fit)
+    model.fit(fit, threads=2)
+    model.fit(fit, threads=None)
 
     results: list[SimulationOutput | PointError] = model.simulate_many([request])
     model.simulate_many([request], threads=4)

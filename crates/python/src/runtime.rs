@@ -8,7 +8,7 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use sbmlsim_abi::ModelDescription;
 
-use crate::errors::LoadError;
+use crate::errors::{InternalError, LoadError, fit_error};
 use crate::simulate::{BatchExecutor, Instance, PreparedSimulation, batch, request_of};
 
 /// `engine.wasm` and `mathlib.wasm`, compiled once per runtime or loaded from the persistent
@@ -141,6 +141,65 @@ impl LoadedModel {
             prepared,
             model: self.model.clone(),
         })
+    }
+
+    /// Fits the parameters of the model to data and gives what the fit found.
+    ///
+    /// `request` is a fit of the contract `fit/1` (a dict): its parameters with their bounds
+    /// and their scale, a request of `simulation/1` per condition, the data of every curve,
+    /// the optimizer to run and the points to start from. The answer is a dict of the same
+    /// contract: the parameters of the optimum, its cost, its residuals, the counters of the
+    /// optimizer and every run of the fit.
+    ///
+    /// The fit runs on a thread of its own without the GIL, and every evaluation of its
+    /// objective is one batch of the engine on `threads` threads (the ones of the request,
+    /// else every CPU of the process): the residuals of a point are computed on the thread of
+    /// the point, so nothing of python is built per simulation. Ctrl-C stops the optimizer at
+    /// its next iteration and raises `KeyboardInterrupt`.
+    ///
+    /// Raises `ValueError` for a request which is none of the contract and for a fit which
+    /// cannot run (a curve of a condition the fit has not, a parameter the model has not, a
+    /// start outside the bounds), and the errors of a simulation for a failure of the engine;
+    /// a failed integration is no error, it is a point the optimizer may not take.
+    #[pyo3(signature = (request, *, threads=None))]
+    fn fit<'py>(
+        &self,
+        py: Python<'py>,
+        request: &Bound<'_, PyAny>,
+        threads: Option<usize>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let request: sbmlsim_fit::FitRequest =
+            serde_path_to_error::deserialize(&mut pythonize::Depythonizer::from_object(request))
+                .map_err(|error| {
+                    PyValueError::new_err(format!("request: {}: {}", error.path(), error.inner()))
+                })?;
+        let model = self.model.clone();
+        let stop = sbmlsim_fit::Stop::new();
+        let worker = {
+            let stop = stop.clone();
+            std::thread::Builder::new()
+                .name("sbmlsim-fit".to_string())
+                .spawn(move || sbmlsim_fit::fit_with(&request, model, threads, &stop))
+                .map_err(|error| {
+                    InternalError::new_err(format!("the fit has no thread: {error}"))
+                })?
+        };
+        // the fit holds no GIL, so the signals of python are checked here while it runs: an
+        // interrupt stops the optimizer at its next iteration and the thread is joined, which
+        // is what keeps a stopped fit from reaching into the model of a caller which went on
+        while !worker.is_finished() {
+            py.detach(|| std::thread::sleep(std::time::Duration::from_millis(20)));
+            if let Err(interrupt) = py.check_signals() {
+                stop.stop();
+                py.detach(|| drop(worker.join()));
+                return Err(interrupt);
+            }
+        }
+        let answer = py
+            .detach(|| worker.join())
+            .map_err(|_| InternalError::new_err("the fit panicked"))?
+            .map_err(fit_error)?;
+        pythonize::pythonize(py, &answer).map_err(Into::into)
     }
 
     /// A persistent batch executor, with at most eight workers by default.

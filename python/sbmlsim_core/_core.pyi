@@ -8,6 +8,7 @@ from typing import Any
 import numpy
 import numpy.typing
 
+FIT_CONTRACT: str
 MODEL_CONTRACT: str
 SIMULATION_CONTRACT: str
 THIRD_PARTY: str
@@ -119,6 +120,14 @@ class LoadedModel:
         self, request: dict[str, Any], *, varying: Sequence[str] = ...
     ) -> PreparedSimulation:
         """Validates the request and ordered varying input IDs once."""
+
+    def fit(
+        self,
+        request: dict[str, Any],
+        *,
+        threads: int | None = None,
+    ) -> dict[str, Any]:
+        """Fits the parameters of the model to data with a request of the contract `fit/1`."""
 
     def batch_executor(self, *, threads: int | None = None) -> BatchExecutor:
         """Creates a reusable pool with lazy workers and retained instances."""

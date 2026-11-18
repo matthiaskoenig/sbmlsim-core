@@ -71,6 +71,21 @@ enum Command {
         #[arg(long, default_value_t = 30_000)]
         timeout_ms: u64,
     },
+    /// Fits the parameters of a compiled model to data with a request of the contract `fit/1`.
+    #[cfg(feature = "native")]
+    Fit {
+        /// The directory of the model, with `model.wasm` and `model.json`.
+        model_dir: PathBuf,
+        /// The fit, a JSON file of the contract `fit/1`.
+        request: PathBuf,
+        /// The JSON file to write the answer into (stdout without).
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        /// The threads of the batch of an evaluation; the ones of the request, else the CPUs
+        /// of the machine.
+        #[arg(short, long)]
+        threads: Option<usize>,
+    },
     /// Runs the prepared cases of the SBML Test Suite and compares them with the baseline.
     Testsuite(TestsuiteArgs),
     /// Measures the models of a benchmark file (`bench/models.toml`) in wasmtime.
@@ -97,6 +112,13 @@ fn main() -> ExitCode {
             output,
             timeout_ms,
         } => simulate(&model_dir, &request, output.as_deref(), timeout_ms).map(|()| true),
+        #[cfg(feature = "native")]
+        Command::Fit {
+            model_dir,
+            request,
+            output,
+            threads,
+        } => fit(&model_dir, &request, output.as_deref(), threads).map(|()| true),
         Command::Testsuite(args) => testsuite::run(&args),
         Command::Bench(args) => bench::run(&args),
         Command::Runtime { output } => testsuite::write_runtime(&output).map(|()| true),
@@ -137,6 +159,49 @@ fn compile(model: &Path, output: &Path, optimize: bool) -> anyhow::Result<()> {
         "model.json",
         &testsuite::description_json(&compiled.description)?,
     )
+}
+
+/// The command `fit`: the fit of the request against the model of the directory, and its
+/// answer as JSON.
+#[cfg(feature = "native")]
+fn fit(
+    model_dir: &Path,
+    request: &Path,
+    output: Option<&Path>,
+    threads: Option<usize>,
+) -> anyhow::Result<()> {
+    let wasm_path = model_dir.join("model.wasm");
+    let wasm =
+        fs::read(&wasm_path).with_context(|| format!("cannot read {}", wasm_path.display()))?;
+    let desc: ModelDescription = read_json(&model_dir.join("model.json"))?;
+    let fit: sbmlsim_fit::FitRequest = read_json(request)?;
+    let model = std::sync::Arc::new(Runtime::embedded()?.load(&wasm, &desc)?);
+    let answer = sbmlsim_fit::fit(&fit, model, threads)?;
+    let json = serde_json::to_string_pretty(&answer).context("cannot write the answer")?;
+    match output {
+        Some(path) => {
+            fs::write(path, &json).with_context(|| format!("cannot write {}", path.display()))?;
+            let found: Vec<String> = answer
+                .parameters
+                .iter()
+                .map(|parameter| format!("{} = {:.6}", parameter.id, parameter.value))
+                .collect();
+            println!(
+                "{} after {} evaluations in {:.3} s, cost {:.6e} ({}): {}",
+                found.join(", "),
+                answer.evaluations,
+                answer.seconds,
+                answer.cost,
+                answer.status,
+                path.display()
+            );
+        }
+        None => std::io::stdout()
+            .lock()
+            .write_all(json.as_bytes())
+            .context("cannot write to stdout")?,
+    }
+    Ok(())
 }
 
 /// The command `simulate`.

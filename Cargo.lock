@@ -2129,6 +2129,7 @@ dependencies = [
  "rayon",
  "sbmlsim-abi",
  "sbmlsim-compiler",
+ "sbmlsim-fit",
  "sbmlsim-host",
  "serde",
  "serde_json",
@@ -2185,6 +2186,7 @@ dependencies = [
  "sbmlsim-abi",
  "sbmlsim-batch",
  "sbmlsim-host",
+ "serde",
  "serde_json",
  "thiserror 2.0.21",
  "wat",
@@ -2234,6 +2236,7 @@ dependencies = [
  "sbmlsim-abi",
  "sbmlsim-batch",
  "sbmlsim-compiler",
+ "sbmlsim-fit",
  "sbmlsim-host",
  "serde_path_to_error",
 ]

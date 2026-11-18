@@ -1,6 +1,6 @@
 //! A fit of the decay model `y' = -k y`: its residuals, its jacobian and its optimum.
 
-use sbmlsim_fit::{Algorithm, Scale, Settings};
+use sbmlsim_fit::{Algorithm, Scale, Settings, Stop};
 
 #[path = "support/fixture.rs"]
 mod fixture;
@@ -98,4 +98,38 @@ fn the_fit_finds_the_parameter_of_the_data() {
             assert_eq!(fit.values, problem.values(&fit.x));
         }
     }
+}
+
+#[test]
+fn a_fit_which_is_stopped_answers_with_the_point_it_reached() {
+    let problem = problem(3.0, Scale::Lin, 4);
+    let stop = Stop::new();
+    stop.stop();
+
+    let fit = problem
+        .optimize_with(&Settings::default(), &problem.start(), &stop)
+        .unwrap();
+
+    assert_eq!(
+        fit.iterations, 0,
+        "the stopped fit took a step: {}",
+        fit.status
+    );
+    assert_eq!(fit.values, vec![3.0]);
+    assert_eq!(fit.status, "UserRequested");
+    assert!(fit.cost > 0.0, "the start of the fit is the optimum");
+}
+
+#[test]
+fn a_fit_of_a_budget_of_time_stops_at_it() {
+    let problem = problem(3.0, Scale::Lin, 4);
+    let settings = Settings {
+        max_seconds: Some(0.0),
+        ..Settings::default()
+    };
+
+    let fit = problem.optimize(&settings).unwrap();
+
+    assert_eq!(fit.status, "MaxTime");
+    assert_eq!(fit.values, vec![3.0]);
 }

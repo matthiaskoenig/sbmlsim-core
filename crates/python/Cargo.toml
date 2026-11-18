@@ -26,6 +26,8 @@ pythonize = "0.30"
 sbmlsim-abi = { path = "../abi" }
 # the pool of the threads of a batch, with an engine instance per thread
 sbmlsim-batch = { path = "../batch" }
+# the fit of a model: the objective on the batch and the optimizers of basin (`fit/1`)
+sbmlsim-fit = { path = "../fit" }
 sbmlsim-compiler = { path = "../compiler" }
 # The native engine: the integrator compiled for the machine of the wheel (CVODE and KLU built
 # by `crates/csolvers`) with `model.wasm` and `mathlib.wasm` in wasmtime, which simulates about

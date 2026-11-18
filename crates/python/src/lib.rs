@@ -47,6 +47,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     drop(numpy::PyArray1::<f64>::zeros(m.py(), 0, false));
     m.add("MODEL_CONTRACT", MODEL_CONTRACT)?;
     m.add("SIMULATION_CONTRACT", SIMULATION_CONTRACT)?;
+    m.add("FIT_CONTRACT", sbmlsim_fit::FIT_CONTRACT)?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add("THIRD_PARTY", sbmlsim_host::THIRD_PARTY_NOTICES)?;
     m.add("SbmlsimCoreError", m.py().get_type::<SbmlsimCoreError>())?;

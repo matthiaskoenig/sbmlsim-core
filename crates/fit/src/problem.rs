@@ -5,6 +5,7 @@ use std::sync::Arc;
 use sbmlsim_abi::{EngineError, Output, SimulationRequest, SimulationResult};
 use sbmlsim_batch::{BatchError, PointFailure, Workers};
 use sbmlsim_host::{LoadedModel, PreparedSimulation};
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// The residual of a point whose simulation failed, the one sbmlsim scores a failed
@@ -63,6 +64,9 @@ pub enum FitError {
     /// The optimizer refused the problem.
     #[error("the optimizer of the fit {0}")]
     Optimizer(String),
+    /// The request of a fit of the contract `fit/1` does not resolve.
+    #[error("the request of the fit {0}")]
+    Request(String),
 }
 
 /// The scale an optimizer searches a parameter on.
@@ -70,7 +74,8 @@ pub enum FitError {
 /// The model always sees the value of the parameter ([`Scale::to_model`]); a parameter whose
 /// bounds span decades is searched as its logarithm, so that a relative step of the optimizer
 /// is a relative step of the parameter, which is what a fit of a PBPK model needs.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Scale {
     /// The value itself.
     #[default]
@@ -435,7 +440,7 @@ impl Problem {
     ///
     /// As [`Problem::residuals`], or if the optimizer refuses the bounds of the fit.
     pub fn optimize(&self, settings: &crate::Settings) -> Result<crate::Fit, FitError> {
-        crate::optimize::run(self, settings, &self.start())
+        crate::optimize::run(self, settings, &self.start(), &crate::Stop::new())
     }
 
     /// Runs an optimizer over the problem, from a point of the search space.
@@ -451,7 +456,22 @@ impl Problem {
         settings: &crate::Settings,
         from: &[f64],
     ) -> Result<crate::Fit, FitError> {
-        crate::optimize::run(self, settings, from)
+        crate::optimize::run(self, settings, from, &crate::Stop::new())
+    }
+
+    /// Runs an optimizer over the problem, from a point of the search space, until a caller
+    /// stops it.
+    ///
+    /// # Errors
+    ///
+    /// As [`Problem::optimize_from`].
+    pub fn optimize_with(
+        &self,
+        settings: &crate::Settings,
+        from: &[f64],
+        stop: &crate::Stop,
+    ) -> Result<crate::Fit, FitError> {
+        crate::optimize::run(self, settings, from, stop)
     }
 
     /// Runs `work` on the threads of the batch of the problem.

@@ -1,6 +1,7 @@
 """sbmlsim-core: compile SBML models to WebAssembly and simulate them."""
 
 from sbmlsim_core._core import (
+    FIT_CONTRACT,
     MODEL_CONTRACT,
     SIMULATION_CONTRACT,
     THIRD_PARTY,
@@ -27,6 +28,7 @@ from sbmlsim_core._core import (
 from sbmlsim_core.batch import simulate_stream
 
 __all__ = [
+    "FIT_CONTRACT",
     "MODEL_CONTRACT",
     "SIMULATION_CONTRACT",
     "THIRD_PARTY",

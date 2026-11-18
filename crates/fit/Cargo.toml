@@ -19,6 +19,8 @@ basin = { version = "3.3", features = ["parallel"] }
 # the pool of the batch, which an evaluation of the objective fans out on
 sbmlsim-batch = { path = "../batch" }
 sbmlsim-abi = { path = "../abi" }
+# the contract `fit/1`, which a host writes and reads back
+serde.workspace = true
 sbmlsim-host = { path = "../host", features = ["native"] }
 thiserror.workspace = true
 
