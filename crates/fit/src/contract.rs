@@ -329,14 +329,7 @@ pub fn fit_with(
             // analysis runs where it has one of its own
             let optimizer = analysis.optimizer.as_ref().unwrap_or(&request.optimizer);
             let walked = if analysis.profiles {
-                profiles(
-                    &problem,
-                    optimizer,
-                    &best.x,
-                    &which,
-                    &analysis.walk,
-                    stop,
-                )?
+                profiles(&problem, optimizer, &best.x, &which, &analysis.walk, stop)?
             } else {
                 Vec::new()
             };

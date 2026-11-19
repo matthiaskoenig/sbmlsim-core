@@ -362,7 +362,11 @@ fn a_fit_of_no_iteration_profiles_the_point_it_was_given() {
     }
     assert_eq!(answer.runs[0].iterations, 0);
     let profile = &answer.profiles[0];
-    assert!((profile.at - K).abs() < 1e-12, "the profile is at {}", profile.at);
+    assert!(
+        (profile.at - K).abs() < 1e-12,
+        "the profile is at {}",
+        profile.at
+    );
     assert_eq!(profile.cost, answer.cost);
     // the other parameter is fitted again at every point, which an optimizer of no iteration
     // would leave at the value of the point before it
