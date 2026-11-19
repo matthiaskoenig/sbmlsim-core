@@ -383,3 +383,30 @@ def test_the_problem_of_a_fit_refuses_a_point_which_is_not_its_parameters(decay,
         problem.cost([1.0, float("nan")])
     with pytest.raises(ValueError, match="none of them"):
         problem.step(5, problem.start)
+
+
+def test_a_fit_reports_every_run_of_it_as_it_finishes(decay, data):
+    reported = []
+
+    answer = decay.fit(
+        fit_request(data, starts=[[0.02], [3.0], [9.0], [5.0]]),
+        threads=2,
+        on_run=lambda index, run: reported.append((index, run["cost"])),
+    )
+
+    assert sorted(reported) == [
+        (index, run["cost"]) for index, run in enumerate(answer["runs"])
+    ]
+
+
+def test_a_fit_whose_report_raises_is_stopped_by_it(decay, data):
+    def refuse(index, run):
+        """Refuse the first run of the fit, as a caller which cannot store it would."""
+        raise RuntimeError(f"the run {index} is no run of mine")
+
+    with pytest.raises(RuntimeError, match="the run 0 is no run of mine"):
+        decay.fit(
+            fit_request(data, starts=[[0.02], [3.0], [9.0], [5.0]]),
+            threads=1,
+            on_run=refuse,
+        )

@@ -38,7 +38,7 @@ mod problem;
 
 pub use contract::{
     ConditionRequest, CurveRequest, FIT_CONTRACT, FitAnswer, FitRequest, FittedParameter,
-    Identifiability, ParameterRequest, RunAnswer, fit, fit_with, problem_of,
+    Identifiability, OnRun, ParameterRequest, RunAnswer, fit, fit_reporting, fit_with, problem_of,
 };
 pub use identifiability::{
     DELTA_95, Fisher, Profile, ProfilePoint, Walk, fisher, profile, profiles,

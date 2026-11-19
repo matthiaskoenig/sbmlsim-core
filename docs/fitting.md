@@ -219,7 +219,7 @@ Fisher information of an optimum and a profile of a parameter the data barely de
   "jacobian": "difference_quotient",
   "seconds": 0.013,
   "residuals": [0.0, -1.2e-9],
-  "runs": [{ "start": [0.5], "values": [0.3], "cost": 9.510899176032252e-18, "status": "SolverConverged", "iterations": 7, "evaluations": 8, "jacobians": 8, "seconds": 0.013 }]
+  "runs": [{ "start": [0.5], "values": [0.3], "cost": 9.510899176032252e-18, "status": "SolverConverged", "iterations": 7, "evaluations": 8, "jacobians": 8, "jacobian": "difference_quotient", "seconds": 0.013 }]
 }
 ```
 
@@ -231,7 +231,7 @@ optimum in the order of the curves, and `runs` one entry per start, in the order
 `seconds` is what the runs took, without the identifiability of the optimum. `simulations` is
 what the fit cost the engine, the simulations of every run and of every profile together, and
 `jacobian` where the jacobian of a step came from, which is what `"auto"` of the request
-resolved to.
+resolved to and which every run carries as well.
 
 A fit which asked for the identifiability answers with `profiles` and `fisher` as well:
 
@@ -294,6 +294,21 @@ for parameter in answer["parameters"]:
 of the caller keeps running and `Ctrl-C` ends the fit where it is (the answer of a stopped fit
 is `UserRequested`). The request is a dict of `fit/1` and the answer a dict of the JSON above;
 `sbmlsim_core.FIT_CONTRACT` is the version of the contract this build carries.
+
+A fit of many starts answers when the last of them finished, which is late for a fit of
+minutes, so `on_run` follows it while it runs:
+
+```python
+answer = model.fit(
+    request, threads=8, on_run=lambda index, run: print(index, run["cost"])
+)
+```
+
+It is called with the index of a start and the run of it as soon as that run finished, on the
+thread of the caller and with the GIL, while the fit runs on. Every run of a fit which
+finished is reported before it answers, and the runs of a fit which `Ctrl-C` stopped are
+reported before `KeyboardInterrupt` is raised, which is what a caller keeps them by; an error
+the callable raises stops the fit and reaches the caller.
 
 A caller whose optimizer stays in python asks for the objective instead. Every call is one
 batch of the engine and nothing but the values of the parameters crosses:
