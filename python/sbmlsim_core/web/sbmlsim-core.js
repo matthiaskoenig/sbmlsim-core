@@ -981,7 +981,7 @@ var sbmlsimCore = (() => {
   var MAX_RUN_BYTES = 64 * 1024 * 1024;
   var MAX_ID = 128;
   var DEFAULT_LIMITS = { knobs: 8, grid: 64 };
-  var REQUEST_FIELDS = /* @__PURE__ */ new Set(["values", "grid", "variant"]);
+  var REQUEST_FIELDS = /* @__PURE__ */ new Set(["values", "grid", "variant", "draws"]);
   var HttpError = class extends Error {
     constructor(status, detail, headers = {}) {
       super(detail);
@@ -1170,7 +1170,7 @@ var sbmlsimCore = (() => {
     }
     const unknown = Object.keys(body).filter((key) => !REQUEST_FIELDS.has(key));
     if (unknown.length > 0) {
-      throw new HttpError(422, `The body of a simulation has the unknown fields ${pyList(unknown.sort())}; its fields are ['grid', 'values', 'variant'].`);
+      throw new HttpError(422, `The body of a simulation has the unknown fields ${pyList(unknown.sort())}; its fields are ['draws', 'grid', 'values', 'variant'].`);
     }
     const mapping = (name) => {
       const value = body[name] ?? {};
@@ -1194,7 +1194,11 @@ var sbmlsimCore = (() => {
     if (typeof variant !== "string" || variant.length > MAX_ID) {
       throw new HttpError(422, `The variant is no text of at most ${MAX_ID} characters.`);
     }
-    return { values, grid, variant };
+    const draws = body.draws ?? 0;
+    if (!Number.isInteger(draws) || draws < 0) {
+      throw new HttpError(422, `The draws of the uncertainty are no whole number of at least 0.`);
+    }
+    return { values, grid, variant, draws };
   }
   function checkLimits(values, grid, limits) {
     for (const [name, mapping] of [["values", values], ["grid", grid]]) {
@@ -1390,6 +1394,22 @@ var sbmlsimCore = (() => {
     }
     return rows;
   }
+  function resolveDraws(panel, uncertainty, asked) {
+    if (!uncertainty || asked === 0) return 0;
+    const max = uncertainty.max_draws ?? (uncertainty.draws ?? []).length;
+    if (asked > max) {
+      throw new HttpError(422, `The panel '${panel}' carries ${max} draws of its uncertainty, ${asked} were asked for.`);
+    }
+    return asked;
+  }
+  function percentile(sample, share) {
+    const sorted = sample.filter((one) => one !== null && one !== void 0 && Number.isFinite(one)).sort((a, b) => a - b);
+    if (sorted.length === 0) return null;
+    const at = share * (sorted.length - 1);
+    const low = Math.floor(at);
+    const high = Math.ceil(at);
+    return sorted[low] + (at - low) * (sorted[high] - sorted[low]);
+  }
   function createPanelEndpoint(options) {
     const {
       bundle,
@@ -1504,13 +1524,14 @@ var sbmlsimCore = (() => {
     };
     const simulate = async (bundleData, pool, model, panel, text, signal) => {
       const started = globalThis.performance?.now() ?? Date.now();
-      const { values, grid, variant } = readBody(text);
+      const { values, grid, variant, draws } = readBody(text);
       const answer = panelOf(bundleData, model, panel, variant);
       const declaration = answer.declaration;
       checkLimits(values, grid, { ...DEFAULT_LIMITS, ...declaration.limits });
       const knobs = declaration.axes ?? [];
       checkKnobs(panel, knobs, values, grid);
       const run = answer.run;
+      const asked = resolveDraws(panel, run.uncertainty, draws);
       const info = await abortable(modelOf(bundleData, pool, run.model), signal);
       const axes = knobs.filter((knob) => knob.id in grid).map((knob) => ({
         id: knob.id,
@@ -1537,59 +1558,104 @@ var sbmlsimCore = (() => {
           changes: doseChanges(run, state)
         };
       });
-      const runKey = JSON.stringify([run.model, run.start, run.end, run.points, points]);
-      const results = await runs.get(
-        runKey,
-        async (runSignal) => {
-          const requests = points.map(({ preinit, changes }) => ({
-            contract: "simulation/1",
-            start: run.start,
-            end: run.end,
-            output: { uniform: { steps: run.points } },
-            preinit,
-            changes,
-            steady_state: null,
-            selections: info.selections,
-            settings: info.settings
-          }));
-          return Promise.all(
-            requests.map(
-              (request) => pool.simulate(info.poolKey, request, { signal: runSignal }).catch((error) => {
-                if (error instanceof EngineError) return null;
-                throw error;
-              })
-            )
-          );
-        },
-        signal
-      );
-      const failed = [];
-      const curves = {};
-      for (const curve of declaration.curves ?? []) curves[curve.id] = [];
-      results.forEach((result, index) => {
-        if (result === null) failed.push(index);
-        const rows = result === null ? [] : outputRows(result);
-        if (result !== null && rows.length !== run.x.length) {
-          throw new Error(`the run of the panel ${panel} has ${rows.length} rows, its x ${run.x.length}`);
-        }
-        for (const curve of declaration.curves ?? []) {
-          const spec = run.curves?.[curve.id];
-          if (!spec) throw new Error(`the run of the panel ${panel} has no curve ${curve.id}`);
-          if (result === null) {
-            curves[curve.id].push(run.x.map(() => null));
-            continue;
+      const runner = (list) => async (runSignal) => {
+        const requests = list.map(({ preinit, changes }) => ({
+          contract: "simulation/1",
+          start: run.start,
+          end: run.end,
+          output: { uniform: { steps: run.points } },
+          preinit,
+          changes,
+          steady_state: null,
+          selections: info.selections,
+          settings: info.settings
+        }));
+        return Promise.all(
+          requests.map(
+            (request) => pool.simulate(info.poolKey, request, { signal: runSignal }).catch((error) => {
+              if (error instanceof EngineError) return null;
+              throw error;
+            })
+          )
+        );
+      };
+      const rowsOf = (list) => {
+        const out = {};
+        const failedAt = [];
+        for (const curve of declaration.curves ?? []) out[curve.id] = [];
+        list.forEach((result, index) => {
+          if (result === null) failedAt.push(index);
+          const rows = result === null ? [] : outputRows(result);
+          if (result !== null && rows.length !== run.x.length) {
+            throw new Error(`the run of the panel ${panel} has ${rows.length} rows, its x ${run.x.length}`);
           }
-          const width = result.columns.length;
-          const column = result.columns.indexOf(spec.selection);
-          if (column < 0) throw new Error(`the model ${run.model} does not select ${spec.selection}`);
-          const row = new Array(rows.length);
-          rows.forEach((r, i) => {
-            const value = result.values[r * width + column] * spec.factor;
-            row[i] = Number.isFinite(value) ? value : null;
-          });
-          curves[curve.id].push(row);
+          for (const curve of declaration.curves ?? []) {
+            const spec = run.curves?.[curve.id];
+            if (!spec) throw new Error(`the run of the panel ${panel} has no curve ${curve.id}`);
+            if (result === null) {
+              out[curve.id].push(run.x.map(() => null));
+              continue;
+            }
+            const width = result.columns.length;
+            const column = result.columns.indexOf(spec.selection);
+            if (column < 0) throw new Error(`the model ${run.model} does not select ${spec.selection}`);
+            const row = new Array(rows.length);
+            rows.forEach((r, i) => {
+              const value = result.values[r * width + column] * spec.factor;
+              row[i] = Number.isFinite(value) ? value : null;
+            });
+            out[curve.id].push(row);
+          }
+        });
+        return { curves: out, failed: failedAt };
+      };
+      const runKey = JSON.stringify([run.model, run.start, run.end, run.points, points]);
+      const results = await runs.get(runKey, runner(points), signal);
+      const { curves, failed } = rowsOf(results);
+      const uncertaintyOf = async () => {
+        if (asked === 0) return null;
+        const vectors = (run.uncertainty.draws ?? []).slice(0, asked);
+        const parameters = run.uncertainty.parameters ?? [];
+        const drawPoints = [];
+        for (const point of points) {
+          for (const vector of vectors) {
+            const preinit = new Map(point.preinit);
+            parameters.forEach((id, k) => preinit.set(id, vector[k]));
+            drawPoints.push({
+              preinit: [...preinit].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0),
+              changes: point.changes
+            });
+          }
         }
-      });
+        const drawKey = JSON.stringify([run.model, run.start, run.end, run.points, drawPoints]);
+        const drawResults = await runs.get(drawKey, runner(drawPoints), signal);
+        const drawn = rowsOf(drawResults);
+        const level = run.uncertainty.level ?? 0.9;
+        const low = (1 - level) / 2;
+        const high = (1 + level) / 2;
+        const band = {};
+        for (const curve of declaration.curves ?? []) {
+          band[curve.id] = points.map((_, p) => {
+            const sample = vectors.map((__, d) => drawn.curves[curve.id][p * asked + d]);
+            const ends = { low: new Array(run.x.length), high: new Array(run.x.length) };
+            for (let t = 0; t < run.x.length; t += 1) {
+              const column = sample.map((row) => row[t]);
+              ends.low[t] = percentile(column, low);
+              ends.high[t] = percentile(column, high);
+            }
+            return ends;
+          });
+        }
+        return {
+          draws: asked,
+          fit: run.uncertainty.fit ?? "",
+          level,
+          band,
+          ...points.length === 1 ? { curves: drawn.curves } : {},
+          failed: drawn.failed
+        };
+      };
+      const uncertainty = await uncertaintyOf();
       const resolvedValues = {};
       for (const knob of knobs) if (!(knob.id in grid)) resolvedValues[knob.id] = fixed[knob.id];
       const resolvedGrid = {};
@@ -1605,6 +1671,7 @@ var sbmlsimCore = (() => {
           model_sha256: run.model_sha256,
           values: resolvedValues,
           grid: resolvedGrid,
+          draws: asked,
           engine: ENGINE,
           settings: { settings: modelEntry.settings, absolute_tolerances: modelEntry.absolute_tolerances ?? {} }
         })
@@ -1627,7 +1694,8 @@ var sbmlsimCore = (() => {
           seconds: (finished - started) / 1e3,
           created: (/* @__PURE__ */ new Date()).toISOString()
         },
-        status: { ok: failed.length === 0, points: results.length, failed }
+        status: { ok: failed.length === 0, points: results.length, failed },
+        ...uncertainty === null ? {} : { uncertainty }
       };
     };
     async function endpoint(input, init = {}) {

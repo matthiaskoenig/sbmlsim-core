@@ -466,7 +466,7 @@ The routes hang under `/api/models/{model}`:
 | `GET /app[?variant=V]` | the app (`app/1`), a 404 for a model without one |
 | `GET /panels/{panel}[?variant=V]` | the declaration of the panel (`panel/1`) |
 | `GET /panels/{panel}/data[?variant=V]` | the study data of the panel (`paneldata/1`) |
-| `POST /panels/{panel}/simulate` | a simulation, body `{ values?, grid?, variant? }`, answer `panel/1` |
+| `POST /panels/{panel}/simulate` | a simulation, body `{ values?, grid?, variant?, draws? }`, answer `panel/1` |
 
 A simulation is checked as the service checks it: a knob the panel does not declare, a value outside the bounds of a range knob or none of the choices of a choice knob, a grid of fewer than 1 or more points than the `limits` of the declaration, and a grid over a choice knob of other points than its choices are refused with a 422. The knobs of the grid span the product of their values in C order (the first knob of the declaration slowest): a range knob of `n` points runs `min`, `(min * (n - 1 - i) + max * i) / (n - 1)` for `i` from 1 to `n - 2`, and `max` (`n` 1 runs `min`), a choice knob its choices. Every other knob takes its value, or its default.
 
@@ -475,13 +475,16 @@ A point is one request of `simulation/1`: the start, the end and `{"uniform": {"
 | field | what it holds |
 |---|---|
 | `contract` | `"panel/1"` |
-| `spec_hash` | the sha256 of the canonical JSON (sorted keys, no whitespace, every character which is not ASCII escaped) of the resolved request: the model, the panel, the query `variant`, the declaration, the sha256 of the SBML, the value of every knob (its default for one the request leaves out), the grid, the engine and the settings |
+| `spec_hash` | the sha256 of the canonical JSON (sorted keys, no whitespace, every character which is not ASCII escaped) of the resolved request: the model, the panel, the query `variant`, the declaration, the sha256 of the SBML, the value of every knob (its default for one the request leaves out), the grid, the draws, the engine and the settings |
 | `x` | the times of the bundle, in the unit `units.x` |
 | `dims` | one axis per knob of the grid: `{ id, label, unit, values }` |
 | `curves` | per curve a row per point of the grid, the values of its selection times its factor; a value which is not finite is `null` |
 | `units` | the units of the run of the bundle |
 | `status` | `{ ok, points, failed }`: a point which does not integrate is a row of `null` in every curve and its flat index is in `failed` |
+| `uncertainty` | the band of the draws, for a request which asked for them; absent without |
 | `provenance` | `{ model, panel, model_sha256, variant, engine, sbmlsim, seconds, created }`: the variant the bundle simulated, `sbmlsim-core <version>`, the version of sbmlsim which exported the bundle |
+
+A panel whose run carries an `uncertainty` - the sample of the fit of its model, which the bundle holds - answers a band for the `draws` a request asks for. Every point of the grid is run once per draw, with the parameters of that draw set before the initialization, exactly as a knob with a `parameter` is set, and the answer carries `uncertainty`: the `draws` it was run with, the `fit` and the `level` of the recipe, `band` (per curve one `{ low, high }` per point of the grid, the percentiles of the sample of that point time by time, the linear interpolation of the order statistics as numpy and the service compute them), `curves` (per curve the row of every draw, only for a run of one point, where their size is bounded) and `failed` (the flat index of every draw which did not integrate, which is no member of the percentiles). The draws are the first ones of the sample, which the export writes in the order of a latin hypercube: a prefix of such a sample is a sample of its own, so the band settles as a page asks for more draws instead of jumping. A request which names no draws runs none, and one which asks for more than the sample holds is refused with a 422 rather than cut, so a page never states a band it did not get.
 
 The runs are shared: the points of one model, end and pre-initialization are one run, so the panels of a page which show one state, each with its own curves, cost one scan. A run in flight is joined, a successful finished one is kept in a cache bounded by bytes and entry count, the least recently used evicted first. Runs with any failed point are not cached, so transient failures can recover and failed runs cannot accumulate at zero accounted bytes. A request whose `signal` aborts is rejected with its reason, as `fetch` is; a run is dropped when every request which waits for it aborted.
 
@@ -503,6 +506,7 @@ DIR/<model id>/models/<model key>/model.json    sbmlsim-core compile
 - `contract` (`"panelbundle/1"`), `model` (the model id of the routes), `title`, `sbmlsim` (the version which exported it) and `created`.
 - `answers`: per query `variant` (`""` and every variant the app is served in), the `app` (or `null`) and per panel its `declaration`, its `data` and its `run`.
 - A `run`: the `variant` and the `model` (a key of `models`) it simulates, the `model_sha256` of its SBML, `start`, `end`, `points` (intervals, `points + 1` rows), the delivered `x`, the `units`, the `curves` (per curve id the `selection` and the `factor` from the unit of the model to the delivered one), the `preinit` (pairs in the units of the model) and the `knobs` (per knob id its `target` and `factor`, its `parameter` and its `unit`).
+- The `uncertainty` of a `run`, for a model whose parameters carry one: the `fit` it comes from, the `level` of the band, the `seed` the sample was drawn with, the `default_draws` a client asks for and the `max_draws` it may ask for, the `parameters` (ids of the model) and the `draws`, one vector per draw in the order of the parameters and in the units of the model.
 - `models`: per model key the `sbml` and the `compiled` directory (relative to `bundle.json`), its `variant`, the `selections` every panel run on it reads, the `settings` of `simulation/1` and the `absolute_tolerances` per state id, which the endpoint turns into a `per_state` tolerance in the order of the `states` of `model.json` (the scalar one for a state without one).
 
 Nothing of the semantics of a simulation lives in JavaScript. The formulas of the derived targets of a panel are compiled into the model by the export: one parameter `panel_knob__<knob id>` per knob a formula reads and one initial assignment per derived target, so a model key is the variant, or the variant and a hash of its derived targets. The unit conversions are factors, and the times of the output are computed by the export.

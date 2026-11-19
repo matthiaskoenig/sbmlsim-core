@@ -469,3 +469,118 @@ test("panel runs in flight obey their independent count cap", async () => {
   assert.equal((await running).status, 200);
   assert.equal((await simulate(bounded, "amount", { values: { dose: 0.015 } })).status, 200);
 });
+
+test("the draws of the uncertainty of a panel are run and answered as a band", async () => {
+  /** A simulation on the main thread with the parameters of one draw set. */
+  const drawn = (c, renal = 100) =>
+    instance.simulate({
+      contract: "simulation/1",
+      start: 0,
+      end: 30,
+      output: { uniform: { steps: 6 } },
+      preinit: [
+        ["c", c],
+        ["dose", 10],
+        ["kbase", 0.1],
+        ["panel_knob__renal", renal],
+        ["panel_knob__speed", 0.1],
+      ],
+      changes: [],
+      steady_state: null,
+      selections: ["B", "[A]"],
+      settings: settings(),
+    });
+  /** The percentile of a sample, the linear interpolation of its order statistics. */
+  const percentileOf = (sample, share) => {
+    const sorted = [...sample].sort((a, b) => a - b);
+    const at = share * (sorted.length - 1);
+    const low = Math.floor(at);
+    return sorted[low] + (at - low) * (sorted[Math.ceil(at)] - sorted[low]);
+  };
+
+  // a request which asks for no draw pays for none: no band and nothing extra was run
+  const plain = await simulate(endpoint, "amount");
+  assert.equal(plain.body.uncertainty, undefined);
+
+  const { status, body } = await simulate(endpoint, "amount", { draws: 2 });
+  assert.equal(status, 200);
+  assert.equal(body.uncertainty.draws, 2);
+  assert.equal(body.uncertainty.fit, "fit toy");
+  assert.equal(body.uncertainty.level, 0.9);
+  assert.deepEqual(body.uncertainty.failed, []);
+  // a run of one point carries the curve of every draw, in the order of the sample
+  assert.equal(body.uncertainty.curves.B.length, 2);
+  const first = column(drawn(1.2), "B");
+  const second = column(drawn(1.8), "B");
+  assert.deepEqual(bits(body.uncertainty.curves.B[0]), bits(first));
+  assert.deepEqual(bits(body.uncertainty.curves.B[1]), bits(second));
+  // the band is the percentiles of that sample, time by time
+  const band = body.uncertainty.band.B[0];
+  assert.equal(band.low.length, bundle.answers[""].panels.amount.run.x.length);
+  for (let t = 0; t < band.low.length; t += 1) {
+    const sample = [first[t], second[t]];
+    assert.equal(band.low[t], percentileOf(sample, 0.05));
+    assert.equal(band.high[t], percentileOf(sample, 0.95));
+    assert.ok(band.low[t] <= band.high[t]);
+  }
+});
+
+test("a draw which does not integrate is left out of the band and counted", async () => {
+  // the fourth draw of the sample sets the renal function to 0, which makes k infinite
+  const { body } = await simulate(endpoint, "amount", { draws: 4 });
+  assert.equal(body.uncertainty.draws, 4);
+  assert.deepEqual(body.uncertainty.failed, [3]);
+  assert.equal(body.uncertainty.curves.B.length, 4);
+  assert.deepEqual(
+    body.uncertainty.curves.B[3],
+    bundle.answers[""].panels.amount.run.x.map(() => null),
+  );
+  // the band of the three which integrated, which the curve of the panel lies inside
+  const band = body.uncertainty.band.B[0];
+  const nominal = body.curves.B[0];
+  for (let t = 1; t < band.low.length; t += 1) {
+    assert.ok(band.low[t] < nominal[t], `the low end at ${t}`);
+    assert.ok(band.high[t] > nominal[t], `the high end at ${t}`);
+  }
+  // the run itself integrated: the draws are no point of the grid
+  assert.deepEqual(body.status, { ok: true, points: 1, failed: [] });
+});
+
+test("a band travels for every point of a grid, and the draws themselves for one point alone", async () => {
+  const { body } = await simulate(endpoint, "amount", { grid: { dose: 2 }, draws: 2 });
+  assert.equal(body.uncertainty.draws, 2);
+  assert.equal(body.uncertainty.band.B.length, 2);
+  assert.equal(body.uncertainty.curves, undefined);
+  // the band of a point is around the curve of that point, and a larger dose is a larger band
+  for (const [point, row] of body.curves.B.entries()) {
+    const band = body.uncertainty.band.B[point];
+    for (let t = 1; t < row.length; t += 1) {
+      assert.ok(band.low[t] <= row[t] && row[t] <= band.high[t], `the point ${point} at ${t}`);
+    }
+  }
+  assert.ok(body.uncertainty.band.B[1].high[3] > body.uncertainty.band.B[0].high[3]);
+});
+
+test("the draws a request may ask for are the ones the sample holds", async () => {
+  const over = await simulate(endpoint, "amount", { draws: 5 });
+  assert.equal(over.status, 422);
+  assert.match(over.body.detail, /carries 4 draws of its uncertainty, 5 were asked for/);
+  // a panel whose recipe carries no uncertainty answers no band, whatever it was asked for
+  const none = await simulate(endpoint, "conc", { draws: 2 });
+  assert.equal(none.status, 200);
+  assert.equal(none.body.uncertainty, undefined);
+  // and a number which is no count at all is no request, while a null is a field which is absent
+  assert.equal((await simulate(endpoint, "amount", { draws: null })).body.uncertainty, undefined);
+  for (const draws of [-1, 1.5, "2"]) {
+    const bad = await simulate(endpoint, "amount", { draws });
+    assert.equal(bad.status, 422, `draws ${JSON.stringify(draws)}`);
+  }
+});
+
+test("the spec hash of an answer carries the draws it was run with", async () => {
+  const hash = async (body) => (await simulate(endpoint, "amount", body)).body.spec_hash;
+  const none = await hash({});
+  assert.notEqual(await hash({ draws: 2 }), none);
+  assert.notEqual(await hash({ draws: 4 }), await hash({ draws: 2 }));
+  assert.equal(await hash({ draws: 2 }), await hash({ draws: 2 }));
+});
