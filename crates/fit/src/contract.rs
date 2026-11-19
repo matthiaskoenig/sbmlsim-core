@@ -222,6 +222,9 @@ pub struct RunAnswer {
     pub evaluations: u64,
     /// The jacobians it took.
     pub jacobians: u64,
+    /// Where they came from: `"sensitivities"` or `"difference_quotient"`, which `"auto"` of
+    /// the request resolves to, the same for every run of a fit.
+    pub jacobian: JacobianChoice,
     /// The time it took.
     pub seconds: f64,
 }
@@ -272,6 +275,13 @@ pub fn problem_of(
     Problem::new(definition, model, threads)
 }
 
+/// What a fit calls with a run of it which finished, see [`fit_reporting`].
+///
+/// It is called on the thread of the pool which ran that start, so a caller of several
+/// threads is called from several of them, and the index is the start of the run in the
+/// request. A fit which is stopped reports the runs which finished before it was.
+pub type OnRun<'a> = &'a (dyn Fn(usize, &RunAnswer) + Send + Sync);
+
 /// Runs a fit of the contract `fit/1` until a caller stops it, see [`fit`] and [`Stop`].
 ///
 /// # Errors
@@ -283,6 +293,25 @@ pub fn fit_with(
     threads: Option<usize>,
     stop: &Stop,
 ) -> Result<FitAnswer, FitError> {
+    fit_reporting(request, model, threads, stop, None)
+}
+
+/// Runs a fit of the contract `fit/1` which reports every run of it as it finishes.
+///
+/// The answer is the one of [`fit_with`] and carries every run as well: `on_run` is what a
+/// caller which cannot wait for the answer needs, e.g. to report the progress of a long fit,
+/// to store its runs while it runs or to keep the runs of a fit which is stopped.
+///
+/// # Errors
+///
+/// As [`fit`].
+pub fn fit_reporting(
+    request: &FitRequest,
+    model: Arc<LoadedModel>,
+    threads: Option<usize>,
+    stop: &Stop,
+    on_run: Option<OnRun<'_>>,
+) -> Result<FitAnswer, FitError> {
     let problem = problem_of(request, model, threads)?;
     let starts = starts_of(request, &problem)?;
     let began = std::time::Instant::now();
@@ -290,30 +319,30 @@ pub fn fit_with(
     // the batch: a start whose evaluation fans fewer conditions out than the pool has threads
     // leaves them to the starts beside it. A fit which was stopped before a start began runs
     // none of it, as a sequence of them would have left it out.
-    let fits: Vec<Option<Result<Fit, FitError>>> = problem.install(|| {
+    let fits: Vec<Option<Result<(Fit, RunAnswer), FitError>>> = problem.install(|| {
         starts
             .par_iter()
-            .map(|start| {
-                (!stop.stopped())
-                    .then(|| problem.optimize_with(&request.optimizer, &start.point, stop))
+            .enumerate()
+            .map(|(index, start)| {
+                (!stop.stopped()).then(|| {
+                    let fit = problem.optimize_with(&request.optimizer, &start.point, stop)?;
+                    let run = answer_of(start, &fit, problem.jacobian_of());
+                    // the run is reported where it finished, before the starts beside it
+                    // finished, which is what a caller of a long fit follows it by
+                    if let Some(on_run) = on_run {
+                        on_run(index, &run);
+                    }
+                    Ok((fit, run))
+                })
             })
             .collect()
     });
     let mut runs: Vec<RunAnswer> = Vec::with_capacity(starts.len());
     let mut best: Option<Fit> = None;
-    for (start, fit) in starts.iter().zip(fits) {
+    for fit in fits {
         let Some(fit) = fit else { continue };
-        let fit = fit?;
-        runs.push(RunAnswer {
-            start: start.values.clone(),
-            values: fit.values.clone(),
-            cost: fit.cost,
-            status: fit.status.clone(),
-            iterations: fit.iterations,
-            evaluations: fit.evaluations,
-            jacobians: fit.jacobians,
-            seconds: fit.seconds,
-        });
+        let (fit, run) = fit?;
+        runs.push(run);
         if best.as_ref().is_none_or(|best| fit.cost < best.cost) {
             best = Some(fit);
         }
@@ -446,6 +475,21 @@ fn definition_of(request: &FitRequest) -> Result<Definition, FitError> {
 /// The starts of a fit, the values of its parameters as given and the point of the search
 /// space of every one of them; the start of the parameters themselves when the request gives
 /// none.
+/// The answer of a run of a fit: where it started, where it ended and what it took.
+fn answer_of(start: &Start, fit: &Fit, jacobian: JacobianChoice) -> RunAnswer {
+    RunAnswer {
+        start: start.values.clone(),
+        values: fit.values.clone(),
+        cost: fit.cost,
+        status: fit.status.clone(),
+        iterations: fit.iterations,
+        evaluations: fit.evaluations,
+        jacobians: fit.jacobians,
+        jacobian,
+        seconds: fit.seconds,
+    }
+}
+
 fn starts_of(request: &FitRequest, problem: &Problem) -> Result<Vec<Start>, FitError> {
     if request.starts.is_empty() {
         return Ok(vec![Start {

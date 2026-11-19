@@ -157,16 +157,25 @@ impl LoadedModel {
     /// the point, so nothing of python is built per simulation. Ctrl-C stops the optimizer at
     /// its next iteration and raises `KeyboardInterrupt`.
     ///
+    /// `on_run` is called with the index of a run of the fit and the run itself (a dict of
+    /// the answer's `runs`) as soon as that run finished, which is what a caller of a long
+    /// fit reports its progress by, stores its runs by and keeps the runs of an interrupted
+    /// fit by: the runs of a fit which is stopped are reported before `KeyboardInterrupt` is
+    /// raised, and the runs of one which finished are all reported before it answers. It is
+    /// called on this thread and not on the ones of the fit, so it holds the GIL and the fit
+    /// runs on while it does; an error it raises stops the fit and reaches the caller.
+    ///
     /// Raises `ValueError` for a request which is none of the contract and for a fit which
     /// cannot run (a curve of a condition the fit has not, a parameter the model has not, a
     /// start outside the bounds), and the errors of a simulation for a failure of the engine;
     /// a failed integration is no error, it is a point the optimizer may not take.
-    #[pyo3(signature = (request, *, threads=None))]
+    #[pyo3(signature = (request, *, threads=None, on_run=None))]
     fn fit<'py>(
         &self,
         py: Python<'py>,
         request: &Bound<'_, PyAny>,
         threads: Option<usize>,
+        on_run: Option<Bound<'py, PyAny>>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let request: sbmlsim_fit::FitRequest =
             serde_path_to_error::deserialize(&mut pythonize::Depythonizer::from_object(request))
@@ -175,11 +184,27 @@ impl LoadedModel {
                 })?;
         let model = self.model.clone();
         let stop = sbmlsim_fit::Stop::new();
+        let (sender, runs) = std::sync::mpsc::channel::<(usize, sbmlsim_fit::RunAnswer)>();
+        let reporting = on_run.is_some();
         let worker = {
             let stop = stop.clone();
             std::thread::Builder::new()
                 .name("sbmlsim-fit".to_string())
-                .spawn(move || sbmlsim_fit::fit_with(&request, model, threads, &stop))
+                .spawn(move || {
+                    if !reporting {
+                        drop(sender);
+                        return sbmlsim_fit::fit_with(&request, model, threads, &stop);
+                    }
+                    // the runs are reported from the threads of the pool and are sent to the
+                    // thread of the caller, which is the one that may hold the GIL, so the
+                    // sender of them is locked: one lock per run of the fit
+                    let sender = std::sync::Mutex::new(sender);
+                    let report = |index: usize, run: &sbmlsim_fit::RunAnswer| {
+                        let sender = sender.lock().unwrap_or_else(|held| held.into_inner());
+                        drop(sender.send((index, run.clone())));
+                    };
+                    sbmlsim_fit::fit_reporting(&request, model, threads, &stop, Some(&report))
+                })
                 .map_err(|error| {
                     InternalError::new_err(format!("the fit has no thread: {error}"))
                 })?
@@ -189,9 +214,17 @@ impl LoadedModel {
         // is what keeps a stopped fit from reaching into the model of a caller which went on
         while !worker.is_finished() {
             py.detach(|| std::thread::sleep(std::time::Duration::from_millis(20)));
+            if let Err(error) = report_runs(py, &runs, on_run.as_ref()) {
+                stop.stop();
+                py.detach(|| drop(worker.join()));
+                return Err(error);
+            }
             if let Err(interrupt) = py.check_signals() {
                 stop.stop();
                 py.detach(|| drop(worker.join()));
+                // the runs which finished before the fit was stopped are what a caller keeps
+                // of it; an error of the report is none of the interrupt it asked for
+                drop(report_runs(py, &runs, on_run.as_ref()));
                 return Err(interrupt);
             }
         }
@@ -199,6 +232,9 @@ impl LoadedModel {
             .detach(|| worker.join())
             .map_err(|_| InternalError::new_err("the fit panicked"))?
             .map_err(fit_error)?;
+        // the runs which finished while the fit was joined are reported as well, so every run
+        // of the answer was reported before it is answered
+        report_runs(py, &runs, on_run.as_ref())?;
         pythonize::pythonize(py, &answer).map_err(Into::into)
     }
 
@@ -260,4 +296,22 @@ impl LoadedModel {
     ) -> PyResult<Vec<Py<PyAny>>> {
         batch(py, &self.model, requests, threads)
     }
+}
+
+/// Reports the runs of a fit which finished since the last report to `on_run`.
+///
+/// Called on the thread of the caller of `LoadedModel.fit` with the GIL, see there. Nothing
+/// is reported for a fit which was not asked to report, whose runs are no channel.
+fn report_runs<'py>(
+    py: Python<'py>,
+    runs: &std::sync::mpsc::Receiver<(usize, sbmlsim_fit::RunAnswer)>,
+    on_run: Option<&Bound<'py, PyAny>>,
+) -> PyResult<()> {
+    let Some(on_run) = on_run else {
+        return Ok(());
+    };
+    while let Ok((index, run)) = runs.try_recv() {
+        on_run.call1((index, pythonize::pythonize(py, &run)?))?;
+    }
+    Ok(())
 }

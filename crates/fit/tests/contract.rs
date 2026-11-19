@@ -2,7 +2,7 @@
 
 use serde_json::{Value, json};
 
-use sbmlsim_fit::{FIT_CONTRACT, FitAnswer, FitRequest, fit};
+use sbmlsim_fit::{FIT_CONTRACT, FitAnswer, FitRequest, Stop, fit, fit_reporting};
 
 #[path = "support/fixture.rs"]
 mod fixture;
@@ -378,4 +378,75 @@ fn a_fit_of_no_iteration_profiles_the_point_it_was_given() {
             point.status
         );
     }
+}
+
+#[test]
+fn a_fit_reports_every_run_of_it_as_it_finishes() {
+    // the runs are reported from the threads of the pool, so a lock keeps them
+    let mut request = json(3.0);
+    request["starts"] = json!([[0.02], [3.0], [9.0], [5.0]]);
+    let request: FitRequest = serde_json::from_value(request).unwrap();
+    let reported = std::sync::Mutex::new(Vec::<(usize, f64)>::new());
+
+    let answer = fit_reporting(
+        &request,
+        model(),
+        None,
+        &Stop::new(),
+        Some(&|index, run| reported.lock().unwrap().push((index, run.cost))),
+    )
+    .unwrap();
+
+    let mut reported = reported.into_inner().unwrap();
+    reported.sort_by_key(|(index, _)| *index);
+    assert_eq!(
+        reported,
+        answer
+            .runs
+            .iter()
+            .enumerate()
+            .map(|(index, run)| (index, run.cost))
+            .collect::<Vec<_>>(),
+        "the runs which were reported are not the runs of the answer"
+    );
+    // and every run says where its jacobian came from, as the fit of all of them does
+    assert!(
+        answer
+            .runs
+            .iter()
+            .all(|run| run.jacobian == answer.jacobian),
+        "a run of the fit took another jacobian than the fit"
+    );
+}
+
+#[test]
+fn a_fit_which_is_stopped_reports_the_runs_which_finished() {
+    // the fit is stopped while it runs, which the report of its first run does: the runs
+    // which were reported are the answer, and the ones which never began are none of it
+    let mut request = json(3.0);
+    request["starts"] = json!([[0.02], [3.0], [9.0], [5.0], [1.0], [0.5], [7.0], [2.0]]);
+    request["threads"] = json!(1);
+    let request: FitRequest = serde_json::from_value(request).unwrap();
+    let stop = Stop::new();
+    let reported = std::sync::Mutex::new(Vec::<usize>::new());
+
+    let answer = fit_reporting(
+        &request,
+        model(),
+        Some(1),
+        &stop,
+        Some(&|index, _| {
+            reported.lock().unwrap().push(index);
+            stop.stop();
+        }),
+    )
+    .unwrap();
+
+    let reported = reported.into_inner().unwrap();
+    assert_eq!(reported.len(), answer.runs.len(), "{reported:?}");
+    assert!(
+        answer.runs.len() < 8,
+        "the fit ran {} of its eight starts after it was stopped",
+        answer.runs.len()
+    );
 }
