@@ -131,24 +131,35 @@ of the integration); a step at the upper bound is taken backwards.
 ### The identifiability
 
 ```json
-{ "parameters": ["k"], "walk": { "points": 10, "span": 1.0, "delta": 1.920729410347062 }, "profiles": true, "fisher": true }
+{ "parameters": ["k"], "walk": { "points": 50, "step": 0.1, "min_step": 0.01, "max_step": 1.0, "factor": 2.0, "rise": 0.2, "delta": 1.920729410347062 }, "profiles": true, "fisher": true }
 ```
 
 An optimum is not an answer until the data is known to determine it. Both ways of saying how
 well it does run on the batch of the fit itself:
 
 - **The profile of the likelihood** of a parameter holds it at a value and fits the others
-  again, at `points` values on each side of the optimum, `span` wide in the space the
-  parameter is searched (a decade for a parameter of the scale `log10`) and clipped to its
-  bounds. Where the cost of those fits rises by `delta` above the optimum are the bounds of
-  the parameter; `delta` is `chi2(0.95, 1) / 2 = 1.9207...` by default, which is the 95 %
-  interval of a cost that is half a sum of squares. A profile which does not rise is a
-  parameter the data says nothing about. The fit of a point starts from the optimum of the
-  point before it, so a profile of a real model costs about one fit per point and not more.
+  again, stepping away from the optimum in the space the parameter is searched (a decade for
+  a parameter of the scale `log10`) until the cost of those fits rises by `delta` above the
+  optimum, which is where the profile bounds the parameter; `delta` is
+  `chi2(0.95, 1) / 2 = 1.9207...` by default, which is the 95 % interval of a cost that is
+  half a sum of squares. The step follows the rise of the cost: the first one is `step`, a
+  step which raises the cost by more than `rise` of `delta` is reduced by `factor` and walked
+  again, down to `min_step`, and one which raises it by less than that fraction of `rise` is
+  enlarged, up to `max_step`, so the points lie where the profile bends and not where it is
+  flat, and a side has about `1 / rise` points below the threshold. A side which does not
+  reach it walks `points` points or the bound of the parameter, whichever comes first, which
+  is what a parameter the data says nothing about does. The fit of a point starts from the
+  optimum of the point before it, so a profile of a real model costs about one fit per point
+  and not more, the fits of the steps which were walked again included.
   The two sides of a profile and the profiles of the parameters do not depend on each other
   and run next to each other on the threads of the batch, which is what fills a pool a fit of
   few conditions leaves idle: the profiles of three parameters of a fit of two conditions are
   2.2 times faster that way on 20 threads.
+A caller which has the optimum of a fit already, e.g. the best run of a fit which ran
+before, walks the profiles around that point: the fit of the request starts there and runs
+`max_iterations: 0`, so it takes no step and its answer is that point, and the `optimizer`
+of the identifiability fits the other parameters at the points of the profiles.
+
 - **The Fisher information** is `JᵀJ` of the residuals at the optimum, one Jacobian and the
   linear algebra of a `parameters x parameters` matrix. Its inverse is the covariance of the
   parameters, its diagonal their standard errors and its scaled form their correlations, in
@@ -158,7 +169,8 @@ well it does run on the batch of the fit itself:
 | field | default | what it sets |
 |---|---|---|
 | `parameters` | every parameter | the ids to profile, in the order of the profiles |
-| `walk` | `{"points": 10, "span": 1.0, "delta": 1.9207...}` | what a profile walks, above |
+| `walk` | `{"points": 50, "step": 0.1, "min_step": 0.01, "max_step": 1.0, "factor": 2.0, "rise": 0.2, "delta": 1.9207...}` | what a profile walks, above |
+| `optimizer` | the one of the fit | the optimizer of the points of a profile, which fit the other parameters |
 | `profiles` | true | whether the profiles are walked at all, which is a fit per point of every one of them |
 | `fisher` | true | whether the Fisher information is computed, which is one Jacobian |
 

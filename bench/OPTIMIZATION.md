@@ -88,14 +88,14 @@ A fit of hydrochlorothiazide, five parameters and ten iterations, on 20 threads:
 
 | the shape | one after the other | next to each other | threads busy, before and after |
 |---|---:|---:|---|
-| 2 conditions, four starts | 120.7 ms | **40.2 ms** | 5.3 → 6.7 |
-| 2 conditions, the profiles of three parameters | 341.1 ms | **160.6 ms** | 4.6 → 8.5 |
-| 4 conditions, four starts | 121.4 ms | **60.3 ms** | 5.9 → 11.6 |
-| 4 conditions, the profiles of three parameters | 583.5 ms | **301.8 ms** | 7.3 → 12.2 |
-| 20 conditions, four starts | 346.6 ms | **202.3 ms** | 12.8 → 15.1 |
-| 20 conditions, the profiles of three parameters | 1275.4 ms | 1282.6 ms | 14.7 → 14.0 |
+| 2 conditions, four starts | 80.4 ms | **40.2 ms** | 5.3 → 6.7 |
+| 2 conditions, the profiles of three parameters | 361.3 ms | **201.0 ms** | 4.9 → 9.0 |
+| 4 conditions, four starts | 101.0 ms | **60.3 ms** | 6.9 → 11.0 |
+| 4 conditions, the profiles of three parameters | 665.8 ms | **403.5 ms** | 7.6 → 11.4 |
+| 20 conditions, four starts | 262.7 ms | **204.2 ms** | 12.4 → 15.4 |
+| 20 conditions, the profiles of three parameters | 1439.7 ms | **1315.4 ms** | 15.2 → 17.4 |
 
-1.7x to 3x for the starts and 1.9x to 2.1x for the profiles of the narrow fits, nothing where the conditions already fill the pool, and the answer is the same one on one thread and on twenty (`a_fit_of_many_starts_answers_the_same_on_one_thread_and_on_eight`): a run is none of the others, so the runs stay in the order of the starts and the best of them is the best whatever stole which point.
+1.3x to 2x for the starts and 1.1x to 1.8x for the profiles, the narrow fits the most and the 20 conditions which already fill the pool the least, and the answer is the same one on one thread and on twenty (`a_fit_of_many_starts_answers_the_same_on_one_thread_and_on_eight`): a run is none of the others, so the runs stay in the order of the starts and the best of them is the best whatever stole which point. The two columns are measured next to each other on the same machine, the sequential one with the three levels of the pool replaced by loops.
 
 ## Estimates, not measurements
 

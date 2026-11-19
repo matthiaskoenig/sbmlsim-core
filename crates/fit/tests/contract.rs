@@ -269,7 +269,7 @@ fn two_conditions_of_one_id_are_refused() {
 fn a_fit_which_asks_for_the_identifiability_of_its_optimum_answers_with_it() {
     let mut request = pair();
     request["identifiability"] = json!({
-        "walk": {"points": 4, "span": 0.3},
+        "walk": {"points": 4, "step": 0.075},
         "fisher": true,
     });
 
@@ -280,7 +280,11 @@ fn a_fit_which_asks_for_the_identifiability_of_its_optimum_answers_with_it() {
     assert_eq!(k.id, "k");
     assert_eq!(y.id, "y");
     assert!((k.at - K).abs() < 1e-6, "the profile is at k = {}", k.at);
-    assert_eq!(k.points.len(), 8);
+    assert!(
+        !k.points.is_empty() && k.points.len() <= 8,
+        "the walk of k took {} points of the four of each side",
+        k.points.len()
+    );
     assert!(k.identifiable && y.identifiable, "{:?}", (k.lower, k.upper));
     assert!(k.lower.unwrap() < K && K < k.upper.unwrap());
     let fisher = answer.fisher.clone().unwrap();
@@ -298,7 +302,7 @@ fn a_fit_which_asks_for_the_profile_of_one_parameter_walks_that_one() {
     let mut request = pair();
     request["identifiability"] = json!({
         "parameters": ["y"],
-        "walk": {"points": 2, "span": 0.2},
+        "walk": {"points": 2, "step": 0.1},
         "fisher": false,
     });
 
@@ -328,4 +332,50 @@ fn a_fit_without_the_block_of_the_identifiability_walks_no_profile() {
     let written = serde_json::to_value(&answer).unwrap();
     assert!(written.get("profiles").is_none(), "{written}");
     assert!(written.get("fisher").is_none(), "{written}");
+}
+
+#[test]
+fn a_fit_of_no_iteration_profiles_the_point_it_was_given() {
+    // a caller which has the optimum of a fit already walks the profiles around it: the fit
+    // of the request takes no step, so its answer is that point, and the points of the
+    // profiles fit the other parameters with an optimizer of their own
+    let mut request = pair();
+    request["starts"] = json!([[K, 1.0]]);
+    request["optimizer"] = json!({"max_iterations": 0});
+    request["identifiability"] = json!({
+        "parameters": ["k"],
+        "walk": {"points": 4, "step": 0.1},
+        "fisher": false,
+        "optimizer": {"max_iterations": 50},
+    });
+
+    let answer = run(request).unwrap();
+
+    // the start itself, up to the round trip through the space it is searched in
+    for (parameter, start) in answer.parameters.iter().zip([K, 1.0]) {
+        assert!(
+            (parameter.value - start).abs() < 1e-12,
+            "the fit moved {} from {start} to {}",
+            parameter.id,
+            parameter.value
+        );
+    }
+    assert_eq!(answer.runs[0].iterations, 0);
+    let profile = &answer.profiles[0];
+    assert!(
+        (profile.at - K).abs() < 1e-12,
+        "the profile is at {}",
+        profile.at
+    );
+    assert_eq!(profile.cost, answer.cost);
+    // the other parameter is fitted again at every point, which an optimizer of no iteration
+    // would leave at the value of the point before it
+    for point in &profile.points {
+        assert!(
+            point.status != "MaxIter",
+            "the point {} took no iteration: {}",
+            point.value,
+            point.status
+        );
+    }
 }

@@ -196,7 +196,7 @@ def main() -> None:
         if args.profile:
             request["identifiability"] = {
                 "parameters": [names[0]],
-                "walk": {"points": 4, "span": 0.5},
+                "walk": {"points": 4, "step": 0.125},
                 "fisher": True,
             }
 

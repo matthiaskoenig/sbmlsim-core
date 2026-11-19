@@ -277,14 +277,15 @@ def test_a_fit_answers_with_the_identifiability_of_its_optimum(decay, data):
     answer = decay.fit(
         pair_request(
             data,
-            identifiability={"walk": {"points": 3, "span": 0.3}, "fisher": True},
+            identifiability={"walk": {"points": 3, "step": 0.1}, "fisher": True},
         ),
         threads=2,
     )
 
     assert [profile["id"] for profile in answer["profiles"]] == ["k", "y"]
     k = answer["profiles"][0]
-    assert len(k["points"]) == 6
+    # at most three points on each side, fewer where the walk crosses the threshold
+    assert 0 < len(k["points"]) <= 6
     assert k["identifiable"]
     assert k["lower"] < 0.3 < k["upper"]
     assert k["threshold"] > k["cost"]

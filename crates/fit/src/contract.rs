@@ -88,6 +88,12 @@ pub struct Identifiability {
     pub profiles: bool,
     /// Whether the Fisher information of the optimum is computed, which is one jacobian.
     pub fisher: bool,
+    /// The optimizer of the points of a profile, which fit the other parameters while one is
+    /// held at a value; the optimizer of the fit itself when it is absent. A caller which
+    /// profiles an optimum it already has runs the fit of `max_iterations: 0`, whose answer
+    /// is the start it was given, and gives the points an optimizer of their own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub optimizer: Option<Settings>,
 }
 
 impl Default for Identifiability {
@@ -97,6 +103,7 @@ impl Default for Identifiability {
             walk: Walk::default(),
             profiles: true,
             fisher: true,
+            optimizer: None,
         }
     }
 }
@@ -318,15 +325,11 @@ pub fn fit_with(
         None => (Vec::new(), None),
         Some(analysis) => {
             let which = which_of(analysis, &problem)?;
+            // the points of a profile fit the other parameters, which the optimizer of the
+            // analysis runs where it has one of its own
+            let optimizer = analysis.optimizer.as_ref().unwrap_or(&request.optimizer);
             let walked = if analysis.profiles {
-                profiles(
-                    &problem,
-                    &request.optimizer,
-                    &best.x,
-                    &which,
-                    &analysis.walk,
-                    stop,
-                )?
+                profiles(&problem, optimizer, &best.x, &which, &analysis.walk, stop)?
             } else {
                 Vec::new()
             };
