@@ -299,7 +299,9 @@ A fit of many starts answers when the last of them finished, which is late for a
 minutes, so `on_run` follows it while it runs:
 
 ```python
-answer = model.fit(request, threads=8, on_run=lambda index, run: print(index, run["cost"]))
+answer = model.fit(
+    request, threads=8, on_run=lambda index, run: print(index, run["cost"])
+)
 ```
 
 It is called with the index of a start and the run of it as soon as that run finished, on the
