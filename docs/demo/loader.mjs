@@ -86,6 +86,9 @@ export const STATS_NAMES = [
   "jacobian_vector_evals",
   "preconditioner_evals",
   "preconditioner_solves",
+  "sensitivity_rhs_evals",
+  "sensitivity_model_rhs_evals",
+  "sensitivity_jac_p_evals",
 ];
 
 const LITTLE_ENDIAN = new Uint8Array(new Uint16Array([1]).buffer)[0] === 1;
