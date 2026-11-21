@@ -86,7 +86,7 @@ use errors::{
     SbmlsimCoreError, SimulationError, UnsupportedError,
 };
 use runtime::{LoadedModel, Runtime};
-use simulate::{Instance, SimulationOutput};
+use simulate::{Instance, OutputSensitivities, SimulationOutput};
 
 /// The extension module of the package `sbmlsim_core`.
 #[pymodule]
@@ -120,6 +120,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Instance>()?;
     m.add_class::<PointError>()?;
     m.add_class::<SimulationOutput>()?;
+    m.add_class::<OutputSensitivities>()?;
     m.add_function(wrap_pyfunction!(compile_sbml, m)?)?;
     m.add_function(wrap_pyfunction!(runtime_wasm, m)?)?;
     Ok(())

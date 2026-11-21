@@ -316,3 +316,41 @@ def test_runtime_timeout_requires_nonnegative_integer():
             sbmlsim_core.Runtime(timeout_ms=value)
     with pytest.raises(TypeError):
         sbmlsim_core.Runtime(timeout_ms=1.5)
+
+
+def test_a_request_without_sensitivities_has_none(decay):
+    out = decay.instance().simulate(request(end=1.0, steps=1))
+    assert out.sensitivities is None
+
+
+def test_the_forward_sensitivities_of_a_run(decay):
+    # y' = -k y with y(0) = 1 and k = 0.5, so dy/dk = -t exp(-k t) and
+    # d(t_half)/dk = -ln(2) / k^2; `time` is no function of a parameter
+    req = request(end=4.0, steps=8)
+    req["sensitivities"] = ["k", "y"]
+    out = decay.instance().simulate(req)
+    sensitivities = out.sensitivities
+    assert sensitivities is not None
+    assert sensitivities.parameters == ["k", "y"]
+    assert sensitivities.values.shape == (9, len(out.columns), 2)
+    assert sensitivities.values.dtype == numpy.float64
+    assert sensitivities.values.flags.c_contiguous
+    time = out.values[:, out.columns.index("time")]
+    assert numpy.all(sensitivities.values[:, out.columns.index("time"), :] == 0.0)
+    y = out.columns.index("y")
+    numpy.testing.assert_allclose(
+        sensitivities.values[:, y, 0],
+        -time * numpy.exp(-0.5 * time),
+        rtol=1e-4,
+        atol=1e-8,
+    )
+    # the sensitivity of a state to its own initial value
+    numpy.testing.assert_allclose(
+        sensitivities.values[:, y, 1], numpy.exp(-0.5 * time), rtol=1e-4, atol=1e-8
+    )
+    # an assignment rule follows the sensitivities of the states and the parameter
+    half = out.columns.index("t_half")
+    assert sensitivities.values[0, half, 0] == pytest.approx(
+        -math.log(2) / 0.25, rel=1e-6
+    )
+    assert sensitivities.values[0, half, 1] == pytest.approx(0.0, abs=1e-9)

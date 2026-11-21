@@ -160,6 +160,9 @@ the order they were asked for and `values` of `n_rows * columns.length * paramet
 numbers, row major: the sensitivity of the column `c` of the row `r` in the parameter `j` is
 `values[(r * columns.length + c) * parameters.length + j]`. The column of the time is 0.
 
+The [python binding](python.md#compile-and-simulate) hands them over as `out.sensitivities`, a
+float64 array of the shape `(rows, columns, parameters)`.
+
 The engine integrates one sensitivity vector per parameter next to the states (CVODES,
 `CV_STAGGERED`), so a run of `k` parameters is one integration and not `k + 1`. The states of
 such a run stay the states of the same run without it: the sensitivities are not in the error
@@ -217,7 +220,7 @@ cached per engine and reused across compatible simulations.
 | field | what it holds |
 |---|---|
 | `contract` | `"model/2"` |
-| `compiler` | the compiler and its version, e.g. `"sbmlsim-compiler 0.13.0"` |
+| `compiler` | the compiler and its version, e.g. `"sbmlsim-compiler 0.14.0"` |
 | `id` | the id of the model |
 | `states` | the states, in the order of the state vector (the order of a `per_state` tolerance) |
 | `parameters` | the parameters (with the compartments, the species which are not states and the species references), in the order of the parameter vector |
@@ -236,7 +239,7 @@ An entity of `states` and `parameters` is `{"id", "kind", "initial", "settable"}
 ```json
 {
   "contract": "model/2",
-  "compiler": "sbmlsim-compiler 0.13.0",
+  "compiler": "sbmlsim-compiler 0.14.0",
   "id": "toy",
   "states": [
     { "id": "A", "kind": { "species": { "compartment": "c", "has_only_substance_units": false, "stores_concentration": false } }, "initial": 20.0, "settable": true }
