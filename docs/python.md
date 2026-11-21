@@ -62,6 +62,7 @@ model.initial_values()  # selection id -> value as loaded
 instance = model.instance()  # one per thread
 out = instance.simulate(request)  # request: a dict of simulation/1
 out.columns, out.values  # names, float64 array (rows, columns)
+out.sensitivities  # None, or the forward sensitivities the request asked for
 instance.stats()  # the counters of the integrator
 # a batch on rayon threads, the results in the order of the requests
 results = model.simulate_many(requests, threads=None)
@@ -73,6 +74,8 @@ The compiler reads SBML Level 3 Version 1 or 2 core, flat and without a required
 request["output"] = "integrator_steps"
 request["settings"]["absolute_tolerance"] = {"per_state": [1e-12] * n_states}
 ```
+
+A request which asks for [forward sensitivities](simulating.md#forward-sensitivities) answers with them on the output, `None` without: `out.sensitivities.parameters` are the ids in the order they were asked for and `out.sensitivities.values` is a float64 array of the shape `(rows, columns, parameters)` in C order, the derivative of the column `c` of the row `r` in the parameter `j` at `[r, c, j]`. They come from the native engine, so a request which asks for them goes through `simulate` or `simulate_many` of a model of this package and not through `engine.wasm`, whose output format has no room for them.
 
 `description` and `initial_values()` of a model, `description` of a compiled model and `columns` of an output are computed anew by every access, so read them once. The parallelism of `simulate_many` is `min(threads, len(requests))`, and its pool and its per-thread instances live only for the duration of the call (an instance costs about 0.3 s to make for a model of 700 kB of description), so give it as many points as you can rather than many small batches: 320 points in one call on 20 threads took 2.09 s against 22.0 s serially.
 

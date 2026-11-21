@@ -83,6 +83,21 @@ class SimulationOutput:
     def values(self) -> numpy.typing.NDArray[numpy.float64]:
         """The values, of the shape `(n_rows, len(columns))`, in C order."""
 
+    @property
+    def sensitivities(self) -> OutputSensitivities | None:
+        """The forward sensitivities, `None` for a request which did not ask for them."""
+
+class OutputSensitivities:
+    """The forward sensitivities of the columns of a table."""
+
+    @property
+    def parameters(self) -> list[str]:
+        """The ids of the parameters, the `sensitivities` of the request, in their order."""
+
+    @property
+    def values(self) -> numpy.typing.NDArray[numpy.float64]:
+        """The derivatives, of the shape `(n_rows, len(columns), len(parameters))`, in C order."""
+
 class PreparedSimulation:
     """A validated request bound to one loaded model, reusable across its instances."""
 

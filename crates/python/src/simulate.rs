@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use numpy::PyArray2;
+use numpy::{PyArray2, PyArray3};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use sbmlsim_abi::EngineError;
@@ -99,6 +99,33 @@ impl PreparedSimulation {
 pub(crate) struct SimulationOutput {
     columns: Vec<String>,
     values: Py<PyArray2<f64>>,
+    sensitivities: Option<Py<OutputSensitivities>>,
+}
+
+/// The forward sensitivities of the columns of a table.
+#[pyclass(frozen, module = "sbmlsim_core")]
+pub(crate) struct OutputSensitivities {
+    parameters: Vec<String>,
+    values: Py<PyArray3<f64>>,
+}
+
+#[pymethods]
+impl OutputSensitivities {
+    /// The ids of the parameters, the `sensitivities` of the request, in their order; a new
+    /// list by every access.
+    #[getter]
+    fn parameters(&self) -> Vec<String> {
+        self.parameters.clone()
+    }
+
+    /// The derivatives as an array of float64 of the shape
+    /// `(n_rows, len(columns), len(parameters))`, in C order: the derivative of the column `c`
+    /// of the row `r` in the parameter `j` is `values[r, c, j]`. The column `time` is no
+    /// function of a parameter, so its derivatives are 0.
+    #[getter]
+    fn values<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray3<f64>> {
+        self.values.bind(py).clone()
+    }
 }
 
 #[pymethods]
@@ -114,6 +141,15 @@ impl SimulationOutput {
     #[getter]
     fn values<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
         self.values.bind(py).clone()
+    }
+
+    /// The forward sensitivities of the columns, `None` for a request which did not ask for
+    /// them (`sensitivities` of the request, which only the native engine carries).
+    #[getter]
+    fn sensitivities(&self, py: Python<'_>) -> Option<Py<OutputSensitivities>> {
+        self.sensitivities
+            .as_ref()
+            .map(|sensitivities| sensitivities.clone_ref(py))
     }
 }
 
@@ -137,9 +173,32 @@ fn output(py: Python<'_>, result: SimulationResult) -> Result<SimulationOutput, 
         result.values,
     )
     .map_err(|error| format!("the table of the engine has no shape: {error}"))?;
+    let sensitivities = result
+        .sensitivities
+        .map(|sensitivities| {
+            let shape = (
+                result.n_rows,
+                result.columns.len(),
+                sensitivities.parameters.len(),
+            );
+            let derivatives = numpy::ndarray::Array3::from_shape_vec(shape, sensitivities.values)
+                .map_err(|error| {
+                format!("the sensitivities of the engine have no shape: {error}")
+            })?;
+            Py::new(
+                py,
+                OutputSensitivities {
+                    parameters: sensitivities.parameters,
+                    values: PyArray3::from_owned_array(py, derivatives).unbind(),
+                },
+            )
+            .map_err(|error| format!("the sensitivities of the engine: {error}"))
+        })
+        .transpose()?;
     Ok(SimulationOutput {
         columns: result.columns,
         values: PyArray2::from_owned_array(py, values).unbind(),
+        sensitivities,
     })
 }
 
