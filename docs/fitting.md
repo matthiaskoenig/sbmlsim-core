@@ -48,7 +48,8 @@ k = 0.300000 [0.283746, 0.316945], y = 1.000000 [0.966070, 1.032069] after 8 eva
       "times": [0.0, 1.0, 2.0],
       "values": [1.0, 0.74, 0.55],
       "noise": [0.02, 0.02, 0.02],
-      "weight": 1.0
+      "weight": 1.0,
+      "after_change": [false, false, false]
     }
   ],
   "optimizer": { "algorithm": "trust_region", "max_iterations": 100 },
@@ -90,6 +91,7 @@ The curves:
 | `values` | the measurements, one per time |
 | `noise` | the standard deviation of every measurement, which its residual is divided by; 1 for every one of them when it is absent. A curve of a concentration and one of a volume are weighted against each other by the deviation of their measurements, and the threshold of an identifiability analysis is a rise of the cost which only means something when the residuals are scaled this way |
 | `weight` | a weight of the whole curve, 1 by default; a residual is multiplied by its square root, so a weight of 4 counts the curve four times |
+| `after_change` | whether a measurement reads the state after a change of its condition rather than the one before it, one flag per time in their order; every measurement reads the state before a change when it is absent. The output of a condition has two rows of the time of a change after its start, the state before the change and the state after it, and a measurement reads the first of them unless its flag says otherwise. A chain of a change and the events it fired has more than two rows of that time, of which a true flag reads the last, the state after the whole chain. This is the `after` of the measurements of PEtab, which a problem read without an extension of its own uses |
 
 The cost of a point of the search space is half the sum of the squares of its residuals, and a
 residual is `(simulated - measured) / noise * sqrt(weight)`. A condition whose integration

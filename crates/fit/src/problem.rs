@@ -183,6 +183,10 @@ pub struct Curve {
     pub noise: Option<Vec<f64>>,
     /// The weight of the curve, which multiplies its residuals.
     pub weight: f64,
+    /// Whether a measurement reads the state after a change rather than the one before it,
+    /// one flag per time; every measurement reads the state before a change when it is
+    /// absent. See [`crate::CurveRequest::after_change`].
+    pub after_change: Option<Vec<bool>>,
 }
 
 /// A fit as a host hands it over: the parameters, the conditions and the data.
@@ -1030,15 +1034,26 @@ fn resolve(
         }
         scales.push(curve.weight / value);
     }
+    let after = match &curve.after_change {
+        None => vec![false; curve.times.len()],
+        Some(after) if after.len() == curve.times.len() => after.clone(),
+        Some(after) => {
+            return Err(fault(format!(
+                "has {} times and {} flags of the state after a change",
+                curve.times.len(),
+                after.len()
+            )));
+        }
+    };
     let times: Vec<f64> = (0..table.n_rows)
         .map(|row| table.values[row * table.columns.len()])
         .collect();
     let mut rows = Vec::with_capacity(curve.times.len());
-    for time in &curve.times {
+    for (time, after) in curve.times.iter().zip(after.iter()) {
         if !curve.values.iter().all(|value| value.is_finite()) {
             return Err(fault("has a measurement which is not finite".to_string()));
         }
-        rows.push(row_of(*time, &times).ok_or_else(|| {
+        rows.push(row_of(*time, &times, *after).ok_or_else(|| {
             fault(format!(
                 "measures at t = {time}, which is no output time of its condition"
             ))
@@ -1054,11 +1069,23 @@ fn resolve(
 }
 
 /// The row of an output time, the nearest one within the resolution of the time.
-fn row_of(time: f64, times: &[f64]) -> Option<usize> {
+///
+/// The output of a condition has two rows of one time at a change after its start, the state
+/// before the change and the state after it, and a chain of a change and the events it fired
+/// has more: `after` reads the last row of the nearest time, the state after the whole chain,
+/// where the default reads the first of them, the state before the change.
+fn row_of(time: f64, times: &[f64], after: bool) -> Option<usize> {
     let mut best: Option<(usize, f64)> = None;
     for (row, output) in times.iter().enumerate() {
         let distance = (output - time).abs();
-        if best.is_none_or(|(_, other)| distance < other) {
+        let closer = best.is_none_or(|(_, other)| {
+            if after {
+                distance <= other
+            } else {
+                distance < other
+            }
+        });
+        if closer {
             best = Some((row, distance));
         }
     }
