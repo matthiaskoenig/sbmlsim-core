@@ -164,3 +164,128 @@ fn a_fit_of_a_budget_of_time_stops_at_it() {
     assert_eq!(fit.status, "MaxTime");
     assert_eq!(fit.values, vec![3.0]);
 }
+
+/// The definition of a fit whose data no parameter reproduces, so the cost of its optimum
+/// is not zero and the relative change of the cost of a step becomes small next to it.
+///
+/// The data of [`definition`] is the model itself, which a fit reproduces to the last bits:
+/// the cost of such a fit falls by orders of magnitude per step and its relative change is
+/// about one until it converges, so no tolerance of the cost ever fires on it.
+fn inconsistent(start: f64) -> sbmlsim_fit::Definition {
+    let mut definition = definition(start, Scale::Log10);
+    for (row, value) in definition.curves[0].values.iter_mut().enumerate() {
+        *value += if row % 2 == 0 { 0.05 } else { -0.05 };
+    }
+    definition
+}
+
+#[test]
+fn a_run_stops_at_the_tolerance_of_its_step() {
+    // without it a least squares run has no test of its step and spends its last
+    // iterations on the noise of the integrator, which it leaves as `NumericalNoProgress`;
+    // `Settings::step_tolerance` says what that costs
+    for algorithm in [Algorithm::TrustRegion, Algorithm::LevenbergMarquardt] {
+        let problem = problem(3.0, Scale::Log10, 4);
+        let ground = problem
+            .optimize(&Settings {
+                algorithm,
+                ..Settings::default()
+            })
+            .unwrap();
+
+        let fit = problem
+            .optimize(&Settings {
+                algorithm,
+                step_tolerance: Some(1e-2),
+                ..Settings::default()
+            })
+            .unwrap();
+
+        assert_eq!(
+            fit.status, "RelativeParamTolerance",
+            "{algorithm:?} did not stop at the tolerance of its step"
+        );
+        assert!(
+            fit.evaluations < ground.evaluations,
+            "{algorithm:?}: {} evaluations against the {} of a run without the tolerance",
+            fit.evaluations,
+            ground.evaluations
+        );
+    }
+}
+
+#[test]
+fn a_run_stops_at_the_tolerance_of_its_cost() {
+    for algorithm in [Algorithm::TrustRegion, Algorithm::LevenbergMarquardt] {
+        let problem = Problem::new(inconsistent(3.0), model(), 4).unwrap();
+        let ground = problem
+            .optimize(&Settings {
+                algorithm,
+                ..Settings::default()
+            })
+            .unwrap();
+
+        let fit = problem
+            .optimize(&Settings {
+                algorithm,
+                cost_tolerance: Some(1e-2),
+                ..Settings::default()
+            })
+            .unwrap();
+
+        assert_eq!(
+            fit.status, "RelativeCostTolerance",
+            "{algorithm:?} did not stop at the tolerance of its cost"
+        );
+        assert!(
+            fit.evaluations < ground.evaluations,
+            "{algorithm:?}: {} evaluations against the {} of a run without the tolerance",
+            fit.evaluations,
+            ground.evaluations
+        );
+        assert!(
+            ground.cost > 0.0,
+            "{algorithm:?}: the data of the fit is consistent after all"
+        );
+    }
+}
+
+#[test]
+fn the_tolerances_of_a_run_which_converges_leave_its_optimum_where_it_is() {
+    // the tolerances a caller gives are the ones of the noise of the integrator, where a
+    // run has converged already: turning them on moves no optimum
+    for algorithm in [Algorithm::TrustRegion, Algorithm::LevenbergMarquardt] {
+        for definition in [definition(3.0, Scale::Log10), inconsistent(3.0)] {
+            let problem = Problem::new(definition, model(), 4).unwrap();
+            let ground = problem
+                .optimize(&Settings {
+                    algorithm,
+                    ..Settings::default()
+                })
+                .unwrap();
+
+            let fit = problem
+                .optimize(&Settings {
+                    algorithm,
+                    step_tolerance: Some(1e-8),
+                    cost_tolerance: Some(1e-8),
+                    ..Settings::default()
+                })
+                .unwrap();
+
+            assert!(
+                (fit.cost - ground.cost).abs() <= 1e-9 * ground.cost.max(1e-12),
+                "{algorithm:?}: the cost {} against the {} of a run without the \
+                 tolerances",
+                fit.cost,
+                ground.cost
+            );
+            assert!(
+                fit.evaluations <= ground.evaluations,
+                "{algorithm:?}: {} evaluations against the {} of a run without them",
+                fit.evaluations,
+                ground.evaluations
+            );
+        }
+    }
+}
