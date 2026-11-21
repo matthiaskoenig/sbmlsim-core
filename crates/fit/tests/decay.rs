@@ -289,3 +289,167 @@ fn the_tolerances_of_a_run_which_converges_leave_its_optimum_where_it_is() {
         }
     }
 }
+
+/// A condition whose change at `t = 5` doubles `y`, so its output has two rows of that
+/// time: the state before the change and the state after it.
+fn doubled_at_five() -> sbmlsim_abi::SimulationRequest {
+    let mut request = fixture::request();
+    request.changes = vec![sbmlsim_abi::Change {
+        time: 5.0,
+        values: vec![],
+        increments: vec![("y".to_string(), 1.0)],
+    }];
+    request
+}
+
+/// The `y` of the two rows of the time of the change, the state before it and the one after.
+fn around_the_change(k: f64) -> (f64, f64) {
+    let model = model();
+    let mut instance = model.instantiate_native().unwrap();
+    let prepared = model
+        .prepare(&doubled_at_five(), &["k".to_string()])
+        .unwrap();
+    let table = instance.simulate_prepared(&prepared, &[k]).unwrap();
+    let columns = table.columns.len();
+    let time = table.columns.iter().position(|c| c == "time").unwrap();
+    let y = table.columns.iter().position(|c| c == "y").unwrap();
+    let at: Vec<usize> = (0..table.n_rows)
+        .filter(|row| table.values[row * columns + time] == 5.0)
+        .collect();
+    assert_eq!(
+        at.len(),
+        2,
+        "the change gives the time of its change two rows"
+    );
+    (
+        table.values[at[0] * columns + y],
+        table.values[at[1] * columns + y],
+    )
+}
+
+/// The problem of one measurement at the time of the change, reading the state before it or
+/// the one after it, whose value is `value`.
+fn at_the_change(value: f64, after: Option<Vec<bool>>) -> Problem {
+    let mut definition = definition(K, Scale::Lin);
+    definition.conditions = vec![doubled_at_five()];
+    definition.curves = vec![sbmlsim_fit::Curve {
+        condition: 0,
+        column: "y".to_string(),
+        times: vec![5.0],
+        values: vec![value],
+        noise: None,
+        weight: 1.0,
+        after_change: after,
+    }];
+    Problem::new(definition, model(), 1).unwrap()
+}
+
+#[test]
+fn a_measurement_at_a_change_reads_the_state_before_it() {
+    let (before, after) = around_the_change(K);
+    assert_ne!(before, after, "the change has to move the state");
+
+    // the measurement is the state before the change, so its residual is zero
+    let problem = at_the_change(before, None);
+    assert_eq!(problem.residuals(&problem.start()).unwrap(), vec![0.0]);
+
+    // and a measurement of the state after it is off by the change: the residual is the
+    // simulated value, the state before the change, less the measured one
+    let problem = at_the_change(after, None);
+    assert_eq!(
+        problem.residuals(&problem.start()).unwrap(),
+        vec![before - after]
+    );
+}
+
+#[test]
+fn a_measurement_whose_flag_is_true_reads_the_state_after_a_change() {
+    let (before, after) = around_the_change(K);
+
+    // the measurement is the state after the change, so its residual is zero
+    let problem = at_the_change(after, Some(vec![true]));
+    assert_eq!(problem.residuals(&problem.start()).unwrap(), vec![0.0]);
+
+    // and a measurement of the state before it is off by the change the other way round
+    let problem = at_the_change(before, Some(vec![true]));
+    assert_eq!(
+        problem.residuals(&problem.start()).unwrap(),
+        vec![after - before]
+    );
+}
+
+#[test]
+fn a_flag_of_the_state_after_a_change_which_is_false_reads_the_state_before_it() {
+    let (before, _) = around_the_change(K);
+
+    let problem = at_the_change(before, Some(vec![false]));
+
+    assert_eq!(problem.residuals(&problem.start()).unwrap(), vec![0.0]);
+}
+
+#[test]
+fn a_curve_of_more_flags_than_times_is_refused() {
+    let mut definition = definition(K, Scale::Lin);
+    definition.conditions = vec![doubled_at_five()];
+    definition.curves = vec![sbmlsim_fit::Curve {
+        condition: 0,
+        column: "y".to_string(),
+        times: vec![5.0],
+        values: vec![1.0],
+        noise: None,
+        weight: 1.0,
+        after_change: Some(vec![true, false]),
+    }];
+
+    let error = Problem::new(definition, model(), 1).unwrap_err();
+
+    let message = error.to_string();
+    assert!(
+        message.contains("1 times and 2 flags"),
+        "the refusal does not name the flags: {message}"
+    );
+}
+
+#[test]
+fn the_jacobian_of_a_measurement_after_a_change_is_the_one_of_the_row_it_reads() {
+    let (before, after) = around_the_change(K);
+
+    // the same measurement read on either side of the change: the residual of each is zero
+    // at `K`, so the jacobians differ only by the row the measurement resolved to
+    let mut jacobians = Vec::new();
+    for flags in [None, Some(vec![true])] {
+        let value = if flags.is_none() { before } else { after };
+        let mut definition = definition(K, Scale::Lin);
+        definition.jacobian = JacobianChoice::DifferenceQuotient;
+        definition.conditions = vec![doubled_at_five()];
+        definition.curves = vec![sbmlsim_fit::Curve {
+            condition: 0,
+            column: "y".to_string(),
+            times: vec![5.0],
+            values: vec![value],
+            noise: None,
+            weight: 1.0,
+            after_change: flags,
+        }];
+        let problem = Problem::new(definition, model(), 1).unwrap();
+        let x = problem.start();
+        let jacobian = problem.jacobian(&x).unwrap();
+        assert_eq!(jacobian.len(), 1);
+
+        // the forward difference of the residual of that very row
+        let at = problem.residuals(&x).unwrap()[0];
+        let step = problem.step(0, &x);
+        let mut moved = x.clone();
+        moved[0] += step;
+        let ahead = problem.residuals(&moved).unwrap()[0];
+        assert_eq!(jacobian[0], (ahead - at) / step);
+        jacobians.push(jacobian[0]);
+    }
+
+    // the change adds to `y`, so the derivative of the state after it in `k` is not the one
+    // of the state before it, i.e. the flag reaches the jacobian and not only the residual
+    assert_ne!(
+        jacobians[0], jacobians[1],
+        "the jacobian is the same on both sides of the change: {jacobians:?}"
+    );
+}

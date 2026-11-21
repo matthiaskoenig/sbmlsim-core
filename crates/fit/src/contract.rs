@@ -154,6 +154,17 @@ pub struct CurveRequest {
     /// The weight of the curve, which multiplies its residuals; one when it is absent.
     #[serde(default = "one")]
     pub weight: f64,
+    /// Whether a measurement reads the state after a change of its condition rather than
+    /// the one before it, one flag per time in their order.
+    ///
+    /// The output of a condition has two rows at the time of a change after its start, the
+    /// state before the change and the state after it. A measurement reads the first of
+    /// them, the state before the change, and one whose flag is true reads the last row of
+    /// its time, the state after it and after every event the change fired. Every
+    /// measurement reads the state before a change when the field is absent, which is the
+    /// behaviour of the releases before 0.16.0.
+    #[serde(default)]
+    pub after_change: Option<Vec<bool>>,
 }
 
 /// What a fit found.
@@ -448,6 +459,7 @@ fn definition_of(request: &FitRequest) -> Result<Definition, FitError> {
             values: curve.values.clone(),
             noise: curve.noise.clone(),
             weight: curve.weight,
+            after_change: curve.after_change.clone(),
         });
     }
     Ok(Definition {

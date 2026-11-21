@@ -34,6 +34,7 @@ fn curve() -> Curve {
         values: vec![1.0, 0.6, 0.4],
         noise: None,
         weight: 1.0,
+        after_change: None,
     }
 }
 
