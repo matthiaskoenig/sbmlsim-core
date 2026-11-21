@@ -133,6 +133,21 @@ pub struct Settings {
     /// The tolerance of the scaled gradient a step converges at; the one of the optimizer
     /// when it is absent.
     pub gradient_tolerance: Option<f64>,
+    /// The tolerance of the step a least squares run converges at, relative to the point it
+    /// steps from, the `xtol` of `scipy.optimize.least_squares`; no test of the step when it
+    /// is absent, which is the default of the optimizers.
+    ///
+    /// A simulation is exact only to the relative tolerance of its integrator, so the cost
+    /// of a fit has a noise of about that size and a run without this tolerance spends its
+    /// last iterations chasing that noise: it ends in `NumericalNoProgress` instead of at a
+    /// step it calls small enough, which on the fits of the HCTZ model of sbmlsim is 2.3
+    /// times the evaluations of a run which stops at `1e-8`.
+    pub step_tolerance: Option<f64>,
+    /// The tolerance of the change of the cost a least squares run converges at, relative to
+    /// the cost before the step, the `ftol` of `scipy.optimize.least_squares`; no test of the
+    /// cost when it is absent, which is the default of the optimizers. See
+    /// [`Settings::step_tolerance`] for what a run without either of them costs.
+    pub cost_tolerance: Option<f64>,
 }
 
 impl Default for Settings {
@@ -142,6 +157,8 @@ impl Default for Settings {
             max_iterations: 100,
             max_seconds: None,
             gradient_tolerance: None,
+            step_tolerance: None,
+            cost_tolerance: None,
         }
     }
 }
@@ -289,6 +306,11 @@ pub(crate) fn run(
             if let Some(tolerance) = settings.gradient_tolerance {
                 solver = solver.with_absolute_scaled_gradient_tolerance(tolerance);
             }
+            // the step and the cost are disabled by `None`, which is the default of the
+            // optimizer, while `None` for the gradient would disable its own default
+            let solver = solver
+                .with_relative_step_tolerance::<Vec<f64>, f64>(settings.step_tolerance)
+                .with_relative_cost_change_tolerance(settings.cost_tolerance);
             let result = drive!(solver);
             (
                 result.param().clone(),
@@ -302,6 +324,9 @@ pub(crate) fn run(
             if let Some(tolerance) = settings.gradient_tolerance {
                 solver = solver.with_absolute_scaled_gradient_tolerance(tolerance);
             }
+            let solver = solver
+                .with_relative_step_tolerance::<Vec<f64>, f64>(settings.step_tolerance)
+                .with_relative_cost_change_tolerance(settings.cost_tolerance);
             let result = drive!(solver);
             (
                 result.param().clone(),

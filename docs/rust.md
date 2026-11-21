@@ -6,10 +6,10 @@ The crates are not published on crates.io; they are built from this repository a
 
 ```toml
 [dependencies]
-sbmlsim-abi = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.14.0" }
-sbmlsim-compiler = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.14.0" }
-sbmlsim-host = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.14.0" }
-sbmlsim-batch = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.14.0" }
+sbmlsim-abi = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.15.0" }
+sbmlsim-compiler = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.15.0" }
+sbmlsim-host = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.15.0" }
+sbmlsim-batch = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.15.0" }
 anyhow = "1"
 ```
 
