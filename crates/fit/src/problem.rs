@@ -271,8 +271,10 @@ struct Resolved {
     rows: Vec<usize>,
     /// The measurements.
     values: Vec<f64>,
-    /// The weight of a point over the standard deviation of its measurement.
-    scales: Vec<f64>,
+    /// The standard deviation of every measurement, which its residual is divided by.
+    noise: Vec<f64>,
+    /// The weight of the curve, which every residual of it is multiplied by.
+    weight: f64,
 }
 
 /// One condition of the fit: what to simulate and which residuals its table carries.
@@ -316,13 +318,18 @@ impl Point {
     fn residuals(&self, table: &SimulationResult) -> Vec<f64> {
         let mut out = Vec::with_capacity(self.n_residuals);
         for curve in &self.curves {
-            for ((row, value), scale) in curve
+            for ((row, value), noise) in curve
                 .rows
                 .iter()
                 .zip(curve.values.iter())
-                .zip(curve.scales.iter())
+                .zip(curve.noise.iter())
             {
-                out.push((table.values[row * self.columns + curve.column] - value) * scale);
+                // the difference is divided by the standard deviation and not
+                // multiplied by its reciprocal, which rounds once more: the
+                // residual is the one of the caller bitwise, e.g. `0.9 / 2.5`
+                // is `0.36` where `0.9 * (1.0 / 2.5)` is `0.36000000000000004`
+                let residual = (table.values[row * self.columns + curve.column] - value) / noise;
+                out.push(residual * curve.weight);
             }
         }
         out
@@ -350,7 +357,8 @@ impl Point {
         let mut out = vec![0.0; self.n_residuals * k];
         let mut at = 0;
         for curve in &self.curves {
-            for (row, scale) in curve.rows.iter().zip(curve.scales.iter()) {
+            for (row, noise) in curve.rows.iter().zip(curve.noise.iter()) {
+                let scale = curve.weight / noise;
                 let values = &sensitivities.values[(row * self.columns + curve.column) * targets..]
                     [..targets];
                 for (value, factor) in values.iter().zip(factors) {
@@ -1182,14 +1190,12 @@ fn resolve(
             )));
         }
     };
-    let mut scales = Vec::with_capacity(noise.len());
     for value in &noise {
         if !value.is_finite() || *value <= 0.0 {
             return Err(fault(format!(
                 "has the standard deviation {value}, which is not positive and finite"
             )));
         }
-        scales.push(curve.weight / value);
     }
     let after = match &curve.after_change {
         None => vec![false; curve.times.len()],
@@ -1221,7 +1227,8 @@ fn resolve(
         column,
         rows,
         values: curve.values.clone(),
-        scales,
+        noise,
+        weight: curve.weight,
     })
 }
 

@@ -548,6 +548,11 @@ impl LoadedModel {
     pub fn initial_selections(&self) -> anyhow::Result<Vec<f64>> {
         let desc = &self.desc;
         if desc.n_algebraic > 0 || desc.n_delays > 0 {
+            // the engine of the simulations, so the initial values of a model are the ones
+            // its simulations start from; `engine.wasm` without the native engine
+            #[cfg(feature = "native")]
+            return Ok(self.instantiate_native()?.initial_selections()?);
+            #[cfg(not(feature = "native"))]
             return Ok(self.instantiate()?.initial_selections()?);
         }
         let (np, ns, nsel) = (
@@ -1062,6 +1067,11 @@ impl LoadedModel {
         request: &SimulationRequest,
         varying: &[String],
     ) -> anyhow::Result<PreparedSimulation> {
+        // the engine which runs the points validates the request and resolves its plan;
+        // `engine.wasm` without the native engine
+        #[cfg(feature = "native")]
+        return Ok(self.instantiate_native()?.prepare(request, varying)?);
+        #[cfg(not(feature = "native"))]
         Ok(self.instantiate()?.prepare(request, varying)?)
     }
 }
@@ -1083,6 +1093,9 @@ pub struct Instance {
     free: TypedFunc<(i32, i32), ()>,
     load: TypedFunc<(i32, i32), i32>,
     simulate: TypedFunc<(i32, i32), i32>,
+    /// Only a build without the native engine reads the initial values through
+    /// `engine.wasm`, see `LoadedModel::initial_selections`.
+    #[cfg_attr(feature = "native", allow(dead_code))]
     initial_values: Option<TypedFunc<(), i32>>,
     output_ptr: TypedFunc<(), i32>,
     output_len: TypedFunc<(), i32>,
@@ -1094,6 +1107,10 @@ pub struct Instance {
 
 impl Instance {
     /// Reads initialized selections without applying events, including DAE constraints.
+    ///
+    /// Only a build without the native engine reads them here, see
+    /// [`LoadedModel::initial_selections`] and `NativeInstance::initial_selections`.
+    #[cfg_attr(feature = "native", allow(dead_code))]
     fn initial_selections(&mut self) -> Result<Vec<f64>, EngineError> {
         let function = self
             .initial_values

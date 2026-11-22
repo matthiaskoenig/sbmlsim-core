@@ -453,3 +453,64 @@ fn the_jacobian_of_a_measurement_after_a_change_is_the_one_of_the_row_it_reads()
         "the jacobian is the same on both sides of the change: {jacobians:?}"
     );
 }
+
+/// The definition of the decay fit against measurements of 0 with the given noise, whose
+/// residual is the simulated value over that noise.
+fn over_noise(noise: f64, weight: f64) -> sbmlsim_fit::Definition {
+    let mut definition = definition(K, Scale::Lin);
+    let points = definition.curves[0].values.len();
+    definition.curves[0].values = vec![0.0; points];
+    definition.curves[0].noise = Some(vec![noise; points]);
+    definition.curves[0].weight = weight;
+    definition
+}
+
+#[test]
+fn the_residual_of_a_measurement_is_its_difference_divided_by_its_noise() {
+    // a residual which is multiplied by the reciprocal of its standard deviation rounds
+    // once more than one which is divided by it, so it is not the residual of the caller
+    // bitwise: `0.9 / 2.5` is `0.36` where `0.9 * (1.0 / 2.5)` is `0.36000000000000004`.
+    // The measurements are 0, so the difference of a point is the simulated value itself
+    // and a fit of noise 1 reports it.
+    let noise = 2.5;
+    let simulated = Problem::new(over_noise(1.0, 1.0), model(), 1).unwrap();
+    let problem = Problem::new(over_noise(noise, 1.0), model(), 1).unwrap();
+    let values = simulated.residuals(&simulated.start()).unwrap();
+
+    let residuals = problem.residuals(&problem.start()).unwrap();
+
+    assert_eq!(residuals.len(), values.len());
+    let reciprocal = 1.0 / noise;
+    let mut rounded = 0;
+    for (residual, value) in residuals.iter().zip(values.iter()) {
+        assert_eq!(
+            *residual,
+            value / noise,
+            "the residual {residual:?} of the value {value:?} is not {:?}, the value \
+             divided by its standard deviation",
+            value / noise
+        );
+        if value / noise != value * reciprocal {
+            rounded += 1;
+        }
+    }
+    assert!(
+        rounded > 0,
+        "no point of the fit tells a division by {noise} from a multiplication by its \
+         reciprocal, so the test cannot see the difference"
+    );
+}
+
+#[test]
+fn the_weight_of_a_curve_multiplies_the_residuals_it_divided() {
+    let problem = Problem::new(over_noise(2.5, 4.0), model(), 1).unwrap();
+    let plain = Problem::new(over_noise(2.5, 1.0), model(), 1).unwrap();
+
+    let residuals = problem.residuals(&problem.start()).unwrap();
+
+    let expected = plain.residuals(&plain.start()).unwrap();
+    assert_eq!(residuals.len(), expected.len());
+    for (got, want) in residuals.iter().zip(expected.iter()) {
+        assert_eq!(*got, want * 4.0);
+    }
+}
