@@ -143,6 +143,12 @@ pub struct Change {
 
 /// A value of a change which the engine evaluates from its own state:
 /// `constant + Σ factor * value(selection)`, read before the change.
+///
+/// The terms are summed after the constant in the order of the request, left to right, so a
+/// result is reproducible from the request alone. An id may repeat in `terms` and its
+/// contributions add; empty `terms` make the form a constant. The `target` must be settable
+/// (and is set, incremented or formed once by a change), while a term need only be readable,
+/// so it may name an entity an assignment rule computes.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Form {

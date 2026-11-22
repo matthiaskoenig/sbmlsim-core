@@ -2,8 +2,8 @@
 //! requests on one engine.
 
 use sbmlsim_abi::{
-    Change, IntegratorSettings, Output, SIMULATION_CONTRACT, SimulationRequest, SimulationResult,
-    SteadyState, Tolerance,
+    Change, Form, IntegratorSettings, Output, SIMULATION_CONTRACT, SimulationRequest,
+    SimulationResult, SteadyState, Tolerance,
 };
 use sbmlsim_engine::model::{
     Compartmental, Decay, DerivedCompartment, EventModel, Fun, Target, TestEvent,
@@ -951,4 +951,88 @@ fn a_failed_request_leaves_the_engine_as_a_fresh_one() {
         .unwrap();
     let bits = |r: &SimulationResult| r.values.iter().map(|v| v.to_bits()).collect::<Vec<_>>();
     assert_eq!(bits(&after_failures), bits(&fresh));
+}
+
+/// A form as a test writes it: the target, the constant and the terms.
+type FormSpec<'a> = (&'a str, f64, &'a [(&'a str, f64)]);
+
+fn formed(time: f64, forms: &[FormSpec]) -> Change {
+    Change {
+        time,
+        values: Vec::new(),
+        increments: Vec::new(),
+        forms: forms
+            .iter()
+            .map(|(target, constant, terms)| Form {
+                target: target.to_string(),
+                constant: *constant,
+                terms: terms.iter().map(|(id, f)| (id.to_string(), *f)).collect(),
+            })
+            .collect(),
+    }
+}
+
+/// The message of the error of a request with these changes on the model `decay`.
+fn decay_error(changes: Vec<Change>) -> String {
+    let mut req = request(0.0, 10.0, Output::Uniform { steps: 2 });
+    req.changes = changes;
+    let model = Decay { k: 0.5 };
+    simulate(&model, &model.description(), &req)
+        .unwrap_err()
+        .to_string()
+}
+
+#[test]
+fn a_form_of_an_unknown_selection_is_refused() {
+    let message = decay_error(vec![formed(5.0, &[("y", 0.0, &[("nope", 1.0)])])]);
+    assert!(message.contains("nope"), "{message}");
+    assert!(message.contains("decay"), "{message}");
+    // an unknown target as well
+    let message = decay_error(vec![formed(5.0, &[("nope", 0.0, &[("y", 1.0)])])]);
+    assert!(message.contains("nope"), "{message}");
+}
+
+#[test]
+fn a_form_target_which_a_value_sets_is_refused() {
+    let mut set = change(5.0, &[("y", 3.0)]);
+    set.forms = formed(5.0, &[("y", 0.0, &[("y", -0.5)])]).forms;
+    let message = decay_error(vec![set]);
+    assert!(
+        message.contains("y is set more than once at t = 5"),
+        "{message}"
+    );
+    // two forms of one target, in two changes of one time
+    let message = decay_error(vec![
+        formed(5.0, &[("y", 0.0, &[])]),
+        formed(5.0, &[("y", 1.0, &[])]),
+    ]);
+    assert!(
+        message.contains("y is set more than once at t = 5"),
+        "{message}"
+    );
+    // and an increment
+    let mut both = incremented(5.0, &[("y", 1.0)]);
+    both.forms = formed(5.0, &[("y", 0.0, &[])]).forms;
+    let message = decay_error(vec![both]);
+    assert!(
+        message.contains("y is set more than once at t = 5"),
+        "{message}"
+    );
+}
+
+#[test]
+fn a_form_of_an_infinite_constant_or_factor_is_refused() {
+    let message = decay_error(vec![formed(5.0, &[("y", f64::INFINITY, &[("y", 1.0)])])]);
+    assert!(message.contains("not finite"), "{message}");
+    assert!(message.contains('y'), "{message}");
+    let message = decay_error(vec![formed(5.0, &[("y", 0.0, &[("k", f64::INFINITY)])])]);
+    assert!(message.contains("not finite"), "{message}");
+    assert!(message.contains('k'), "{message}");
+}
+
+#[test]
+fn a_form_of_a_target_which_is_not_settable_is_refused() {
+    let message = decay_error(vec![formed(5.0, &[("t_half", 0.0, &[("y", 1.0)])])]);
+    assert!(message.contains("t_half"), "{message}");
+    assert!(message.contains("assignment rule"), "{message}");
 }
