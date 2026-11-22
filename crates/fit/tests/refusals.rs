@@ -42,7 +42,7 @@ fn definition() -> Definition {
     Definition {
         jacobian: Default::default(),
         parameters: vec![parameter()],
-        conditions: vec![request()],
+        conditions: vec![request().into()],
         curves: vec![curve()],
     }
 }
@@ -148,10 +148,13 @@ fn a_parameter_the_model_has_not_is_refused() {
 #[test]
 fn a_condition_which_outputs_the_steps_of_the_integrator_is_refused() {
     let refusal = refusal(Definition {
-        conditions: vec![SimulationRequest {
-            output: Output::IntegratorSteps,
-            ..request()
-        }],
+        conditions: vec![
+            SimulationRequest {
+                output: Output::IntegratorSteps,
+                ..request()
+            }
+            .into(),
+        ],
         ..definition()
     });
 
@@ -269,7 +272,7 @@ fn a_condition_whose_integration_fails_has_the_residuals_of_a_failure() {
     request.settings.maximum_num_steps = 60;
     let problem = Problem::new(
         Definition {
-            conditions: vec![request],
+            conditions: vec![request.into()],
             ..definition()
         },
         model(),
@@ -301,7 +304,7 @@ fn a_condition_which_does_not_integrate_at_the_start_is_refused() {
     request.settings.maximum_num_steps = 1;
 
     let refusal = refusal(Definition {
-        conditions: vec![request],
+        conditions: vec![request.into()],
         ..definition()
     });
 
@@ -321,7 +324,7 @@ fn the_residuals_of_a_curve_are_the_ones_of_its_own_condition() {
     };
     let problem = Problem::new(
         Definition {
-            conditions: vec![request(), long],
+            conditions: vec![request().into(), long.into()],
             curves: vec![
                 curve(),
                 Curve {

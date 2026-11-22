@@ -14,8 +14,8 @@ use sbmlsim_host::LoadedModel;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Curve, Definition, Fisher, Fit, FitError, JacobianChoice, Parameter, Problem, Profile, Scale,
-    Settings, Stop, Walk, fisher, profiles,
+    Condition, Curve, Definition, Derived, Fisher, Fit, FitError, JacobianChoice, Parameter,
+    Problem, Profile, Scale, Settings, Stop, Term, Walk, fisher, profiles,
 };
 
 /// Whether the jacobian of a request is the one of [`JacobianChoice::Auto`], which its
@@ -132,6 +132,43 @@ pub struct ConditionRequest {
     /// The simulation of the condition, a request of `simulation/1` whose output is the times
     /// of the data of its curves.
     pub request: SimulationRequest,
+    /// The values of the condition which follow the parameters of the fit, each a linear form
+    /// over them which is evaluated before every simulation and set on its target.
+    ///
+    /// A value of a request of `simulation/1` is a number, so a condition whose value is a
+    /// parameter the fit estimates, e.g. the initial amount of a species which a PEtab
+    /// condition assigns an estimated parameter, could not be a condition of a fit: a number
+    /// folded when the request was built would hold that value at the start of the fit while
+    /// the optimizer moves the parameter. Such a value is given here instead, and the fit
+    /// sets it on its target as a pre-initialization of the condition, with the values the
+    /// optimizer is at.
+    ///
+    /// Absent, which is the request every release before 0.17.0 reads, there are none.
+    #[serde(default)]
+    pub derived: Option<Vec<DerivedRequest>>,
+}
+
+/// A value of a condition which follows the parameters of a fit, `constant + Σ factor * p`.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct DerivedRequest {
+    /// The entity of the model the value is set on, a settable selection, which must be no
+    /// parameter of the fit and no other derived value of the same condition.
+    pub target: String,
+    /// The constant term of the linear form, `0` when it is absent.
+    #[serde(default)]
+    pub constant: f64,
+    /// The terms over the parameters of the fit, which may be empty for a constant value.
+    #[serde(default)]
+    pub terms: Vec<TermRequest>,
+}
+
+/// One term of a linear form of a derived value, the parameter it reads and its factor.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct TermRequest {
+    /// The position of the parameter in the parameters of the fit.
+    pub parameter: usize,
+    /// What the value of that parameter is multiplied by.
+    pub factor: f64,
 }
 
 /// A curve of data of a fit.
@@ -478,7 +515,30 @@ fn definition_of(request: &FitRequest) -> Result<Definition, FitError> {
         conditions: request
             .conditions
             .iter()
-            .map(|condition| condition.request.clone())
+            .map(|condition| Condition {
+                request: condition.request.clone(),
+                derived: condition
+                    .derived
+                    .as_ref()
+                    .map(|derived| {
+                        derived
+                            .iter()
+                            .map(|value| Derived {
+                                target: value.target.clone(),
+                                constant: value.constant,
+                                terms: value
+                                    .terms
+                                    .iter()
+                                    .map(|term| Term {
+                                        parameter: term.parameter,
+                                        factor: term.factor,
+                                    })
+                                    .collect(),
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            })
             .collect(),
         curves,
     })

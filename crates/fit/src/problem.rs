@@ -1,5 +1,6 @@
 //! The problem of a fit: its definition, its residuals and its jacobian on the batch.
 
+use std::borrow::Cow;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -194,13 +195,69 @@ pub struct Curve {
 pub struct Definition {
     /// The parameters of the fit, in the order of the vector of an optimizer.
     pub parameters: Vec<Parameter>,
-    /// The request of every condition of the fit. Its output has to be the given times or a
-    /// uniform grid, so that the row of a measurement does not depend on the parameters.
-    pub conditions: Vec<SimulationRequest>,
+    /// Every condition of the fit. Its output has to be the given times or a uniform grid, so
+    /// that the row of a measurement does not depend on the parameters.
+    pub conditions: Vec<Condition>,
     /// The curves of data of the fit.
     pub curves: Vec<Curve>,
     /// Where the jacobian of a step of the optimizer comes from.
     pub jacobian: JacobianChoice,
+}
+
+/// One condition of a fit: its simulation and the values which follow the parameters.
+#[derive(Clone, Debug)]
+pub struct Condition {
+    /// The request of the simulation, whose values are numbers.
+    pub request: SimulationRequest,
+    /// The values which follow the parameters of the fit, set on their targets before every
+    /// simulation, see [`Derived`]; empty for a condition of numbers alone.
+    pub derived: Vec<Derived>,
+}
+
+/// A value of a condition which follows the parameters of a fit, `constant + Σ factor * p`.
+///
+/// A value of a request of `simulation/1` is a number, so a value which an optimizer moves,
+/// e.g. the initial amount of a species which a PEtab condition assigns an estimated
+/// parameter, cannot be one: a number would hold it where the fit started. The fit evaluates
+/// the form at the values the optimizer is at and sets it on its target as a
+/// pre-initialization of the condition, which is what a varying target of a prepared request
+/// is ([`sbmlsim_core_engine::Engine::prepare`]).
+#[derive(Clone, Debug)]
+pub struct Derived {
+    /// The entity of the model the value is set on, a settable selection.
+    pub target: String,
+    /// The constant term of the linear form.
+    pub constant: f64,
+    /// The terms over the parameters of the fit, by their position.
+    pub terms: Vec<Term>,
+}
+
+impl From<SimulationRequest> for Condition {
+    /// A condition of a simulation of numbers alone, which has no derived value.
+    fn from(request: SimulationRequest) -> Self {
+        Self {
+            request,
+            derived: Vec::new(),
+        }
+    }
+}
+
+impl Derived {
+    /// The value of the form at the values of the parameters, on the linear scale.
+    fn value(&self, parameters: &[f64]) -> f64 {
+        self.terms.iter().fold(self.constant, |sum, term| {
+            sum + term.factor * parameters[term.parameter]
+        })
+    }
+}
+
+/// One term of a linear form of a [`Derived`] value.
+#[derive(Clone, Copy, Debug)]
+pub struct Term {
+    /// The position of the parameter in the parameters of the fit.
+    pub parameter: usize,
+    /// What the value of that parameter is multiplied by.
+    pub factor: f64,
 }
 
 /// A curve resolved against the simulation of its condition.
@@ -233,9 +290,28 @@ struct Point {
     curves: Vec<Resolved>,
     /// The number of residuals of those curves.
     n_residuals: usize,
+    /// The values of the condition which follow the parameters, in the order they were
+    /// appended to its varying targets, see [`Derived`]; empty for a condition of numbers.
+    derived: Vec<Derived>,
 }
 
 impl Point {
+    /// The values of the varying targets of the condition at the values of the parameters:
+    /// the parameters themselves and then the linear forms of its derived values, which is
+    /// the order [`Problem::new`] prepared its varying targets in.
+    ///
+    /// A condition without derived values hands the values of the parameters through, so the
+    /// common fit allocates nothing per simulation.
+    fn values<'a>(&self, parameters: &'a [f64]) -> Cow<'a, [f64]> {
+        if self.derived.is_empty() {
+            return Cow::Borrowed(parameters);
+        }
+        let mut values = Vec::with_capacity(parameters.len() + self.derived.len());
+        values.extend_from_slice(parameters);
+        values.extend(self.derived.iter().map(|value| value.value(parameters)));
+        Cow::Owned(values)
+    }
+
     /// The residuals of the curves of the condition, in the order of the curves.
     fn residuals(&self, table: &SimulationResult) -> Vec<f64> {
         let mut out = Vec::with_capacity(self.n_residuals);
@@ -401,10 +477,15 @@ impl Problem {
             return Err(FitError::Empty("curve"));
         }
         let varying: Vec<String> = parameters.iter().map(|p| p.id.clone()).collect();
+        let mut varyings = Vec::with_capacity(conditions.len());
+        for (at, condition) in conditions.iter().enumerate() {
+            varyings.push(check_derived(at, condition, &varying)?);
+        }
+        let derived = conditions.iter().any(|c| !c.derived.is_empty());
         let workers = Workers::new(model, threads)?;
         let mut prepared = Vec::with_capacity(conditions.len());
-        for (at, request) in conditions.iter().enumerate() {
-            if matches!(request.output, Output::IntegratorSteps) {
+        for ((at, condition), varying) in conditions.iter().enumerate().zip(varyings.iter()) {
+            if matches!(condition.request.output, Output::IntegratorSteps) {
                 return Err(FitError::Condition {
                     at,
                     message: "outputs the steps of the integrator, whose times depend on the \
@@ -412,14 +493,20 @@ impl Problem {
                         .to_string(),
                 });
             }
-            prepared.push(workers.model().prepare(request, &varying).map_err(|err| {
-                FitError::Condition {
-                    at,
-                    message: format!("cannot be prepared: {err}"),
-                }
-            })?);
+            prepared.push(
+                workers
+                    .model()
+                    .prepare(&condition.request, varying)
+                    .map_err(|err| FitError::Condition {
+                        at,
+                        message: format!("cannot be prepared: {err}"),
+                    })?,
+            );
         }
-        let (sensitive, jacobian) = if jacobian == JacobianChoice::Sensitivities {
+        // a derived value follows more than one parameter in general, which the one parameter
+        // per varying target of a block of the jacobian cannot carry, so such a fit takes the
+        // difference quotients of its optimizer
+        let (sensitive, jacobian) = if jacobian == JacobianChoice::Sensitivities && !derived {
             let prepared = sensitive_conditions(&workers, &conditions, &varying)?;
             (prepared, JacobianChoice::Sensitivities)
         } else {
@@ -433,17 +520,19 @@ impl Problem {
             .iter()
             .map(|p| p.scale.to_model(p.scale.to_search(p.start)))
             .collect();
-        let tables = simulate(&workers, &prepared, &start)?;
+        let tables = simulate(&workers, &prepared, &conditions, &start)?;
         let mut points: Vec<Point> = prepared
             .into_iter()
             .zip(sensitive)
             .zip(tables.iter())
-            .map(|((prepared, sensitive), table)| Point {
+            .zip(conditions.iter())
+            .map(|(((prepared, sensitive), table), condition)| Point {
                 prepared,
                 sensitive,
                 columns: table.columns.len(),
                 curves: Vec::new(),
                 n_residuals: 0,
+                derived: condition.derived.clone(),
             })
             .collect();
         let mut n_residuals = 0;
@@ -859,7 +948,8 @@ impl Problem {
         self.simulations
             .fetch_add(shots.len() as u64, Ordering::Relaxed);
         let outcomes = self.workers.map(shots, |instance, shot| {
-            let table = instance.simulate_prepared(&shot.point.prepared, shot.values)?;
+            let values = shot.point.values(shot.values);
+            let table = instance.simulate_prepared(&shot.point.prepared, &values)?;
             Ok(shot.point.residuals(&table))
         });
         let mut residuals = Vec::with_capacity(shots.len());
@@ -885,7 +975,7 @@ impl Problem {
 /// be a jacobian of two accuracies.
 fn sensitive_conditions(
     workers: &Workers,
-    conditions: &[SimulationRequest],
+    conditions: &[Condition],
     varying: &[String],
 ) -> Result<Vec<Option<PreparedSimulation>>, FitError> {
     let mut instance = workers
@@ -893,8 +983,8 @@ fn sensitive_conditions(
         .instantiate_native()
         .map_err(|error| FitError::Request(format!("cannot be instantiated: {error}")))?;
     let mut prepared = Vec::with_capacity(conditions.len());
-    for (at, request) in conditions.iter().enumerate() {
-        let mut request = request.clone();
+    for (at, condition) in conditions.iter().enumerate() {
+        let mut request = condition.request.clone();
         request.sensitivities = varying.to_vec();
         match instance.prepare(&request, varying) {
             Ok(sensitive) => prepared.push(Some(sensitive)),
@@ -915,14 +1005,81 @@ fn sensitive_conditions(
     Ok(prepared)
 }
 
+/// Checks the derived values of a condition and gets its varying targets.
+///
+/// The varying targets of a condition are the parameters of the fit and then the targets of
+/// its derived values, which must be settable entities the parameters do not already set and
+/// which the condition must not name twice; a term reads a parameter of the fit.
+fn check_derived(
+    at: usize,
+    condition: &Condition,
+    varying: &[String],
+) -> Result<Vec<String>, FitError> {
+    let mut targets = varying.to_vec();
+    for value in &condition.derived {
+        let fault = if value.target.is_empty() {
+            Some("has a derived value without a target".to_string())
+        } else if targets.contains(&value.target) {
+            Some(format!(
+                "sets '{}' as a derived value and as a parameter or a derived value already",
+                value.target
+            ))
+        } else if !value.constant.is_finite() {
+            Some(format!(
+                "has the derived value '{}' of the constant {}, which is not finite",
+                value.target, value.constant
+            ))
+        } else {
+            value.terms.iter().find_map(|term| {
+                if term.parameter >= varying.len() {
+                    Some(format!(
+                        "has the derived value '{}', which reads the parameter {} of a fit of \
+                         {} parameters",
+                        value.target,
+                        term.parameter,
+                        varying.len()
+                    ))
+                } else if !term.factor.is_finite() {
+                    Some(format!(
+                        "has the derived value '{}' of the factor {}, which is not finite",
+                        value.target, term.factor
+                    ))
+                } else {
+                    None
+                }
+            })
+        };
+        if let Some(message) = fault {
+            return Err(FitError::Condition { at, message });
+        }
+        targets.push(value.target.clone());
+    }
+    Ok(targets)
+}
+
 /// Simulates every prepared condition once at the values of the parameters.
 fn simulate(
     workers: &Workers,
     prepared: &[PreparedSimulation],
+    conditions: &[Condition],
     values: &[f64],
 ) -> Result<Vec<SimulationResult>, FitError> {
     let mut tables = Vec::with_capacity(prepared.len());
-    let outcomes = workers.map(prepared, |instance, prepared| {
+    let shots: Vec<(&PreparedSimulation, Cow<'_, [f64]>)> = prepared
+        .iter()
+        .zip(conditions.iter())
+        .map(|(prepared, condition)| {
+            let values = if condition.derived.is_empty() {
+                Cow::Borrowed(values)
+            } else {
+                let mut all = values.to_vec();
+                all.extend(condition.derived.iter().map(|value| value.value(values)));
+                Cow::Owned(all)
+            };
+            (prepared, values)
+        })
+        .collect();
+    let outcomes = workers.map(&shots, |instance, (prepared, values)| {
         instance.simulate_prepared(prepared, values)
     });
     for (at, outcome) in outcomes.into_iter().enumerate() {

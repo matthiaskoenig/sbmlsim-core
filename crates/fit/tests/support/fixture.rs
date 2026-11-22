@@ -63,7 +63,7 @@ pub fn definition(start: f64, scale: Scale) -> Definition {
             upper: 10.0,
             scale,
         }],
-        conditions: vec![request()],
+        conditions: vec![request().into()],
         curves: vec![Curve {
             condition: 0,
             column: "y".to_string(),
@@ -110,7 +110,7 @@ pub fn pair(k: f64, y: f64, scale: Scale) -> Definition {
                 scale,
             },
         ],
-        conditions: vec![request()],
+        conditions: vec![request().into()],
         curves: vec![Curve {
             condition: 0,
             column: "y".to_string(),

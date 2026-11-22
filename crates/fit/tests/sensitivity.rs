@@ -57,7 +57,7 @@ fn sensitive(scale: Scale) -> Definition {
 /// run carries.
 fn with_a_change(scale: Scale) -> Definition {
     let mut definition = pair(0.5, 2.0, scale);
-    definition.conditions[0].changes = vec![Change {
+    definition.conditions[0].request.changes = vec![Change {
         time: 5.0,
         values: vec![("y".to_string(), 0.5)],
         increments: vec![],

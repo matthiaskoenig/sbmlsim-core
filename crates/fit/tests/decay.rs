@@ -331,7 +331,7 @@ fn around_the_change(k: f64) -> (f64, f64) {
 /// the one after it, whose value is `value`.
 fn at_the_change(value: f64, after: Option<Vec<bool>>) -> Problem {
     let mut definition = definition(K, Scale::Lin);
-    definition.conditions = vec![doubled_at_five()];
+    definition.conditions = vec![doubled_at_five().into()];
     definition.curves = vec![sbmlsim_fit::Curve {
         condition: 0,
         column: "y".to_string(),
@@ -390,7 +390,7 @@ fn a_flag_of_the_state_after_a_change_which_is_false_reads_the_state_before_it()
 #[test]
 fn a_curve_of_more_flags_than_times_is_refused() {
     let mut definition = definition(K, Scale::Lin);
-    definition.conditions = vec![doubled_at_five()];
+    definition.conditions = vec![doubled_at_five().into()];
     definition.curves = vec![sbmlsim_fit::Curve {
         condition: 0,
         column: "y".to_string(),
@@ -421,7 +421,7 @@ fn the_jacobian_of_a_measurement_after_a_change_is_the_one_of_the_row_it_reads()
         let value = if flags.is_none() { before } else { after };
         let mut definition = definition(K, Scale::Lin);
         definition.jacobian = JacobianChoice::DifferenceQuotient;
-        definition.conditions = vec![doubled_at_five()];
+        definition.conditions = vec![doubled_at_five().into()];
         definition.curves = vec![sbmlsim_fit::Curve {
             condition: 0,
             column: "y".to_string(),

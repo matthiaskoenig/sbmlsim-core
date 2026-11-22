@@ -80,6 +80,44 @@ The parameters:
 | `lower`, `upper` | the bounds, which every point of the search stays inside |
 | `scale` | `"lin"` (the default), `"log"` or `"log10"`: the space the optimizer searches in. A parameter of a concentration, a rate or a volume is fitted on a logarithmic scale, where a step is a share of the value and not an absolute amount, and its bounds must be positive |
 
+The conditions:
+
+| field | what it holds |
+|---|---|
+| `id` | the id of the condition, which the curves read it by |
+| `request` | the simulation, a request of `simulation/1` whose output is the times of the data of its curves |
+| `derived` | the values of the condition which follow the parameters of the fit, each a linear form over them, absent for a condition of numbers alone (see below) |
+
+A value of a request of `simulation/1` is a number, so a condition whose value is a parameter
+the fit estimates, e.g. the initial amount of a species which a PEtab condition assigns an
+estimated parameter, cannot carry it as one: a number folded when the request was built holds
+that value where the fit started while the optimizer moves the parameter. Such a value is a
+`derived` value of its condition instead, which the fit evaluates at the values the optimizer
+is at and sets on its target as a pre-initialization of the condition, before every
+simulation:
+
+```json
+{
+  "id": "c0",
+  "request": { "contract": "simulation/1", "end": 10.0, "output": { "uniform": { "steps": 10 } }, "selections": ["time", "y"] },
+  "derived": [
+    { "target": "y", "constant": 0.0, "terms": [{ "parameter": 0, "factor": 1.0 }] }
+  ]
+}
+```
+
+| field | what it holds |
+|---|---|
+| `target` | the entity of the model the value is set on, a settable selection, which must be no parameter of the fit and no other derived value of the same condition |
+| `constant` | the constant term of the linear form, `0` when it is absent |
+| `terms` | the terms over the parameters, each the `parameter` (its position in `parameters`) and its `factor`; empty for a value which is a constant |
+
+The value is `constant + Σ factor * parameter` on the linear scale of the parameters, whatever
+scale an optimizer searches them in. A fit whose conditions carry derived values takes the
+difference quotients of its optimizer for its jacobian: a derived value follows more than one
+parameter in general, which the one parameter per varying target of a block of the forward
+sensitivities cannot carry.
+
 The curves:
 
 | field | what it holds |
