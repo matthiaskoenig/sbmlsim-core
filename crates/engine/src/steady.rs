@@ -26,7 +26,7 @@
 //! execution with the time it had left (sbmlsim's roadrunner keeps such an execution at the time
 //! of its clock; this engine moves it with the simulation).
 
-use sbmlsim_abi::{IntegratorSettings, SteadyState};
+use sbmlsim_abi::{IntegratorSettings, SteadyState, SteadyStateAfter};
 use sbmlsim_csolvers::ffi::{CV_NORMAL, CV_ROOT_RETURN, CV_TSTOP_RETURN};
 
 use crate::events::{Events, Probe};
@@ -44,7 +44,7 @@ pub const STEADY_STATE_FROM: f64 = 0.0;
 /// moved to `start`, the windows of the events are the ones of the simulation again.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn steady_state<'a, const DAE: bool, H: crate::delay::Mode>(
-    mut cvode: Option<&mut Integrator<DAE, H>>,
+    cvode: Option<&mut Integrator<DAE, H>>,
     problem: &mut Problem<'_>,
     settings: &IntegratorSettings,
     start: f64,
@@ -54,21 +54,72 @@ pub(crate) fn steady_state<'a, const DAE: bool, H: crate::delay::Mode>(
     mut events: Option<&mut Events<'a, DAE>>,
     model_id: &str,
     rates: &mut Vec<f64>,
-    mut constraints: Option<&mut crate::solver::Constraints<'a>>,
+    constraints: Option<&mut crate::solver::Constraints<'a>>,
 ) -> Result<(), EngineError> {
     let m = problem.n_model;
-    let model = problem.model;
     let from = STEADY_STATE_FROM;
     if let Some(events) = events.as_deref_mut() {
         // the events at the time 0 are part of the initial state
         events.execute_at(from, &mut y[..m], &mut problem.p, Probe::Exact)?;
     }
+    let t = equilibrate(
+        cvode,
+        problem,
+        settings,
+        from,
+        y,
+        &Criterion {
+            absolute_tolerance: steady.absolute_tolerance,
+            relative_tolerance: steady.relative_tolerance,
+            max_time: steady.max_time,
+        },
+        events.as_deref_mut(),
+        model_id,
+        rates,
+        constraints,
+    )?;
+    if let Some(events) = events {
+        events.rebase(t, start);
+        events.set_window(start, end);
+    }
+    Ok(())
+}
+
+/// The criterion of a steady state, which [`SteadyState`] and [`SteadyStateAfter`] share.
+struct Criterion {
+    absolute_tolerance: f64,
+    relative_tolerance: f64,
+    max_time: f64,
+}
+
+/// Integrates the model from `from` with the state `y` over horizons which grow by a factor of
+/// ten until the criterion holds at the end of one of them, and answers the time it reached.
+///
+/// This is the loop the pre-equilibration and the steady state after the end share; what
+/// differs is what the caller does before it (the events of the initialization, or the pending
+/// executions moved to `from`) and after it (the pending executions moved to the start of the
+/// simulation, or nothing, the simulation being over).
+#[allow(clippy::too_many_arguments)]
+fn equilibrate<'a, const DAE: bool, H: crate::delay::Mode>(
+    mut cvode: Option<&mut Integrator<DAE, H>>,
+    problem: &mut Problem<'_>,
+    settings: &IntegratorSettings,
+    from: f64,
+    y: &mut [f64],
+    criterion: &Criterion,
+    mut events: Option<&mut Events<'a, DAE>>,
+    model_id: &str,
+    rates: &mut Vec<f64>,
+    mut constraints: Option<&mut crate::solver::Constraints<'a>>,
+) -> Result<f64, EngineError> {
+    let m = problem.n_model;
+    let model = problem.model;
     rates.clear();
     rates.resize(m, 0.0);
     let mut t = from;
     let mut horizon = 1.0f64;
     loop {
-        let stop = from + horizon.min(steady.max_time);
+        let stop = from + horizon.min(criterion.max_time);
         match (cvode.as_deref_mut(), events.as_deref_mut()) {
             (Some(cvode), Some(events)) => {
                 events.set_window(from, stop);
@@ -94,12 +145,12 @@ pub(crate) fn steady_state<'a, const DAE: bool, H: crate::delay::Mode>(
             projection.algebraic_rates(t, &y[..m], &problem.p, rates)?;
         }
         let steady_now = rates.iter().zip(&y[..m]).all(|(r, x)| {
-            r.abs() <= steady.absolute_tolerance + steady.relative_tolerance * x.abs()
+            r.abs() <= criterion.absolute_tolerance + criterion.relative_tolerance * x.abs()
         });
         if steady_now {
-            break;
+            return Ok(t);
         }
-        if t - from >= steady.max_time {
+        if t - from >= criterion.max_time {
             let worst = rates.iter().map(|r| r.abs()).fold(0.0, f64::max);
             return Err(EngineError::Integration {
                 flag: STEADY_STATE_FLAG,
@@ -107,16 +158,59 @@ pub(crate) fn steady_state<'a, const DAE: bool, H: crate::delay::Mode>(
                 message: format!(
                     "the model {model_id} did not reach a steady state up to the time {}, the \
                      largest rate of change is {worst:e}",
-                    steady.max_time
+                    criterion.max_time
                 ),
             });
         }
         horizon *= 10.0;
     }
-    if let Some(events) = events {
-        events.rebase(t, start);
-        events.set_window(start, end);
+}
+
+/// Integrates the model to a steady state **after** the end of a simulation, from the state `y`
+/// the timecourse ended in at the time `end`, with the triggers of its events as it left them.
+///
+/// The pending executions are moved from `end` to [`SteadyStateAfter::from`], as the
+/// pre-equilibration moves them to the start of the simulation which follows it, and nothing
+/// follows this one: the caller records the row of the steady state and the request is done.
+///
+/// The events are not executed at `from` first, unlike the pre-equilibration, where they are
+/// the events of the initialization at the time 0: the model is in the middle of its
+/// simulation here, so an event which executed during the timecourse does not execute again at
+/// the same threshold, which is what libroadrunner does when it continues from the state of its
+/// model.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn steady_state_after<'a, const DAE: bool, H: crate::delay::Mode>(
+    cvode: Option<&mut Integrator<DAE, H>>,
+    problem: &mut Problem<'_>,
+    settings: &IntegratorSettings,
+    end: f64,
+    y: &mut [f64],
+    steady: &SteadyStateAfter,
+    mut events: Option<&mut Events<'a, DAE>>,
+    model_id: &str,
+    rates: &mut Vec<f64>,
+    constraints: Option<&mut crate::solver::Constraints<'a>>,
+) -> Result<(), EngineError> {
+    let from = steady.from;
+    if let Some(events) = events.as_deref_mut() {
+        events.rebase(end, from);
     }
+    equilibrate(
+        cvode,
+        problem,
+        settings,
+        from,
+        y,
+        &Criterion {
+            absolute_tolerance: steady.absolute_tolerance,
+            relative_tolerance: steady.relative_tolerance,
+            max_time: steady.max_time,
+        },
+        events,
+        model_id,
+        rates,
+        constraints,
+    )?;
     Ok(())
 }
 

@@ -212,6 +212,8 @@ struct RunSettings {
     steps: bool,
     settings: IntegratorSettings,
     steady_state: Option<sbmlsim_abi::SteadyState>,
+    steady_state_after: Option<sbmlsim_abi::SteadyStateAfter>,
+    before_events: bool,
     seed: u64,
 }
 
@@ -1073,6 +1075,8 @@ fn prepare(
                 relative_tolerance: steady.relative_tolerance,
                 max_time: steady.max_time,
             }),
+        steady_state_after: req.steady_state_after.clone(),
+        before_events: req.before_events,
         seed: req.seed,
     };
     if n_cvode > n && matches!(req.settings.absolute_tolerance, Tolerance::PerState(_)) {
@@ -1590,7 +1594,26 @@ fn run_model<const DAE: bool, H: delay::Mode>(
                     &mut events,
                     changes,
                     &mut scratch.segments,
-                )
+                    req.before_events,
+                )?;
+                // the steady state after the end continues from the state the timecourse
+                // ended in, with the triggers of the events as it left them
+                if let Some(after) = &req.steady_state_after {
+                    steady::steady_state_after(
+                        Some(&mut *cvode),
+                        &mut problem,
+                        settings,
+                        end,
+                        &mut y0,
+                        after,
+                        Some(&mut events),
+                        &desc.id,
+                        &mut scratch.steady_rates,
+                        None,
+                    )?;
+                    recorder.row(f64::INFINITY, &y0[..problem.n_model], &problem.p)?;
+                }
+                Ok(())
             };
             let outcome = integrate();
             probe_rhs = events.probe_rhs();
@@ -1633,7 +1656,25 @@ fn run_model<const DAE: bool, H: delay::Mode>(
                     &mut recorder,
                     changes,
                     constraints.as_deref_mut(),
-                )
+                )?;
+                // a model without events has no trigger to carry, the steady state after the
+                // end simply continues from the state the timecourse ended in
+                if let Some(after) = &req.steady_state_after {
+                    steady::steady_state_after(
+                        cvode.as_deref_mut(),
+                        &mut problem,
+                        settings,
+                        end,
+                        &mut y0,
+                        after,
+                        None,
+                        &desc.id,
+                        &mut scratch.steady_rates,
+                        constraints.as_deref_mut(),
+                    )?;
+                    recorder.row(f64::INFINITY, &y0[..problem.n_model], &problem.p)?;
+                }
+                Ok(())
             };
             let outcome = integrate();
             let counts = cvode.as_deref().map(Integrator::counts).unwrap_or_default();
@@ -1678,6 +1719,8 @@ mod tests {
             preinit: vec![("[S]".into(), 2.0)],
             changes: vec![],
             steady_state: None,
+            steady_state_after: None,
+            before_events: false,
             selections: vec![],
             settings: IntegratorSettings::default(),
             seed: 0,
@@ -1732,6 +1775,8 @@ mod tests {
             preinit: vec![],
             changes: vec![],
             steady_state: None,
+            steady_state_after: None,
+            before_events: false,
             selections: selections.iter().map(|s| s.to_string()).collect(),
             settings: IntegratorSettings::default(),
             seed: 0,

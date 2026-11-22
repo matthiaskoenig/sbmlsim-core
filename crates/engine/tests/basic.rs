@@ -24,6 +24,8 @@ fn request(start: f64, end: f64, output: Output, selections: &[&str]) -> Simulat
         preinit: vec![],
         changes: vec![],
         steady_state: None,
+        steady_state_after: None,
+        before_events: false,
         selections: selections.iter().map(|s| s.to_string()).collect(),
         settings: IntegratorSettings {
             relative_tolerance: 1e-10,

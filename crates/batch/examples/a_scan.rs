@@ -25,6 +25,8 @@ fn main() -> anyhow::Result<()> {
         preinit: vec![],
         changes: vec![],
         steady_state: None,
+        steady_state_after: None,
+        before_events: false,
         seed: 0,
         sensitivities: vec![],
     };

@@ -6,10 +6,10 @@ The crates are not published on crates.io; they are built from this repository a
 
 ```toml
 [dependencies]
-sbmlsim-abi = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.17.0" }
-sbmlsim-compiler = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.17.0" }
-sbmlsim-host = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.17.0" }
-sbmlsim-batch = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.17.0" }
+sbmlsim-abi = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.18.0" }
+sbmlsim-compiler = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.18.0" }
+sbmlsim-host = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.18.0" }
+sbmlsim-batch = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.18.0" }
 anyhow = "1"
 ```
 
@@ -44,7 +44,10 @@ fn main() -> anyhow::Result<()> {
         preinit: vec![],
         changes: vec![],
         steady_state: None,
+        steady_state_after: None,
+        before_events: false,
         seed: 0,
+        sensitivities: vec![],
     };
     let result = instance.simulate(&request)?;
 
@@ -89,7 +92,10 @@ fn main() -> anyhow::Result<()> {
         preinit: vec![],
         changes: vec![],
         steady_state: None,
+        steady_state_after: None,
+        before_events: false,
         seed: 0,
+        sensitivities: vec![],
     };
     // the request is validated and resolved once; a point of the scan is the value of `k`
     let prepared = model.prepare(&request, &["k".to_string()])?;

@@ -30,6 +30,8 @@ fn request(end: f64, output: Output) -> SimulationRequest {
         preinit: vec![],
         changes: vec![],
         steady_state: None,
+        steady_state_after: None,
+        before_events: false,
         selections: vec!["time".to_string(), "y".to_string()],
         settings: IntegratorSettings {
             stiff: false,

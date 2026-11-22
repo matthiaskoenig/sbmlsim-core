@@ -16,6 +16,8 @@ fn request() -> SimulationRequest {
         preinit: vec![],
         changes: vec![],
         steady_state: None,
+        steady_state_after: None,
+        before_events: false,
         selections: vec![],
         settings: IntegratorSettings::default(),
         seed: 123,

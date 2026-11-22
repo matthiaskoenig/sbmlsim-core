@@ -86,6 +86,8 @@ The CSV has the names of the columns in its first line, then one line per row; a
   "preinit": [["k", 0.7]],
   "changes": [{ "time": 5.0, "values": [["y", 2.0]] }],
   "steady_state": null,
+  "steady_state_after": null,
+  "before_events": false,
   "selections": ["time", "y"],
   "sensitivities": ["k"],
   "settings": {
@@ -111,6 +113,8 @@ The CSV has the names of the columns in its first line, then one line per row; a
 | `preinit` | values set before the initialization, as `[id, value]` pairs; the ids are selections: `S` is the amount of a species, `[S]` its concentration (converted with the size its compartment has once the initial assignments are evaluated, so a pre-initialization holds the concentration of a species across the initialization, also when it changes that size, directly or through an initial assignment), any other id the value of its entity. The order of the values does not matter. The initial assignments see them |
 | `changes` | changes at absolute times in `[start, end]`, in non-decreasing order of the time: `{"time": t, "values": [[id, value], ...], "increments": [[id, increment], ...]}` (`increments` optional, 0.6.0), see below |
 | `steady_state` | `null`, or a steady state reached before the start: `{"preinit", "absolute_tolerance", "relative_tolerance", "max_time"}` (defaults `[]`, `1e-8`, `1e-6`, `1e8`), see below |
+| `steady_state_after` | `null`, or a steady state reached after the end, whose row the output carries last at the time `inf`: `{"from", "absolute_tolerance", "relative_tolerance", "max_time"}` (defaults `0.0`, `1e-8`, `1e-6`, `1e8`), see below (0.18.0) |
+| `before_events` | `false`, or `true` for an output at the end which is the state **before** the events of the end time execute, see below (0.18.0) |
 | `sensitivities` | the ids of the values the forward sensitivities of the run are taken in (0.12.0, the native engine only), empty for a run without them; see below |
 | `selections` | the ids of the columns after `time`; a leading `"time"` is that column (not repeated), a later `"time"` another copy of the time of the row; empty is `time` followed by every selection of the model |
 | `settings` | the settings of the integrator, below; the defaults of the engine are the ones of roadrunner |
@@ -146,6 +150,10 @@ of the simulation as well.
 **Changes.** The values of a change are set at once (the changes of one time are one change): a compartment keeps the concentrations of the species of a concentration in it (not of an amount, not of an assignment rule, not of one the change sets), and the assignment rules follow. A change at the start is applied after the initialization (and after the steady state) and before the output of the start; a change after the start ends a segment of the integration, and the output has the state before it and the state after it at its time (two rows: in the steps of the integrator always, in an output of times when its time is one of them). The events a change triggers execute with it; an event at its time executes after it. An increment adds to the value of its id in the state before the change (an amount `S`, a concentration `[S]`, the value of any other entity), at once with the values: a repeated dose is `{"time": 24, "increments": [["PODOSE_x", 25]]}`, the formula `"PODOSE_x + 25"` of a change of sbmlsim. One change sets or increments an id once.
 
 **Steady state.** The model is initialized once, with the pre-initialization of the request and of the steady state together (an id in both is refused), and integrated from the time 0, events active, until every state has `|dx/dt| <= absolute_tolerance + relative_tolerance * |x|` at the end of a horizon (1, 10, 100, ... time units), at most `max_time`; the simulation starts from that state at its start. A steady state which is not reached is an error of the integration.
+
+**Steady state after the end.** `steady_state_after` is the same criterion applied **after** the timecourse, which is a measurement at steady state (PEtab v2's time `inf`) where `steady_state` is the pre-equilibration before the start. The model continues from the state the timecourse ended in, with the triggers of its events as it left them and every pending execution moved from the end to `from`, so an event which executed during the timecourse does not execute again at the same threshold, and it is integrated from `from` over the same growing horizons. Its row is the last of the output, at the time `inf`; the rows of the timecourse are the ones of a request without it, bitwise. `from` is 0 by default, which is where roadrunner integrates the steady state of a model whose math does not read the time; a caller which continues a model which reads the time passes the end of its timecourse, as roadrunner does.
+
+**The state before the events of the end.** A request answers the end with the state **after** the events of the end time, which is what a timecourse reads. A caller which folds the value of a change into a number needs the other one: roadrunner evaluates the triggers and applies a change *before* it executes the events of that time, so the formula of the change reads the state before them. `"before_events": true` is that request: the events of the end are not executed at all, the simulation ending there, and the last row is the state the end was integrated to with the changes and the events before it applied. Only the end is affected, an output time inside the interval seeing the state after the events of its time as it does without the flag. The flag holds for every kind of output, the steps of the integrator included, where the two rows of an event at the end become the one row before it.
 
 ## Forward sensitivities
 
@@ -220,7 +228,7 @@ cached per engine and reused across compatible simulations.
 | field | what it holds |
 |---|---|
 | `contract` | `"model/2"` |
-| `compiler` | the compiler and its version, e.g. `"sbmlsim-compiler 0.17.0"` |
+| `compiler` | the compiler and its version, e.g. `"sbmlsim-compiler 0.18.0"` |
 | `id` | the id of the model |
 | `states` | the states, in the order of the state vector (the order of a `per_state` tolerance) |
 | `parameters` | the parameters (with the compartments, the species which are not states and the species references), in the order of the parameter vector |
@@ -239,7 +247,7 @@ An entity of `states` and `parameters` is `{"id", "kind", "initial", "settable"}
 ```json
 {
   "contract": "model/2",
-  "compiler": "sbmlsim-compiler 0.17.0",
+  "compiler": "sbmlsim-compiler 0.18.0",
   "id": "toy",
   "states": [
     { "id": "A", "kind": { "species": { "compartment": "c", "has_only_substance_units": false, "stores_concentration": false } }, "initial": 20.0, "settable": true }

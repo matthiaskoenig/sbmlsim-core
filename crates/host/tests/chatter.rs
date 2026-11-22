@@ -63,6 +63,8 @@ fn request(end: f64, output: Output, rtol: f64, atol: f64) -> SimulationRequest 
         preinit: vec![],
         changes: vec![],
         steady_state: None,
+        steady_state_after: None,
+        before_events: false,
         selections: vec![],
         settings: IntegratorSettings {
             relative_tolerance: rtol,

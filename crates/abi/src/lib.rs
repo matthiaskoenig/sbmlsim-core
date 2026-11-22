@@ -680,6 +680,8 @@ mod tests {
                 relative_tolerance: 1e-7,
                 max_time: 1e6,
             }),
+            steady_state_after: None,
+            before_events: false,
             selections: vec!["time".to_string(), "[S]".to_string()],
             settings: IntegratorSettings {
                 relative_tolerance: 1e-8,

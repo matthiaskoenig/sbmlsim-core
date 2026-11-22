@@ -538,6 +538,11 @@ struct Outputs<'t> {
     /// at it or after it is never written before the change, also when it is too close to the
     /// time of a stop to integrate to.
     limit: f64,
+    /// Whether the output at the end is the state before the events of the end execute
+    /// ([`sbmlsim_abi::SimulationRequest::before_events`]): they are not executed at all, the
+    /// simulation ending there, so the last row is the state the end was integrated to and
+    /// the changes and the events before the end left.
+    before_events: bool,
 }
 
 impl Outputs<'_> {
@@ -588,7 +593,13 @@ impl Outputs<'_> {
         let at_end = t >= self.end || too_close(t, self.end);
         if self.steps {
             let after = if at_end {
-                Some(Probe::End)
+                // the events of the end are not executed when the caller asked for the state
+                // before them, and the row of the end is the one before them
+                if self.before_events {
+                    None
+                } else {
+                    Some(Probe::End)
+                }
             } else if kind == StopKind::Step {
                 None
             } else {
@@ -613,6 +624,10 @@ impl Outputs<'_> {
             return Ok(executed);
         }
         if at_end {
+            if self.before_events {
+                self.write(t, y, p, true, recorder)?;
+                return Ok(false);
+            }
             let executed = events.execute(t, &mut y[..m], p, true)?;
             self.write(t, y, p, true, recorder)?;
             return Ok(executed);
@@ -662,7 +677,9 @@ impl Outputs<'_> {
         self.limit = changes.time(k + 1).unwrap_or(f64::INFINITY);
         events.execute_at(t, &mut y[..m], p, Probe::Change)?;
         if at_end {
-            events.execute_at(t, &mut y[..m], p, Probe::End)?;
+            if !self.before_events {
+                events.execute_at(t, &mut y[..m], p, Probe::End)?;
+            }
             if self.steps {
                 recorder.row(t, &y[..m], p)?;
             } else {
@@ -725,6 +742,7 @@ pub(crate) fn integrate_events<const DAE: bool, H: crate::delay::Mode>(
     events: &mut Events<'_, DAE>,
     changes: &Changes,
     scratch: &mut Scratch,
+    before_events: bool,
 ) -> Result<(), EngineError> {
     let m = problem.n_model;
     let model = problem.model;
@@ -744,6 +762,7 @@ pub(crate) fn integrate_events<const DAE: bool, H: crate::delay::Mode>(
         end,
         m,
         limit: f64::INFINITY,
+        before_events,
     };
     let mut t = start;
 
@@ -763,11 +782,14 @@ pub(crate) fn integrate_events<const DAE: bool, H: crate::delay::Mode>(
         k = 1;
     }
     out.limit = changes.time(k).unwrap_or(f64::INFINITY);
+    // the start is also the end of a simulation of an empty interval, where the caller which
+    // asked for the state before the events of the end gets exactly that
+    let at_the_end = only_start && before_events;
     if steps {
         recorder.row(t, &y[..m], &problem.p)?;
         // the state before these events is the row of the start
         let probe = if only_start { Probe::End } else { Probe::After };
-        if events.execute_at(t, &mut y[..m], &mut problem.p, probe)? {
+        if !at_the_end && events.execute_at(t, &mut y[..m], &mut problem.p, probe)? {
             recorder.row(t, &y[..m], &problem.p)?;
         }
     } else {
@@ -776,7 +798,9 @@ pub(crate) fn integrate_events<const DAE: bool, H: crate::delay::Mode>(
             out.write(t, y, &problem.p, false, recorder)?;
         }
         let probe = if only_start { Probe::End } else { Probe::After };
-        events.execute_at(t, &mut y[..m], &mut problem.p, probe)?;
+        if !at_the_end {
+            events.execute_at(t, &mut y[..m], &mut problem.p, probe)?;
+        }
         if only_start {
             out.write(t, y, &problem.p, true, recorder)?;
         }
