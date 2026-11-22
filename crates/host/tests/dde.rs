@@ -138,6 +138,7 @@ fn historical_parameter_values_survive_events_and_request_changes_on_prepared_re
         time: 2.,
         values: vec![("p".into(), 20.)],
         increments: vec![],
+        forms: Vec::new(),
     });
     let plan = model.prepare(&req, &["p".into()]).unwrap();
     let verify = |result: SimulationResult, initial| {
@@ -224,6 +225,7 @@ fn a_delayed_pulse_reaches_the_rhs_and_trigger_between_sparse_outputs() {
                     time,
                     values: vec![("p".into(), value)],
                     increments: vec![],
+                    forms: Vec::new(),
                 });
             }
             each_host(&model, &req, |result| {
@@ -372,6 +374,7 @@ fn a_reversing_history_query_rearms_the_epoch_it_just_crossed() {
         time: 1.,
         values: vec![("p".into(), 1.)],
         increments: vec![],
+        forms: Vec::new(),
     }];
     each_host(&model, &req, |result| {
         close(*result.values.last().unwrap(), 0.01);

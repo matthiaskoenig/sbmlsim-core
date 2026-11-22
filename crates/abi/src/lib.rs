@@ -662,6 +662,23 @@ pub struct EventInfo {
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_change_carries_forms() {
+        let json = r#"{"time":1.0,"values":[],"forms":[{"target":"S","constant":2.0,"terms":[["S",-0.5]]}]}"#;
+        let change: Change = serde_json::from_str(json).unwrap();
+        assert_eq!(change.forms.len(), 1);
+        assert_eq!(change.forms[0].target, "S");
+        assert_eq!(change.forms[0].constant, 2.0);
+        assert_eq!(change.forms[0].terms, vec![("S".to_string(), -0.5)]);
+        // the forms survive a round trip in the shape they were written in
+        assert_eq!(serde_json::to_string(&change).unwrap(), json);
+        // a change without forms reads as before and writes no key, an unknown field is refused
+        let plain: Change = serde_json::from_str(r#"{"time":1.0,"values":[]}"#).unwrap();
+        assert!(plain.forms.is_empty());
+        assert!(!serde_json::to_string(&plain).unwrap().contains("forms"));
+        assert!(serde_json::from_str::<Change>(r#"{"time":1.0,"values":[],"what":1}"#).is_err());
+    }
+
     fn full_request() -> SimulationRequest {
         SimulationRequest {
             contract: SIMULATION_CONTRACT.to_string(),
@@ -673,6 +690,7 @@ mod tests {
                 time: 3.0,
                 values: vec![("dose".to_string(), 100.0), ("V".to_string(), 1.5)],
                 increments: Vec::new(),
+                forms: Vec::new(),
             }],
             steady_state: Some(SteadyState {
                 preinit: vec![("x".to_string(), 1.0)],

@@ -2,8 +2,8 @@
 //! requests on one engine.
 
 use sbmlsim_abi::{
-    Change, IntegratorSettings, Output, SIMULATION_CONTRACT, SimulationRequest, SimulationResult,
-    SteadyState, Tolerance,
+    Change, Form, IntegratorSettings, Output, SIMULATION_CONTRACT, SimulationRequest,
+    SimulationResult, SteadyState, Tolerance,
 };
 use sbmlsim_engine::model::{
     Compartmental, Decay, DerivedCompartment, EventModel, Fun, Target, TestEvent,
@@ -38,6 +38,7 @@ fn change(time: f64, values: &[(&str, f64)]) -> Change {
         time,
         values: values.iter().map(|(id, v)| (id.to_string(), *v)).collect(),
         increments: Vec::new(),
+        forms: Vec::new(),
     }
 }
 
@@ -189,6 +190,7 @@ fn incremented(time: f64, increments: &[(&str, f64)]) -> Change {
             .iter()
             .map(|(id, v)| (id.to_string(), *v))
             .collect(),
+        forms: Vec::new(),
     }
 }
 
@@ -209,6 +211,7 @@ fn an_increment_adds_to_the_value_before_the_change() {
         time: 5.0,
         values: vec![("C".to_string(), 2.0)],
         increments: vec![("S".to_string(), 0.5), ("[R]".to_string(), 0.25)],
+        forms: Vec::new(),
     }];
     let result = compartmental(&req);
     assert_eq!(column(&result, "S")[2], 1.5);
@@ -230,6 +233,7 @@ fn an_id_is_set_or_incremented_once_by_a_change() {
         time: 5.0,
         values: vec![("S".to_string(), 2.0)],
         increments: vec![("S".to_string(), 0.5)],
+        forms: Vec::new(),
     }];
     let model = Compartmental { k: 0.0 };
     let error = simulate(&model, &model.description(), &req).unwrap_err();
@@ -947,4 +951,182 @@ fn a_failed_request_leaves_the_engine_as_a_fresh_one() {
         .unwrap();
     let bits = |r: &SimulationResult| r.values.iter().map(|v| v.to_bits()).collect::<Vec<_>>();
     assert_eq!(bits(&after_failures), bits(&fresh));
+}
+
+/// A form as a test writes it: the target, the constant and the terms.
+type FormSpec<'a> = (&'a str, f64, &'a [(&'a str, f64)]);
+
+fn formed(time: f64, forms: &[FormSpec]) -> Change {
+    Change {
+        time,
+        values: Vec::new(),
+        increments: Vec::new(),
+        forms: forms
+            .iter()
+            .map(|(target, constant, terms)| Form {
+                target: target.to_string(),
+                constant: *constant,
+                terms: terms.iter().map(|(id, f)| (id.to_string(), *f)).collect(),
+            })
+            .collect(),
+    }
+}
+
+/// The message of the error of a request with these changes on the model `decay`.
+fn decay_error(changes: Vec<Change>) -> String {
+    let mut req = request(0.0, 10.0, Output::Uniform { steps: 2 });
+    req.changes = changes;
+    let model = Decay { k: 0.5 };
+    simulate(&model, &model.description(), &req)
+        .unwrap_err()
+        .to_string()
+}
+
+#[test]
+fn a_form_of_an_unknown_selection_is_refused() {
+    let message = decay_error(vec![formed(5.0, &[("y", 0.0, &[("nope", 1.0)])])]);
+    assert!(message.contains("nope"), "{message}");
+    assert!(message.contains("decay"), "{message}");
+    // an unknown target as well
+    let message = decay_error(vec![formed(5.0, &[("nope", 0.0, &[("y", 1.0)])])]);
+    assert!(message.contains("nope"), "{message}");
+}
+
+#[test]
+fn a_form_target_which_a_value_sets_is_refused() {
+    let mut set = change(5.0, &[("y", 3.0)]);
+    set.forms = formed(5.0, &[("y", 0.0, &[("y", -0.5)])]).forms;
+    let message = decay_error(vec![set]);
+    assert!(
+        message.contains("y is set more than once at t = 5"),
+        "{message}"
+    );
+    // two forms of one target, in two changes of one time
+    let message = decay_error(vec![
+        formed(5.0, &[("y", 0.0, &[])]),
+        formed(5.0, &[("y", 1.0, &[])]),
+    ]);
+    assert!(
+        message.contains("y is set more than once at t = 5"),
+        "{message}"
+    );
+    // and an increment
+    let mut both = incremented(5.0, &[("y", 1.0)]);
+    both.forms = formed(5.0, &[("y", 0.0, &[])]).forms;
+    let message = decay_error(vec![both]);
+    assert!(
+        message.contains("y is set more than once at t = 5"),
+        "{message}"
+    );
+}
+
+#[test]
+fn a_form_of_an_infinite_constant_or_factor_is_refused() {
+    let message = decay_error(vec![formed(5.0, &[("y", f64::INFINITY, &[("y", 1.0)])])]);
+    assert!(
+        message.contains("the value inf of y at t = 5 is not finite"),
+        "{message}"
+    );
+    let message = decay_error(vec![formed(5.0, &[("y", 0.0, &[("k", f64::INFINITY)])])]);
+    assert!(message.contains("not finite"), "{message}");
+    assert!(message.contains('k'), "{message}");
+}
+
+#[test]
+fn a_form_of_a_target_which_is_not_settable_is_refused() {
+    let message = decay_error(vec![formed(5.0, &[("t_half", 0.0, &[("y", 1.0)])])]);
+    assert!(message.contains("t_half"), "{message}");
+    assert!(message.contains("assignment rule"), "{message}");
+}
+
+/// A run on `Compartmental` with these changes, at `0, 5, 5, 10` (the rows 1 and 2 are the
+/// state before and after the change).
+fn compartmental_with(changes: Vec<Change>) -> SimulationResult {
+    let mut req = request(0.0, 10.0, Output::Uniform { steps: 2 });
+    req.changes = changes;
+    compartmental(&req)
+}
+
+#[test]
+fn a_form_scales_its_target() {
+    let plain = compartmental(&request(0.0, 10.0, Output::Uniform { steps: 2 }));
+    let before = column(&plain, "S")[1];
+    let run = compartmental_with(vec![formed(5.0, &[("S", 0.0, &[("S", -0.5)])])]);
+    assert_eq!(column(&run, "S")[2], -0.5 * before);
+}
+
+#[test]
+fn a_form_is_the_increment_it_generalizes() {
+    let a = compartmental_with(vec![incremented(5.0, &[("S", 3.0)])]);
+    let b = compartmental_with(vec![formed(5.0, &[("S", 3.0, &[("S", 1.0)])])]);
+    assert_eq!(a, b);
+}
+
+#[test]
+fn a_form_reads_another_selection() {
+    let plain = compartmental(&request(0.0, 10.0, Output::Uniform { steps: 2 }));
+    let run = compartmental_with(vec![formed(5.0, &[("S", 1.0, &[("H", 2.0)])])]);
+    assert_eq!(column(&run, "S")[2], 1.0 + 2.0 * column(&plain, "H")[1]);
+}
+
+#[test]
+fn a_form_reads_the_kind_of_its_term() {
+    // the compartment is 2, so the concentration is not the amount and the two cannot be
+    // confused
+    let mut plain = request(0.0, 10.0, Output::Uniform { steps: 2 });
+    plain.preinit = vec![("C".to_string(), 2.0)];
+    let plain_run = compartmental(&plain);
+    let mut req = request(0.0, 10.0, Output::Uniform { steps: 2 });
+    req.preinit = vec![("C".to_string(), 2.0)];
+    req.changes = vec![formed(5.0, &[("S", 0.0, &[("[S]", 1.0)])])];
+    let after = column(&compartmental(&req), "S")[2];
+    assert_eq!(after, column(&plain_run, "[S]")[1]);
+    assert_eq!(after, column(&plain_run, "S")[1] / 2.0);
+}
+
+#[test]
+fn a_form_is_applied_with_the_values_of_its_change() {
+    // the change sets C and forms S from S: the form reads the state before anything of the
+    // change is set, and the compartment is set first with the concentrations kept
+    let plain = compartmental(&request(0.0, 10.0, Output::Uniform { steps: 2 }));
+    let mut set = change(5.0, &[("C", 4.0)]);
+    set.forms = formed(5.0, &[("S", 0.0, &[("S", 2.0)])]).forms;
+    let run = compartmental_with(vec![set]);
+    assert_eq!(column(&run, "S")[2], 2.0 * column(&plain, "S")[1]);
+    assert_eq!(column(&run, "C")[2], 4.0);
+    // R stores its concentration, which the new compartment keeps
+    assert_eq!(column(&run, "[R]")[2], column(&plain, "[R]")[1]);
+}
+
+#[test]
+fn a_form_reads_the_value_before_a_value_of_its_change() {
+    // the change sets S to 7 and forms H from S: H reads the S before the change (1), not
+    // the 7 just set, so no order of application can change a form
+    let mut set = change(5.0, &[("S", 7.0)]);
+    set.forms = formed(5.0, &[("H", 1.0, &[("S", 3.0)])]).forms;
+    let run = compartmental_with(vec![set]);
+    assert_eq!(column(&run, "S")[2], 7.0);
+    assert_eq!(column(&run, "H")[2], 1.0 + 3.0 * 1.0);
+    // and an increment of S the same way
+    let mut bump = incremented(5.0, &[("S", 7.0)]);
+    bump.forms = formed(5.0, &[("H", 1.0, &[("S", 3.0)])]).forms;
+    let run = compartmental_with(vec![bump]);
+    assert_eq!(column(&run, "S")[2], 8.0);
+    assert_eq!(column(&run, "H")[2], 4.0);
+}
+
+#[test]
+fn a_form_sums_its_terms_in_the_order_of_the_request() {
+    // S, R and H are 1 before the change: 1e16 - 1e16 + 1 is 1 from the left, while
+    // 1e16 + 1 - 1e16 would round to 0
+    let run = compartmental_with(vec![formed(
+        5.0,
+        &[("S", 0.0, &[("S", 1e16), ("R", -1e16), ("H", 1.0)])],
+    )]);
+    assert_eq!(column(&run, "S")[2], 1.0);
+    let run = compartmental_with(vec![formed(
+        5.0,
+        &[("S", 0.0, &[("S", 1e16), ("H", 1.0), ("R", -1e16)])],
+    )]);
+    assert_eq!(column(&run, "S")[2], 0.0);
 }

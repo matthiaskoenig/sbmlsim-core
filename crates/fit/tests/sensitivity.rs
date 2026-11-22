@@ -61,6 +61,7 @@ fn with_a_change(scale: Scale) -> Definition {
         time: 5.0,
         values: vec![("y".to_string(), 0.5)],
         increments: vec![],
+        forms: Vec::new(),
     }];
     definition
 }

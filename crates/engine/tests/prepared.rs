@@ -55,6 +55,7 @@ fn prepared_runs_are_bit_identical_across_settings_and_changes() {
         time: 1.5,
         values: vec![("y".into(), 4.0), ("k".into(), 0.7)],
         increments: Vec::new(),
+        forms: Vec::new(),
     }];
     for stiff in [true, false, true] {
         for jacobian in [JacobianChoice::Auto, JacobianChoice::DifferenceQuotient] {
@@ -130,6 +131,7 @@ fn a_point_request_records_each_requested_row_from_the_initialized_ode() {
         time: req.start,
         values: vec![("y".into(), 11.0)],
         increments: vec![],
+        forms: Vec::new(),
     }];
     assert_eq!(engine.simulate(&req).unwrap().values, [5.0, 11.0]);
     equal(&engine.simulate(&trajectory).unwrap(), &original);
@@ -146,6 +148,7 @@ fn concentration_overrides_keep_template_quantity_and_order() {
         time: 1.5,
         values: vec![("C".into(), 5.0), ("[S]".into(), 1.0)],
         increments: Vec::new(),
+        forms: Vec::new(),
     }];
     // S overrides the entity's existing concentration slot without changing its quantity.
     let plan = engine
@@ -262,6 +265,7 @@ fn gmres_prepared_replay_applies_delayed_events_and_changes() {
         time: 2.0,
         values: vec![("y".into(), 4.0)],
         increments: vec![],
+        forms: Vec::new(),
     }];
     let plan = engine.prepare(&req, &["delay".into()]).unwrap();
     for delay in [0.2, 1.5, 0.2] {
@@ -301,6 +305,7 @@ fn a_prepared_ode_probes_all_differential_states_without_consistency_steps() {
         time: 0.0,
         values: vec![],
         increments: vec![("amount".into(), 1.0)],
+        forms: Vec::new(),
     }];
     req.selections = vec!["observed".into()];
     let plan = engine.prepare(&req, &["amount".into()]).unwrap();

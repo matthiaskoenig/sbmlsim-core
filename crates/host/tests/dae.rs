@@ -303,6 +303,7 @@ fn a_change_and_cascading_events_leave_each_output_on_the_constraint() {
         time: 0.5,
         values: vec![("x".into(), 2.0)],
         increments: vec![],
+        forms: Vec::new(),
     });
     let result = loaded.instantiate().unwrap().simulate(&req).unwrap();
     assert_eq!(result.columns, ["time", "x", "z", "observed"]);
@@ -599,6 +600,7 @@ fn a_change_refreshes_the_assignment_rules_the_projection_reads() {
         time: 1.0,
         values: vec![("k".to_string(), 5.0)],
         increments: vec![],
+        forms: Vec::new(),
     }];
     let result = loaded.instantiate().unwrap().simulate(&req).unwrap();
     assert_eq!(result.columns, ["time", "k", "q", "z"]);
@@ -631,6 +633,7 @@ fn the_unknown_of_an_algebraic_rule_is_not_settable() {
         time: 0.5,
         values: vec![("z".to_string(), 1.0)],
         increments: vec![],
+        forms: Vec::new(),
     }];
     for req in [set, changed] {
         let error = engine.simulate(&req).unwrap_err();

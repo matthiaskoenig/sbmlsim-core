@@ -49,6 +49,7 @@ fn prepared_plans_are_shared_by_workers_and_preserve_results() {
             time: 4.0,
             values: vec![("y".into(), 3.0)],
             increments: Vec::new(),
+            forms: Vec::new(),
         }];
         template.steady_state = steady_state;
         let plan = model.prepare(&template, &["k".into(), "y".into()]).unwrap();

@@ -45,7 +45,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use sbmlsim_abi::{Change, EntityKind, ModelDescription};
+use sbmlsim_abi::{Change, EntityKind, Form, ModelDescription};
 
 use crate::model::ModelFns;
 use crate::{EngineError, request};
@@ -72,6 +72,10 @@ pub(crate) struct Species {
     stores_concentration: bool,
 }
 
+/// A form resolved to the positions of its ids: the target, the constant and the terms
+/// `(target, factor)` in the order of the request.
+pub(crate) type ResolvedForm = (Target, f64, Vec<(Target, f64)>);
+
 /// A change resolved to the positions of its targets.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ResolvedChange {
@@ -81,6 +85,9 @@ pub(crate) struct ResolvedChange {
     values: Vec<(Target, f64)>,
     /// The targets and their increments, added to their values before the change.
     increments: Vec<(Target, f64)>,
+    /// The forms: the target, the constant and the terms `(target, factor)`, in the order of
+    /// the request.
+    forms: Vec<ResolvedForm>,
 }
 
 /// The species of a concentration in a compartment which a change of the compartment
@@ -228,6 +235,65 @@ impl Target {
     }
 }
 
+/// The target an id names and its entity: `S` the amount of a species, `[S]` its concentration,
+/// any other id the value of its entity. An unknown id and a concentration of an entity which
+/// is no species are [`EngineError::Request`] naming the id.
+fn lookup<'a>(
+    metadata: &'a Metadata,
+    id: &str,
+) -> Result<(Target, &'a EntityTarget, &'a str), EngineError> {
+    let concentration = id.strip_prefix('[').and_then(|s| s.strip_suffix(']'));
+    let name = concentration.unwrap_or(id);
+    let (name, entity) = metadata
+        .entities
+        .get_key_value(name)
+        .ok_or_else(|| request(format!("model {} has no entity {id}", metadata.id)))?;
+    let target = match (concentration, entity.species) {
+        (Some(_), Some(species)) => Target::Concentration(species),
+        (Some(_), None) => {
+            return Err(request(format!(
+                "{id} of model {} is no concentration: {name} is no species",
+                metadata.id
+            )));
+        }
+        (None, Some(species)) => Target::Amount(species),
+        (None, None) => Target::Entity(entity.index),
+    };
+    Ok((target, entity, name))
+}
+
+/// The target of an id and the position of its entity, whether or not it is settable: what a
+/// term of a form reads. An unknown id is [`EngineError::Request`] naming the id and the model.
+pub(crate) fn resolve_target(
+    metadata: &Metadata,
+    id: &str,
+) -> Result<(Target, usize), EngineError> {
+    let (target, entity, _) = lookup(metadata, id)?;
+    Ok((target, entity.index))
+}
+
+/// Resolves the terms `(id, factor)` of a form, which are read and never set: an id need not
+/// be settable and may repeat (the contributions add). `place` names them in a message. An
+/// unknown id and a factor which is not finite are [`EngineError::Request`] naming the id.
+pub(crate) fn resolve_terms(
+    metadata: &Metadata,
+    terms: &[(String, f64)],
+    place: &str,
+) -> Result<Vec<(Target, f64)>, EngineError> {
+    terms
+        .iter()
+        .map(|(id, factor)| {
+            let (target, _) = resolve_target(metadata, id)?;
+            if !factor.is_finite() {
+                return Err(request(format!(
+                    "the factor {factor} of {id} {place} is not finite"
+                )));
+            }
+            Ok((target, *factor))
+        })
+        .collect()
+}
+
 /// Resolves the values of a change or of the pre-initialization, both in the selections of
 /// sbmlsim (`S` the amount of a species, `[S]` its concentration); `place` names them in a
 /// message (`at t = 5`, `in the pre-initialization`). An unknown id, an entity which is not
@@ -241,24 +307,8 @@ pub(crate) fn resolve_values(
     let mut resolved: Vec<(Target, f64)> = Vec::with_capacity(values.len());
     let mut seen = BTreeSet::new();
     for (id, value) in values {
-        let concentration = id.strip_prefix('[').and_then(|s| s.strip_suffix(']'));
-        let name = concentration.unwrap_or(id);
-        let entity = metadata
-            .entities
-            .get(name)
-            .ok_or_else(|| request(format!("model {} has no entity {id}", metadata.id)))?;
-        let (index, species) = (entity.index, entity.species);
-        let target = match (concentration, species) {
-            (Some(_), Some(species)) => Target::Concentration(species),
-            (Some(_), None) => {
-                return Err(request(format!(
-                    "{id} of model {} is no concentration: {name} is no species",
-                    metadata.id
-                )));
-            }
-            (None, Some(species)) => Target::Amount(species),
-            (None, None) => Target::Entity(index),
-        };
+        let (target, entity, name) = lookup(metadata, id)?;
+        let index = entity.index;
         if !entity.settable {
             // The targets of the assignment rules and the unknowns of the algebraic rules are
             // the entities which are not settable (`Entity::settable` of the IR).
@@ -306,7 +356,7 @@ impl Changes {
         end: f64,
     ) -> Result<Changes, EngineError> {
         type Pairs = Vec<(String, f64)>;
-        let mut merged: Vec<(f64, Pairs, Pairs)> = Vec::with_capacity(changes.len());
+        let mut merged: Vec<(f64, Pairs, Pairs, Vec<Form>)> = Vec::with_capacity(changes.len());
         let mut previous = start;
         for change in changes {
             let t = change.time;
@@ -317,26 +367,48 @@ impl Changes {
                 )));
             }
             match merged.last_mut() {
-                Some((time, values, increments)) if *time == t => {
+                Some((time, values, increments, forms)) if *time == t => {
                     values.extend(change.values.iter().cloned());
                     increments.extend(change.increments.iter().cloned());
+                    forms.extend(change.forms.iter().cloned());
                 }
-                _ => merged.push((t, change.values.clone(), change.increments.clone())),
+                _ => merged.push((
+                    t,
+                    change.values.clone(),
+                    change.increments.clone(),
+                    change.forms.clone(),
+                )),
             }
             previous = t;
         }
         let resolved = merged
             .iter()
-            .map(|(time, values, increments)| {
+            .map(|(time, values, increments, forms)| {
                 let place = format!("at t = {time}");
-                // one id is set or incremented once: resolved together, then split
-                let all: Vec<(String, f64)> = values.iter().chain(increments).cloned().collect();
+                // one id is set, incremented or formed once: resolved together, then split
+                // (the constant of a form is the value its target is checked with)
+                let all: Vec<(String, f64)> = values
+                    .iter()
+                    .chain(increments)
+                    .cloned()
+                    .chain(forms.iter().map(|f| (f.target.clone(), f.constant)))
+                    .collect();
                 let mut resolved = resolve_values(metadata, &all, &place)?;
+                let targets = resolved.split_off(values.len() + increments.len());
                 let increments = resolved.split_off(values.len());
+                let forms = forms
+                    .iter()
+                    .zip(targets)
+                    .map(|(form, (target, constant))| {
+                        let terms = resolve_terms(metadata, &form.terms, &place)?;
+                        Ok((target, constant, terms))
+                    })
+                    .collect::<Result<Vec<_>, EngineError>>()?;
                 Ok(ResolvedChange {
                     time: *time,
                     values: resolved,
                     increments,
+                    forms,
                 })
             })
             .collect::<Result<Vec<_>, EngineError>>()?;
@@ -375,20 +447,38 @@ impl Changes {
                 y[i - np] = v;
             }
         };
-        // an increment is a value: the value of its target before the change plus it, read
-        // in the state after the assignment rules, as the other values are set into it
+        // the value of a term as the state before the change has it, read in the state after
+        // the assignment rules
+        let read = |target: Target| {
+            let size = target.compartment().map_or(f64::NAN, |c| get(y, p, c));
+            target.read(get(y, p, target.index()), size)
+        };
+        // an increment is a value: the value of its target before the change plus it, and a
+        // form is a value too, `constant + sum(factor * term)` with the terms summed in the
+        // order of the request from the constant. Every one is read before anything of the
+        // change is set, so the order of their application cannot change a value.
         let incremented: Vec<(Target, f64)> = change
             .increments
             .iter()
-            .map(|&(target, increment)| {
-                let size = target.compartment().map_or(f64::NAN, |c| get(y, p, c));
-                (
-                    target,
-                    target.read(get(y, p, target.index()), size) + increment,
-                )
+            .map(|&(target, increment)| (target, read(target) + increment))
+            .collect();
+        let formed: Vec<(Target, f64)> = change
+            .forms
+            .iter()
+            .map(|(target, constant, terms)| {
+                let value = terms
+                    .iter()
+                    .fold(*constant, |sum, &(term, factor)| sum + factor * read(term));
+                (*target, value)
             })
             .collect();
-        let values: Vec<(Target, f64)> = change.values.iter().copied().chain(incremented).collect();
+        let values: Vec<(Target, f64)> = change
+            .values
+            .iter()
+            .copied()
+            .chain(incremented)
+            .chain(formed)
+            .collect();
         let targeted = |i: usize| {
             values.iter().any(|(target, _)| match target {
                 Target::Entity(e) => *e == i,
@@ -420,5 +510,80 @@ impl Changes {
         model.assign(change.time, y, p);
         model.check_error()?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use sbmlsim_abi::Form;
+
+    use super::*;
+    use crate::model::Decay;
+
+    /// A form as a test writes it: the target, the constant and the terms.
+    type FormSpec<'a> = (&'a str, f64, &'a [(&'a str, f64)]);
+
+    /// A change at `time` of the forms `(target, constant, terms)`, in the order given.
+    pub(crate) fn formed(time: f64, forms: &[FormSpec]) -> Change {
+        Change {
+            time,
+            forms: forms
+                .iter()
+                .map(|(target, constant, terms)| Form {
+                    target: target.to_string(),
+                    constant: *constant,
+                    terms: terms.iter().map(|(id, f)| (id.to_string(), *f)).collect(),
+                })
+                .collect(),
+            ..Change::default()
+        }
+    }
+
+    /// The forms of the first change of `changes` on the model `decay`, resolved.
+    pub(crate) fn resolved_forms(changes: &[Change]) -> Result<Vec<ResolvedForm>, EngineError> {
+        let desc = Decay { k: 0.5 }.description();
+        let resolved = Changes::new(&desc, changes, 0.0, 10.0)?;
+        Ok(resolved.changes[0].forms.clone())
+    }
+
+    // the positions of `decay`: the parameters `k`, `t_half`, then the state `y`
+    const K: Target = Target::Entity(0);
+    const T_HALF: Target = Target::Entity(1);
+    const Y: Target = Target::Entity(2);
+
+    #[test]
+    fn a_form_resolves_in_the_order_of_the_request() {
+        let forms = resolved_forms(&[formed(
+            5.0,
+            &[("y", 2.0, &[("k", 3.0), ("y", -0.5), ("k", 1.0)])],
+        )])
+        .unwrap();
+        // the terms are not sorted and a repeated id stays two terms, which add
+        assert_eq!(forms, vec![(Y, 2.0, vec![(K, 3.0), (Y, -0.5), (K, 1.0)])]);
+    }
+
+    #[test]
+    fn a_form_without_terms_is_a_constant() {
+        let forms = resolved_forms(&[formed(5.0, &[("k", 4.0, &[])])]).unwrap();
+        assert_eq!(forms, vec![(K, 4.0, vec![])]);
+    }
+
+    #[test]
+    fn a_form_reads_a_term_which_is_not_settable() {
+        let forms = resolved_forms(&[formed(5.0, &[("y", 0.0, &[("t_half", 1.0)])])]).unwrap();
+        assert_eq!(forms, vec![(Y, 0.0, vec![(T_HALF, 1.0)])]);
+        // as a target the same entity is refused
+        let error = resolved_forms(&[formed(5.0, &[("t_half", 0.0, &[])])]).unwrap_err();
+        assert!(error.to_string().contains("t_half"), "{error}");
+    }
+
+    #[test]
+    fn the_forms_of_changes_of_one_time_merge() {
+        let forms = resolved_forms(&[
+            formed(5.0, &[("k", 1.0, &[])]),
+            formed(5.0, &[("y", 2.0, &[("k", 1.0)])]),
+        ])
+        .unwrap();
+        assert_eq!(forms, vec![(K, 1.0, vec![]), (Y, 2.0, vec![(K, 1.0)])]);
     }
 }
