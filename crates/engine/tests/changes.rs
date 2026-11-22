@@ -38,6 +38,7 @@ fn change(time: f64, values: &[(&str, f64)]) -> Change {
         time,
         values: values.iter().map(|(id, v)| (id.to_string(), *v)).collect(),
         increments: Vec::new(),
+        forms: Vec::new(),
     }
 }
 
@@ -189,6 +190,7 @@ fn incremented(time: f64, increments: &[(&str, f64)]) -> Change {
             .iter()
             .map(|(id, v)| (id.to_string(), *v))
             .collect(),
+        forms: Vec::new(),
     }
 }
 
@@ -209,6 +211,7 @@ fn an_increment_adds_to_the_value_before_the_change() {
         time: 5.0,
         values: vec![("C".to_string(), 2.0)],
         increments: vec![("S".to_string(), 0.5), ("[R]".to_string(), 0.25)],
+        forms: Vec::new(),
     }];
     let result = compartmental(&req);
     assert_eq!(column(&result, "S")[2], 1.5);
@@ -230,6 +233,7 @@ fn an_id_is_set_or_incremented_once_by_a_change() {
         time: 5.0,
         values: vec![("S".to_string(), 2.0)],
         increments: vec![("S".to_string(), 0.5)],
+        forms: Vec::new(),
     }];
     let model = Compartmental { k: 0.0 };
     let error = simulate(&model, &model.description(), &req).unwrap_err();

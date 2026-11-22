@@ -405,6 +405,7 @@ fn requests_on_one_instance_give_the_bits_of_a_fresh_instance() {
         time: 2.5,
         values: vec![("x".to_string(), 1.0)],
         increments: Vec::new(),
+        forms: Vec::new(),
     }];
     let mut instance = runtime()
         .instantiate(&compiled.wasm, &compiled.description)

@@ -119,6 +119,13 @@ pub enum Output {
 /// amount, `[S]` the concentration, as a value reads them), simultaneously with the values: a
 /// repeated dose (`PODOSE + d`), as sbmlsim's formula `"PODOSE + d"` of a change, which reads
 /// the state before the change. An id is either set or incremented by one change.
+///
+/// A form is the general case of an increment: `constant + Σ factor * value(id)` over the
+/// values before the change, set on its target as a value is, simultaneously with the values
+/// and the increments (an increment is the form of its own id with the factor 1). It carries a
+/// value which follows the state, e.g. the formula `S - 0.5 * R` of a change, which a number
+/// would hold where the request was built. An id is either set, incremented or formed by one
+/// change.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Change {
@@ -129,6 +136,22 @@ pub struct Change {
     /// The `(id, increment)` pairs, added to the values before the change; none by default.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub increments: Vec<(String, f64)>,
+    /// The forms, each evaluated from the state before the change; none by default.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub forms: Vec<Form>,
+}
+
+/// A value of a change which the engine evaluates from its own state:
+/// `constant + Σ factor * value(selection)`, read before the change.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Form {
+    /// The id of the entity the value is set on, a settable selection.
+    pub target: String,
+    /// The constant term.
+    pub constant: f64,
+    /// The `(id, factor)` terms over the values before the change.
+    pub terms: Vec<(String, f64)>,
 }
 
 /// A steady state which is reached after the end of the simulation, as sbmlsim's measurement

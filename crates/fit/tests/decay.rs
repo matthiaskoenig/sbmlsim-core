@@ -298,6 +298,7 @@ fn doubled_at_five() -> sbmlsim_abi::SimulationRequest {
         time: 5.0,
         values: vec![],
         increments: vec![("y".to_string(), 1.0)],
+        forms: Vec::new(),
     }];
     request
 }

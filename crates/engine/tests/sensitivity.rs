@@ -185,6 +185,7 @@ fn a_sensitivity_of_a_run_with_a_change_is_refused() {
         time: 5.0,
         values: vec![("y".to_string(), 2.0)],
         increments: vec![],
+        forms: Vec::new(),
     }];
 
     let refusal = decay(&request).unwrap_err();
