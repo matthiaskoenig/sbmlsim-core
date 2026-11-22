@@ -12,6 +12,15 @@
 //! of the C library of the host (`SUNRpowerR` in the step size of CVODE), `engine.wasm` those of
 //! wasi-libc, so the step sizes and with them the results differ in the last bits (within the
 //! tolerances of the integration). The math of the model is `mathlib.wasm` in both.
+//!
+//! With the feature `native` it is the engine of every call of a caller which has it, the
+//! python bindings among them: the batch and the fit simulate on it, and
+//! [`crate::LoadedModel::initial_selections`] and [`crate::LoadedModel::prepare`] read the
+//! initial values of a DAE or delay model and resolve the plan of a prepared request in it as
+//! well, so the values a caller reads and the plan its points run come from the engine which
+//! runs them. `engine.wasm` is then only the engine of the browser
+//! ([`crate::ENGINE_WASM`], which the JavaScript host loads) and of a build without the
+//! feature.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -80,13 +89,25 @@ impl NativeInstance {
         self.engine.simulate_prepared(&plan, values)
     }
 
-    /// Validates a request in the native engine and gives the handle a batch runs it with,
-    /// for a request `engine.wasm` does not carry: the forward sensitivities of a run.
+    /// Reads the initialized selections of the model, in the order of the description and
+    /// without executing its events, the consistent initial conditions of a DAE model and the
+    /// history of a model with delays included.
     ///
-    /// [`crate::LoadedModel::prepare`], which every other prepared request goes through,
-    /// validates it in an instance of `engine.wasm`, whose output format carries the values of
-    /// a table and nothing else, so it refuses the sensitivities of a run. The plan of this
-    /// instance is kept as if the request had been run on it.
+    /// It is what [`crate::LoadedModel::initial_selections`] reads a model the direct
+    /// evaluation of its own does not cover with.
+    ///
+    /// # Errors
+    ///
+    /// If the engine cannot initialize the model, e.g. a DAE whose initial conditions do not
+    /// converge.
+    pub fn initial_selections(&mut self) -> Result<Vec<f64>, EngineError> {
+        self.execution.begin(&mut self.inner.borrow_mut().store);
+        self.engine.initial_values()
+    }
+
+    /// Validates a request in the native engine and gives the handle a batch runs it with.
+    ///
+    /// The plan of this instance is kept as if the request had been run on it.
     ///
     /// # Errors
     ///
