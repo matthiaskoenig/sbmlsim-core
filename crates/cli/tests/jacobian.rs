@@ -356,6 +356,8 @@ fn robertson(choice: JacobianChoice, solver: LinearSolver) -> SimulationResult {
         preinit: vec![],
         changes: vec![],
         steady_state: None,
+        steady_state_after: None,
+        before_events: false,
         selections: ["time", "y1", "y2", "y3"].map(String::from).to_vec(),
         settings: IntegratorSettings {
             relative_tolerance: 1e-8,
@@ -485,6 +487,8 @@ fn falls_back(sbml: &str, selections: &[&str]) {
         preinit: vec![],
         changes: vec![],
         steady_state: None,
+        steady_state_after: None,
+        before_events: false,
         selections: selections.iter().map(|s| s.to_string()).collect(),
         settings: IntegratorSettings {
             relative_tolerance: 1e-8,

@@ -363,6 +363,8 @@ fn request(
         preinit: model.preinit.clone(),
         changes: vec![],
         steady_state: None,
+        steady_state_after: None,
+        before_events: false,
         selections,
         settings: IntegratorSettings {
             relative_tolerance: model.relative_tolerance,

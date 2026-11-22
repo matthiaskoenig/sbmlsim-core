@@ -522,6 +522,8 @@ pub fn case_request(settings: &CaseSettings) -> SimulationRequest {
         preinit: Vec::new(),
         changes: Vec::new(),
         steady_state: None,
+        steady_state_after: None,
+        before_events: false,
         selections: settings.selections.clone(),
         settings: IntegratorSettings {
             relative_tolerance: INTEGRATOR_TOLERANCE,

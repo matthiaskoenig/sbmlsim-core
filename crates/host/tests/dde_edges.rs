@@ -35,6 +35,8 @@ fn request(start: f64, end: f64, steps: u32, selections: &[&str]) -> SimulationR
         preinit: vec![],
         changes: vec![],
         steady_state: None,
+        steady_state_after: None,
+        before_events: false,
         seed: 1,
         selections: selections.iter().map(|s| s.to_string()).collect(),
         settings: IntegratorSettings::default(),

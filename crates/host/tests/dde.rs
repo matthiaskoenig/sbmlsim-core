@@ -37,6 +37,8 @@ fn request(end: f64, steps: u32, selections: &[&str]) -> SimulationRequest {
         preinit: vec![],
         changes: vec![],
         steady_state: None,
+        steady_state_after: None,
+        before_events: false,
         seed: 0,
         settings: IntegratorSettings {
             relative_tolerance: 1e-9,

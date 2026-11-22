@@ -25,6 +25,29 @@ pub struct SimulationRequest {
     pub changes: Vec<Change>,
     /// A steady state to reach before the start.
     pub steady_state: Option<SteadyState>,
+    /// A steady state to reach after the end, whose row the output carries last, at the time
+    /// `inf`; none by default.
+    ///
+    /// The model continues from the state the timecourse ended in, with the triggers of its
+    /// events as it left them, so an event which executed during the timecourse does not
+    /// execute again at the same threshold. This is a measurement at steady state (PEtab v2's
+    /// time `inf`), where [`SimulationRequest::steady_state`] is the pre-equilibration before
+    /// the start.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub steady_state_after: Option<SteadyStateAfter>,
+    /// Whether the output at the end is the state **before** the events of the end time
+    /// execute; `false` by default, which is the state after them.
+    ///
+    /// The caller which folds the value of a change needs the state the change is applied to,
+    /// which is the one before the events of its time: it asks for the segment which ends
+    /// there with this flag, as libroadrunner evaluates the triggers and applies a change
+    /// before it executes the events of that time.
+    ///
+    /// Only the end is affected: an output time inside the interval sees the state after the
+    /// events of its time, as without the flag, and the events of the end are simply not
+    /// executed, the simulation ending there.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub before_events: bool,
     /// The ids of the selections to write as columns, after the column `time`.
     ///
     /// The first column of a result is always `time`, the time of the row: a leading `"time"`
@@ -106,6 +129,44 @@ pub struct Change {
     /// The `(id, increment)` pairs, added to the values before the change; none by default.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub increments: Vec<(String, f64)>,
+}
+
+/// A steady state which is reached after the end of the simulation, as sbmlsim's measurement
+/// at the time `inf`.
+///
+/// The model continues from the state the timecourse ended in, with the triggers of its events
+/// as it left them and every pending execution moved to [`SteadyStateAfter::from`], and is
+/// integrated from `from` over horizons which grow by a factor of ten, as the pre-equilibration
+/// is, until every state has `|dx/dt| <= absolute_tolerance + relative_tolerance * |x|` at the
+/// end of a horizon, at most `max_time`. Its row is the last of the output, at the time `inf`.
+///
+/// A steady state which is not reached is an error of the integration.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SteadyStateAfter {
+    /// The time the integration to the steady state starts at; 0 by default.
+    ///
+    /// libroadrunner continues at the time the timecourse ended at for a model whose math reads
+    /// the time and at 0 for every other one, which sbmlsim passes here, so the two agree.
+    #[serde(default)]
+    pub from: f64,
+    /// The absolute tolerance of the steady state criterion.
+    pub absolute_tolerance: f64,
+    /// The relative tolerance of the steady state criterion.
+    pub relative_tolerance: f64,
+    /// The longest time integrated to reach it.
+    pub max_time: f64,
+}
+
+impl Default for SteadyStateAfter {
+    fn default() -> Self {
+        Self {
+            from: 0.0,
+            absolute_tolerance: 1e-8,
+            relative_tolerance: 1e-6,
+            max_time: 1e8,
+        }
+    }
 }
 
 /// A steady state which is reached before the start, as sbmlsim's `SteadyState`.

@@ -257,6 +257,8 @@ fn edge_values_keep_their_bits() {
             preinit: Vec::new(),
             changes: Vec::new(),
             steady_state: None,
+            steady_state_after: None,
+            before_events: false,
             selections: Vec::new(),
             settings: sbmlsim_abi::IntegratorSettings::default(),
             seed: 0,
@@ -503,6 +505,8 @@ fn literal_folding_gives_the_bits_of_the_code() {
                 preinit: Vec::new(),
                 changes: Vec::new(),
                 steady_state: None,
+                steady_state_after: None,
+                before_events: false,
                 selections: std::iter::once("time".to_string())
                     .chain((0..n_rules).map(|i| format!("r{i}")))
                     .chain(["x".to_string(), "k".to_string()])

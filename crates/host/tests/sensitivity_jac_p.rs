@@ -58,6 +58,8 @@ fn request(stiff: bool) -> SimulationRequest {
         preinit: vec![],
         changes: vec![],
         steady_state: None,
+        steady_state_after: None,
+        before_events: false,
         selections: vec![
             "time".to_string(),
             "S".to_string(),

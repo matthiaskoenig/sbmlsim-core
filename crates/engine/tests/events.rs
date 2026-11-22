@@ -19,6 +19,8 @@ fn request(start: f64, end: f64, output: Output, seed: u64) -> SimulationRequest
         preinit: vec![],
         changes: vec![],
         steady_state: None,
+        steady_state_after: None,
+        before_events: false,
         selections: vec![],
         settings: IntegratorSettings {
             relative_tolerance: 1e-10,
@@ -505,5 +507,180 @@ fn a_description_of_another_jacobian_is_refused() {
         ),
         Err(other) => panic!("{other:?}"),
         Ok(_) => panic!("accepted"),
+    }
+}
+
+/// The event `y >= 5: x = x + 10` of the ramp `y' = 1`, which executes at the time 5.
+fn jump_at_five() -> EventModel {
+    let mut event = TestEvent::new("jump", |_, y, _| y[0] >= 5.0, vec![|_, y, _| y[0] - 5.0]);
+    event.initial_value = false;
+    event.assignments = vec![(X, |_, _, p| p[0] + 10.0)];
+    ramp(vec![event])
+}
+
+#[test]
+fn before_events_gives_the_state_at_the_end_without_the_events_of_that_time() {
+    // the ramp reaches 5 at the time 5, where the event sets `x` from 0 to 10: a caller which
+    // folds the value of a change at 5 needs `x` before it, which libroadrunner reads there
+    let model = jump_at_five();
+    let at_five = |before_events: bool| {
+        let mut req = request(0.0, 5.0, Output::Times(vec![0.0, 5.0]), 1);
+        req.selections = vec!["time".into(), "y".into(), "x".into()];
+        req.before_events = before_events;
+        let result = run(&model, &req);
+        (
+            *column(&result, "x").last().unwrap(),
+            *column(&result, "y").last().unwrap(),
+            result.values.len() / result.columns.len(),
+        )
+    };
+    let (x_after, y_after, rows_after) = at_five(false);
+    let (x_before, y_before, rows_before) = at_five(true);
+    // the state after the event of the end, which is what a request answers by default
+    assert_eq!(x_after, 10.0);
+    // the state before it, which is what the flag asks for
+    assert_eq!(x_before, 0.0);
+    // the event assigns a parameter only, so the row is the same otherwise
+    assert!((y_before - 5.0).abs() < 1e-7, "{y_before}");
+    assert!((y_after - 5.0).abs() < 1e-7, "{y_after}");
+    assert_eq!(rows_before, rows_after);
+}
+
+#[test]
+fn before_events_leaves_the_events_inside_the_interval_alone() {
+    // only the end is affected: the event at 5 executes for a simulation which runs past it,
+    // and every row of such a run is the one of a request without the flag
+    let model = jump_at_five();
+    let rows = |before_events: bool| {
+        let mut req = request(0.0, 8.0, Output::Times(vec![0.0, 5.0, 8.0]), 1);
+        req.selections = vec!["time".into(), "x".into()];
+        req.before_events = before_events;
+        column(&run(&model, &req), "x")
+    };
+    let after = rows(false);
+    // the event executed inside the interval, whatever the flag says about its end
+    assert_eq!(*after.last().unwrap(), 10.0);
+    assert_eq!(rows(true), after);
+}
+
+#[test]
+fn before_events_holds_for_the_steps_of_the_integrator() {
+    let model = jump_at_five();
+    let steps = |before_events: bool| {
+        let mut req = request(0.0, 5.0, Output::IntegratorSteps, 1);
+        req.selections = vec!["time".into(), "x".into()];
+        req.before_events = before_events;
+        let result = run(&model, &req);
+        column(&result, "x")
+    };
+    // the steps have the event of the end as two rows, the state before and after it
+    let after = steps(false);
+    assert_eq!(*after.last().unwrap(), 10.0);
+    // with the flag the event does not execute, so no row of the steps is 10
+    let before = steps(true);
+    assert!(before.iter().all(|x| *x == 0.0), "{before:?}");
+}
+
+/// `x' = k (target - x)`, which relaxes to `target`, with the event
+/// `x >= 3: target = target + 10`, which executes once on the way there.
+fn relaxation() -> EventModel {
+    let mut event = TestEvent::new("raise", |_, y, _| y[0] >= 3.0, vec![|_, y, _| y[0] - 3.0]);
+    event.initial_value = false;
+    event.assignments = vec![(Target::Param(1), |_, _, p| p[1] + 10.0)];
+    EventModel {
+        states: vec![("x", 0.0)],
+        parameters: vec![("k", 0.5), ("target", 7.0)],
+        rhs: |_, y, p, ydot| ydot[0] = p[0] * (p[1] - y[0]),
+        events: vec![event],
+        discontinuities: vec![],
+    }
+}
+
+/// The settings of a steady state after the end.
+fn after_the_end() -> sbmlsim_abi::SteadyStateAfter {
+    sbmlsim_abi::SteadyStateAfter {
+        from: 0.0,
+        absolute_tolerance: 1e-10,
+        relative_tolerance: 1e-8,
+        max_time: 1e6,
+    }
+}
+
+#[test]
+fn a_steady_state_after_the_end_is_the_last_row_of_the_output_at_the_time_inf() {
+    let model = relaxation();
+    let mut req = request(0.0, 2.0, Output::Times(vec![0.0, 1.0, 2.0]), 1);
+    req.selections = vec!["time".into(), "x".into(), "target".into()];
+    req.steady_state_after = Some(after_the_end());
+    let result = run(&model, &req);
+    let time = column(&result, "time");
+    let x = column(&result, "x");
+    // the three rows of the timecourse and the row of the steady state after them
+    assert_eq!(time.len(), 4);
+    assert_eq!(time[..3], [0.0, 1.0, 2.0]);
+    assert_eq!(time[3], f64::INFINITY);
+    // the event executed on the way to the steady state, which is `target` there
+    assert!((x[3] - 17.0).abs() < 1e-6, "{x:?}");
+    assert_eq!(*column(&result, "target").last().unwrap(), 17.0);
+}
+
+#[test]
+fn a_steady_state_after_the_end_does_not_execute_the_events_of_the_timecourse_again() {
+    // the event raises `target` by 10 once; the state carried into the steady state has its
+    // trigger true, so an engine which started from the initial state would raise it twice
+    let model = relaxation();
+    let steady_state_of = |end: f64| {
+        let mut req = request(0.0, end, Output::Times(vec![0.0, end]), 1);
+        req.selections = vec!["time".into(), "target".into()];
+        req.steady_state_after = Some(after_the_end());
+        *column(&run(&model, &req), "target").last().unwrap()
+    };
+    // a timecourse which is over before the event, and one which is over after it
+    assert_eq!(steady_state_of(0.5), 17.0);
+    assert_eq!(steady_state_of(20.0), 17.0);
+}
+
+#[test]
+fn a_steady_state_after_the_end_of_a_model_without_events_continues_from_the_end() {
+    let model = EventModel {
+        states: vec![("x", 0.0)],
+        parameters: vec![("k", 0.5), ("target", 7.0)],
+        rhs: |_, y, p, ydot| ydot[0] = p[0] * (p[1] - y[0]),
+        events: vec![],
+        discontinuities: vec![],
+    };
+    let mut req = request(0.0, 1.0, Output::Times(vec![0.0, 1.0]), 1);
+    req.selections = vec!["time".into(), "x".into()];
+    req.steady_state_after = Some(after_the_end());
+    let result = run(&model, &req);
+    let x = column(&result, "x");
+    assert_eq!(x.len(), 3);
+    assert!((x[2] - 7.0).abs() < 1e-6, "{x:?}");
+    assert_eq!(*column(&result, "time").last().unwrap(), f64::INFINITY);
+}
+
+#[test]
+fn a_steady_state_after_the_end_which_is_not_reached_is_an_error() {
+    let model = EventModel {
+        states: vec![("x", 0.0)],
+        parameters: vec![("k", 1.0)],
+        rhs: |_, _, p, ydot| ydot[0] = p[0],
+        events: vec![],
+        discontinuities: vec![],
+    };
+    let mut req = request(0.0, 1.0, Output::Times(vec![0.0, 1.0]), 1);
+    req.steady_state_after = Some(sbmlsim_abi::SteadyStateAfter {
+        max_time: 10.0,
+        ..after_the_end()
+    });
+    match simulate(&model, &model.description(), &req) {
+        Err(EngineError::Integration { flag, message, .. }) => {
+            assert_eq!(flag, sbmlsim_engine::STEADY_STATE_FLAG);
+            assert!(
+                message.contains("did not reach a steady state"),
+                "{message}"
+            );
+        }
+        other => panic!("{other:?}"),
     }
 }
