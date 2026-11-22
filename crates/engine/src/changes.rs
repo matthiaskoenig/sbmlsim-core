@@ -447,20 +447,38 @@ impl Changes {
                 y[i - np] = v;
             }
         };
-        // an increment is a value: the value of its target before the change plus it, read
-        // in the state after the assignment rules, as the other values are set into it
+        // the value of a term as the state before the change has it, read in the state after
+        // the assignment rules
+        let read = |target: Target| {
+            let size = target.compartment().map_or(f64::NAN, |c| get(y, p, c));
+            target.read(get(y, p, target.index()), size)
+        };
+        // an increment is a value: the value of its target before the change plus it, and a
+        // form is a value too, `constant + sum(factor * term)` with the terms summed in the
+        // order of the request from the constant. Every one is read before anything of the
+        // change is set, so the order of their application cannot change a value.
         let incremented: Vec<(Target, f64)> = change
             .increments
             .iter()
-            .map(|&(target, increment)| {
-                let size = target.compartment().map_or(f64::NAN, |c| get(y, p, c));
-                (
-                    target,
-                    target.read(get(y, p, target.index()), size) + increment,
-                )
+            .map(|&(target, increment)| (target, read(target) + increment))
+            .collect();
+        let formed: Vec<(Target, f64)> = change
+            .forms
+            .iter()
+            .map(|(target, constant, terms)| {
+                let value = terms
+                    .iter()
+                    .fold(*constant, |sum, &(term, factor)| sum + factor * read(term));
+                (*target, value)
             })
             .collect();
-        let values: Vec<(Target, f64)> = change.values.iter().copied().chain(incremented).collect();
+        let values: Vec<(Target, f64)> = change
+            .values
+            .iter()
+            .copied()
+            .chain(incremented)
+            .chain(formed)
+            .collect();
         let targeted = |i: usize| {
             values.iter().any(|(target, _)| match target {
                 Target::Entity(e) => *e == i,
@@ -566,6 +584,6 @@ mod tests {
             formed(5.0, &[("y", 2.0, &[("k", 1.0)])]),
         ])
         .unwrap();
-        assert_eq!(forms.len(), 2);
+        assert_eq!(forms, vec![(K, 1.0, vec![]), (Y, 2.0, vec![(K, 1.0)])]);
     }
 }

@@ -1023,8 +1023,10 @@ fn a_form_target_which_a_value_sets_is_refused() {
 #[test]
 fn a_form_of_an_infinite_constant_or_factor_is_refused() {
     let message = decay_error(vec![formed(5.0, &[("y", f64::INFINITY, &[("y", 1.0)])])]);
-    assert!(message.contains("not finite"), "{message}");
-    assert!(message.contains('y'), "{message}");
+    assert!(
+        message.contains("the value inf of y at t = 5 is not finite"),
+        "{message}"
+    );
     let message = decay_error(vec![formed(5.0, &[("y", 0.0, &[("k", f64::INFINITY)])])]);
     assert!(message.contains("not finite"), "{message}");
     assert!(message.contains('k'), "{message}");
@@ -1035,4 +1037,96 @@ fn a_form_of_a_target_which_is_not_settable_is_refused() {
     let message = decay_error(vec![formed(5.0, &[("t_half", 0.0, &[("y", 1.0)])])]);
     assert!(message.contains("t_half"), "{message}");
     assert!(message.contains("assignment rule"), "{message}");
+}
+
+/// A run on `Compartmental` with these changes, at `0, 5, 5, 10` (the rows 1 and 2 are the
+/// state before and after the change).
+fn compartmental_with(changes: Vec<Change>) -> SimulationResult {
+    let mut req = request(0.0, 10.0, Output::Uniform { steps: 2 });
+    req.changes = changes;
+    compartmental(&req)
+}
+
+#[test]
+fn a_form_scales_its_target() {
+    let plain = compartmental(&request(0.0, 10.0, Output::Uniform { steps: 2 }));
+    let before = column(&plain, "S")[1];
+    let run = compartmental_with(vec![formed(5.0, &[("S", 0.0, &[("S", -0.5)])])]);
+    assert_eq!(column(&run, "S")[2], -0.5 * before);
+}
+
+#[test]
+fn a_form_is_the_increment_it_generalizes() {
+    let a = compartmental_with(vec![incremented(5.0, &[("S", 3.0)])]);
+    let b = compartmental_with(vec![formed(5.0, &[("S", 3.0, &[("S", 1.0)])])]);
+    assert_eq!(a, b);
+}
+
+#[test]
+fn a_form_reads_another_selection() {
+    let plain = compartmental(&request(0.0, 10.0, Output::Uniform { steps: 2 }));
+    let run = compartmental_with(vec![formed(5.0, &[("S", 1.0, &[("H", 2.0)])])]);
+    assert_eq!(column(&run, "S")[2], 1.0 + 2.0 * column(&plain, "H")[1]);
+}
+
+#[test]
+fn a_form_reads_the_kind_of_its_term() {
+    // the compartment is 2, so the concentration is not the amount and the two cannot be
+    // confused
+    let mut plain = request(0.0, 10.0, Output::Uniform { steps: 2 });
+    plain.preinit = vec![("C".to_string(), 2.0)];
+    let plain_run = compartmental(&plain);
+    let mut req = request(0.0, 10.0, Output::Uniform { steps: 2 });
+    req.preinit = vec![("C".to_string(), 2.0)];
+    req.changes = vec![formed(5.0, &[("S", 0.0, &[("[S]", 1.0)])])];
+    let after = column(&compartmental(&req), "S")[2];
+    assert_eq!(after, column(&plain_run, "[S]")[1]);
+    assert_eq!(after, column(&plain_run, "S")[1] / 2.0);
+}
+
+#[test]
+fn a_form_is_applied_with_the_values_of_its_change() {
+    // the change sets C and forms S from S: the form reads the state before anything of the
+    // change is set, and the compartment is set first with the concentrations kept
+    let plain = compartmental(&request(0.0, 10.0, Output::Uniform { steps: 2 }));
+    let mut set = change(5.0, &[("C", 4.0)]);
+    set.forms = formed(5.0, &[("S", 0.0, &[("S", 2.0)])]).forms;
+    let run = compartmental_with(vec![set]);
+    assert_eq!(column(&run, "S")[2], 2.0 * column(&plain, "S")[1]);
+    assert_eq!(column(&run, "C")[2], 4.0);
+    // R stores its concentration, which the new compartment keeps
+    assert_eq!(column(&run, "[R]")[2], column(&plain, "[R]")[1]);
+}
+
+#[test]
+fn a_form_reads_the_value_before_a_value_of_its_change() {
+    // the change sets S to 7 and forms H from S: H reads the S before the change (1), not
+    // the 7 just set, so no order of application can change a form
+    let mut set = change(5.0, &[("S", 7.0)]);
+    set.forms = formed(5.0, &[("H", 1.0, &[("S", 3.0)])]).forms;
+    let run = compartmental_with(vec![set]);
+    assert_eq!(column(&run, "S")[2], 7.0);
+    assert_eq!(column(&run, "H")[2], 1.0 + 3.0 * 1.0);
+    // and an increment of S the same way
+    let mut bump = incremented(5.0, &[("S", 7.0)]);
+    bump.forms = formed(5.0, &[("H", 1.0, &[("S", 3.0)])]).forms;
+    let run = compartmental_with(vec![bump]);
+    assert_eq!(column(&run, "S")[2], 8.0);
+    assert_eq!(column(&run, "H")[2], 4.0);
+}
+
+#[test]
+fn a_form_sums_its_terms_in_the_order_of_the_request() {
+    // S, R and H are 1 before the change: 1e16 - 1e16 + 1 is 1 from the left, while
+    // 1e16 + 1 - 1e16 would round to 0
+    let run = compartmental_with(vec![formed(
+        5.0,
+        &[("S", 0.0, &[("S", 1e16), ("R", -1e16), ("H", 1.0)])],
+    )]);
+    assert_eq!(column(&run, "S")[2], 1.0);
+    let run = compartmental_with(vec![formed(
+        5.0,
+        &[("S", 0.0, &[("S", 1e16), ("H", 1.0), ("R", -1e16)])],
+    )]);
+    assert_eq!(column(&run, "S")[2], 0.0);
 }
