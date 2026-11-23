@@ -186,6 +186,10 @@ pub struct CurveRequest {
     /// The measurements, one per time.
     pub values: Vec<f64>,
     /// The standard deviation of every measurement, which its residual is divided by.
+    /// Every value is positive; a positive infinity is allowed and means the point carries
+    /// no information: it stays in the residual vector and contributes nothing (its
+    /// residual is `+-0.0` and its row of the jacobian is zeros). Zero, a negative value
+    /// and `NaN` are refused.
     #[serde(default)]
     pub noise: Option<Vec<f64>>,
     /// The weight of the curve, which multiplies its residuals; one when it is absent.

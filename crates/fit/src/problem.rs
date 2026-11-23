@@ -180,7 +180,9 @@ pub struct Curve {
     /// The measurements, one per time.
     pub values: Vec<f64>,
     /// The standard deviation of every measurement, the residuals are divided by it; one
-    /// for every point when it is absent.
+    /// for every point when it is absent. A positive infinity is a measurement which
+    /// carries no information: its residual (`+-0.0`) and its row of the jacobian (zeros)
+    /// are zero, and the arithmetic needs no case of its own.
     pub noise: Option<Vec<f64>>,
     /// The weight of the curve, which multiplies its residuals.
     pub weight: f64,
@@ -1191,9 +1193,10 @@ fn resolve(
         }
     };
     for value in &noise {
-        if !value.is_finite() || *value <= 0.0 {
+        // an infinite standard deviation is a measurement which carries no information
+        if value.is_nan() || *value <= 0.0 {
             return Err(fault(format!(
-                "has the standard deviation {value}, which is not positive and finite"
+                "has the standard deviation {value}, which is no standard deviation of a curve; pass a positive value, or an infinity to drop the point"
             )));
         }
     }
