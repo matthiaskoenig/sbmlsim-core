@@ -7,10 +7,10 @@
 The demo on [JavaScript](../docs/javascript.md) simulates the repressilator in the
 page of the reader. It needs the JavaScript loader and the two modules of the engine,
 which are vendored from the published npm package at `NPM_VERSION` with the integrity
-of the registry checked, and the compiled model, which the command line of a local
-build writes from the SBML committed next to it. Every file is committed and the
-build of the documentation generates none of them, as with the tables of the
-benchmarks and the grid of the test suite.
+of the registry checked, and the compiler of the browser, which the page compiles the
+SBML committed next to them with, so nothing of the demo is compiled ahead of time.
+Every file is committed and the build of the documentation generates none of them, as
+with the tables of the benchmarks and the grid of the test suite.
 
     uv run scripts/demo_assets.py            # write them
     uv run scripts/demo_assets.py --check    # compare them with VERSION.json
@@ -22,27 +22,26 @@ import argparse
 import base64
 import hashlib
 import json
-import shutil
-import subprocess
 import tarfile
 import tempfile
 import urllib.request
 from pathlib import Path
 
 # the release of the npm package the demo runs, raised with a release
-NPM_VERSION = "0.22.0"
+NPM_VERSION = "0.23.0"
 REGISTRY = "https://registry.npmjs.org/sbmlsim-core"
 
 # what is taken out of the package, by its path in the tarball
 VENDORED: dict[str, str] = {
+    "package/compile.mjs": "compile.mjs",
     "package/loader.mjs": "loader.mjs",
+    "package/runtime/compiler.wasm": "compiler.wasm",
     "package/runtime/engine.wasm": "engine.wasm",
     "package/runtime/mathlib.wasm": "mathlib.wasm",
 }
 
-# the model of the demo and what the command line compiles it into
+# the model of the demo, which the page compiles with the vendored compiler
 MODEL_SBML = "repressilator.xml"
-COMPILED = ("model.wasm", "model.json")
 
 DEMO_DIR = Path("docs/demo")
 VERSION_FILE = "VERSION.json"
@@ -110,29 +109,6 @@ def vendor(tarball: bytes, out: Path) -> None:
                 (out / name).write_bytes(extracted.read())
 
 
-def compile_model(cli: Path, out: Path) -> None:
-    """Compile the model of the demo with the command line of a local build.
-
-    Args:
-        cli: The `sbmlsim-core` binary.
-        out: The directory of the demo, which holds the SBML.
-
-    Raises:
-        SystemExit: The compilation failed.
-    """
-    with tempfile.TemporaryDirectory() as directory:
-        result = subprocess.run(
-            [str(cli), "compile", str(out / MODEL_SBML), "-o", directory],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if result.returncode != 0:
-            raise SystemExit(f"{cli} compile failed:\n{result.stderr}")
-        for name in COMPILED:
-            shutil.copyfile(Path(directory) / name, out / name)
-
-
 def digests(out: Path) -> dict[str, str]:
     """Get the digests of every asset of the demo.
 
@@ -142,7 +118,7 @@ def digests(out: Path) -> dict[str, str]:
     Returns:
         The file names to their hex SHA-256, sorted.
     """
-    names = [*VENDORED.values(), MODEL_SBML, *COMPILED]
+    names = [*VENDORED.values(), MODEL_SBML]
     return {name: _sha256(out / name) for name in sorted(names)}
 
 
@@ -188,12 +164,6 @@ def main() -> int:
         "--check", action="store_true", help="compare instead of writing"
     )
     parser.add_argument("--out", type=Path, default=DEMO_DIR)
-    parser.add_argument(
-        "--cli",
-        type=Path,
-        default=Path("target/release/sbmlsim-core"),
-        help="the command line which compiles the model",
-    )
     arguments = parser.parse_args()
     out: Path = arguments.out
 
@@ -202,12 +172,6 @@ def main() -> int:
 
     out.mkdir(parents=True, exist_ok=True)
     vendor(fetch_package(NPM_VERSION), out)
-    if not arguments.cli.exists():
-        raise SystemExit(
-            f"{arguments.cli} does not exist; build it with "
-            "`cargo build --release -p sbmlsim-cli` or give --cli"
-        )
-    compile_model(arguments.cli, out)
     (out / VERSION_FILE).write_text(
         json.dumps(
             {"npm_version": NPM_VERSION, "files": digests(out)},

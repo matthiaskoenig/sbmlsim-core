@@ -37,7 +37,7 @@ A release is made from `develop`. Since `develop` only accepts pull requests, th
 
     The tag makes all three of a release: the python package on PyPI, the package on npm and the release of this repository, named `sbmlsim-core x.y.z` with the body of `release-notes/x.y.z.md`. The job `github_release` makes the last one once both registries carry the version, so a release of this repository never announces a version a registry does not have. Nothing of a release is made by hand.
 
-8. bump the live demo of the documentation, which is vendored from the published npm package and so can only follow the tag: set `NPM_VERSION` of `scripts/demo_assets.py` to the new version, run `uv run scripts/demo_assets.py` to vendor the package and compile the model again, compare it with `uv run scripts/demo_assets.py --check` and take `docs/demo/` through a pull request of its own. Nothing compares this one either, so a demo left behind keeps running the engine of the release before.
+8. bump the live demo of the documentation, which is vendored from the published npm package and so can only follow the tag: set `NPM_VERSION` of `scripts/demo_assets.py` to the new version, run `uv run scripts/demo_assets.py` to vendor the package again, compare it with `uv run scripts/demo_assets.py --check` and take `docs/demo/` through a pull request of its own. The page compiles its model itself with the vendored `compiler.wasm`, so nothing of the demo needs a local build. Nothing compares this one either, so a demo left behind keeps running the engine of the release before.
 
 ## The crate on crates.io
 
