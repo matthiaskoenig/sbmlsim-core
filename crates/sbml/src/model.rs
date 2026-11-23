@@ -63,13 +63,32 @@ impl Level {
     }
 }
 
-/// A unit definition as a unit expression, e.g. `0.001*mole*(60*second)**-1`.
+/// One unit of a unit definition, as the document writes it: the kind of the unit and the
+/// three factors of `multiplier * 10^scale * kind^exponent`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Unit {
+    /// The kind, a base unit of SBML or, for new base units of a model which the levels
+    /// before 3 allow, the id of the definition itself.
+    pub kind: String,
+    /// The exponent, 1 without one.
+    pub exponent: f64,
+    /// The scale, the power of ten, 0 without one.
+    pub scale: i32,
+    /// The multiplier, 1 without one.
+    pub multiplier: f64,
+}
+
+/// A unit definition as a unit expression, e.g. `0.001*mole*(60*second)**-1`, and as the units
+/// the document writes it with, which a conversion of the units needs.
 #[derive(Debug, Clone, PartialEq)]
 pub struct UnitDefinition {
     /// The id.
     pub id: String,
     /// The expression a unit registry parses.
     pub expression: String,
+    /// The units of the definition, in the order of the document; empty for a definition
+    /// without a unit, whose expression is `dimensionless`.
+    pub units: Vec<Unit>,
 }
 
 /// A function definition, `math` is its lambda.
@@ -451,7 +470,7 @@ fn child_math<'a, 'i>(n: X<'a, 'i>) -> Option<X<'a, 'i>> {
 
 /// A unit as `kind`, `factor*kind`, `kind**e` or `(factor*kind)**e`, the factor the double of
 /// the text `{multiplier}e{scale}` (the multiplier read as a double first).
-fn unit_term(u: X) -> Result<String, ReadError> {
+fn unit_term(u: X) -> Result<Unit, ReadError> {
     let kind = req(u, "kind")?;
     let text = |name: &str, default: &str| {
         u.attribute(name)
@@ -460,39 +479,58 @@ fn unit_term(u: X) -> Result<String, ReadError> {
     };
     let (multiplier, scale) = (text("multiplier", "1"), text("scale", "0"));
     let no_number = |what: &str, v: &str| err(format!("<unit> {what} {v:?} is no number"));
-    let m = multiplier
+    let multiplier = multiplier
         .parse::<f64>()
         .map_err(|_| no_number("multiplier", &multiplier))?;
-    // the display of a finite double has no exponent, so the text is a valid number
-    let factor = if m.is_finite() {
-        format!("{m}e{scale}")
-            .parse::<f64>()
-            .map_err(|_| no_number("scale", &scale))?
-    } else {
-        m
-    };
-    let exponent = double(u, "exponent")?.unwrap_or(1.0);
-    Ok(match (factor == 1.0, exponent == 1.0) {
-        (true, true) => kind,
-        (false, true) => format!("{factor}*{kind}"),
-        (true, false) => format!("{kind}**{exponent}"),
-        (false, false) => format!("({factor}*{kind})**{exponent}"),
+    let scale = scale
+        .parse::<i32>()
+        .map_err(|_| no_number("scale", &scale))?;
+    Ok(Unit {
+        kind,
+        exponent: double(u, "exponent")?.unwrap_or(1.0),
+        scale,
+        multiplier,
     })
 }
 
+/// The expression of one unit, `multiplier * 10^scale` as one factor in front of the kind.
+fn unit_text(unit: &Unit) -> String {
+    let Unit {
+        kind,
+        exponent,
+        scale,
+        multiplier,
+    } = unit;
+    // the display of a finite double has no exponent, so the text is a valid number
+    let factor = if multiplier.is_finite() {
+        format!("{multiplier}e{scale}")
+            .parse::<f64>()
+            .unwrap_or(*multiplier)
+    } else {
+        *multiplier
+    };
+    match (factor == 1.0, *exponent == 1.0) {
+        (true, true) => kind.clone(),
+        (false, true) => format!("{factor}*{kind}"),
+        (true, false) => format!("{kind}**{exponent}"),
+        (false, false) => format!("({factor}*{kind})**{exponent}"),
+    }
+}
+
 fn unit_definition(n: X, lv: Level) -> Result<UnitDefinition, ReadError> {
-    let terms = items(n, "listOfUnits", "unit")
+    let units = items(n, "listOfUnits", "unit")
         .into_iter()
         .map(unit_term)
         .collect::<Result<Vec<_>, _>>()?;
-    let expression = if terms.is_empty() {
+    let expression = if units.is_empty() {
         "dimensionless".to_string()
     } else {
-        terms.join("*")
+        units.iter().map(unit_text).collect::<Vec<_>>().join("*")
     };
     Ok(UnitDefinition {
         id: sid(n, lv)?,
         expression,
+        units,
     })
 }
 
@@ -711,12 +749,12 @@ fn rule(n: X, lv: Level) -> Result<Rule, ReadError> {
 /// The units every level before Level 3 defines itself, with the expression of a unit
 /// registry: a model which does not redefine them takes them as they are, and every one of them
 /// is a default of the model, which Level 3 states on `<model>` instead.
-const BUILT_IN_UNITS: [(&str, &str); 5] = [
-    ("substance", "mole"),
-    ("volume", "litre"),
-    ("area", "metre**2"),
-    ("length", "metre"),
-    ("time", "second"),
+const BUILT_IN_UNITS: [(&str, &str, f64); 5] = [
+    ("substance", "mole", 1.0),
+    ("volume", "litre", 1.0),
+    ("area", "metre", 2.0),
+    ("length", "metre", 1.0),
+    ("time", "second", 1.0),
 ];
 
 fn read_model(m: X, lv: Level) -> Result<Model, ReadError> {
@@ -727,11 +765,18 @@ fn read_model(m: X, lv: Level) -> Result<Model, ReadError> {
         .collect::<Result<Vec<_>, _>>()?;
     if !lv.is_level_3() {
         // the built in units of the level, unless the model redefines them
-        for (id, expression) in BUILT_IN_UNITS {
+        for (id, kind, exponent) in BUILT_IN_UNITS {
             if !unit_definitions.iter().any(|u| u.id == id) {
+                let unit = Unit {
+                    kind: kind.to_string(),
+                    exponent,
+                    scale: 0,
+                    multiplier: 1.0,
+                };
                 unit_definitions.push(UnitDefinition {
                     id: id.to_string(),
-                    expression: expression.to_string(),
+                    expression: unit_text(&unit),
+                    units: vec![unit],
                 });
             }
         }

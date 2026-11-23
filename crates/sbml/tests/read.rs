@@ -1,5 +1,5 @@
 use sbmlsim_sbml::math::{Node, Op};
-use sbmlsim_sbml::{ReadError, Rule, read};
+use sbmlsim_sbml::{ReadError, Rule, Unit, read};
 
 fn data(name: &str) -> String {
     let path = format!("{}/tests/data/{name}", env!("CARGO_MANIFEST_DIR"));
@@ -139,6 +139,43 @@ fn unit_expressions() {
     assert_eq!(unit_expr(&u("litre", "1", "-3", "1e2")), "0.1*litre");
     assert_eq!(unit_expr(&u("litre", "1", "0", "1.5E1")), "15*litre");
     assert_eq!(unit_expr(&u("litre", "-1", "-3", "1e2")), "(0.1*litre)**-1");
+}
+
+#[test]
+fn a_unit_definition_keeps_its_units() {
+    let xml = r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2">
+<model><listOfUnitDefinitions>
+  <unitDefinition id="mmol_per_min"><listOfUnits>
+    <unit kind="mole" scale="-3"/>
+    <unit kind="second" exponent="-1" multiplier="60"/>
+  </listOfUnits></unitDefinition>
+  <unitDefinition id="nothing"><listOfUnits/></unitDefinition>
+</listOfUnitDefinitions></model></sbml>"#;
+    let definitions = read(xml).unwrap().model.unit_definitions;
+    // the expression a unit registry parses, and the units the document writes
+    assert_eq!(definitions[0].expression, "0.001*mole*(60*second)**-1");
+    assert_eq!(
+        definitions[0].units,
+        [
+            Unit {
+                kind: "mole".to_string(),
+                exponent: 1.0,
+                scale: -3,
+                multiplier: 1.0,
+            },
+            Unit {
+                kind: "second".to_string(),
+                exponent: -1.0,
+                scale: 0,
+                multiplier: 60.0,
+            },
+        ]
+    );
+    assert_eq!(definitions[1].expression, "dimensionless");
+    assert!(
+        definitions[1].units.is_empty(),
+        "a definition without a unit"
+    );
 }
 
 #[test]
