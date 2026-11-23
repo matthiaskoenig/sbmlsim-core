@@ -1,6 +1,6 @@
 # Compiling a model
 
-The command line compiles an SBML Level 3 file (Version 1 or 2) into a model directory: `model.wasm`, the compiled model, and `model.json`, its description (`model/2`, see [Simulating](simulating.md#the-description-model2)).
+The command line compiles an SBML file of any level and version into a model directory: `model.wasm`, the compiled model, and `model.json`, its description (`model/2`, see [Simulating](simulating.md#the-description-model2)).
 
 ```bash
 sbmlsim-core compile model.xml -o model-dir            # target/release/sbmlsim-core of a build
@@ -13,7 +13,7 @@ cargo run -p sbmlsim-cli -- compile crates/host/tests/decay.xml -o decay-model
 | `--no-optimize` | without the optimizer: the same results, a larger and slower module |
 
 <svg class="core-diagram" viewBox="0 12 840 304" xmlns="http://www.w3.org/2000/svg" role="img"
-     aria-label="A model of any SBML level is prepared with prepare_model.py when it is not Level 3 Version 2 core or carries comp. The compiler takes Level 3 Version 2 core, reading the distrib package as annotation only, and writes model.wasm, which imports the memory of the engine and the functions of mathlib and exports the contract model/2, and model.json, which describes the states and selections, the units as text and the Jacobian with the reason when it is not analytic. A required package, a fast reaction, an unknown identifier, a cycle of assignment rules and a draw of distrib are refused, each named with the element which caused it.">
+     aria-label="A model of any SBML level and version goes into the compiler as it stands, prepared with prepare_model.py only when it carries comp. The compiler takes SBML core of every level, reading the distrib package as annotation only, and writes model.wasm, which imports the memory of the engine and the functions of mathlib and exports the contract model/2, and model.json, which describes the states and selections, the units as text and the Jacobian with the reason when it is not analytic. A required package, a fast reaction, an unknown identifier, a cycle of assignment rules and a draw of distrib are refused, each named with the element which caused it.">
   <defs>
     <marker id="cp-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
       <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
@@ -22,19 +22,19 @@ cargo run -p sbmlsim-cli -- compile crates/host/tests/decay.xml -o decay-model
   <g class="cd-step">
     <rect x="16" y="48" width="132" height="46" rx="6"/>
     <text x="82" y="70">any SBML</text>
-    <text class="cd-sub" x="82" y="86">L1, L2, comp</text>
+    <text class="cd-sub" x="82" y="86">L1, L2, L3, comp</text>
   </g>
   <line x1="154" y1="71" x2="186" y2="71" marker-end="url(#cp-arrow)"/>
   <g class="cd-step">
     <rect x="192" y="48" width="150" height="46" rx="6"/>
     <text x="267" y="70">prepare_model.py</text>
-    <text class="cd-sub" x="267" y="86">libsbml, when needed</text>
+    <text class="cd-sub" x="267" y="86">libsbml, for comp</text>
   </g>
   <line x1="348" y1="71" x2="380" y2="71" marker-end="url(#cp-arrow)"/>
   <g class="cd-step">
     <rect x="386" y="48" width="132" height="46" rx="6"/>
-    <text x="452" y="70">L3V2 core</text>
-    <text class="cd-sub" x="452" y="86">distrib annotates</text>
+    <text x="452" y="70">SBML core</text>
+    <text class="cd-sub" x="452" y="86">any level, flat</text>
   </g>
   <line x1="524" y1="71" x2="556" y2="71" marker-end="url(#cp-arrow)"/>
   <g class="cd-step cd-active">
@@ -91,7 +91,7 @@ absent for ODE models.
 
 ## What the compiler reads
 
-The reader (`crates/sbml`) takes SBML Level 3 Version 2 core. A package with `required="false"` (layout, render, fbc annotations, ...) is ignored, and a package whose `required` attribute is `"true"` is refused (`the required package comp is not supported`): `comp` must be flattened before, a model read without its submodels is another model. A required package whose elements only annotate the model is read as well, its elements ignored as those of an optional one, so far `distrib`: it carries the uncertainty of a parameter (`<distrib:uncertainty>`, which the models of pkdb_models write for every fitted parameter: the confidence interval of the profile likelihood, the standard error of the Fisher information and the distribution of the draws), and the mathematics of the model is the same without it. The package is read by its namespace URI, never by its prefix, and only the elements of an uncertainty are read of it (`listOfUncertainties`, `uncertainty`, `listOfUncertParameters`, `uncertParameter`, `uncertSpan`, the whole of the package as libsbml implements it): any other element of that namespace is refused with its name (`<drawFromDistribution> of the namespace ... is not supported`), not ignored, so that no element which computes is dropped on the way to a deterministic simulation. A draw is therefore refused in either shape it has, whatever `required` says: the `<csymbol>` of a distribution (`http://www.sbml.org/sbml/symbols/distrib/normal`) in a math of the model is an unknown csymbol, as any math the reader does not understand, and the `<distrib:drawFromDistribution>` element of the drafts of the package is an element of the namespace which is no uncertainty. Units pass through as text and nothing is computed with them: a unit definition becomes a unit expression which a unit registry such as pint parses (`mmol/min` as `0.001*mole*(60*second)**-1`), the field `units` of `model.json`.
+The reader (`crates/sbml`) takes SBML core of every level and version: Level 1 Versions 1 and 2, Level 2 Versions 1 to 5 and Level 3 Versions 1 and 2, all read into the model of Level 3, so nothing behind the reader knows the level of the file (the defaults of the older levels, their built-in units, their `<stoichiometryMath>` and the infix formulas of Level 1 included). A package with `required="false"` (layout, render, fbc annotations, ...) is ignored, and a package whose `required` attribute is `"true"` is refused (`the required package comp is not supported`): `comp` must be flattened before, a model read without its submodels is another model. A required package whose elements only annotate the model is read as well, its elements ignored as those of an optional one, so far `distrib`: it carries the uncertainty of a parameter (`<distrib:uncertainty>`, which the models of pkdb_models write for every fitted parameter: the confidence interval of the profile likelihood, the standard error of the Fisher information and the distribution of the draws), and the mathematics of the model is the same without it. The package is read by its namespace URI, never by its prefix, and only the elements of an uncertainty are read of it (`listOfUncertainties`, `uncertainty`, `listOfUncertParameters`, `uncertParameter`, `uncertSpan`, the whole of the package as libsbml implements it): any other element of that namespace is refused with its name (`<drawFromDistribution> of the namespace ... is not supported`), not ignored, so that no element which computes is dropped on the way to a deterministic simulation. A draw is therefore refused in either shape it has, whatever `required` says: the `<csymbol>` of a distribution (`http://www.sbml.org/sbml/symbols/distrib/normal`) in a math of the model is an unknown csymbol, as any math the reader does not understand, and the `<distrib:drawFromDistribution>` element of the drafts of the package is an element of the namespace which is no uncertainty. Units pass through as text and nothing is computed with them: a unit definition becomes a unit expression which a unit registry such as pint parses (`mmol/min` as `0.001*mole*(60*second)**-1`), the field `units` of `model.json`.
 
 An unsupported feature is refused with its element, and so is a model which is not valid SBML (an unknown identifier, a cycle of assignment rules). In the SBML Test Suite the remaining refusals are the fast reactions (see [Test suite](testsuite.md)). Missing math is handled as libroadrunner 2.11 handles it: a rule or an initial assignment without math is ignored, an event without a trigger is ignored, a delay or a priority without math is none; a kinetic law without math, a call of a function definition without math and an empty `<math>` are refused.
 
@@ -116,7 +116,7 @@ sbmlsim-core compile prepared.xml -o model-dir
 
 - `comp` is flattened.
 - The elements and annotations of `distrib` are stripped, which the compiler does not need (it reads the package and ignores them, see above): the uncertainties of `distrib` (`<distrib:listOfUncertainties>` of the parameters of a fit) are metadata and do not change a simulation. A distribution function of `distrib` in a math (`normal(0, 1)` as a csymbol) would change it, so such a model is refused with a non-zero exit, naming the element (`initialAssignment of x (normal)`), as the compiler refuses it.
-- The model is converted to L3V2.
+- The model is converted to L3V2, which the compiler no longer needs, since the reader takes every level, and which keeps a prepared model comparable to the ones of earlier runs.
 - The rest of the model (non-required packages such as `fbc` and `layout`, notes, annotations) is kept.
 
 With `--bench bench/models.toml` the script prepares every model of the benchmark from its `source` into its `sbml`, with the absolute tolerance of every state as roadrunner scales the scalar one (`<name>.atol.json`), see [Running the benchmark](benchmarks.md#running-the-benchmark-against-roadrunner).

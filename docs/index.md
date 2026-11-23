@@ -7,7 +7,7 @@
 [![python](https://img.shields.io/pypi/pyversions/sbmlsim-core.svg?logo=python&logoColor=white&label=python)](https://pypi.org/project/sbmlsim-core/)
 [![license](https://img.shields.io/badge/license-MIT%20AND%20BSD--3--Clause%20AND%20LGPL--2.1--or--later-blue.svg)](licenses.md)
 
-sbmlsim-core is an SBML to WebAssembly compiler and a CVODE/IDA simulation engine with KLU, written in Rust. It compiles an SBML Level 3 Version 2 core model into a WebAssembly module and simulates it with the same `engine.wasm` in wasmtime, in Node and in browsers, with bitwise identical results on every host.
+sbmlsim-core is an SBML to WebAssembly compiler and a CVODE/IDA simulation engine with KLU, written in Rust. It compiles an SBML core model of any level and version into a WebAssembly module and simulates it with the same `engine.wasm` in wasmtime, in Node and in browsers, with bitwise identical results on every host.
 
 It is the simulation core of the web apps of [sbmlsim](https://matthiaskoenig.github.io/sbmlsim/): the semantics of a simulation are those of sbmlsim (PEtab v2), the integrator and the linear solvers those of libroadrunner (CVODE of SUNDIALS, KLU of SuiteSparse).
 
@@ -93,7 +93,7 @@ A model passes through three parts, joined by two contracts which are defined in
   </g>
   <line x1="446" y1="310" x2="446" y2="322" marker-end="url(#cd-arrow)"/>
 </svg>
-**The compiler.** `crates/compiler`, built on `sbml` (the reader of SBML L3V2 core and its MathML), `ir` (the model representation: the states and parameters in the order of libroadrunner's vectors, the rules in their order of dependency, the events, the analytic Jacobian) and `codegen` (the WebAssembly module). It turns an SBML file into `model.wasm`, with an analytic sparse Jacobian, and `model.json`, its description (`model/1`). The compiler does no file system or OS access, so it also builds for `wasm32-unknown-unknown` and can run in a browser. See [Compiling a model](compiling.md).
+**The compiler.** `crates/compiler`, built on `sbml` (the reader of SBML core of every level and version, and its MathML), `ir` (the model representation: the states and parameters in the order of libroadrunner's vectors, the rules in their order of dependency, the events, the analytic Jacobian) and `codegen` (the WebAssembly module). It turns an SBML file into `model.wasm`, with an analytic sparse Jacobian, and `model.json`, its description (`model/1`). The compiler does no file system or OS access, so it also builds for `wasm32-unknown-unknown` and can run in a browser. See [Compiling a model](compiling.md).
 
 **The engine.** `crates/engine`, built into `engine.wasm` (wasm32-wasip1): Rust with CVODE and IDA 7.9 and KLU (`crates/csolvers`). It runs a request of `simulation/1` on a compiled model: the pre-initialization, changes at times, events, a steady state before the start, and the dense or the KLU linear solver (KLU above 12 states, `KLU_THRESHOLD`). `mathlib.wasm` (`crates/mathlib`) is the one implementation of every math function a model calls, so a result does not depend on the math of a host. See [Simulating](simulating.md).
 

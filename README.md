@@ -13,7 +13,7 @@ Documentation: https://matthiaskoenig.github.io/sbmlsim-core/ (built from `docs/
 
 ## What the core is
 
-- The compiler (`crates/compiler`, built on `sbml`, `ir` and `codegen`) turns an SBML Level 3 Version 2 core model (flat, no required package but `distrib`, whose uncertainties annotate and are ignored) into `model.wasm`, with analytic sparse Jacobians, and `model.json`, its description.
+- The compiler (`crates/compiler`, built on `sbml`, `ir` and `codegen`) turns an SBML core model of any level and version (Level 1, Level 2 and Level 3; flat, no required package but `distrib`, whose uncertainties annotate and are ignored) into `model.wasm`, with analytic sparse Jacobians, and `model.json`, its description.
 - The engine (`crates/engine`, `engine.wasm`, wasm32-wasip1) is Rust with CVODE and IDA 7.9 and KLU. It runs a request on a compiled model: changes, events, steady states, dense or KLU linear solvers (dense through 12 states by default), and opt-in preconditioned GMRES for stiff ODEs.
 - [Delay differential equations](docs/delays.md) support SBML prehistory, nested and variable delays, and delayed discontinuities. Ordinary ODEs retain their compiled modules and solver path.
 - The hosts run the same `engine.wasm`, `mathlib.wasm` and `model.wasm` with bitwise identical results: wasmtime (`crates/host`, the command line `sbmlsim-core`) and Node and browsers (`js/loader.mjs`).
@@ -77,7 +77,7 @@ node --test js/test
 
 ## Compile
 
-The command line compiles an SBML Level 3 Version 2 file into a model directory, `model.wasm` and its description `model.json`:
+The command line compiles an SBML file of any level and version into a model directory, `model.wasm` and its description `model.json`:
 
 ```bash
 cargo run -p sbmlsim-cli -- compile crates/host/tests/decay.xml -o decay-model
@@ -175,7 +175,7 @@ Measured in this repository: 1754 of 1789 cases pass, including all 53 delay cas
 
 The DAE feature has a separate [ODE performance report](bench/ODE_PERFORMANCE.md) and reproducible measurements. DAE support is accepted with the measured ODE performance cost: the final native comparison measured 9.34% higher median thread CPU time. The roadrunner measurements below predate DAE support.
 
-`bench/models.toml` lists the models of the benchmark against roadrunner; `bench/RESULTS.md` has the method and the results. A model with `comp`, `distrib` or of another level is prepared first (`scripts/prepare_model.py`: comp flattened, the uncertainties of distrib stripped, a distribution function in a math refused, converted to L3V2):
+`bench/models.toml` lists the models of the benchmark against roadrunner; `bench/RESULTS.md` has the method and the results. A model with `comp` or `distrib` is prepared first (`scripts/prepare_model.py`: comp flattened, the uncertainties of distrib stripped, a distribution function in a math refused, converted to L3V2):
 
 ```bash
 uv run scripts/prepare_model.py --bench bench/models.toml        # into target/bench-models/

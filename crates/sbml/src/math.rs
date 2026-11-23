@@ -115,6 +115,39 @@ pub enum Node {
     Empty,
 }
 
+impl Node {
+    /// The names of the symbols the node reads, in the order of the expression and with every
+    /// repetition.
+    #[must_use]
+    pub fn symbols(&self) -> Vec<&str> {
+        let mut names = Vec::new();
+        self.collect_symbols(&mut names);
+        names
+    }
+
+    fn collect_symbols<'a>(&'a self, names: &mut Vec<&'a str>) {
+        match self {
+            Self::Symbol(name) => names.push(name),
+            Self::Apply { args, .. } => {
+                for arg in args {
+                    arg.collect_symbols(names);
+                }
+            }
+            Self::Piecewise { pieces, otherwise } => {
+                for (value, condition) in pieces {
+                    value.collect_symbols(names);
+                    condition.collect_symbols(names);
+                }
+                if let Some(otherwise) = otherwise {
+                    otherwise.collect_symbols(names);
+                }
+            }
+            Self::Lambda { body, .. } => body.collect_symbols(names),
+            _ => {}
+        }
+    }
+}
+
 /// The `definitionURL` of a `csymbol` in a message: the URL, or that it has none.
 fn definition_url(url: Option<&str>) -> String {
     match url {

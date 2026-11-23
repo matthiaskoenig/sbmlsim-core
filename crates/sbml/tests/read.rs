@@ -167,14 +167,10 @@ fn elements_keep_their_ids() {
 }
 
 #[test]
-fn refuses_level_2() {
-    assert_eq!(
-        read(&data("level2.xml")).unwrap_err(),
-        ReadError::NotLevel3 {
-            level: 2,
-            version: 4
-        }
-    );
+fn reads_level_2() {
+    let doc = read(&data("level2.xml")).expect("L2V4 is read");
+    assert_eq!((doc.level, doc.version), (2, 4));
+    assert_eq!(doc.model.id.as_deref(), Some("old"));
 }
 
 #[test]
