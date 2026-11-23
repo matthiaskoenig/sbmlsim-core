@@ -2,7 +2,7 @@
 
 Rust is the language sbmlsim-core is written in, so it is also the binding with nothing in between: the compiler (`sbmlsim-compiler`) turns SBML into `model.wasm` and its description, and the host (`sbmlsim-host`) links that model with `engine.wasm` and `mathlib.wasm` in wasmtime and simulates it. The [Python](python.md) and [JavaScript](javascript.md) bindings are these two crates behind an extension module and an ES module.
 
-The crates are not published on crates.io; they are built from this repository and version together with it. Depend on them by git:
+The crates are built from this repository and version together with it, so depend on them by git. `sbmlsim-sbml`, the reader of SBML, is the one exception: it holds nothing but its own sources and is published on [crates.io](https://crates.io/crates/sbmlsim-sbml), so a project which reads SBML without simulating it needs none of the rest.
 
 ```toml
 [dependencies]
@@ -11,6 +11,9 @@ sbmlsim-compiler = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag
 sbmlsim-host = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.21.0" }
 sbmlsim-batch = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.21.0" }
 anyhow = "1"
+
+# the reader alone, from crates.io
+sbmlsim-sbml = "0.21"
 ```
 
 `sbmlsim-abi` carries the two contracts as types, which the compiler and the host both speak.
@@ -135,6 +138,7 @@ The pool is the one the [Python](python.md) bindings run `simulate_many` and `ba
 | `sbmlsim-batch` | the pool of a batch of simulations: a thread per point, an instance per thread |
 | `sbmlsim-csolvers` | CVODE and SuiteSparse, built from source for the engine and for the native host |
 | `sbmlsim-cli` | the command line `sbmlsim-core` |
+| `sbmlsim-sbml` | the reader of SBML core, every level and version, on crates.io |
 
 `Runtime::new(engine_wasm, mathlib_wasm)` takes other builds of the two, `Runtime::with_max_memory` and `Runtime::with_execution_timeout` bound an instance, and `Instance::wasi_calls` counts the calls into the host, which is zero while a model loads and simulates. The exports of `engine.wasm` are documented in `crates/engine/src/exports.rs`.
 
