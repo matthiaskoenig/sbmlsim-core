@@ -89,6 +89,11 @@ pub struct UnitDefinition {
     /// The units of the definition, in the order of the document; empty for a definition
     /// without a unit, whose expression is `dimensionless`.
     pub units: Vec<Unit>,
+    /// Whether the reader defines the units itself, which is true for the units every level
+    /// before Level 3 has built in and which the model does not state (`substance`, `volume`,
+    /// `area`, `length` and `time`); a conversion of the model writes what the model states,
+    /// so it tells the two apart.
+    pub built_in: bool,
 }
 
 /// A function definition, `math` is its lambda.
@@ -531,6 +536,7 @@ fn unit_definition(n: X, lv: Level) -> Result<UnitDefinition, ReadError> {
         id: sid(n, lv)?,
         expression,
         units,
+        built_in: false,
     })
 }
 
@@ -777,6 +783,7 @@ fn read_model(m: X, lv: Level) -> Result<Model, ReadError> {
                     id: id.to_string(),
                     expression: unit_text(&unit),
                     units: vec![unit],
+                    built_in: true,
                 });
             }
         }
