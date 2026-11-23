@@ -65,6 +65,14 @@ fn the_built_in_units_of_level_2_are_defined() {
             .clone()
     };
     assert_eq!(units("substance"), "mole");
+    // the reader defines them, the model states none of them
+    assert!(
+        doc.model
+            .unit_definitions
+            .iter()
+            .all(|definition| definition.built_in),
+        "the units of the level are the ones of the reader"
+    );
     assert_eq!(units("volume"), "litre");
     assert_eq!(units("area"), "metre**2");
     assert_eq!(units("length"), "metre");
@@ -97,6 +105,7 @@ fn a_model_redefines_a_built_in_unit() {
         .collect();
     assert_eq!(substance.len(), 1, "the definition of the model stands");
     assert_eq!(substance[0].expression, "0.001*mole");
+    assert!(!substance[0].built_in, "the model states the units itself");
 }
 
 #[test]
