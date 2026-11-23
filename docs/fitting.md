@@ -69,6 +69,8 @@ k = 0.300000 [0.283746, 0.316945], y = 1.000000 [0.966070, 1.032069] after 8 eva
 | `starts` | the starts to run, each a value per parameter on the linear scale; the `start` of every parameter when it is empty. Every start is run, next to the others on the threads of the batch, and the best of them is the answer |
 | `threads` | the threads of the batch of an evaluation; the CPUs of the machine when it is absent, and what a caller gives takes precedence |
 | `jacobian` | where the jacobian of a step comes from: `"auto"` (the default, below), `"sensitivities"` or `"difference_quotient"` |
+| `priors` | a prior per parameter, below; empty or absent for a fit which has none |
+| `prior_correlation` | the correlation of a group of priors, below; nothing of it when it is absent |
 | `identifiability` | how well the data determines the optimum, below; nothing of it when it is absent |
 
 The parameters:
@@ -137,7 +139,8 @@ The curves:
 | `column` | the selection of that condition it measures; the condition has to select it |
 | `times` | the times of the measurements, every one an output time of the condition (within 1e-9 relative). A fit interpolates nothing: the condition is asked for the times of its data |
 | `values` | the measurements, one per time |
-| `noise` | the standard deviation of every measurement, which its residual is divided by; 1 for every one of them when it is absent. A curve of a concentration and one of a volume are weighted against each other by the deviation of their measurements, and the threshold of an identifiability analysis is a rise of the cost which only means something when the residuals are scaled this way. A positive infinity is a measurement which carries no information (a caller whose weight of a point is 0 gives `reference / sqrt(0)`): its residual is `0.0` and its row of the jacobian is zeros, so the residuals and the jacobian keep the alignment of the problem. Zero, a negative value and `NaN` are refused |
+| `noise` | the noise of every measurement, which its residual is divided by; 1 for every one of them when it is absent. It is the standard deviation of the measurement for a curve without a `likelihood` and for the `normal` and `log-normal` kinds, and the scale of its distribution for the `laplace` and `log-laplace` kinds, whose standard deviation is `sqrt(2)` times it. A curve of a concentration and one of a volume are weighted against each other by the deviation of their measurements, and the threshold of an identifiability analysis is a rise of the cost which only means something when the residuals are scaled this way. A positive infinity is a measurement which carries no information (a caller whose weight of a point is 0 gives `reference / sqrt(0)`): its residual is `0.0` and its row of the jacobian is zeros, so the residuals and the jacobian keep the alignment of the problem. Zero, a negative value and `NaN` are refused |
+| `likelihood` | which likelihood the curve is, below; absent is the weighted least squares of `noise`. A curve with one has **two** residuals per measurement |
 | `weight` | a weight of the whole curve, 1 by default; a residual is multiplied by its square root, so a weight of 4 counts the curve four times |
 | `after_change` | whether a measurement reads the state after a change of its condition rather than the one before it, one flag per time in their order; every measurement reads the state before a change when it is absent. The output of a condition has two rows of the time of a change after its start, the state before the change and the state after it, and a measurement reads the first of them unless its flag says otherwise. A chain of a change and the events it fired has more than two rows of that time, of which a true flag reads the last, the state after the whole chain. This is the `after` of the measurements of PEtab, which a problem read without an extension of its own uses |
 
@@ -146,6 +149,151 @@ residual is `(simulated - measured) / noise * sqrt(weight)`. A condition whose i
 fails scores every residual of its curves at 1e3 instead, which is finite and large, so an
 optimizer walks away from a region it cannot integrate instead of ending the fit; a condition
 which cannot be simulated at the start of the fit is an error of the request.
+
+### The likelihood of a curve
+
+A curve without a `likelihood` is a weighted least squares, which says nothing about the noise
+of its measurements beyond dividing by it. A fit which estimates that noise needs more: the
+scale of a density normalizes it as well as scaling the deviation, so an objective which only
+divides by the scale is smaller the larger the scale, and an optimizer free to move it walks it
+to infinity. The `likelihood` of a curve is that normalization.
+
+```json
+{
+  "condition": "control",
+  "column": "y",
+  "times": [1.0, 2.0],
+  "values": [0.5, 0.4],
+  "noise": [0.02, 0.02],
+  "likelihood": { "distribution": "log-normal", "noise_column": "sigma" }
+}
+```
+
+| field | what it holds |
+|---|---|
+| `distribution` | which likelihood it is, one of `"normal"`, `"log-normal"`, `"laplace"` and `"log-laplace"`; required, and any other string is refused when the request is read |
+| `noise_column` | the selection of the condition whose value in the row of a measurement is the noise of that measurement, which the condition has to select; absent means the noise is the `noise` of the curve. A noise which follows the parameters or the simulation is one more selection and no second simulation. A `noise_column` together with a `noise` is refused, and so is a likelihood with neither: a standard deviation of 1 is no noise model |
+
+A curve with a likelihood has **twice** its measurements as residuals, laid out
+`[data..., scale...]` per curve, with the curves in the order of the request, in the
+`residuals` of the answer and in the rows of the jacobian alike. With `sigma` the noise of a
+measurement and `value` its measured value:
+
+```text
+r      = (column - value) / sigma
+data   = (normal | log-normal) ? r : r.signum() * sqrt(2 |r|)
+term   = ln(sigma) + (log ? value : 0) + (laplace ? ln(2) : ln(2 pi) / 2)
+offset = 100 + (log ? max(-2 value, 0) : 0)
+scale  = sqrt(max(2 term + offset, 0))
+```
+
+both multiplied by the square root of the weight of the curve. Half the sum of the squares of
+the two rows is the negative log-likelihood of the measurement **plus `0.5 * offset`**, which
+the host subtracts: the engine never does, because the offset of a measurement of a log kind
+depends on that measurement's own value. The constant 100 keeps the term under the root
+positive for the noise a real fit meets, and a noise so small that `2 term + offset` is still
+negative gives a scale row of `0.0`.
+
+The rows of the jacobian are the chain rule of the two, with `dsigma` the sensitivity of the
+noise column, which is zero for a fixed `noise`:
+
+```text
+ddata  = (dcolumn - r dsigma) / sigma      // and / sqrt(2 |r|) for a Laplace kind, 0 where r == 0
+dscale = scale > 0 ? (dsigma / sigma) / scale : 0
+```
+
+A measurement whose noise is a positive infinity carries no information under a likelihood
+exactly as it does without one: both of its residuals are `±0.0` and both of its rows of the
+jacobian are zeros, so it keeps its place in the vector. A noise which is zero, negative or
+`NaN` is a failed measurement, which scores 1e3 in both of its rows.
+
+### The priors
+
+A prior turns a fit into a maximum a posteriori estimate: the engine appends a residual row per
+prior after every curve row, so that half the sum of the squares of the whole vector is the
+negative log posterior of the fit up to a constant per prior which the host subtracts. A prior
+is a function of the values of the parameters alone, so none of these rows costs a simulation.
+
+```json
+{
+  "priors": [
+    { "parameter": 0, "kind": "normal", "parameters": [1.0, 0.5], "offset": 2.0, "normalizer": -0.03659170390601009, "lower": 0.1, "upper": 5.0 }
+  ]
+}
+```
+
+| field | what it holds |
+|---|---|
+| `parameter` | the position of the parameter in `parameters`, which carries at most one prior and must be no member of `prior_correlation` |
+| `kind` | one of `"normal"`, `"log-normal"`, `"uniform"`, `"log-uniform"`, `"laplace"` and `"log-laplace"` |
+| `parameters` | exactly two numbers, the ones of PEtab for that kind, below |
+| `offset` | the `c` of the row, the constant the host wants the cost measured from |
+| `normalizer` | the log of the mass of the prior between `lower` and `upper`, which the engine subtracts from the density of the kind to get the truncated one; `0` for a prior the host does not truncate. The engine integrates nothing: a truncation is this one number |
+| `lower`, `upper` | finite and increasing, and they have to cover the bounds of the parameter, since the row is `NaN` outside them and an optimizer searches the whole box. Wider bounds than the parameter's are accepted |
+
+| `kind` | `parameters` | the density |
+|---|---|---|
+| `normal` | the mean and the standard deviation | the normal of the value |
+| `log-normal` | the mean and the standard deviation **of the logarithm** | the log-normal of the value |
+| `uniform` | the bounds of the value | `1 / (b - a)` inside them and zero outside |
+| `log-uniform` | the bounds **of the value**, both positive, as PEtab writes them | `1 / (x (ln b - ln a))` |
+| `laplace` | the location and the scale | the Laplace of the value |
+| `log-laplace` | the location and the scale **of the logarithm** | the Laplace of the logarithm of the value |
+
+The row of a prior is `sqrt(max(offset - 2 (log_density(x) - normalizer), 0))`, and its one
+non-zero column of the jacobian is `-(d log_density / dx) / row` times the derivative of the
+scale the parameter is searched in, or `0` where the maximum clipped the square to zero. The
+row is `NaN`, with a zero column, for a value outside `[lower, upper]`, for a `NaN` value and
+for a density of zero (a uniform prior outside its own support, a log kind at a value which is
+not positive). A value **at** a bound is a value of the prior, since an optimizer sits at a
+bound.
+
+Priors which are not independent are one `prior_correlation`, a Gaussian copula over the normal
+scores of its members:
+
+```json
+{
+  "prior_correlation": {
+    "parameters": [0, 1],
+    "log": [false, true],
+    "location": [1.0, 0.0],
+    "scale": [0.5, 0.7],
+    "inverse": [[1.0, 0.0], [-0.25, 0.5]],
+    "offsets": [3.0],
+    "lower": [0.1, 0.1],
+    "upper": [5.0, 5.0]
+  }
+}
+```
+
+| field | what it holds |
+|---|---|
+| `parameters` | the `k` positions of its members in `parameters`, each at most once and none of them a `parameter` of `priors`; one member is allowed, none is refused |
+| `log` | whether a member is read as its logarithm, one flag per member |
+| `location`, `scale` | the location and the scale of the normal score of every member, `scale` positive and finite |
+| `inverse` | the inverse of the lower Cholesky factor of the correlation, `k` rows of `k` values. A wrong row count and a ragged row are refused |
+| `offsets` | one offset per **logarithmic** member, in the order of those members; `[]` when none of them is logarithmic |
+| `lower`, `upper` | the bounds of every member, finite, increasing and positive where `log` is true. They are checked and are no term of the rows: a whitened score outside them is an ordinary number of the multivariate normal, and an optimizer searches a parameter between its own bounds |
+
+With `v_i` the value of a member or its logarithm where `log[i]`, its score is
+`z_i = (v_i - location_i) / scale_i`, and the group adds `k` whitened rows
+`w_i = Σ_j inverse[i][j] z_j` followed by one row `sqrt(max(offsets_k + 2 ln(x_i), 0))` per
+logarithmic member in ascending order of `i`. All of the whitened rows are `NaN` when any score
+is not finite. The `Σ ln(scale) + ln(det L) + k ln(2 pi) / 2` of the density is not subtracted
+by the engine and belongs in the offsets of the host, and the engine normalizes no truncation
+of a correlated group.
+
+The rows of the whole problem are therefore, in this order:
+
+```text
+[ every curve row, curve by curve ]    (a curve with a likelihood: its data rows, then its scale rows)
+[ one row per entry of `priors`, in the order of the request ]
+[ the k whitened rows of `prior_correlation` ]
+[ one row per logarithmic member of `prior_correlation` ]
+```
+
+A host which wants the rows of its data alone takes the ones before the priors, whose number
+its own request determines.
 
 ### The optimizer
 
@@ -219,6 +367,13 @@ of the identifiability fits the other parameters at the points of the profiles.
   parameters, its diagonal their standard errors and its scaled form their correlations, in
   the space the parameters are searched. It holds where the cost is a parabola around the
   optimum, and it is singular exactly when the data does not determine every direction.
+  Its residuals are **every** residual of the problem, the prior rows included, so for a fit
+  which carries priors it is the precision of the posterior, the information of the data plus
+  the curvature of the priors, and an interval of its errors is a credible interval of the
+  posterior and not a confidence interval of the estimate; for a fit without priors the two are
+  one number and it is the confidence interval. A host which wants the information of the data
+  alone asks for the `jacobian` at the optimum and drops its trailing prior rows, whose number
+  its own request determines.
 
 | field | default | what it sets |
 |---|---|---|
@@ -281,7 +436,8 @@ Fisher information of an optimum and a profile of a parameter the data barely de
 `MaxTime`, `UserRequested` (a caller stopped the fit), `SolverFailed` and the other
 termination codes of basin. `parameters` carries the `value` of every parameter on the linear
 scale and the `x` it has in the space it was searched, `residuals` the residuals of the
-optimum in the order of the curves, and `runs` one entry per start, in the order of the starts.
+optimum in the order of the rows of the problem (the curves, then the priors), and `runs` one
+entry per start, in the order of the starts.
 `seconds` is what the runs took, without the identifiability of the optimum. `simulations` is
 what the fit cost the engine, the simulations of every run and of every profile together, and
 `jacobian` where the jacobian of a step came from, which is what `"auto"` of the request
@@ -322,7 +478,9 @@ the optimum, so a grid of a few points per side bounds a quadratic profile where
 information bounds it (`sqrt(2 * delta) = 1.96` standard errors; in the run above the profile
 gives 0.0239 of a decade and the information 0.0240). On the cost itself the same grid would
 report half the interval. A point of
-a profile carries the `values` the other parameters reached there. When the information cannot
+a profile carries the `values` the other parameters reached there. The `fisher` of a fit which
+carries priors is the precision of its posterior, see [the
+identifiability](#the-identifiability) above. When the information cannot
 be inverted there is no `covariance`, no `errors` and no `correlation`, and `singular` says so
 and names the parameters whose own information is nothing:
 
