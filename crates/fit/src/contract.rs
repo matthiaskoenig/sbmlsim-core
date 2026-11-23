@@ -102,6 +102,9 @@ pub struct FitRequest {
 /// of a density, and a host which truncates a prior at the bounds of its parameter has it
 /// already. The row of a value outside the bounds, and of one whose density is zero, is
 /// `NaN`: the prior is not defined there, which is no claim about the cost of such a point.
+/// The bounds of a prior cover the ones of its parameter, so the first of these is no point
+/// an optimizer of the fit takes, while the second is, e.g. a uniform prior whose support is
+/// narrower than its parameter.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct PriorRequest {
     /// The position of the parameter in the parameters of the fit.
@@ -109,10 +112,21 @@ pub struct PriorRequest {
     /// The distribution of the prior: `"normal"`, `"log-normal"`, `"uniform"`,
     /// `"log-uniform"`, `"laplace"` or `"log-laplace"`.
     pub kind: PriorKind,
-    /// The two parameters of that distribution, the ones of PEtab: the mean and the standard
-    /// deviation of a normal kind, the location and the scale of a Laplace one and the bounds
-    /// of a uniform one, of the logarithm of the value for a kind whose name begins with
-    /// `log`.
+    /// The two parameters of that distribution, the ones of PEtab, whose meaning is the one
+    /// of the kind:
+    ///
+    /// ```text
+    /// normal(mu, s)       the mean and the standard deviation of the value
+    /// log-normal(mu, s)   the mean and the standard deviation of its logarithm
+    /// laplace(mu, b)      the location and the scale of the value
+    /// log-laplace(mu, b)  the location and the scale of its logarithm
+    /// uniform(a, b)       the bounds of the value, which increase
+    /// log-uniform(a, b)   the bounds of the value as well, both positive
+    /// ```
+    ///
+    /// The bounds of a `log-uniform` prior are the ones of the value and not of its
+    /// logarithm, as PEtab writes them, so its density is `1 / (x (ln(b) - ln(a)))`; a scale
+    /// is positive and the bounds of a uniform kind increase.
     pub parameters: Vec<f64>,
     /// The offset `c` of the row, which keeps `c - 2 log p` positive between the bounds: the
     /// density of a narrow distribution is larger than one, whose negative logarithm has no
@@ -122,6 +136,11 @@ pub struct PriorRequest {
     /// from the density of the kind; zero for a prior the host does not truncate.
     pub normalizer: f64,
     /// The smallest value the prior is defined at, the lower bound of the parameter.
+    ///
+    /// The bounds have to cover the ones of the parameter, and a prior whose bounds lie
+    /// inside them is refused: the row of a value the prior is not defined at is `NaN`, so a
+    /// prior narrower than the box an optimizer searches in would be a cost of `NaN` at
+    /// points of the fit and no error anywhere.
     pub lower: f64,
     /// The largest value it is defined at, the upper bound of the parameter.
     pub upper: f64,
@@ -142,6 +161,12 @@ pub struct PriorRequest {
 /// term of the offset of the cost which the host keeps, as it keeps the
 /// [`CorrelationRequest::offsets`] of the logarithmic rows. A parameter of this block carries
 /// no prior of [`FitRequest::priors`] of its own, which would be a second prior of it.
+///
+/// The bounds of this block are checked when the fit is read and are no term of its rows: a
+/// whitened score outside them is an ordinary number of the multivariate normal and finite
+/// wherever the scores are, while the row of an independent prior of [`FitRequest::priors`]
+/// outside its bounds is `NaN`. An optimizer searches a parameter between its own bounds, so
+/// no point of a fit reaches that difference.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct CorrelationRequest {
     /// The positions of the parameters in the parameters of the fit, `k` of them, every one
@@ -160,9 +185,9 @@ pub struct CorrelationRequest {
     /// of the logarithmic priors.
     pub offsets: Vec<f64>,
     /// The smallest value of every parameter, its lower bound, which is positive for a
-    /// logarithmic prior.
+    /// logarithmic prior; checked and no term of the rows, see the block.
     pub lower: Vec<f64>,
-    /// Its largest value, its upper bound.
+    /// Its largest value, its upper bound; checked and no term of the rows as well.
     pub upper: Vec<f64>,
 }
 
@@ -392,7 +417,8 @@ pub struct FitAnswer {
     /// The profiles of the likelihood of the parameters, when the fit asked for them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub profiles: Vec<Profile>,
-    /// The Fisher information of the optimum, when the fit asked for it.
+    /// The Fisher information of the optimum, when the fit asked for it; of the posterior for
+    /// a fit which carries priors, see [`Fisher::information`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fisher: Option<Fisher>,
 }

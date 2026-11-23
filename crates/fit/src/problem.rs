@@ -242,11 +242,23 @@ pub struct Likelihood {
 /// The distribution of the prior of a parameter of a fit, the priors of PEtab the engine
 /// evaluates.
 ///
-/// Every kind takes the two parameters of PEtab: the mean and the standard deviation of a
-/// normal kind, the location and the scale of a Laplace one and the bounds of a uniform one.
+/// Every kind takes the two parameters of PEtab, whose meaning is the one of its own kind:
+///
+/// ```text
+/// normal(mu, s)       the mean and the standard deviation of the value
+/// log-normal(mu, s)   the mean and the standard deviation of its logarithm
+/// laplace(mu, b)      the location and the scale of the value
+/// log-laplace(mu, b)  the location and the scale of its logarithm
+/// uniform(a, b)       the bounds of the value, which increase
+/// log-uniform(a, b)   the bounds of the value as well, both positive, not of its logarithm
+/// ```
+///
 /// A kind whose name begins with `log` is the distribution of the logarithm of the value,
-/// whose density carries the value itself; it says nothing about the [`Scale`] an optimizer
-/// searches the parameter on, which is the one of the parameter whatever its prior is.
+/// whose density carries the value itself - but the parameters of `log-uniform` are the
+/// bounds of the value, as PEtab writes them, and not of its logarithm, which is the one kind
+/// whose parameters are no numbers of the logarithm. A kind says nothing about the [`Scale`]
+/// an optimizer searches the parameter on, which is the one of the parameter whatever its
+/// prior is.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum PriorKind {
@@ -254,10 +266,12 @@ pub enum PriorKind {
     Normal,
     /// A normal distribution of the mean and the standard deviation of its logarithm.
     LogNormal,
-    /// A uniform distribution between two values, whose density is zero outside of them.
+    /// A uniform distribution of the value between two bounds of it, whose density is zero
+    /// outside of them.
     Uniform,
-    /// A uniform distribution of its logarithm between two values, the density
-    /// `1 / (x (ln(b) - ln(a)))`, which is zero outside of them as well.
+    /// A uniform distribution of its logarithm between two bounds of the value, not of its
+    /// logarithm: the density `1 / (x (ln(b) - ln(a)))` between `a` and `b`, which is zero
+    /// outside of them as well, and both bounds are positive.
     LogUniform,
     /// A Laplace distribution of the location and the scale of the value.
     Laplace,
@@ -384,14 +398,17 @@ fn deviation_slope(deviation: f64, scale: f64) -> f64 {
 /// The row of a value outside the bounds, and of one whose density is zero, is `NaN`. That is
 /// no claim about the cost of such a point, as an infinite noise of a measurement is: the
 /// prior is not defined there, and a point of the search space an optimizer may take is
-/// inside the bounds of every parameter of the fit.
+/// inside the bounds of every parameter of the fit, which the bounds of its prior cover: a
+/// prior which does not cover them is refused when the fit is read.
 #[derive(Clone, Debug)]
 pub struct Prior {
     /// The position of the parameter in [`Definition::parameters`].
     pub parameter: usize,
     /// The distribution of the prior.
     pub kind: PriorKind,
-    /// The parameters of that distribution, the two of its kind, see [`PriorKind`].
+    /// The parameters of that distribution, the two of its kind and in its units: the bounds
+    /// of a `log-uniform` kind are the ones of the value and not of its logarithm, see
+    /// [`PriorKind`].
     pub parameters: Vec<f64>,
     /// The offset `c` of the row, which keeps `c - 2 log p` positive between the bounds.
     pub offset: f64,
@@ -399,7 +416,8 @@ pub struct Prior {
     /// from the density of the kind: the host computes it, since the normalization of a
     /// truncation is a distribution function and no term of a density.
     pub normalizer: f64,
-    /// The smallest value the prior is defined at, the lower bound of the parameter.
+    /// The smallest value the prior is defined at, the lower bound of the parameter: a prior
+    /// which does not cover the bounds of its parameter is refused.
     pub lower: f64,
     /// The largest value it is defined at, the upper bound of the parameter.
     pub upper: f64,
@@ -463,7 +481,10 @@ impl Prior {
 /// normalized without the bounds, and its constant, `sum(ln(scale)) + ln(det(L)) +
 /// k ln(2 pi) / 2`, is a term of the offset of the cost which the host keeps and subtracts,
 /// as it keeps the [`Correlation::offsets`] of the logarithmic rows. The bounds are the ones
-/// of the parameters, which an optimizer searches between.
+/// of the parameters, which an optimizer searches between: they are checked when the fit is
+/// read and are no term of the rows, unlike the ones of an independent [`Prior`], whose row
+/// outside them is `NaN`, since a whitened score is an ordinary number of the multivariate
+/// normal wherever the scores are finite.
 #[derive(Clone, Debug)]
 pub struct Correlation {
     /// The positions of the parameters in [`Definition::parameters`], `k` of them.
@@ -2023,6 +2044,18 @@ fn check_priors(
             return Err(fault(format!(
                 "of '{id}' is defined between {} and {}, which are not increasing and finite",
                 prior.lower, prior.upper
+            )));
+        }
+        // the row of a value the prior is not defined at is `NaN`, so a prior which does not
+        // cover the box an optimizer searches in would be a cost of `NaN` at points of that
+        // box and no error anywhere
+        let parameter = &parameters[prior.parameter];
+        if prior.lower > parameter.lower || prior.upper < parameter.upper {
+            return Err(fault(format!(
+                "of '{id}' is defined between {} and {}, which does not cover the bounds {} \
+                 and {} of the parameter: its row would be `NaN` at a point of the search \
+                 space",
+                prior.lower, prior.upper, parameter.lower, parameter.upper
             )));
         }
         check_kind(prior.kind, &prior.parameters)

@@ -1134,6 +1134,26 @@ fn of_a_correlation(k: f64, y: f64, correlation: Value) -> Value {
     })
 }
 
+/// The same request with every parameter searched on a scale, which the row of the jacobian
+/// of a prior is the chain rule of (`Scale::derivative`): the bounds of `of_a_prior` and of
+/// `of_a_correlation` are positive, so every scale takes them.
+fn on_the_scale(mut request: Value, scale: &str) -> Value {
+    for parameter in request["parameters"].as_array_mut().unwrap() {
+        parameter["scale"] = json!(scale);
+    }
+    request
+}
+
+/// The derivative of the value of a parameter in the point of the search space which searches
+/// it on a scale, the factor of a row of the jacobian of a prior.
+fn of_the_scale(scale: &str, value: f64) -> f64 {
+    match scale {
+        "lin" => 1.0,
+        "log10" => value * std::f64::consts::LN_10,
+        other => panic!("the scale {other} is no scale of these tests"),
+    }
+}
+
 /// One case of a kind of prior: the parameters of the distribution, the value of the
 /// parameter of the fit, the normalizer of the truncation at the bounds and the log density
 /// `petab` computes there.
@@ -1282,35 +1302,45 @@ fn every_prior_kind_is_the_log_density_of_petab() {
 
 #[test]
 fn a_prior_outside_its_bounds_is_nan() {
-    // a value below the lower bound of its prior, one above its upper bound and one outside
-    // the support of a uniform prior, whose density is zero there: the row of such a point
-    // says that the prior is not defined there and not that the point costs nothing
-    let outside = |prior: Value| {
-        let problem = problem(of_a_prior(1.3, json!([prior]))).unwrap();
-        problem.residuals(&problem.start()).unwrap()[2]
-    };
-    let normal = |lower: f64, upper: f64| {
-        json!({
+    // the bounds of a prior cover the ones of its parameter, so a value outside them is
+    // outside the box an optimizer searches in; `residuals` evaluates such a point anyway,
+    // and the row of the prior says that it is not defined there and not that the point
+    // costs nothing
+    let normal = problem(of_a_prior(
+        1.3,
+        json!([{
             "parameter": 0,
             "kind": "normal",
             "parameters": [1.0, 0.5],
             "offset": 2.0,
             "normalizer": 0.0,
-            "lower": lower,
-            "upper": upper,
-        })
-    };
+            "lower": PRIOR_LOWER,
+            "upper": PRIOR_UPPER,
+        }]),
+    ))
+    .unwrap();
+    let row = |value: f64| normal.residuals(&[value]).unwrap()[2];
 
-    assert!(
-        outside(normal(2.0, PRIOR_UPPER)).is_nan(),
-        "the row of a value below the lower bound of its prior is not NaN"
-    );
-    assert!(
-        outside(normal(PRIOR_LOWER, 1.0)).is_nan(),
-        "the row of a value above the upper bound of its prior is not NaN"
-    );
-    assert!(
-        outside(json!({
+    for value in [PRIOR_LOWER - 0.01, PRIOR_UPPER + 0.01] {
+        assert!(
+            row(value).is_nan(),
+            "the row of the value {value} outside the bounds of its prior is not NaN"
+        );
+    }
+    // a value at a bound of its prior is a value of it, which is where an optimizer sits
+    // when the data pushes a parameter against its bound
+    for value in [PRIOR_LOWER, PRIOR_UPPER] {
+        let at = row(value);
+        assert!(
+            at.is_finite(),
+            "the row of the value {value} at a bound of its prior is {at}"
+        );
+    }
+    // and a value inside the bounds whose density is zero, outside the support of a uniform
+    // prior, is `NaN` as well: that point is one of the box
+    let uniform = problem(of_a_prior(
+        1.3,
+        json!([{
             "parameter": 0,
             "kind": "uniform",
             "parameters": [2.0, 3.0],
@@ -1318,19 +1348,52 @@ fn a_prior_outside_its_bounds_is_nan() {
             "normalizer": 0.0,
             "lower": PRIOR_LOWER,
             "upper": PRIOR_UPPER,
-        }))
-        .is_nan(),
+        }]),
+    ))
+    .unwrap();
+
+    assert!(
+        uniform.residuals(&uniform.start()).unwrap()[2].is_nan(),
         "the row of a value outside the support of its uniform prior is not NaN"
     );
-    // and a value at a bound of its prior is a value of it, which is where an optimizer
-    // sits when the data pushes a parameter against its bound
-    for bound in [normal(1.3, PRIOR_UPPER), normal(PRIOR_LOWER, 1.3)] {
-        let row = outside(bound);
+}
+
+#[test]
+fn a_prior_which_does_not_cover_the_bounds_of_its_parameter_is_refused() {
+    // the row of a value a prior is not defined at is `NaN`, so a prior inside the box an
+    // optimizer searches in would be a cost of `NaN` at points of the fit and no error
+    // anywhere: a prior of narrower bounds is refused, one of wider bounds is not, since its
+    // rows are numbers everywhere in the box
+    let bounded = |lower: f64, upper: f64| {
+        problem(of_a_prior(
+            1.3,
+            json!([{
+                "parameter": 0,
+                "kind": "normal",
+                "parameters": [1.0, 0.5],
+                "offset": 2.0,
+                "normalizer": 0.0,
+                "lower": lower,
+                "upper": upper,
+            }]),
+        ))
+        .err()
+        .unwrap_or_default()
+    };
+
+    for (lower, upper) in [(0.5, PRIOR_UPPER), (PRIOR_LOWER, 2.0), (0.5, 2.0)] {
+        let refusal = bounded(lower, upper);
         assert!(
-            row.is_finite(),
-            "the row of a value at a bound of its prior is {row}"
+            refusal.contains("does not cover the bounds") && refusal.contains("the prior 0 of 'k'"),
+            "the prior between {lower} and {upper} of a parameter between {PRIOR_LOWER} and \
+             {PRIOR_UPPER} is refused with {refusal:?}"
         );
     }
+    assert_eq!(
+        bounded(PRIOR_LOWER - 0.05, PRIOR_UPPER + 0.5),
+        String::new(),
+        "a prior of wider bounds than its parameter is refused"
+    );
 }
 
 #[test]
@@ -1404,67 +1467,6 @@ fn correlated_priors_are_whitened_by_the_inverse_in_order() {
 #[test]
 fn a_profile_which_holds_a_correlated_parameter_still_reads_its_value() {
     let (k, y) = (1.3, 1.4);
-    let problem = problem(of_a_correlation(
-        k,
-        y,
-        json!({
-            "parameters": [0, 1],
-            "log": [false, true],
-            "location": [1.0, 0.0],
-            "scale": [0.5, 0.7],
-            "inverse": [[1.0, 0.0], [-0.25, 0.5]],
-            "offsets": [3.0],
-            "lower": [PRIOR_LOWER, PRIOR_LOWER],
-            "upper": [PRIOR_UPPER, PRIOR_UPPER],
-        }),
-    ))
-    .unwrap();
-    let held = problem.fixing(&[(0, k)]).unwrap();
-
-    let residuals = problem.residuals(&[k, y]).unwrap();
-    let profile = held.residuals(&[y]).unwrap();
-
-    assert_eq!(held.parameters().len(), 1, "the profile searches `y` alone");
-    assert_eq!(held.n_residuals(), problem.n_residuals());
-    for row in 2..5 {
-        same(
-            profile[row],
-            residuals[row],
-            &format!("the prior row {row} of the profile"),
-        );
-    }
-}
-
-#[test]
-fn the_prior_rows_of_the_jacobian_are_analytic() {
-    // the row of a prior follows the value of its parameter alone, and the engine writes its
-    // derivative instead of a difference of two of them: every kind against the central
-    // difference of the residuals themselves
-    for case in &CASES {
-        let mut request = of_a_prior(case.value, json!([case.prior()]));
-        request["jacobian"] = json!("sensitivities");
-        let problem = problem(request).unwrap();
-        let x = problem.start();
-
-        let jacobian = problem.jacobian(&x).unwrap();
-
-        assert_eq!(problem.jacobian_of(), JacobianChoice::Sensitivities);
-        assert_eq!(jacobian.len(), 3);
-        let apart = apart(&jacobian, &central(&problem, &x));
-        assert!(
-            apart < 1e-6,
-            "the row of the {} prior is {apart} off the central difference of the residuals: \
-             {jacobian:?} against {:?}",
-            case.kind,
-            central(&problem, &x)
-        );
-    }
-}
-
-#[test]
-fn the_rows_of_the_correlated_priors_of_the_jacobian_are_analytic() {
-    // a whitened row follows every correlated parameter and the row of a logarithm its own
-    let (k, y) = (1.3, 1.4);
     let mut request = of_a_correlation(
         k,
         y,
@@ -1481,27 +1483,218 @@ fn the_rows_of_the_correlated_priors_of_the_jacobian_are_analytic() {
     );
     request["jacobian"] = json!("sensitivities");
     let problem = problem(request).unwrap();
+    let held = problem.fixing(&[(0, k)]).unwrap();
+
+    let residuals = problem.residuals(&[k, y]).unwrap();
+    let profile = held.residuals(&[y]).unwrap();
+
+    assert_eq!(held.parameters().len(), 1, "the profile searches `y` alone");
+    assert_eq!(held.n_residuals(), problem.n_residuals());
+    for row in 2..5 {
+        same(
+            profile[row],
+            residuals[row],
+            &format!("the prior row {row} of the profile"),
+        );
+    }
+    // and the prior rows of its jacobian are the column of `y` of the whole one: the rows of
+    // the correlated priors are as many as the correlated parameters and the columns of
+    // their derivatives as well, which is not the `k` of the free parameters of a profile,
+    // so the two counts cannot be confused for one another
+    let block = held.jacobian(&[y]).unwrap();
+    let whole = problem.jacobian(&[k, y]).unwrap();
+    assert_eq!(block.len(), held.n_residuals(), "one column per row");
+    for row in 2..5 {
+        same(
+            block[row],
+            whole[row * 2 + 1],
+            &format!("the prior row {row} of the block of the profile"),
+        );
+    }
+    assert_eq!(
+        block[2], 0.0,
+        "the first whitened row does not read `y`: {block:?}"
+    );
+    assert!(
+        block[3] != 0.0 && block[4] != 0.0,
+        "the second whitened row and the one of the logarithm read `y`: {block:?}"
+    );
+}
+
+#[test]
+fn the_prior_rows_of_the_jacobian_are_analytic() {
+    // the row of a prior follows the value of its parameter alone, and the engine writes its
+    // derivative instead of a difference of two of them: every kind against the central
+    // difference of the residuals themselves, on both scales a parameter of positive bounds
+    // is searched on, so that the chain rule of the scale is part of the comparison
+    for scale in ["lin", "log10"] {
+        for case in &CASES {
+            let mut request = on_the_scale(of_a_prior(case.value, json!([case.prior()])), scale);
+            request["jacobian"] = json!("sensitivities");
+            let problem = problem(request).unwrap();
+            let x = problem.start();
+
+            let jacobian = problem.jacobian(&x).unwrap();
+
+            assert_eq!(problem.jacobian_of(), JacobianChoice::Sensitivities);
+            assert_eq!(jacobian.len(), 3);
+            let apart = apart(&jacobian, &central(&problem, &x));
+            assert!(
+                apart < 1e-6,
+                "the row of the {} prior on the {scale} scale is {apart} off the central \
+                 difference of the residuals: {jacobian:?} against {:?}",
+                case.kind,
+                central(&problem, &x)
+            );
+            // the density of a uniform prior does not move with the value, so its row is
+            // zero and a difference of it says nothing; the row of every other kind moves,
+            // and a row which was never written would be zero as well
+            let moves = case.kind != "uniform";
+            assert_eq!(
+                jacobian[2] != 0.0,
+                moves,
+                "the row of the {} prior on the {scale} scale is {}",
+                case.kind,
+                jacobian[2]
+            );
+        }
+    }
+}
+
+#[test]
+fn the_row_of_a_prior_the_offset_does_not_reach_is_zero() {
+    // the row is `sqrt(c - 2 log p)`, and the density of a narrow prior is larger than one,
+    // whose negative logarithm has no root: an offset the density does not reach is the row
+    // zero, the smallest one, which has no derivative either, as the row of the scale of a
+    // tiny noise of a likelihood has none
+    let (location, scale, value): (f64, f64, f64) = (1.3, 0.01, 1.31);
+    let mut request = of_a_prior(
+        value,
+        json!([{
+            "parameter": 0,
+            "kind": "normal",
+            "parameters": [location, scale],
+            "offset": 0.0,
+            "normalizer": 0.0,
+            "lower": PRIOR_LOWER,
+            "upper": PRIOR_UPPER,
+        }]),
+    );
+    request["jacobian"] = json!("sensitivities");
+    let problem = problem(request).unwrap();
     let x = problem.start();
 
+    let residuals = problem.residuals(&x).unwrap();
     let jacobian = problem.jacobian(&x).unwrap();
 
-    assert_eq!(jacobian.len(), 5 * 2);
-    let apart = apart(&jacobian, &central(&problem, &x));
-    assert!(
-        apart < 1e-6,
-        "the rows of the correlated priors are {apart} off the central difference of the \
-         residuals: {jacobian:?} against {:?}",
-        central(&problem, &x)
+    // the density at one standard deviation of a scale of 0.01 is about 3.2, so the term of
+    // the row, `0 - 2 * 3.2`, is negative and the row is the clamped zero, while the density
+    // moves with the value there, `-z/s` of about -100
+    let z: f64 = (value - location) / scale;
+    let density = -0.5 * z * z - scale.ln() - LN_2PI_HALF;
+    assert!(density > 0.0, "the density of the prior is {density}");
+    same(residuals[2], 0.0, "the row of the prior");
+    same(jacobian[2], 0.0, "the derivative of that row");
+}
+
+#[test]
+fn the_row_of_a_laplace_prior_at_its_location_has_no_slope() {
+    // the density of a Laplace prior has no derivative at its location, where it is largest
+    // and its row smallest: the engine takes the derivative as zero there, as it takes the
+    // one of the residual of the data of a Laplace likelihood at its own minimum
+    let (location, scale, offset): (f64, f64, f64) = (1.3, 0.4, 2.0);
+    let mut request = of_a_prior(
+        location,
+        json!([{
+            "parameter": 0,
+            "kind": "laplace",
+            "parameters": [location, scale],
+            "offset": offset,
+            "normalizer": 0.0,
+            "lower": PRIOR_LOWER,
+            "upper": PRIOR_UPPER,
+        }]),
     );
-    // the first whitened row reads `k` alone, since the inverse of the factor is lower
-    // triangular, the second both, and the logarithm reads `y` alone
-    assert_eq!(&jacobian[4..6], &[1.0 / 0.5, 0.0], "{jacobian:?}");
-    assert!(
-        jacobian[6] != 0.0 && jacobian[7] != 0.0,
-        "the second whitened row reads one parameter: {jacobian:?}"
+    request["jacobian"] = json!("sensitivities");
+    let problem = problem(request).unwrap();
+    let x = problem.start();
+
+    let residuals = problem.residuals(&x).unwrap();
+    let jacobian = problem.jacobian(&x).unwrap();
+
+    // the row itself is a number of the density at the kink, `-ln(2 b)`, and is positive, so
+    // the zero of its derivative is the one of the density and no clamped row
+    let density = -(2.0 * scale).ln();
+    same(
+        residuals[2],
+        (offset - 2.0 * density).sqrt(),
+        "the row of the prior",
     );
-    assert_eq!(jacobian[8], 0.0, "{jacobian:?}");
-    assert!(jacobian[9] != 0.0, "{jacobian:?}");
+    assert!(residuals[2] > 0.0, "the row is {}", residuals[2]);
+    assert_eq!(
+        jacobian[2], 0.0,
+        "the derivative of the row at the kink is {}",
+        jacobian[2]
+    );
+}
+
+#[test]
+fn the_rows_of_the_correlated_priors_of_the_jacobian_are_analytic() {
+    // a whitened row follows every correlated parameter and the row of a logarithm its own,
+    // on both scales a parameter of positive bounds is searched on, so that the chain rule
+    // of the scale is part of the comparison
+    let (k, y) = (1.3, 1.4);
+    for scale in ["lin", "log10"] {
+        let mut request = on_the_scale(
+            of_a_correlation(
+                k,
+                y,
+                json!({
+                    "parameters": [0, 1],
+                    "log": [false, true],
+                    "location": [1.0, 0.0],
+                    "scale": [0.5, 0.7],
+                    "inverse": [[1.0, 0.0], [-0.25, 0.5]],
+                    "offsets": [3.0],
+                    "lower": [PRIOR_LOWER, PRIOR_LOWER],
+                    "upper": [PRIOR_UPPER, PRIOR_UPPER],
+                }),
+            ),
+            scale,
+        );
+        request["jacobian"] = json!("sensitivities");
+        let problem = problem(request).unwrap();
+        let x = problem.start();
+
+        let jacobian = problem.jacobian(&x).unwrap();
+
+        assert_eq!(jacobian.len(), 5 * 2);
+        let apart = apart(&jacobian, &central(&problem, &x));
+        assert!(
+            apart < 1e-6,
+            "the rows of the correlated priors on the {scale} scale are {apart} off the \
+             central difference of the residuals: {jacobian:?} against {:?}",
+            central(&problem, &x)
+        );
+        // the first whitened row reads `k` alone, since the inverse of the factor is lower
+        // triangular, the second both, and the logarithm reads `y` alone; its derivative is
+        // the one in the value, `inverse[0][0] / scale[0]`, times the one of the scale the
+        // parameter is searched on
+        let expected = of_the_scale(scale, k) / 0.5;
+        assert!(
+            (jacobian[4] - expected).abs() <= 1e-9 * expected,
+            "the first whitened row on the {scale} scale is {} and not {expected}: \
+             {jacobian:?}",
+            jacobian[4]
+        );
+        assert_eq!(jacobian[5], 0.0, "{jacobian:?}");
+        assert!(
+            jacobian[6] != 0.0 && jacobian[7] != 0.0,
+            "the second whitened row reads one parameter: {jacobian:?}"
+        );
+        assert_eq!(jacobian[8], 0.0, "{jacobian:?}");
+        assert!(jacobian[9] != 0.0, "{jacobian:?}");
+    }
 }
 
 #[test]
