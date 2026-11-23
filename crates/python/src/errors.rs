@@ -76,12 +76,12 @@ pub(crate) fn simulation_error(error: EngineError) -> PyErr {
     }
 }
 
-/// The exception of a batch which cannot run: a number of threads which is none, or a pool of
-/// threads which does not start.
+/// The exception of a batch which cannot run: a number of threads which is none, a batch of
+/// no model, or a pool of threads which does not start.
 pub(crate) fn batch_error(error: BatchError) -> PyErr {
     let message = error.to_string();
     match error {
-        BatchError::Threads(_) => PyValueError::new_err(message),
+        BatchError::Threads(_) | BatchError::Models => PyValueError::new_err(message),
         BatchError::Pool { .. } => LoadError::new_err(message),
     }
 }

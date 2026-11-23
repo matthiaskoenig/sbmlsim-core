@@ -410,3 +410,118 @@ def test_a_fit_whose_report_raises_is_stopped_by_it(decay, data):
             threads=1,
             on_run=refuse,
         )
+
+
+@pytest.fixture(scope="module")
+def fast(decay: sbmlsim_core.LoadedModel) -> sbmlsim_core.LoadedModel:
+    """A second model, the decay of twice the rate: `y' = -2 k y`."""
+    sbml = (ROOT / "crates/host/tests/decay.xml").read_text(encoding="utf-8")
+    doubled = sbml.replace(
+        "<apply><times/><apply><minus/><ci>k</ci></apply><ci>y</ci></apply>",
+        "<apply><times/><apply><minus/><cn>2</cn></apply><ci>k</ci><ci>y</ci></apply>",
+    )
+    assert doubled != sbml, "the rate rule of the decay model was not doubled"
+    compiled = sbmlsim_core.compile_sbml(doubled)
+    return sbmlsim_core.Runtime().load(compiled.wasm, compiled.description)
+
+
+def models_request(
+    slow_data: tuple[list[float], list[float]],
+    fast_data: tuple[list[float], list[float]],
+    **over: Any,
+) -> dict[str, Any]:
+    """The fit of `k` against the data of both models, each condition on its model."""
+    return {
+        "contract": sbmlsim_core.FIT_CONTRACT,
+        "parameters": [
+            {"id": "k", "start": 3.0, "lower": 0.01, "upper": 10.0, "scale": "log10"}
+        ],
+        "conditions": [
+            {"id": "slow", "model": "slow", "request": request(end=10.0, steps=10)},
+            {"id": "fast", "model": "fast", "request": request(end=10.0, steps=10)},
+        ],
+        "curves": [
+            {
+                "id": "y of the slow decay",
+                "condition": "slow",
+                "column": "y",
+                "times": slow_data[0],
+                "values": slow_data[1],
+            },
+            {
+                "id": "y of the fast decay",
+                "condition": "fast",
+                "column": "y",
+                "times": fast_data[0],
+                "values": fast_data[1],
+            },
+        ],
+        "optimizer": {"max_iterations": 50},
+    } | over
+
+
+def test_a_fit_of_two_models_finds_the_parameter_of_the_data_of_both(decay, fast, data):
+    fast_data = simulate(fast, end=10.0, steps=10)
+
+    answer = sbmlsim_core.fit_models(
+        {"slow": decay, "fast": fast},
+        models_request(data, fast_data),
+        threads=2,
+    )
+
+    assert answer["status"] == "SolverConverged"
+    assert answer["parameters"][0]["value"] == pytest.approx(0.3, rel=1e-6)
+    assert answer["cost"] == pytest.approx(0.0, abs=1e-12)
+
+
+def test_every_condition_of_a_fit_is_simulated_on_the_model_it_names(decay, fast, data):
+    fast_data = simulate(fast, end=10.0, steps=10)
+    swapped = {"slow": fast, "fast": decay}
+
+    problem = sbmlsim_core.fit_problem_of_models(
+        swapped, models_request(data, fast_data)
+    )
+
+    residuals = problem.residuals(problem.start)
+    assert numpy.abs(residuals).max() > 1e-3
+
+
+def test_the_problem_of_a_fit_of_two_models_is_the_one_of_its_data(decay, fast, data):
+    fast_data = simulate(fast, end=10.0, steps=10)
+    models = {"slow": decay, "fast": fast}
+    request_of = models_request(data, fast_data)
+    request_of["parameters"][0]["start"] = 0.3
+
+    problem = sbmlsim_core.fit_problem_of_models(models, request_of, threads=2)
+
+    assert problem.n_residuals == 22
+    # the start is the value of the data, on a logarithmic scale and back
+    assert numpy.abs(problem.residuals(problem.start)).max() < 1e-14
+
+
+def test_a_condition_which_names_a_model_the_fit_has_not_is_refused(decay, fast, data):
+    fast_data = simulate(fast, end=10.0, steps=10)
+    request_of = models_request(data, fast_data)
+    request_of["conditions"][1]["model"] = "female"
+
+    with pytest.raises(ValueError, match="'female'"):
+        sbmlsim_core.fit_models({"slow": decay, "fast": fast}, request_of)
+
+
+def test_a_condition_of_a_fit_of_several_models_names_one_of_them(decay, fast, data):
+    fast_data = simulate(fast, end=10.0, steps=10)
+    request_of = models_request(data, fast_data)
+    del request_of["conditions"][0]["model"]
+
+    with pytest.raises(ValueError, match="names no model"):
+        sbmlsim_core.fit_models({"slow": decay, "fast": fast}, request_of)
+
+
+def test_a_fit_of_no_model_is_refused(data):
+    with pytest.raises(ValueError, match="at least one model"):
+        sbmlsim_core.fit_models({}, fit_request(data))
+
+
+def test_the_models_of_a_fit_are_loaded_models(decay, data):
+    with pytest.raises(ValueError, match="no loaded model"):
+        sbmlsim_core.fit_models({"decay": "a model"}, fit_request(data))

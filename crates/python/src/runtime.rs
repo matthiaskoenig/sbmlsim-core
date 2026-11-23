@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
 use sbmlsim_abi::ModelDescription;
 
 use crate::errors::{InternalError, LoadError, fit_error};
@@ -177,65 +178,13 @@ impl LoadedModel {
         threads: Option<usize>,
         on_run: Option<Bound<'py, PyAny>>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let request: sbmlsim_fit::FitRequest =
-            serde_path_to_error::deserialize(&mut pythonize::Depythonizer::from_object(request))
-                .map_err(|error| {
-                    PyValueError::new_err(format!("request: {}: {}", error.path(), error.inner()))
-                })?;
-        let model = self.model.clone();
-        let stop = sbmlsim_fit::Stop::new();
-        let (sender, runs) = std::sync::mpsc::channel::<(usize, sbmlsim_fit::RunAnswer)>();
-        let reporting = on_run.is_some();
-        let worker = {
-            let stop = stop.clone();
-            std::thread::Builder::new()
-                .name("sbmlsim-fit".to_string())
-                .spawn(move || {
-                    if !reporting {
-                        drop(sender);
-                        return sbmlsim_fit::fit_with(&request, model, threads, &stop);
-                    }
-                    // the runs are reported from the threads of the pool and are sent to the
-                    // thread of the caller, which is the one that may hold the GIL, so the
-                    // sender of them is locked: one lock per run of the fit
-                    let sender = std::sync::Mutex::new(sender);
-                    let report = |index: usize, run: &sbmlsim_fit::RunAnswer| {
-                        let sender = sender.lock().unwrap_or_else(|held| held.into_inner());
-                        drop(sender.send((index, run.clone())));
-                    };
-                    sbmlsim_fit::fit_reporting(&request, model, threads, &stop, Some(&report))
-                })
-                .map_err(|error| {
-                    InternalError::new_err(format!("the fit has no thread: {error}"))
-                })?
-        };
-        // the fit holds no GIL, so the signals of python are checked here while it runs: an
-        // interrupt stops the optimizer at its next iteration and the thread is joined, which
-        // is what keeps a stopped fit from reaching into the model of a caller which went on
-        while !worker.is_finished() {
-            py.detach(|| std::thread::sleep(std::time::Duration::from_millis(20)));
-            if let Err(error) = report_runs(py, &runs, on_run.as_ref()) {
-                stop.stop();
-                py.detach(|| drop(worker.join()));
-                return Err(error);
-            }
-            if let Err(interrupt) = py.check_signals() {
-                stop.stop();
-                py.detach(|| drop(worker.join()));
-                // the runs which finished before the fit was stopped are what a caller keeps
-                // of it; an error of the report is none of the interrupt it asked for
-                drop(report_runs(py, &runs, on_run.as_ref()));
-                return Err(interrupt);
-            }
-        }
-        let answer = py
-            .detach(|| worker.join())
-            .map_err(|_| InternalError::new_err("the fit panicked"))?
-            .map_err(fit_error)?;
-        // the runs which finished while the fit was joined are reported as well, so every run
-        // of the answer was reported before it is answered
-        report_runs(py, &runs, on_run.as_ref())?;
-        pythonize::pythonize(py, &answer).map_err(Into::into)
+        run_fit(
+            py,
+            vec![(sbmlsim_fit::DEFAULT_MODEL.to_string(), self.model.clone())],
+            request,
+            threads,
+            on_run,
+        )
     }
 
     /// The problem of a fit of the contract `fit/1`, for an optimizer which stays in python.
@@ -314,4 +263,138 @@ fn report_runs<'py>(
         on_run.call1((index, pythonize::pythonize(py, &run)?))?;
     }
     Ok(())
+}
+
+/// Runs a fit of the contract `fit/1` on the given models, see `LoadedModel.fit`.
+fn run_fit<'py>(
+    py: Python<'py>,
+    models: Vec<(String, Arc<sbmlsim_host::LoadedModel>)>,
+    request: &Bound<'_, PyAny>,
+    threads: Option<usize>,
+    on_run: Option<Bound<'py, PyAny>>,
+) -> PyResult<Bound<'py, PyAny>> {
+    let request: sbmlsim_fit::FitRequest =
+        serde_path_to_error::deserialize(&mut pythonize::Depythonizer::from_object(request))
+            .map_err(|error| {
+                PyValueError::new_err(format!("request: {}: {}", error.path(), error.inner()))
+            })?;
+    let stop = sbmlsim_fit::Stop::new();
+    let (sender, runs) = std::sync::mpsc::channel::<(usize, sbmlsim_fit::RunAnswer)>();
+    let reporting = on_run.is_some();
+    let worker = {
+        let stop = stop.clone();
+        std::thread::Builder::new()
+            .name("sbmlsim-fit".to_string())
+            .spawn(move || {
+                if !reporting {
+                    drop(sender);
+                    return sbmlsim_fit::fit_models(&request, models, threads, &stop);
+                }
+                // the runs are reported from the threads of the pool and are sent to the
+                // thread of the caller, which is the one that may hold the GIL, so the
+                // sender of them is locked: one lock per run of the fit
+                let sender = std::sync::Mutex::new(sender);
+                let report = |index: usize, run: &sbmlsim_fit::RunAnswer| {
+                    let sender = sender.lock().unwrap_or_else(|held| held.into_inner());
+                    drop(sender.send((index, run.clone())));
+                };
+                sbmlsim_fit::fit_reporting_models(&request, models, threads, &stop, Some(&report))
+            })
+            .map_err(|error| InternalError::new_err(format!("the fit has no thread: {error}")))?
+    };
+    // the fit holds no GIL, so the signals of python are checked here while it runs: an
+    // interrupt stops the optimizer at its next iteration and the thread is joined, which
+    // is what keeps a stopped fit from reaching into the model of a caller which went on
+    while !worker.is_finished() {
+        py.detach(|| std::thread::sleep(std::time::Duration::from_millis(20)));
+        if let Err(error) = report_runs(py, &runs, on_run.as_ref()) {
+            stop.stop();
+            py.detach(|| drop(worker.join()));
+            return Err(error);
+        }
+        if let Err(interrupt) = py.check_signals() {
+            stop.stop();
+            py.detach(|| drop(worker.join()));
+            // the runs which finished before the fit was stopped are what a caller keeps
+            // of it; an error of the report is none of the interrupt it asked for
+            drop(report_runs(py, &runs, on_run.as_ref()));
+            return Err(interrupt);
+        }
+    }
+    let answer = py
+        .detach(|| worker.join())
+        .map_err(|_| InternalError::new_err("the fit panicked"))?
+        .map_err(fit_error)?;
+    // the runs which finished while the fit was joined are reported as well, so every run
+    // of the answer was reported before it is answered
+    report_runs(py, &runs, on_run.as_ref())?;
+    pythonize::pythonize(py, &answer).map_err(Into::into)
+}
+
+/// The models of a fit, in the order of the mapping, which is the order of their instances.
+fn models_of(
+    models: &Bound<'_, PyDict>,
+) -> PyResult<Vec<(String, Arc<sbmlsim_host::LoadedModel>)>> {
+    if models.is_empty() {
+        return Err(PyValueError::new_err("a fit simulates at least one model"));
+    }
+    let mut of = Vec::with_capacity(models.len());
+    for (id, model) in models.iter() {
+        let id: String = id.extract().map_err(|_| {
+            PyValueError::new_err("the models of a fit are keyed by the id of a model")
+        })?;
+        let model: PyRef<'_, LoadedModel> = model.extract().map_err(|_| {
+            PyValueError::new_err(format!("the model '{id}' of the fit is no loaded model"))
+        })?;
+        of.push((id, model.model.clone()));
+    }
+    Ok(of)
+}
+
+/// Fits the parameters of several models to data and gives what the fit found.
+///
+/// This is `LoadedModel.fit` of a fit of more than one model, e.g. of data which is the data
+/// of two builds of a model: `models` are the loaded models by the id the conditions of the
+/// request name them by, and every condition of the request names the model it simulates
+/// (`model` of a condition of `fit/1`). A thread of the fit holds an instance of every model
+/// its points met, so a fit of two models is twice the memory of a fit of one.
+///
+/// Raises `ValueError` for a mapping which is empty or holds something which is no loaded
+/// model, for a condition which names a model the fit has not or names none at all, and
+/// otherwise as `LoadedModel.fit`.
+#[pyfunction]
+#[pyo3(signature = (models, request, *, threads=None, on_run=None))]
+pub(crate) fn fit_models<'py>(
+    py: Python<'py>,
+    models: &Bound<'_, PyDict>,
+    request: &Bound<'_, PyAny>,
+    threads: Option<usize>,
+    on_run: Option<Bound<'py, PyAny>>,
+) -> PyResult<Bound<'py, PyAny>> {
+    run_fit(py, models_of(models)?, request, threads, on_run)
+}
+
+/// The problem of a fit of several models, for an optimizer which stays in python.
+///
+/// This is `LoadedModel.fit_problem` of a fit of more than one model, see `fit_models`.
+///
+/// Raises the errors of `fit_models`: the starts of the request are not read here.
+#[pyfunction]
+#[pyo3(signature = (models, request, *, threads=None))]
+pub(crate) fn fit_problem_of_models(
+    py: Python<'_>,
+    models: &Bound<'_, PyDict>,
+    request: &Bound<'_, PyAny>,
+    threads: Option<usize>,
+) -> PyResult<crate::fit::FitProblem> {
+    let request: sbmlsim_fit::FitRequest =
+        serde_path_to_error::deserialize(&mut pythonize::Depythonizer::from_object(request))
+            .map_err(|error| {
+                PyValueError::new_err(format!("request: {}: {}", error.path(), error.inner()))
+            })?;
+    let models = models_of(models)?;
+    let problem = py
+        .detach(|| sbmlsim_fit::problem_of_models(&request, models, threads))
+        .map_err(fit_error)?;
+    Ok(crate::fit::FitProblem::new(problem))
 }

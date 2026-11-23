@@ -6,10 +6,10 @@ The crates are built from this repository and version together with it, so depen
 
 ```toml
 [dependencies]
-sbmlsim-abi = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.21.0" }
-sbmlsim-compiler = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.21.0" }
-sbmlsim-host = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.21.0" }
-sbmlsim-batch = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.21.0" }
+sbmlsim-abi = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.22.0" }
+sbmlsim-compiler = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.22.0" }
+sbmlsim-host = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.22.0" }
+sbmlsim-batch = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.22.0" }
 anyhow = "1"
 
 # the reader alone, from crates.io
@@ -123,7 +123,7 @@ fn main() -> anyhow::Result<()> {
 
 This is `crates/batch/examples/a_scan.rs`, which `cargo clippy --all-targets` builds, so the example above cannot drift from the API either. Run it with `cargo run --example a_scan`.
 
-`Workers::new` is a pool for one batch and `WorkerPool` keeps one across batches, grown to the points of a batch and never shrunk, which is what a caller of many small batches needs. `Workers::map` is the batch of any work which is more than a simulation: the whole work of a point runs on the thread of the point, so a caller which computes the residuals of an objective or the rows of a table does that there as well, and gives one `Outcome` per point in the order of the points. A point which fails, and a point which panics, fails alone: `Outcome` is a result per point, so a batch is never ended by one of its points.
+`Workers::new` is a pool for one batch and `WorkerPool` keeps one across batches, grown to the points of a batch and never shrunk, which is what a caller of many small batches needs. `Workers::map` is the batch of any work which is more than a simulation: the whole work of a point runs on the thread of the point, so a caller which computes the residuals of an objective or the rows of a table does that there as well, and gives one `Outcome` per point in the order of the points. A point which fails, and a point which panics, fails alone: `Outcome` is a result per point, so a batch is never ended by one of its points. `Workers::of_models` is a pool of several models, whose thread holds an instance of every model its points met, and `Workers::map_at` routes a point to its model, which is what a fit of several models runs on.
 
 The pool is the one the [Python](python.md) bindings run `simulate_many` and `batch_executor` on.
 
