@@ -193,7 +193,7 @@ fn a_concentration_rule_of_version_1_names_a_specie() {
     match &doc.model.rules[..] {
         [Rule::Assignment { variable, math, .. }] => {
             assert_eq!(variable, "s");
-            assert_eq!(math, &Some(Node::Number(2.0)));
+            assert_eq!(math, &Some(Node::number(2.0)));
         }
         rules => panic!("the rule of the specie, not {rules:?}"),
     }

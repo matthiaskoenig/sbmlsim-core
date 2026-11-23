@@ -17,10 +17,10 @@ fn symbol(name: &str) -> Node {
 
 #[test]
 fn reads_a_number_a_symbol_and_a_sum() {
-    assert_eq!(parse("2").unwrap(), Node::Number(2.0));
-    assert_eq!(parse("2.5").unwrap(), Node::Number(2.5));
-    assert_eq!(parse("2e-3").unwrap(), Node::Number(0.002));
-    assert_eq!(parse(" 1.5E+2 ").unwrap(), Node::Number(150.0));
+    assert_eq!(parse("2").unwrap(), Node::number(2.0));
+    assert_eq!(parse("2.5").unwrap(), Node::number(2.5));
+    assert_eq!(parse("2e-3").unwrap(), Node::number(0.002));
+    assert_eq!(parse(" 1.5E+2 ").unwrap(), Node::number(150.0));
     assert_eq!(parse("x_1").unwrap(), symbol("x_1"));
     assert_eq!(
         parse("a + b").unwrap(),
@@ -59,8 +59,8 @@ fn a_product_binds_tighter_than_a_sum_and_a_power_tighter_than_a_product() {
         apply(
             Op::Times,
             vec![
-                Node::Number(2.0),
-                apply(Op::Power, vec![Node::Number(3.0), Node::Number(2.0)]),
+                Node::number(2.0),
+                apply(Op::Power, vec![Node::number(3.0), Node::number(2.0)]),
             ],
         )
     );
@@ -69,8 +69,8 @@ fn a_product_binds_tighter_than_a_sum_and_a_power_tighter_than_a_product() {
         apply(
             Op::Plus,
             vec![
-                Node::Number(1.0),
-                apply(Op::Times, vec![Node::Number(2.0), Node::Number(3.0)]),
+                Node::number(1.0),
+                apply(Op::Times, vec![Node::number(2.0), Node::number(3.0)]),
             ],
         )
     );
@@ -83,8 +83,8 @@ fn a_power_associates_to_the_left_as_libsbml_reads_it() {
         apply(
             Op::Power,
             vec![
-                apply(Op::Power, vec![Node::Number(2.0), Node::Number(3.0)]),
-                Node::Number(2.0),
+                apply(Op::Power, vec![Node::number(2.0), Node::number(3.0)]),
+                Node::number(2.0),
             ],
         )
     );
@@ -97,13 +97,13 @@ fn a_sign_binds_tighter_than_a_power() {
         parse("-x^2").unwrap(),
         apply(
             Op::Power,
-            vec![apply(Op::Minus, vec![symbol("x")]), Node::Number(2.0),],
+            vec![apply(Op::Minus, vec![symbol("x")]), Node::number(2.0),],
         )
     );
     // the sign of a number is the sign of the number itself
     assert_eq!(
         parse("-2^2").unwrap(),
-        apply(Op::Power, vec![Node::Number(-2.0), Node::Number(2.0)])
+        apply(Op::Power, vec![Node::number(-2.0), Node::number(2.0)])
     );
     assert_eq!(
         parse("a - -b").unwrap(),
@@ -119,11 +119,11 @@ fn the_logarithms_carry_their_base() {
     assert_eq!(parse("log(x)").unwrap(), apply(Op::Ln, vec![symbol("x")]));
     assert_eq!(
         parse("log(2, 8)").unwrap(),
-        apply(Op::Log, vec![Node::Number(2.0), Node::Number(8.0)])
+        apply(Op::Log, vec![Node::number(2.0), Node::number(8.0)])
     );
     assert_eq!(
         parse("log10(x)").unwrap(),
-        apply(Op::Log, vec![Node::Number(10.0), symbol("x")])
+        apply(Op::Log, vec![Node::number(10.0), symbol("x")])
     );
     assert_eq!(parse("ln(x)").unwrap(), apply(Op::Ln, vec![symbol("x")]));
 }
@@ -132,11 +132,11 @@ fn the_logarithms_carry_their_base() {
 fn the_roots_carry_their_degree() {
     assert_eq!(
         parse("sqrt(x)").unwrap(),
-        apply(Op::Root, vec![Node::Number(2.0), symbol("x")])
+        apply(Op::Root, vec![Node::number(2.0), symbol("x")])
     );
     assert_eq!(
         parse("root(3, x)").unwrap(),
-        apply(Op::Root, vec![Node::Number(3.0), symbol("x")])
+        apply(Op::Root, vec![Node::number(3.0), symbol("x")])
     );
 }
 
@@ -144,11 +144,11 @@ fn the_roots_carry_their_degree() {
 fn the_functions_of_the_grammar() {
     assert_eq!(
         parse("pow(2, 3)").unwrap(),
-        apply(Op::Power, vec![Node::Number(2.0), Node::Number(3.0)])
+        apply(Op::Power, vec![Node::number(2.0), Node::number(3.0)])
     );
     assert_eq!(
         parse("ceil(1.5)").unwrap(),
-        apply(Op::Ceiling, vec![Node::Number(1.5)])
+        apply(Op::Ceiling, vec![Node::number(1.5)])
     );
     assert_eq!(parse("abs(x)").unwrap(), apply(Op::Abs, vec![symbol("x")]));
     assert_eq!(
@@ -165,7 +165,7 @@ fn the_functions_of_the_grammar() {
     );
     assert_eq!(
         parse("delay(x, 1)").unwrap(),
-        apply(Op::Delay, vec![symbol("x"), Node::Number(1.0)])
+        apply(Op::Delay, vec![symbol("x"), Node::number(1.0)])
     );
 }
 
