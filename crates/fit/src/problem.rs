@@ -24,6 +24,27 @@ pub const FAILED_RESIDUAL: f64 = 1e3;
 /// residuals and an optimizer stops next to its start.
 pub const DIFF_STEP: f64 = 1e-3;
 
+/// What the residual of the scale of the noise of a measurement carries on top of its term,
+/// the `LIKELIHOOD_OFFSET` of sbmlsim.
+///
+/// A least squares optimizer minimizes a sum of squares, so the negative log-likelihood of a
+/// measurement is written as two residuals whose squares add up to twice it: the one of its
+/// data and the one of the scale of its noise, `sqrt(2 term + offset)`. The term of a scale
+/// is `ln(sigma) + c` and is negative for a small standard deviation, which has no root, so
+/// every such row carries this offset. The cost of a fit is therefore the negative
+/// log-likelihood plus `0.5 * offset` per measurement, a constant of the data which the host
+/// subtracts: the engine never does, since the offset of a measurement of a log kind depends
+/// on its own value.
+pub const LIKELIHOOD_OFFSET: f64 = 100.0;
+
+/// Half the logarithm of `2 pi`, the normalization of the density of a normal distribution,
+/// the double python computes for `0.5 * np.log(2.0 * np.pi)`.
+pub const LN_2PI_HALF: f64 = 0.918_938_533_204_672_7;
+
+/// The logarithm of 2, the normalization of the density of a Laplace distribution, the
+/// double python computes for `np.log(2.0)`.
+pub const LN_2: f64 = std::f64::consts::LN_2;
+
 /// What is wrong with a fit, or with the engine under it.
 #[derive(Debug, Error)]
 pub enum FitError {
@@ -54,6 +75,17 @@ pub enum FitError {
         /// What is wrong with it.
         message: String,
     },
+    /// A prior of a parameter of the fit cannot be evaluated.
+    #[error("the prior {at} {message}")]
+    Prior {
+        /// The index of the prior in the definition.
+        at: usize,
+        /// What is wrong with it.
+        message: String,
+    },
+    /// The correlated priors of the fit cannot be evaluated.
+    #[error("the correlation of the priors {0}")]
+    Correlation(String),
     /// The pool of the batch was refused, e.g. for its number of threads.
     #[error("the pool of the batch: {0}")]
     Pool(#[from] BatchError),
@@ -152,6 +184,473 @@ impl Scale {
     }
 }
 
+/// The distribution of the noise of the measurements of a curve.
+///
+/// A curve which names one is a curve of a likelihood: the residual of a measurement is the
+/// one of its data and one more of the scale of its noise, so that half the sum of their
+/// squares is the negative log-likelihood of the measurement up to [`LIKELIHOOD_OFFSET`].
+/// The log kinds are the ones of a measurement which is a logarithm (the log-normal noise of
+/// data of a geometric standard deviation), whose density carries the measurement itself.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum NoiseKind {
+    /// A normal noise of the standard deviation of the measurement.
+    Normal,
+    /// A normal noise of the logarithm of the measurement, whose column and values are
+    /// logarithms.
+    LogNormal,
+    /// A Laplace noise of the scale of the measurement, which is its standard deviation over
+    /// `sqrt(2)`, and whose residual is the root of twice its absolute deviation.
+    Laplace,
+    /// A Laplace noise of the logarithm of the measurement, whose column and values are
+    /// logarithms.
+    LogLaplace,
+}
+
+impl NoiseKind {
+    /// Whether the measurements and the column of the kind are logarithms, whose density
+    /// carries the measurement itself.
+    fn logarithmic(self) -> bool {
+        matches!(self, NoiseKind::LogNormal | NoiseKind::LogLaplace)
+    }
+
+    /// Whether the kind is a Laplace distribution, whose negative log-likelihood carries the
+    /// absolute deviation of a measurement and not half its square.
+    fn laplace(self) -> bool {
+        matches!(self, NoiseKind::Laplace | NoiseKind::LogLaplace)
+    }
+
+    /// The normalization of the density of the kind, the constant of the term of the scale of
+    /// its noise.
+    fn constant(self) -> f64 {
+        if self.laplace() { LN_2 } else { LN_2PI_HALF }
+    }
+}
+
+/// The noise model of a curve, which makes its residuals the ones of a likelihood.
+#[derive(Clone, Debug)]
+pub struct Likelihood {
+    /// The distribution of the noise of every measurement of the curve.
+    pub distribution: NoiseKind,
+    /// The column of the simulation of the condition which is the noise of a measurement,
+    /// read in the row of that measurement, its standard deviation for a normal kind and the
+    /// scale of its distribution for a Laplace one, as [`Curve::noise`] is; the `noise` of
+    /// the curve when it is absent, and the two together are refused.
+    pub noise_column: Option<String>,
+}
+
+/// The distribution of the prior of a parameter of a fit, the priors of PEtab the engine
+/// evaluates.
+///
+/// Every kind takes the two parameters of PEtab, whose meaning is the one of its own kind:
+///
+/// ```text
+/// normal(mu, s)       the mean and the standard deviation of the value
+/// log-normal(mu, s)   the mean and the standard deviation of its logarithm
+/// laplace(mu, b)      the location and the scale of the value
+/// log-laplace(mu, b)  the location and the scale of its logarithm
+/// uniform(a, b)       the bounds of the value, which increase
+/// log-uniform(a, b)   the bounds of the value as well, both positive, not of its logarithm
+/// ```
+///
+/// A kind whose name begins with `log` is the distribution of the logarithm of the value,
+/// whose density carries the value itself - but the parameters of `log-uniform` are the
+/// bounds of the value, as PEtab writes them, and not of its logarithm, which is the one kind
+/// whose parameters are no numbers of the logarithm. A kind says nothing about the [`Scale`]
+/// an optimizer searches the parameter on, which is the one of the parameter whatever its
+/// prior is.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PriorKind {
+    /// A normal distribution of the mean and the standard deviation of the value.
+    Normal,
+    /// A normal distribution of the mean and the standard deviation of its logarithm.
+    LogNormal,
+    /// A uniform distribution of the value between two bounds of it, whose density is zero
+    /// outside of them.
+    Uniform,
+    /// A uniform distribution of its logarithm between two bounds of the value, not of its
+    /// logarithm: the density `1 / (x (ln(b) - ln(a)))` between `a` and `b`, which is zero
+    /// outside of them as well, and both bounds are positive.
+    LogUniform,
+    /// A Laplace distribution of the location and the scale of the value.
+    Laplace,
+    /// A Laplace distribution of the location and the scale of its logarithm.
+    LogLaplace,
+}
+
+impl PriorKind {
+    /// The name of the kind of the contract, which a refusal of a prior names it by.
+    fn name(self) -> &'static str {
+        match self {
+            PriorKind::Normal => "normal",
+            PriorKind::LogNormal => "log-normal",
+            PriorKind::Uniform => "uniform",
+            PriorKind::LogUniform => "log-uniform",
+            PriorKind::Laplace => "laplace",
+            PriorKind::LogLaplace => "log-laplace",
+        }
+    }
+}
+
+/// The number of parameters of a prior, the two of every kind of [`PriorKind`].
+const PRIOR_PARAMETERS: usize = 2;
+
+/// The log density of a prior at a value, the one of the kind without the truncation at the
+/// bounds of its parameter, which [`Prior::normalizer`] carries.
+///
+/// The terms are the ones of `petab.v2`:
+///
+/// ```text
+/// normal(mu, s)       -0.5 z^2 - ln(s) - ln(2 pi)/2            z = (x - mu)/s
+/// log-normal(mu, s)   -0.5 z^2 - ln(s) - ln(2 pi)/2 - ln(x)    z = (ln(x) - mu)/s
+/// laplace(mu, b)      -|x - mu|/b - ln(2 b)
+/// log-laplace(mu, b)  -|ln(x) - mu|/b - ln(2 b) - ln(x)
+/// uniform(a, b)       -ln(b - a) between a and b, -inf outside
+/// log-uniform(a, b)   -ln(ln(b) - ln(a)) - ln(x) between a and b, -inf outside
+/// ```
+///
+/// A value which is not positive has no logarithm, so the density of a log kind there is
+/// `NaN` or an infinity and never a number: the row of such a value is `NaN`, see
+/// [`Prior::row_of`].
+fn log_density(kind: PriorKind, parameters: &[f64], x: f64) -> f64 {
+    let (first, second) = (parameters[0], parameters[1]);
+    match kind {
+        PriorKind::Normal => {
+            let z = (x - first) / second;
+            -0.5 * z * z - second.ln() - LN_2PI_HALF
+        }
+        PriorKind::LogNormal => {
+            let z = (x.ln() - first) / second;
+            -0.5 * z * z - second.ln() - LN_2PI_HALF - x.ln()
+        }
+        PriorKind::Laplace => -(x - first).abs() / second - (2.0 * second).ln(),
+        PriorKind::LogLaplace => -(x.ln() - first).abs() / second - (2.0 * second).ln() - x.ln(),
+        PriorKind::Uniform => {
+            if (first..=second).contains(&x) {
+                -(second - first).ln()
+            } else {
+                f64::NEG_INFINITY
+            }
+        }
+        PriorKind::LogUniform => {
+            if (first..=second).contains(&x) {
+                -(second.ln() - first.ln()).ln() - x.ln()
+            } else {
+                f64::NEG_INFINITY
+            }
+        }
+    }
+}
+
+/// The derivative of [`log_density`] in the value, which the row of a prior of the jacobian
+/// of a fit is the chain rule of:
+///
+/// ```text
+/// normal(mu, s)       -z/s                                     z = (x - mu)/s
+/// log-normal(mu, s)   -z/(s x) - 1/x                           z = (ln(x) - mu)/s
+/// laplace(mu, b)      -sign(x - mu)/b
+/// log-laplace(mu, b)  -sign(ln(x) - mu)/(b x) - 1/x
+/// uniform(a, b)       0
+/// log-uniform(a, b)   -1/x
+/// ```
+///
+/// The density of a Laplace kind has no derivative at its location, where it is largest and
+/// the row of the prior smallest: the engine takes the derivative as zero there, as it takes
+/// the one of the residual of the data of a Laplace likelihood at its own minimum.
+fn log_density_derivative(kind: PriorKind, parameters: &[f64], x: f64) -> f64 {
+    let (first, second) = (parameters[0], parameters[1]);
+    match kind {
+        PriorKind::Normal => {
+            let z = (x - first) / second;
+            -z / second
+        }
+        PriorKind::LogNormal => {
+            let z = (x.ln() - first) / second;
+            -z / (second * x) - 1.0 / x
+        }
+        PriorKind::Laplace => deviation_slope(x - first, second),
+        PriorKind::LogLaplace => deviation_slope(x.ln() - first, second) / x - 1.0 / x,
+        PriorKind::Uniform => 0.0,
+        PriorKind::LogUniform => -1.0 / x,
+    }
+}
+
+/// The derivative of `-|deviation| / scale` in the deviation, zero at the kink of it.
+fn deviation_slope(deviation: f64, scale: f64) -> f64 {
+    if deviation == 0.0 {
+        0.0
+    } else {
+        -deviation.signum() / scale
+    }
+}
+
+/// The prior of one parameter of a fit, which is one row of the residuals of its objective.
+///
+/// The row is `sqrt(c - 2 log p)` of the log density `log p` of the prior truncated at
+/// [`Prior::lower`] and [`Prior::upper`] and of the offset `c` the host sends, so that half
+/// its square is the negative log density of the prior up to `c / 2`: the density of a narrow
+/// distribution is larger than one, whose negative logarithm has no root, which is what the
+/// offset of a row keeps positive, as [`LIKELIHOOD_OFFSET`] does for the scale of a noise.
+/// The cost of a fit therefore carries `c / 2` per prior, a constant of the problem which the
+/// host subtracts; the engine never does.
+///
+/// The row of a value outside the bounds, and of one whose density is zero, is `NaN`. That is
+/// no claim about the cost of such a point, as an infinite noise of a measurement is: the
+/// prior is not defined there, and a point of the search space an optimizer may take is
+/// inside the bounds of every parameter of the fit, which the bounds of its prior cover: a
+/// prior which does not cover them is refused when the fit is read.
+#[derive(Clone, Debug)]
+pub struct Prior {
+    /// The position of the parameter in [`Definition::parameters`].
+    pub parameter: usize,
+    /// The distribution of the prior.
+    pub kind: PriorKind,
+    /// The parameters of that distribution, the two of its kind and in its units: the bounds
+    /// of a `log-uniform` kind are the ones of the value and not of its logarithm, see
+    /// [`PriorKind`].
+    pub parameters: Vec<f64>,
+    /// The offset `c` of the row, which keeps `c - 2 log p` positive between the bounds.
+    pub offset: f64,
+    /// The logarithm of the mass of the prior between the bounds, which the engine subtracts
+    /// from the density of the kind: the host computes it, since the normalization of a
+    /// truncation is a distribution function and no term of a density.
+    pub normalizer: f64,
+    /// The smallest value the prior is defined at, the lower bound of the parameter: a prior
+    /// which does not cover the bounds of its parameter is refused.
+    pub lower: f64,
+    /// The largest value it is defined at, the upper bound of the parameter.
+    pub upper: f64,
+}
+
+/// The residual row of a prior and its derivative, see [`Prior::row_of`].
+#[derive(Clone, Copy, Debug)]
+struct PriorRow {
+    /// The row itself.
+    residual: f64,
+    /// Its derivative in the value of the parameter, zero where it has none.
+    slope: f64,
+}
+
+impl Prior {
+    /// The row of the prior at the value of its parameter and the derivative of that row in
+    /// the value, which the residuals and the jacobian of the fit share, so that a row and
+    /// its derivative cannot drift apart.
+    fn row_of(&self, value: f64) -> PriorRow {
+        // a value outside the bounds of the prior, `NaN` among them, is none of it, and so
+        // is one whose density is zero, e.g. outside the support of a uniform prior
+        let none = PriorRow {
+            residual: f64::NAN,
+            slope: 0.0,
+        };
+        if value.is_nan() || value < self.lower || value > self.upper {
+            return none;
+        }
+        let density = log_density(self.kind, &self.parameters, value);
+        if !density.is_finite() {
+            return none;
+        }
+        let residual = (self.offset - 2.0 * (density - self.normalizer))
+            .max(0.0)
+            .sqrt();
+        PriorRow {
+            residual,
+            // a density the offset of the row does not reach is a row of zero, the smallest
+            // one, which has no derivative, as the row of the scale of a tiny noise of a
+            // likelihood has none
+            slope: if residual > 0.0 {
+                -log_density_derivative(self.kind, &self.parameters, value) / residual
+            } else {
+                0.0
+            },
+        }
+    }
+}
+
+/// The correlated priors of a fit, one multivariate normal of the scores of their values.
+///
+/// The priors of several parameters are correlated when the host gives the normal scores
+/// `z_i = (v_i - location_i) / scale_i` of their values a correlation, `v` being the value of
+/// the parameter or its logarithm where [`Correlation::log`] says so, i.e. a normal and a
+/// log-normal prior. Their rows are the whitened scores `w = L^-1 z` of the Cholesky factor
+/// `L` of that correlation, whose inverse the host sends, so that half the sum of their
+/// squares is the quadratic form `z' R^-1 z / 2` of the multivariate normal, and one row more
+/// per logarithmic prior for the density of its logarithm in the value, `1 / x`.
+///
+/// The engine normalizes no truncation of a correlated prior: the multivariate normal is
+/// normalized without the bounds, and its constant, `sum(ln(scale)) + ln(det(L)) +
+/// k ln(2 pi) / 2`, is a term of the offset of the cost which the host keeps and subtracts,
+/// as it keeps the [`Correlation::offsets`] of the logarithmic rows. The bounds are the ones
+/// of the parameters, which an optimizer searches between: they are checked when the fit is
+/// read and are no term of the rows, unlike the ones of an independent [`Prior`], whose row
+/// outside them is `NaN`, since a whitened score is an ordinary number of the multivariate
+/// normal wherever the scores are finite.
+#[derive(Clone, Debug)]
+pub struct Correlation {
+    /// The positions of the parameters in [`Definition::parameters`], `k` of them.
+    pub parameters: Vec<usize>,
+    /// Whether the score of a prior is the one of the logarithm of the value, i.e. whether
+    /// it is log-normal; one flag per parameter.
+    pub log: Vec<bool>,
+    /// The mean of the value of every prior, or of its logarithm.
+    pub location: Vec<f64>,
+    /// Its standard deviation, which is positive.
+    pub scale: Vec<f64>,
+    /// The inverse of the lower Cholesky factor of the correlation, `k * k` row major.
+    pub inverse: Vec<f64>,
+    /// The offset `c` of the row `sqrt(c + 2 ln(x))` of every logarithmic prior, in the
+    /// order of the logarithmic priors.
+    pub offsets: Vec<f64>,
+    /// The smallest value of every parameter, its lower bound.
+    pub lower: Vec<f64>,
+    /// Its largest value, its upper bound.
+    pub upper: Vec<f64>,
+}
+
+/// The residual rows of the correlated priors of a fit and their derivatives, see
+/// [`Correlation::rows_of`].
+#[derive(Clone, Debug)]
+struct CorrelatedRows {
+    /// The rows: the `k` whitened scores and then one per logarithmic prior.
+    rows: Vec<f64>,
+    /// The derivative of every row in the value of every correlated parameter,
+    /// `rows.len() * k` row major.
+    slopes: Vec<f64>,
+}
+
+impl Correlation {
+    /// The number of rows of the correlated priors: the whitened scores and one per
+    /// logarithmic prior.
+    fn n_rows(&self) -> usize {
+        self.parameters.len() + self.offsets.len()
+    }
+
+    /// The rows of the correlated priors at the values of the parameters of the fit and the
+    /// derivative of every one of them, which the residuals and the jacobian share.
+    ///
+    /// A whitened score is the product of a row of the inverse of the factor with the
+    /// scores, accumulated from zero with one addition per column in ascending order, which
+    /// is the loop the host evaluates and no dot product of a library: the two sides of the
+    /// contract are compared on these numbers, so the order of the additions is part of it.
+    /// The whitened scores are all `NaN` when a score is not finite, e.g. the logarithm of a
+    /// value which is not positive, as they are one product of all of them, while the row of
+    /// a logarithm is `NaN` only where its own term is.
+    fn rows_of(&self, values: &[f64]) -> CorrelatedRows {
+        let k = self.parameters.len();
+        let mut scores = Vec::with_capacity(k);
+        for at in 0..k {
+            let value = values[self.parameters[at]];
+            let value = if self.log[at] { value.ln() } else { value };
+            scores.push((value - self.location[at]) / self.scale[at]);
+        }
+        let mut rows = vec![f64::NAN; self.n_rows()];
+        let mut slopes = vec![0.0; self.n_rows() * k];
+        if scores.iter().all(|score| score.is_finite()) {
+            for row in 0..k {
+                let mut total = 0.0;
+                for column in 0..k {
+                    total += self.inverse[row * k + column] * scores[column];
+                }
+                rows[row] = total;
+                for column in 0..k {
+                    let mut slope = self.inverse[row * k + column] / self.scale[column];
+                    if self.log[column] {
+                        slope /= values[self.parameters[column]];
+                    }
+                    slopes[row * k + column] = slope;
+                }
+            }
+        }
+        // the density of the logarithm of a log-normal prior in the value, `1 / x`, whose
+        // row the offset of the host keeps positive as the offset of a prior does
+        let mut which = 0;
+        for column in 0..k {
+            if !self.log[column] {
+                continue;
+            }
+            let (at, value) = (k + which, values[self.parameters[column]]);
+            let term = self.offsets[which] + 2.0 * value.ln();
+            if term.is_finite() {
+                rows[at] = term.max(0.0).sqrt();
+                if rows[at] > 0.0 {
+                    slopes[at * k + column] = 1.0 / (rows[at] * value);
+                }
+            }
+            which += 1;
+        }
+        CorrelatedRows { rows, slopes }
+    }
+}
+
+/// The priors of the parameters of a fit, whose rows come after every row of its curves.
+#[derive(Clone, Debug, Default)]
+struct Priors {
+    /// The priors of the parameters which are not correlated, in the order of the fit.
+    independent: Vec<Prior>,
+    /// The correlated priors of the fit, if it has any.
+    correlation: Option<Correlation>,
+}
+
+impl Priors {
+    /// The number of rows of the priors in the residuals of the fit: one per prior of a
+    /// parameter of its own and the rows of the correlated ones.
+    fn n_rows(&self) -> usize {
+        self.independent.len() + self.correlation.as_ref().map_or(0, Correlation::n_rows)
+    }
+
+    /// Writes the rows of the priors into the residuals of the fit, which begin at `into`.
+    ///
+    /// `values` is [`Problem::values`], the values of the parameters of the fit on the linear
+    /// scale, which carries the ones a profile holds at a value as well: the prior of such a
+    /// parameter is read where it is held.
+    fn write(&self, into: &mut [f64], values: &[f64]) {
+        for (at, prior) in self.independent.iter().enumerate() {
+            into[at] = prior.row_of(values[prior.parameter]).residual;
+        }
+        if let Some(correlation) = &self.correlation {
+            let rows = correlation.rows_of(values);
+            into[self.independent.len()..].copy_from_slice(&rows.rows);
+        }
+    }
+
+    /// Writes the rows of the priors into the jacobian of the fit, whose rows of the priors
+    /// begin at `into` and which has `k` columns.
+    ///
+    /// The row of a prior follows the value of its parameter alone and a whitened score the
+    /// values of the correlated parameters, each by the chain rule of its derivative and of
+    /// the [`Scale`] of the parameter, which `factors` carries per parameter of the fit as
+    /// [`Problem::jacobian_of_sensitivities`] computes it. The row of a parameter a profile
+    /// holds at a value is zero: it is no column of the jacobian.
+    fn write_block(
+        &self,
+        into: &mut [f64],
+        values: &[f64],
+        factors: &[Option<(usize, f64)>],
+        k: usize,
+    ) {
+        for (at, prior) in self.independent.iter().enumerate() {
+            let Some((column, derivative)) = factors[prior.parameter] else {
+                continue;
+            };
+            into[at * k + column] = prior.row_of(values[prior.parameter]).slope * derivative;
+        }
+        let Some(correlation) = &self.correlation else {
+            return;
+        };
+        let rows = correlation.rows_of(values);
+        let correlated = correlation.parameters.len();
+        for row in 0..correlation.n_rows() {
+            for (at, parameter) in correlation.parameters.iter().enumerate() {
+                let Some((column, derivative)) = factors[*parameter] else {
+                    continue;
+                };
+                let slope = rows.slopes[row * correlated + at];
+                into[(self.independent.len() + row) * k + column] = slope * derivative;
+            }
+        }
+    }
+}
+
 /// A parameter of a fit: what it sets in the model, where it starts and where it may go.
 #[derive(Clone, Debug)]
 pub struct Parameter {
@@ -181,9 +680,11 @@ pub struct Curve {
     /// The measurements, one per time.
     pub values: Vec<f64>,
     /// The standard deviation of every measurement, the residuals are divided by it; one
-    /// for every point when it is absent. A positive infinity is a measurement which
-    /// carries no information: its residual (`+-0.0`) and its row of the jacobian (zeros)
-    /// are zero, and the arithmetic needs no case of its own.
+    /// for every point when it is absent. It is the scale of the noise of a curve whose
+    /// [`Likelihood::distribution`] is a Laplace kind, whose standard deviation is `sqrt(2)`
+    /// times it. A positive infinity is a measurement which carries no information: its
+    /// residuals are `+-0.0` and its rows of the jacobian are zeros, the one row of a curve
+    /// without a likelihood and both rows of a curve with one.
     pub noise: Option<Vec<f64>>,
     /// The weight of the curve, which multiplies its residuals.
     pub weight: f64,
@@ -191,9 +692,13 @@ pub struct Curve {
     /// one flag per time; every measurement reads the state before a change when it is
     /// absent. See [`crate::CurveRequest::after_change`].
     pub after_change: Option<Vec<bool>>,
+    /// The noise model of the curve, which makes its residuals the ones of a likelihood:
+    /// two per measurement, the one of its data and the one of the scale of its noise. The
+    /// weighted least squares of [`Curve::noise`] when it is absent.
+    pub likelihood: Option<Likelihood>,
 }
 
-/// A fit as a host hands it over: the parameters, the conditions and the data.
+/// A fit as a host hands it over: the parameters, the conditions, the data and the priors.
 #[derive(Clone, Debug)]
 pub struct Definition {
     /// The parameters of the fit, in the order of the vector of an optimizer.
@@ -205,6 +710,13 @@ pub struct Definition {
     pub curves: Vec<Curve>,
     /// Where the jacobian of a step of the optimizer comes from.
     pub jacobian: JacobianChoice,
+    /// The priors of the parameters of the fit, one row of its residuals each, see
+    /// [`Prior`]; a parameter which is correlated carries none of its own, and a fit of the
+    /// least squares of its curves has none at all.
+    pub priors: Vec<Prior>,
+    /// The correlated priors of the fit, which are one multivariate normal of the scores of
+    /// their values, see [`Correlation`].
+    pub prior_correlation: Option<Correlation>,
 }
 
 /// One condition of a fit: its simulation and the values which follow the parameters.
@@ -278,10 +790,127 @@ struct Resolved {
     rows: Vec<usize>,
     /// The measurements.
     values: Vec<f64>,
-    /// The standard deviation of every measurement, which its residual is divided by.
+    /// The standard deviation of every measurement, which its residual is divided by; the
+    /// ones of a curve whose standard deviation is a column of its condition are never read.
     noise: Vec<f64>,
     /// The weight of the curve, which every residual of it is multiplied by.
     weight: f64,
+    /// The noise model of the curve, resolved against the table of its condition; `None` for
+    /// the weighted least squares of a curve without one.
+    likelihood: Option<ResolvedLikelihood>,
+}
+
+/// The noise model of a curve, with the column of its standard deviation resolved.
+#[derive(Clone, Copy, Debug)]
+struct ResolvedLikelihood {
+    /// The distribution of the noise of every measurement of the curve.
+    distribution: NoiseKind,
+    /// The column of the standard deviation of a measurement in the table of the condition,
+    /// `None` for a curve whose standard deviations are the numbers of its request.
+    noise_column: Option<usize>,
+}
+
+/// The two residual rows of one measurement of a curve of a likelihood and what their
+/// derivatives are built from, see [`Resolved::rows_of`].
+#[derive(Clone, Copy, Debug)]
+struct Rows {
+    /// The standard deviation of the measurement, which is positive and may be infinite.
+    sigma: f64,
+    /// The deviation of the measurement over it, `(column - value) / sigma`.
+    r: f64,
+    /// The residual of the data, without the weight of the curve.
+    data: f64,
+    /// The root of `2 |r|`, which the residual of the data of a Laplace kind is with the
+    /// sign of `r`, and which the derivative of that residual divides by.
+    deviation_root: f64,
+    /// The root of `2 term + offset`, the residual of the scale of the noise, without the
+    /// weight of the curve as well; its derivative divides by it.
+    scale_root: f64,
+}
+
+/// Whether a number is a standard deviation of a measurement at runtime: positive, where an
+/// infinity is the one of a measurement which carries no information and zero, a negative
+/// value and `NaN` are none of it.
+///
+/// The standard deviations a request gives are checked when the curve is resolved; a column
+/// of the simulation is whatever the model computes, so a fit reads it every time.
+fn usable_sigma(sigma: f64) -> bool {
+    sigma > 0.0
+}
+
+impl Resolved {
+    /// The number of rows of the curve in the residuals of the fit: one per measurement, and
+    /// one more per measurement for the scale of the noise of a likelihood.
+    fn n_rows(&self) -> usize {
+        self.rows.len() * if self.likelihood.is_some() { 2 } else { 1 }
+    }
+
+    /// The two residual rows of the measurement `at` of a curve of the likelihood, without
+    /// the weight of the curve, `None` for a measurement whose standard deviation is none
+    /// ([`FAILED_RESIDUAL`] for both of them).
+    ///
+    /// The row of the data is the deviation of the measurement over its standard deviation,
+    /// and for a Laplace kind the root of twice its absolute value with its sign, so that
+    /// half its square is the deviation the negative log-likelihood of that kind carries.
+    /// The row of the scale is `sqrt(2 term + offset)` of the term `ln(sigma) + c`, which a
+    /// log kind adds the measurement to, since its density carries it; the offset of the row
+    /// keeps the term of a small standard deviation above zero, see [`LIKELIHOOD_OFFSET`].
+    ///
+    /// Both rows of a measurement of an infinite standard deviation are zero. An infinity is
+    /// no claim that a measurement has infinite noise, whose density would carry the
+    /// logarithm of it; it is what [`Curve::noise`] says a measurement which carries no
+    /// information is, and such a measurement contributes nothing to the cost of a
+    /// likelihood as it contributes nothing to the one of a weighted least squares: its two
+    /// rows hold their places in the residual vector and say nothing in either of them. Its
+    /// deviation is `+-0.0` by the arithmetic itself and the term of its scale is the one
+    /// case of its own.
+    fn rows_of(
+        &self,
+        table: &SimulationResult,
+        columns: usize,
+        likelihood: ResolvedLikelihood,
+        at: usize,
+    ) -> Option<Rows> {
+        let row = self.rows[at];
+        let sigma = match likelihood.noise_column {
+            Some(column) => table.values[row * columns + column],
+            None => self.noise[at],
+        };
+        if !usable_sigma(sigma) {
+            return None;
+        }
+        let kind = likelihood.distribution;
+        let value = self.values[at];
+        // the difference is divided by the standard deviation and not multiplied by its
+        // reciprocal, which rounds once more, as the residual of a least squares is
+        let r = (table.values[row * columns + self.column] - value) / sigma;
+        let deviation_root = (2.0 * r.abs()).sqrt();
+        let data = if kind.laplace() {
+            r.signum() * deviation_root
+        } else {
+            r
+        };
+        let term = sigma.ln() + if kind.logarithmic() { value } else { 0.0 } + kind.constant();
+        let offset = LIKELIHOOD_OFFSET
+            + if kind.logarithmic() {
+                (-2.0 * value).max(0.0)
+            } else {
+                0.0
+            };
+        Some(Rows {
+            sigma,
+            r,
+            data,
+            deviation_root,
+            // the scale of a measurement which carries no information says nothing, where
+            // the term of an infinite standard deviation would be an infinity
+            scale_root: if sigma.is_finite() {
+                (2.0 * term + offset).max(0.0).sqrt()
+            } else {
+                0.0
+            },
+        })
+    }
 }
 
 /// One condition of the fit: what to simulate and which residuals its table carries.
@@ -324,21 +953,38 @@ impl Point {
     }
 
     /// The residuals of the curves of the condition, in the order of the curves.
+    ///
+    /// The rows of a curve of a likelihood are the residuals of its data and then the ones of
+    /// the scale of their noise, which is the layout of its block of the jacobian as well.
     fn residuals(&self, table: &SimulationResult) -> Vec<f64> {
         let mut out = Vec::with_capacity(self.n_residuals);
         for curve in &self.curves {
-            for ((row, value), noise) in curve
-                .rows
-                .iter()
-                .zip(curve.values.iter())
-                .zip(curve.noise.iter())
-            {
-                // the difference is divided by the standard deviation and not
-                // multiplied by its reciprocal, which rounds once more: the
-                // residual is the one of the caller bitwise, e.g. `0.9 / 2.5`
-                // is `0.36` where `0.9 * (1.0 / 2.5)` is `0.36000000000000004`
-                let residual = (table.values[row * self.columns + curve.column] - value) / noise;
-                out.push(residual * curve.weight);
+            let Some(likelihood) = curve.likelihood else {
+                for ((row, value), noise) in curve
+                    .rows
+                    .iter()
+                    .zip(curve.values.iter())
+                    .zip(curve.noise.iter())
+                {
+                    // the difference is divided by the standard deviation and not
+                    // multiplied by its reciprocal, which rounds once more: the
+                    // residual is the one of the caller bitwise, e.g. `0.9 / 2.5`
+                    // is `0.36` where `0.9 * (1.0 / 2.5)` is `0.36000000000000004`
+                    let residual =
+                        (table.values[row * self.columns + curve.column] - value) / noise;
+                    out.push(residual * curve.weight);
+                }
+                continue;
+            };
+            // the rows of a measurement are made in both loops, which costs a division and
+            // a root and holds no buffer of the rows of the scales while the data is pushed
+            for at in 0..curve.rows.len() {
+                let rows = curve.rows_of(table, self.columns, likelihood, at);
+                out.push(rows.map_or(FAILED_RESIDUAL, |rows| rows.data * curve.weight));
+            }
+            for at in 0..curve.rows.len() {
+                let rows = curve.rows_of(table, self.columns, likelihood, at);
+                out.push(rows.map_or(FAILED_RESIDUAL, |rows| rows.scale_root * curve.weight));
             }
         }
         out
@@ -351,6 +997,13 @@ impl Point {
     /// `factors` is, per varying target of the condition, the parameter of the search space it
     /// takes its value from and the derivative of that value in it ([`Scale::derivative`]),
     /// `None` for a target which is held at a value.
+    ///
+    /// The two rows of a measurement of a likelihood are the chain rule of its residuals: the
+    /// one of its data follows the column of the curve and, where its standard deviation is a
+    /// column of the condition, that column as well, the one of the scale of its noise only
+    /// the latter. The rows of a measurement whose standard deviation is none are zero, as
+    /// the derivative of its constant [`FAILED_RESIDUAL`] is, and so are the rows of one
+    /// whose standard deviation is infinite, whose residuals are zero.
     fn block(
         &self,
         table: &SimulationResult,
@@ -364,19 +1017,62 @@ impl Point {
         };
         let targets = sensitivities.parameters.len();
         let mut out = vec![0.0; self.n_residuals * k];
+        let derivatives = |row: usize, column: usize| {
+            &sensitivities.values[(row * self.columns + column) * targets..][..targets]
+        };
         let mut at = 0;
         for curve in &self.curves {
-            for (row, noise) in curve.rows.iter().zip(curve.noise.iter()) {
-                let scale = curve.weight / noise;
-                let values = &sensitivities.values[(row * self.columns + curve.column) * targets..]
-                    [..targets];
-                for (value, factor) in values.iter().zip(factors) {
-                    if let Some((parameter, factor)) = factor {
-                        out[at * k + parameter] = value * scale * factor;
+            let Some(likelihood) = curve.likelihood else {
+                for (row, noise) in curve.rows.iter().zip(curve.noise.iter()) {
+                    let scale = curve.weight / noise;
+                    let values = derivatives(*row, curve.column);
+                    for (value, factor) in values.iter().zip(factors) {
+                        if let Some((parameter, factor)) = factor {
+                            out[at * k + parameter] = value * scale * factor;
+                        }
                     }
+                    at += 1;
                 }
-                at += 1;
+                continue;
+            };
+            let n = curve.rows.len();
+            for point in 0..n {
+                let Some(rows) = curve.rows_of(table, self.columns, likelihood, point) else {
+                    continue;
+                };
+                let dcolumn = derivatives(curve.rows[point], curve.column);
+                let dnoise = likelihood
+                    .noise_column
+                    .map(|column| derivatives(curve.rows[point], column));
+                for (target, factor) in factors.iter().enumerate() {
+                    let Some((parameter, factor)) = factor else {
+                        continue;
+                    };
+                    let dsigma = dnoise.map_or(0.0, |values| values[target]);
+                    let dr = (dcolumn[target] - rows.r * dsigma) / rows.sigma;
+                    let ddata = if likelihood.distribution.laplace() {
+                        // the residual of the data of a Laplace kind is the root it carries,
+                        // which has no derivative where the deviation is zero, the minimum
+                        // of that residual
+                        if rows.r == 0.0 {
+                            0.0
+                        } else {
+                            dr / rows.deviation_root
+                        }
+                    } else {
+                        dr
+                    };
+                    let dscale = if rows.scale_root > 0.0 {
+                        (dsigma / rows.sigma) / rows.scale_root
+                    } else {
+                        0.0
+                    };
+                    let weight = curve.weight * factor;
+                    out[(at + point) * k + parameter] = ddata * weight;
+                    out[(at + n + point) * k + parameter] = dscale * weight;
+                }
             }
+            at += 2 * n;
         }
         Ok(out)
     }
@@ -385,11 +1081,11 @@ impl Point {
     fn write_block(&self, into: &mut [f64], block: &[f64], k: usize) {
         let mut at = 0;
         for curve in &self.curves {
-            for row in 0..curve.rows.len() {
+            for row in 0..curve.n_rows() {
                 let (from, to) = ((at + row) * k, (curve.offset + row) * k);
                 into[to..to + k].copy_from_slice(&block[from..from + k]);
             }
-            at += curve.rows.len();
+            at += curve.n_rows();
         }
     }
 
@@ -397,7 +1093,7 @@ impl Point {
     fn write(&self, into: &mut [f64], residuals: &[f64]) {
         let mut at = 0;
         for curve in &self.curves {
-            let n = curve.rows.len();
+            let n = curve.n_rows();
             into[curve.offset..curve.offset + n].copy_from_slice(&residuals[at..at + n]);
             at += n;
         }
@@ -426,6 +1122,11 @@ pub struct Problem {
     /// The conditions of the fit and the curves they carry, shared with the problems which
     /// fix a parameter of it.
     points: Arc<Vec<Point>>,
+    /// The priors of the parameters, whose rows come after every row of the curves, shared
+    /// with those problems as well: the prior of a parameter a profile holds at a value is
+    /// read where it is held.
+    priors: Arc<Priors>,
+    /// The rows of the curves and of the priors together.
     n_residuals: usize,
     /// Where the jacobian of a step comes from: [`JacobianChoice::Sensitivities`] or
     /// [`JacobianChoice::DifferenceQuotient`], resolved once for the whole problem.
@@ -509,8 +1210,11 @@ impl Problem {
             conditions,
             curves,
             jacobian,
+            priors,
+            prior_correlation,
         } = definition;
         check_parameters(&parameters)?;
+        let priors = check_priors(priors, prior_correlation, &parameters)?;
         if conditions.is_empty() {
             return Err(FitError::Empty("condition"));
         }
@@ -600,10 +1304,14 @@ impl Problem {
                     ),
                 })?;
             let resolved = resolve(at, curve, &tables[curve.condition], n_residuals)?;
-            n_residuals += resolved.rows.len();
-            point.n_residuals += resolved.rows.len();
+            n_residuals += resolved.n_rows();
+            point.n_residuals += resolved.n_rows();
             point.curves.push(resolved);
         }
+        // the rows of the priors come after every row of a curve, so that the residuals of a
+        // fit of the same data are the ones of its least squares and then the ones of its
+        // priors, whatever the priors are
+        n_residuals += priors.n_rows();
         Ok(Problem {
             slots: (0..parameters.len())
                 .map(|at| Slot::Free {
@@ -613,6 +1321,7 @@ impl Problem {
                 .collect(),
             free: parameters,
             points: Arc::new(points),
+            priors: Arc::new(priors),
             n_residuals,
             jacobian,
             simulations: Arc::new(AtomicU64::new(0)),
@@ -687,6 +1396,7 @@ impl Problem {
             free,
             slots,
             points: self.points.clone(),
+            priors: self.priors.clone(),
             n_residuals: self.n_residuals,
             jacobian: self.jacobian,
             simulations: self.simulations.clone(),
@@ -700,7 +1410,8 @@ impl Problem {
         &self.free
     }
 
-    /// The number of residuals of one evaluation.
+    /// The number of residuals of one evaluation: the rows of the curves of the fit and
+    /// then the rows of its priors.
     #[must_use]
     pub fn n_residuals(&self) -> usize {
         self.n_residuals
@@ -760,12 +1471,14 @@ impl Problem {
             .collect()
     }
 
-    /// The residuals of a point of the search space, one per measurement.
+    /// The residuals of a point of the search space: the rows of the curves of the fit, in
+    /// their order, and then the rows of its priors.
     ///
     /// The conditions are one batch of the engine: every point simulates on the instance of
     /// its thread and reduces its table to the residuals of its curves there, so the tables
     /// never leave the thread which made them. The residuals of a condition whose integration
-    /// failed are [`FAILED_RESIDUAL`].
+    /// failed are [`FAILED_RESIDUAL`]. The rows of the priors need no simulation and are
+    /// computed from the values of the parameters themselves, see [`Priors::write`].
     ///
     /// # Errors
     ///
@@ -786,7 +1499,15 @@ impl Problem {
         for (shot, point) in shots.iter().zip(points.iter()) {
             shot.point.write(&mut residuals, point);
         }
+        let at = self.priors_at();
+        self.priors.write(&mut residuals[at..], &values);
         Ok(residuals)
+    }
+
+    /// Where the rows of the priors begin in the residuals of the fit: after every row of
+    /// its curves.
+    fn priors_at(&self) -> usize {
+        self.n_residuals - self.priors.n_rows()
     }
 
     /// The cost of a point of the search space, half the sum of the squares of its residuals.
@@ -890,7 +1611,8 @@ impl Problem {
 
     /// The jacobian out of the forward sensitivities of the conditions: one simulation per
     /// condition, whatever the number of the parameters, and the derivative of a residual
-    /// instead of a difference of two of them.
+    /// instead of a difference of two of them. The rows of the priors are analytic as well
+    /// and need no simulation, see [`Priors::write_block`].
     ///
     /// The sensitivities of a condition are the derivatives of its columns in the values of
     /// its varying targets, which the scale of a parameter turns into the derivative in the
@@ -936,6 +1658,9 @@ impl Problem {
             },
         );
         let mut jacobian = vec![0.0; self.n_residuals * k];
+        let at = self.priors_at();
+        self.priors
+            .write_block(&mut jacobian[at * k..], &values, &factors, k);
         for (shot, outcome) in shots.iter().zip(outcomes) {
             match outcome {
                 Ok(block) => shot.point.write_block(&mut jacobian, &block, k),
@@ -954,6 +1679,13 @@ impl Problem {
     /// the forward difference of the residuals over [`Problem::step`]. The whole jacobian is
     /// one batch of the engine, `(parameters + 1) * conditions` points which do not depend on
     /// each other, so it fans out over the threads at once instead of once per column.
+    ///
+    /// The rows of the priors are rows of the residuals, so they are differenced as well and
+    /// are as accurate as the rows of a curve here, which is the step of a forward difference
+    /// and not the rounding of a derivative: the jacobian of a fit is the one of its
+    /// differences or the one of its sensitivities and never a mixture of the two. A step
+    /// which leaves the bounds of its parameter, which [`Problem::step`] takes only in a box
+    /// of less than twice its step, differences a row of a prior which is `NaN` there.
     ///
     /// # Errors
     ///
@@ -985,6 +1717,15 @@ impl Problem {
             let column = at / g;
             shot.point
                 .write(&mut residuals[column * n..(column + 1) * n], point);
+        }
+        // the rows of the priors are rows of the residuals, so the difference of a column
+        // differences them as well
+        let priors = self.priors_at();
+        for (column, values) in moved.iter().enumerate() {
+            self.priors.write(
+                &mut residuals[column * n + priors..(column + 1) * n],
+                values,
+            );
         }
         let mut jacobian = vec![0.0; self.n_residuals * k];
         for row in 0..self.n_residuals {
@@ -1260,6 +2001,208 @@ fn check_parameters(parameters: &[Parameter]) -> Result<(), FitError> {
     Ok(())
 }
 
+/// Checks the priors of a fit and gathers them: the prior of a parameter of its own and the
+/// correlated ones, which the engine evaluates at the values of the parameters.
+///
+/// A parameter carries one prior: a second prior of it, and a prior of a parameter which is
+/// correlated, would multiply two densities into one objective, which is no prior of the host
+/// and no fit a caller means.
+fn check_priors(
+    priors: Vec<Prior>,
+    correlation: Option<Correlation>,
+    parameters: &[Parameter],
+) -> Result<Priors, FitError> {
+    // whether a parameter carries a prior already, the correlated ones first, so that a
+    // parameter which is correlated and carries one of its own is reported at that prior
+    let mut carried = vec![false; parameters.len()];
+    if let Some(correlation) = &correlation {
+        check_correlation(correlation, parameters, &mut carried)?;
+    }
+    for (at, prior) in priors.iter().enumerate() {
+        let fault = |message: String| FitError::Prior { at, message };
+        if prior.parameter >= parameters.len() {
+            return Err(fault(format!(
+                "is the prior of the parameter {} of a fit of {} parameters",
+                prior.parameter,
+                parameters.len()
+            )));
+        }
+        let id = &parameters[prior.parameter].id;
+        if std::mem::replace(&mut carried[prior.parameter], true) {
+            return Err(fault(format!(
+                "is a second prior of '{id}', which carries a prior or is correlated already"
+            )));
+        }
+        if !prior.offset.is_finite() || !prior.normalizer.is_finite() {
+            return Err(fault(format!(
+                "of '{id}' has the offset {} and the normalizer {}, one of which is not \
+                 finite",
+                prior.offset, prior.normalizer
+            )));
+        }
+        if !prior.lower.is_finite() || !prior.upper.is_finite() || prior.lower >= prior.upper {
+            return Err(fault(format!(
+                "of '{id}' is defined between {} and {}, which are not increasing and finite",
+                prior.lower, prior.upper
+            )));
+        }
+        // the row of a value the prior is not defined at is `NaN`, so a prior which does not
+        // cover the box an optimizer searches in would be a cost of `NaN` at points of that
+        // box and no error anywhere
+        let parameter = &parameters[prior.parameter];
+        if prior.lower > parameter.lower || prior.upper < parameter.upper {
+            return Err(fault(format!(
+                "of '{id}' is defined between {} and {}, which does not cover the bounds {} \
+                 and {} of the parameter: its row would be `NaN` at a point of the search \
+                 space",
+                prior.lower, prior.upper, parameter.lower, parameter.upper
+            )));
+        }
+        check_kind(prior.kind, &prior.parameters)
+            .map_err(|message| fault(format!("of '{id}' {message}")))?;
+    }
+    Ok(Priors {
+        independent: priors,
+        correlation,
+    })
+}
+
+/// Checks the parameters of a distribution of a prior, which are the two of its kind.
+fn check_kind(kind: PriorKind, parameters: &[f64]) -> Result<(), String> {
+    let name = kind.name();
+    if parameters.len() != PRIOR_PARAMETERS {
+        return Err(format!(
+            "has {} parameters, and a {name} prior takes two of them",
+            parameters.len()
+        ));
+    }
+    if let Some(value) = parameters.iter().find(|value| !value.is_finite()) {
+        return Err(format!(
+            "has the parameter {value} of its {name} distribution, which is not finite"
+        ));
+    }
+    let (first, second) = (parameters[0], parameters[1]);
+    match kind {
+        PriorKind::Normal | PriorKind::LogNormal | PriorKind::Laplace | PriorKind::LogLaplace => {
+            if second <= 0.0 {
+                return Err(format!(
+                    "is a {name} prior of the scale {second}, which is not positive"
+                ));
+            }
+        }
+        PriorKind::Uniform | PriorKind::LogUniform => {
+            if first >= second {
+                return Err(format!(
+                    "is a {name} prior between {first} and {second}, which are not increasing"
+                ));
+            }
+            if kind == PriorKind::LogUniform && first <= 0.0 {
+                return Err(format!(
+                    "is a {name} prior from {first}, which is not positive and has no logarithm"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Checks the correlated priors of a fit and marks their parameters in `carried`.
+///
+/// The lengths are the ones of a correlation of `k` parameters, so that a row of it is read
+/// where the host wrote it, and every value is a number the engine can evaluate the scores
+/// and the whitened rows with. The bounds are the ones of the parameters, which the engine
+/// does not normalize the multivariate normal over, see [`Correlation`]; a logarithmic prior
+/// needs a positive lower bound, since the score of its parameter is a logarithm.
+fn check_correlation(
+    correlation: &Correlation,
+    parameters: &[Parameter],
+    carried: &mut [bool],
+) -> Result<(), FitError> {
+    let fault = |message: String| FitError::Correlation(message);
+    let k = correlation.parameters.len();
+    if k == 0 {
+        return Err(fault("has no parameter".to_string()));
+    }
+    for (what, length) in [
+        ("log", correlation.log.len()),
+        ("location", correlation.location.len()),
+        ("scale", correlation.scale.len()),
+        ("lower", correlation.lower.len()),
+        ("upper", correlation.upper.len()),
+    ] {
+        if length != k {
+            return Err(fault(format!(
+                "has {k} parameters and {length} of '{what}'"
+            )));
+        }
+    }
+    if correlation.inverse.len() != k * k {
+        return Err(fault(format!(
+            "has {k} parameters and the {} values of its inverse, which is no {k} by {k} \
+             matrix",
+            correlation.inverse.len()
+        )));
+    }
+    let logarithmic = correlation.log.iter().filter(|log| **log).count();
+    if correlation.offsets.len() != logarithmic {
+        return Err(fault(format!(
+            "has {logarithmic} logarithmic priors and {} offsets of their rows",
+            correlation.offsets.len()
+        )));
+    }
+    if let Some(value) = correlation
+        .inverse
+        .iter()
+        .chain(correlation.offsets.iter())
+        .find(|value| !value.is_finite())
+    {
+        return Err(fault(format!(
+            "has the value {value} of its inverse or of its offsets, which is not finite"
+        )));
+    }
+    for (at, parameter) in correlation.parameters.iter().enumerate() {
+        if *parameter >= parameters.len() {
+            return Err(fault(format!(
+                "correlates the parameter {parameter} of a fit of {} parameters",
+                parameters.len()
+            )));
+        }
+        let id = &parameters[*parameter].id;
+        if std::mem::replace(&mut carried[*parameter], true) {
+            return Err(fault(format!(
+                "correlates '{id}' twice, and a parameter of a correlation is one of its \
+                 priors"
+            )));
+        }
+        if !correlation.location[at].is_finite() {
+            return Err(fault(format!(
+                "gives '{id}' the location {}, which is not finite",
+                correlation.location[at]
+            )));
+        }
+        let scale = correlation.scale[at];
+        if !scale.is_finite() || scale <= 0.0 {
+            return Err(fault(format!(
+                "gives '{id}' the scale {scale}, which is not positive and finite"
+            )));
+        }
+        let (lower, upper) = (correlation.lower[at], correlation.upper[at]);
+        if !lower.is_finite() || !upper.is_finite() || lower >= upper {
+            return Err(fault(format!(
+                "defines the prior of '{id}' between {lower} and {upper}, which are not \
+                 increasing and finite"
+            )));
+        }
+        if correlation.log[at] && lower <= 0.0 {
+            return Err(fault(format!(
+                "gives the logarithmic prior of '{id}' the lower bound {lower}, which is not \
+                 positive and has no logarithm"
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Resolves a curve against the table of its condition: its column and the row of a point.
 fn resolve(
     at: usize,
@@ -1313,6 +2256,46 @@ fn resolve(
             )));
         }
     }
+    let likelihood = match &curve.likelihood {
+        None => None,
+        Some(likelihood) => {
+            let column = match &likelihood.noise_column {
+                None if curve.noise.is_none() => {
+                    return Err(fault(
+                        "carries a likelihood and neither a 'noise' nor a 'noise_column': a \
+                         standard deviation of one is no noise model"
+                            .to_string(),
+                    ));
+                }
+                None => None,
+                Some(_) if curve.noise.is_some() => {
+                    return Err(fault(
+                        "carries a 'noise_column' and a 'noise' as well: the standard \
+                         deviation of a measurement is the column of its condition or the \
+                         number of its request, not both"
+                            .to_string(),
+                    ));
+                }
+                Some(name) => Some(
+                    table
+                        .columns
+                        .iter()
+                        .position(|column| *column == *name)
+                        .ok_or_else(|| {
+                            fault(format!(
+                                "reads the noise_column '{name}', which its condition does \
+                                 not select: {:?}",
+                                table.columns
+                            ))
+                        })?,
+                ),
+            };
+            Some(ResolvedLikelihood {
+                distribution: likelihood.distribution,
+                noise_column: column,
+            })
+        }
+    };
     let after = match &curve.after_change {
         None => vec![false; curve.times.len()],
         Some(after) if after.len() == curve.times.len() => after.clone(),
@@ -1345,6 +2328,7 @@ fn resolve(
         values: curve.values.clone(),
         noise,
         weight: curve.weight,
+        likelihood,
     })
 }
 

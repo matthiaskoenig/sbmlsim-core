@@ -56,6 +56,8 @@ pub fn definition(start: f64, scale: Scale) -> Definition {
     let (times, values) = data(K);
     Definition {
         jacobian: Default::default(),
+        priors: Vec::new(),
+        prior_correlation: None,
         parameters: vec![Parameter {
             id: "k".to_string(),
             start,
@@ -72,6 +74,7 @@ pub fn definition(start: f64, scale: Scale) -> Definition {
             noise: None,
             weight: 1.0,
             after_change: None,
+            likelihood: None,
         }],
     }
 }
@@ -94,6 +97,8 @@ pub fn pair(k: f64, y: f64, scale: Scale) -> Definition {
     let noise = Some(vec![NOISE; values.len()]);
     Definition {
         jacobian: Default::default(),
+        priors: Vec::new(),
+        prior_correlation: None,
         parameters: vec![
             Parameter {
                 id: "k".to_string(),
@@ -119,6 +124,7 @@ pub fn pair(k: f64, y: f64, scale: Scale) -> Definition {
             noise,
             weight: 1.0,
             after_change: None,
+            likelihood: None,
         }],
     }
 }

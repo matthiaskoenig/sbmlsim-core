@@ -14,8 +14,9 @@ use sbmlsim_host::LoadedModel;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Condition, Curve, DEFAULT_MODEL, Definition, Derived, Fisher, Fit, FitError, JacobianChoice,
-    Parameter, Problem, Profile, Scale, Settings, Stop, Term, Walk, fisher, profiles,
+    Condition, Correlation, Curve, DEFAULT_MODEL, Definition, Derived, Fisher, Fit, FitError,
+    JacobianChoice, Likelihood, NoiseKind, Parameter, Prior, PriorKind, Problem, Profile, Scale,
+    Settings, Stop, Term, Walk, fisher, profiles,
 };
 
 /// Whether the jacobian of a request is the one of [`JacobianChoice::Auto`], which its
@@ -73,6 +74,121 @@ pub struct FitRequest {
     /// The identifiability of the optimum the fit finds; none of it when the block is absent.
     #[serde(default)]
     pub identifiability: Option<Identifiability>,
+    /// The priors of the parameters of the fit, one residual row each, which make the cost
+    /// of the fit its negative log posterior up to a constant of the problem, see
+    /// [`PriorRequest`]. A parameter whose prior is correlated carries none here.
+    ///
+    /// Absent, which is every request written before the block existed, the fit has none and
+    /// its cost is the one of its curves alone.
+    #[serde(default)]
+    pub priors: Vec<PriorRequest>,
+    /// The correlated priors of the fit, which are one multivariate normal of the scores of
+    /// their values, see [`CorrelationRequest`]; none when the block is absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prior_correlation: Option<CorrelationRequest>,
+}
+
+/// The prior of one parameter of a fit, which the engine evaluates without a simulation.
+///
+/// The row of a prior is `sqrt(c - 2 log p)` of its log density and of the offset `c` of this
+/// block, so that half the sum of the squares of every residual of the fit is its negative
+/// log posterior up to `0.5 * c` per prior, a constant of the problem which the host
+/// subtracts, as it subtracts the one of a likelihood. The rows of the priors come **after**
+/// every row of the curves, the ones of this block in its order and then the rows of
+/// [`FitRequest::prior_correlation`].
+///
+/// The engine evaluates the density of the kind and the host the normalization of the
+/// truncation at the bounds, [`PriorRequest::normalizer`]: a distribution function is no term
+/// of a density, and a host which truncates a prior at the bounds of its parameter has it
+/// already. The row of a value outside the bounds, and of one whose density is zero, is
+/// `NaN`: the prior is not defined there, which is no claim about the cost of such a point.
+/// The bounds of a prior cover the ones of its parameter, so the first of these is no point
+/// an optimizer of the fit takes, while the second is, e.g. a uniform prior whose support is
+/// narrower than its parameter.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct PriorRequest {
+    /// The position of the parameter in the parameters of the fit.
+    pub parameter: usize,
+    /// The distribution of the prior: `"normal"`, `"log-normal"`, `"uniform"`,
+    /// `"log-uniform"`, `"laplace"` or `"log-laplace"`.
+    pub kind: PriorKind,
+    /// The two parameters of that distribution, the ones of PEtab, whose meaning is the one
+    /// of the kind:
+    ///
+    /// ```text
+    /// normal(mu, s)       the mean and the standard deviation of the value
+    /// log-normal(mu, s)   the mean and the standard deviation of its logarithm
+    /// laplace(mu, b)      the location and the scale of the value
+    /// log-laplace(mu, b)  the location and the scale of its logarithm
+    /// uniform(a, b)       the bounds of the value, which increase
+    /// log-uniform(a, b)   the bounds of the value as well, both positive
+    /// ```
+    ///
+    /// The bounds of a `log-uniform` prior are the ones of the value and not of its
+    /// logarithm, as PEtab writes them, so its density is `1 / (x (ln(b) - ln(a)))`; a scale
+    /// is positive and the bounds of a uniform kind increase.
+    pub parameters: Vec<f64>,
+    /// The offset `c` of the row, which keeps `c - 2 log p` positive between the bounds: the
+    /// density of a narrow distribution is larger than one, whose negative logarithm has no
+    /// root.
+    pub offset: f64,
+    /// The logarithm of the mass of the prior between the bounds, which the engine subtracts
+    /// from the density of the kind; zero for a prior the host does not truncate.
+    pub normalizer: f64,
+    /// The smallest value the prior is defined at, the lower bound of the parameter.
+    ///
+    /// The bounds have to cover the ones of the parameter, and a prior whose bounds lie
+    /// inside them is refused: the row of a value the prior is not defined at is `NaN`, so a
+    /// prior narrower than the box an optimizer searches in would be a cost of `NaN` at
+    /// points of the fit and no error anywhere.
+    pub lower: f64,
+    /// The largest value it is defined at, the upper bound of the parameter.
+    pub upper: f64,
+}
+
+/// The correlated priors of a fit, one multivariate normal of the scores of their values.
+///
+/// The priors of several parameters are correlated when their normal scores
+/// `z_i = (v_i - location_i) / scale_i` carry a correlation, `v` being the value of the
+/// parameter or its logarithm where [`CorrelationRequest::log`] says so, i.e. a normal and a
+/// log-normal prior. Their rows are the whitened scores `w = L^-1 z` of the Cholesky factor
+/// `L` of that correlation, whose inverse this block carries, so that half the sum of their
+/// squares is the quadratic form of the multivariate normal, and one row more per logarithmic
+/// prior for the density of its logarithm in the value, `1 / x`.
+///
+/// The engine normalizes no truncation of a correlated prior: the normal is normalized
+/// without the bounds and its constant, `sum(ln(scale)) + ln(det(L)) + k ln(2 pi) / 2`, is a
+/// term of the offset of the cost which the host keeps, as it keeps the
+/// [`CorrelationRequest::offsets`] of the logarithmic rows. A parameter of this block carries
+/// no prior of [`FitRequest::priors`] of its own, which would be a second prior of it.
+///
+/// The bounds of this block are checked when the fit is read and are no term of its rows: a
+/// whitened score outside them is an ordinary number of the multivariate normal and finite
+/// wherever the scores are, while the row of an independent prior of [`FitRequest::priors`]
+/// outside its bounds is `NaN`. An optimizer searches a parameter between its own bounds, so
+/// no point of a fit reaches that difference.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct CorrelationRequest {
+    /// The positions of the parameters in the parameters of the fit, `k` of them, every one
+    /// of them once.
+    pub parameters: Vec<usize>,
+    /// Whether the score of a prior is the one of the logarithm of the value, i.e. whether
+    /// the prior is log-normal; one flag per parameter.
+    pub log: Vec<bool>,
+    /// The mean of the value of every prior, or of its logarithm.
+    pub location: Vec<f64>,
+    /// Its standard deviation, which is positive.
+    pub scale: Vec<f64>,
+    /// The inverse of the lower Cholesky factor of the correlation, `k` rows of `k` values.
+    pub inverse: Vec<Vec<f64>>,
+    /// The offset `c` of the row `sqrt(c + 2 ln(x))` of every logarithmic prior, in the order
+    /// of the logarithmic priors.
+    pub offsets: Vec<f64>,
+    /// The smallest value of every parameter, its lower bound, which is positive for a
+    /// logarithmic prior; checked and no term of the rows, see the block.
+    pub lower: Vec<f64>,
+    /// Its largest value, its upper bound; checked and no term of the rows as well.
+    pub upper: Vec<f64>,
 }
 
 /// What to ask of the optimum of a fit: how well its data determines it.
@@ -195,11 +311,13 @@ pub struct CurveRequest {
     pub times: Vec<f64>,
     /// The measurements, one per time.
     pub values: Vec<f64>,
-    /// The standard deviation of every measurement, which its residual is divided by.
+    /// The standard deviation of every measurement, which its residual is divided by; the
+    /// scale of the noise of a measurement for a curve whose `likelihood` is one of the
+    /// Laplace kinds, whose standard deviation is `sqrt(2)` times it.
     /// Every value is positive; a positive infinity is allowed and means the point carries
     /// no information: it stays in the residual vector and contributes nothing (its
-    /// residual is `+-0.0` and its row of the jacobian is zeros). Zero, a negative value
-    /// and `NaN` are refused.
+    /// residuals are `+-0.0` and its rows of the jacobian are zeros, both rows of a curve
+    /// of a likelihood). Zero, a negative value and `NaN` are refused.
     #[serde(default)]
     pub noise: Option<Vec<f64>>,
     /// The weight of the curve, which multiplies its residuals; one when it is absent.
@@ -216,6 +334,53 @@ pub struct CurveRequest {
     /// behaviour of the releases before 0.16.0.
     #[serde(default)]
     pub after_change: Option<Vec<bool>>,
+    /// The noise distribution of the measurements of the curve, which makes its residuals the
+    /// ones of a likelihood.
+    ///
+    /// A curve with a likelihood has **twice** its measurements as residuals: the residual of
+    /// every measurement and then, in the same order, the residual of the scale of its noise,
+    /// so that half the sum of their squares is the negative log-likelihood of the curve up
+    /// to `0.5 * LIKELIHOOD_OFFSET` per measurement, a constant of the data which the host
+    /// subtracts (a measurement of a log kind carries `(-2 value).max(0)` more of it). A
+    /// curve without one is the weighted least squares of [`CurveRequest::noise`], one
+    /// residual per measurement, which no field of this block changes.
+    ///
+    /// The log kinds mean that the column of the curve and its values are logarithms: the
+    /// engine transforms nothing, a host which fits data of a geometric standard deviation
+    /// selects a column which is a logarithm and gives the logarithms of its measurements,
+    /// and the density of such a kind carries the measurement itself.
+    ///
+    /// The noise of a measurement is the `noise` of the curve or the `noise_column` of this
+    /// block, its standard deviation for a normal kind and the scale of its distribution for
+    /// a Laplace one; a curve which carries both, and one which carries neither, is refused.
+    ///
+    /// Absent, which is every request written before the block existed, there is none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub likelihood: Option<LikelihoodRequest>,
+}
+
+/// The noise distribution of the measurements of a curve, see [`CurveRequest::likelihood`].
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct LikelihoodRequest {
+    /// The distribution of the noise of every measurement of the curve: `"normal"`,
+    /// `"log-normal"`, `"laplace"` or `"log-laplace"`.
+    pub distribution: NoiseKind,
+    /// The column of the simulation of the condition which is the noise of a measurement,
+    /// read in the row of that measurement, e.g. a parameter of the fit itself or an
+    /// assignment rule of the model over it, which is the noise a fit moves. It is the
+    /// standard deviation of the measurement for the `normal` and `log-normal` kinds and the
+    /// scale of its distribution for the `laplace` and `log-laplace` kinds, whose standard
+    /// deviation is `sqrt(2)` times it, as the `noise` of the curve is.
+    ///
+    /// The `noise` of the curve when it is absent, and a curve which carries the two together
+    /// is refused. The condition has to select the column, as it selects the one of the
+    /// curve. The value there is positive: an infinity is a measurement which carries no
+    /// information, both of whose rows are zero as a `noise` of an infinity makes them, and
+    /// zero, a negative value and `NaN` are no noise of a measurement
+    /// ([`crate::FAILED_RESIDUAL`] for both of its rows, which is what a failed integration
+    /// gives the rows of a curve; the point fails, the fit goes on).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub noise_column: Option<String>,
 }
 
 /// What a fit found.
@@ -244,14 +409,16 @@ pub struct FitAnswer {
     /// The time every run of the fit took together, without the identifiability of its
     /// optimum, which every profile of [`FitAnswer::profiles`] carries its own share of.
     pub seconds: f64,
-    /// The residuals of the optimum, in the order of the curves of the request.
+    /// The residuals of the optimum: the rows of the curves of the request, in their order,
+    /// and then the rows of its priors.
     pub residuals: Vec<f64>,
     /// Every run of the fit, in the order of its starts.
     pub runs: Vec<RunAnswer>,
     /// The profiles of the likelihood of the parameters, when the fit asked for them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub profiles: Vec<Profile>,
-    /// The Fisher information of the optimum, when the fit asked for it.
+    /// The Fisher information of the optimum, when the fit asked for it; of the posterior for
+    /// a fit which carries priors, see [`Fisher::information`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fisher: Option<Fisher>,
 }
@@ -564,6 +731,10 @@ fn definition_of(request: &FitRequest) -> Result<Definition, FitError> {
             noise: curve.noise.clone(),
             weight: curve.weight,
             after_change: curve.after_change.clone(),
+            likelihood: curve.likelihood.as_ref().map(|likelihood| Likelihood {
+                distribution: likelihood.distribution,
+                noise_column: likelihood.noise_column.clone(),
+            }),
         });
     }
     Ok(Definition {
@@ -609,7 +780,56 @@ fn definition_of(request: &FitRequest) -> Result<Definition, FitError> {
             })
             .collect(),
         curves,
+        priors: request
+            .priors
+            .iter()
+            .map(|prior| Prior {
+                parameter: prior.parameter,
+                kind: prior.kind,
+                parameters: prior.parameters.clone(),
+                offset: prior.offset,
+                normalizer: prior.normalizer,
+                lower: prior.lower,
+                upper: prior.upper,
+            })
+            .collect(),
+        prior_correlation: correlation_of(request.prior_correlation.as_ref())?,
     })
+}
+
+/// Resolves the correlated priors of a request: the rows of the inverse of the factor, which
+/// the problem holds as one row major matrix, flattened.
+fn correlation_of(
+    correlation: Option<&CorrelationRequest>,
+) -> Result<Option<Correlation>, FitError> {
+    let Some(correlation) = correlation else {
+        return Ok(None);
+    };
+    let k = correlation.parameters.len();
+    if correlation.inverse.len() != k {
+        return Err(FitError::Correlation(format!(
+            "has {k} parameters and the {} rows of its inverse",
+            correlation.inverse.len()
+        )));
+    }
+    for (at, row) in correlation.inverse.iter().enumerate() {
+        if row.len() != k {
+            return Err(FitError::Correlation(format!(
+                "has the row {at} of {} values of its inverse and {k} parameters",
+                row.len()
+            )));
+        }
+    }
+    Ok(Some(Correlation {
+        parameters: correlation.parameters.clone(),
+        log: correlation.log.clone(),
+        location: correlation.location.clone(),
+        scale: correlation.scale.clone(),
+        inverse: correlation.inverse.concat(),
+        offsets: correlation.offsets.clone(),
+        lower: correlation.lower.clone(),
+        upper: correlation.upper.clone(),
+    }))
 }
 
 /// The starts of a fit, the values of its parameters as given and the point of the search

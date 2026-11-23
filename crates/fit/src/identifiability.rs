@@ -133,12 +133,27 @@ pub struct Fisher {
     pub parameters: Vec<String>,
     /// `JᵀJ` of the residuals at the optimum, row major: the information of the fit about its
     /// parameters, in the space they are searched.
+    ///
+    /// It is built from every residual of the fit, the rows of the priors of its parameters
+    /// included ([`crate::PriorRequest`], [`crate::CorrelationRequest`]): for a fit which
+    /// carries priors this is the precision of its posterior, the information of the data
+    /// plus the curvature of the priors, and not the information of the data alone. A host
+    /// which wants the information of the data takes [`Problem::jacobian`] at the optimum and
+    /// drops its trailing prior rows, whose number its own request determines (one per prior
+    /// and, for a correlation, one per correlated parameter and one per logarithmic one),
+    /// since the answer does not count them.
     pub information: Vec<f64>,
     /// Its inverse, the covariance of the parameters; absent when the information is
     /// singular. It is the covariance of the estimate where the residuals of the fit are
     /// weighted by the standard deviation of their measurement, as the noise of a curve does.
+    ///
+    /// For a fit with priors it is accordingly the covariance of the posterior, so an
+    /// interval of [`Fisher::errors`] around the optimum is a credible interval of the
+    /// posterior and not a confidence interval of the estimate; for a fit without priors the
+    /// two are one number and it is the confidence interval.
     pub covariance: Option<Vec<f64>>,
-    /// The square roots of the diagonal of that covariance, the standard errors.
+    /// The square roots of the diagonal of that covariance, the standard errors; of the
+    /// posterior for a fit with priors, see [`Fisher::covariance`].
     pub errors: Option<Vec<f64>>,
     /// The covariance scaled by those errors, the correlations of the parameters, row major.
     pub correlation: Option<Vec<f64>>,
@@ -392,7 +407,9 @@ fn crossing(
 /// parameters.
 ///
 /// One jacobian of the residuals at `at` ([`crate::Fit::x`]), which is one batch of the
-/// engine, and the linear algebra of a `k x k` matrix.
+/// engine, and the linear algebra of a `k x k` matrix. The residuals are every residual of
+/// the problem, so a fit with priors gets the precision of its posterior, see
+/// [`Fisher::information`].
 ///
 /// # Errors
 ///
