@@ -749,6 +749,79 @@ fn read_model(m: X, lv: Level) -> Result<Model, ReadError> {
         .into_iter()
         .map(|r| reaction(r, lv, &mut rules))
         .collect::<Result<Vec<_>, _>>()?;
+    let events = list("listOfEvents", "event")
+        .into_iter()
+        .map(event)
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut compartments = Vec::new();
+    let mut defaulted = Vec::new();
+    for c in list("listOfCompartments", "compartment") {
+        let id = sid(c, lv)?;
+        if c.attribute("constant").is_none() {
+            defaulted.push(id.clone());
+        }
+        compartments.push(Compartment {
+            id,
+            spatial_dimensions: double(c, "spatialDimensions")?,
+            // the size of a compartment of Level 1 is its volume
+            size: double(c, if lv.is_level_1() { "volume" } else { "size" })?,
+            units: opt(c, "units"),
+            // a compartment of Level 1 and Level 2 is constant by default
+            constant: flag(c, "constant", !lv.is_level_3())?,
+        });
+    }
+    let mut parameters = Vec::new();
+    for p in list("listOfParameters", "parameter") {
+        let id = sid(p, lv)?;
+        if p.attribute("constant").is_none() {
+            defaulted.push(id.clone());
+        }
+        parameters.push(Parameter {
+            id,
+            value: double(p, "value")?,
+            units: opt(p, "units"),
+            // a parameter of Level 1 and Level 2 is constant by default
+            constant: flag(p, "constant", !lv.is_level_3())?,
+        });
+    }
+    // Level 1 has no `constant` at all and Level 2 lets it default to true, so a compartment or
+    // a parameter which a rule or an event determines is no constant whatever the default says
+    let mut determined: Vec<&str> = rules
+        .iter()
+        .filter_map(|r| match r {
+            Rule::Assignment { variable, .. } | Rule::Rate { variable, .. } => {
+                Some(variable.as_str())
+            }
+            Rule::Algebraic { .. } => None,
+        })
+        .chain(
+            events
+                .iter()
+                .flat_map(|e| e.assignments.iter().map(|a| a.variable.as_str())),
+        )
+        .collect();
+    // Level 1 has no `constant` at all, so a quantity which an algebraic rule reads is one of
+    // the unknowns of the rule and no constant, as libsbml converts such a model as well
+    if lv.is_level_1() {
+        for rule in &rules {
+            if let Rule::Algebraic {
+                math: Some(math), ..
+            } = rule
+            {
+                determined.extend(math.symbols());
+            }
+        }
+    }
+    for id in &defaulted {
+        if determined.contains(&id.as_str()) {
+            if let Some(c) = compartments.iter_mut().find(|c| &c.id == id) {
+                c.constant = false;
+            }
+            if let Some(p) = parameters.iter_mut().find(|p| &p.id == id) {
+                p.constant = false;
+            }
+        }
+    }
     // the units of the model are the built in ones before Level 3, which states them itself;
     // the extent of a reaction of those levels is a substance
     let default_units = |name: &str, built_in: &str| match opt(m, name) {
@@ -775,20 +848,7 @@ fn read_model(m: X, lv: Level) -> Result<Model, ReadError> {
                 })
             })
             .collect::<Result<_, ReadError>>()?,
-        compartments: list("listOfCompartments", "compartment")
-            .into_iter()
-            .map(|c| {
-                Ok(Compartment {
-                    id: sid(c, lv)?,
-                    spatial_dimensions: double(c, "spatialDimensions")?,
-                    // the size of a compartment of Level 1 is its volume
-                    size: double(c, if lv.is_level_1() { "volume" } else { "size" })?,
-                    units: opt(c, "units"),
-                    // a compartment of Level 1 and Level 2 is constant by default
-                    constant: flag(c, "constant", !lv.is_level_3())?,
-                })
-            })
-            .collect::<Result<_, ReadError>>()?,
+        compartments,
         species: list("listOfSpecies", lv.species_names().0)
             .into_iter()
             .map(|s| {
@@ -813,18 +873,7 @@ fn read_model(m: X, lv: Level) -> Result<Model, ReadError> {
                 })
             })
             .collect::<Result<_, ReadError>>()?,
-        parameters: list("listOfParameters", "parameter")
-            .into_iter()
-            .map(|p| {
-                Ok(Parameter {
-                    id: sid(p, lv)?,
-                    value: double(p, "value")?,
-                    units: opt(p, "units"),
-                    // a parameter of Level 1 and Level 2 is constant by default
-                    constant: flag(p, "constant", !lv.is_level_3())?,
-                })
-            })
-            .collect::<Result<_, ReadError>>()?,
+        parameters,
         initial_assignments: list("listOfInitialAssignments", "initialAssignment")
             .into_iter()
             .map(|a| {
@@ -837,10 +886,7 @@ fn read_model(m: X, lv: Level) -> Result<Model, ReadError> {
             .collect::<Result<_, ReadError>>()?,
         rules,
         reactions,
-        events: list("listOfEvents", "event")
-            .into_iter()
-            .map(event)
-            .collect::<Result<_, _>>()?,
+        events,
     })
 }
 

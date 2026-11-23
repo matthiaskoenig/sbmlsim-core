@@ -322,3 +322,54 @@ fn the_trigger_of_an_event_of_level_2_is_persistent_with_the_initial_value_true(
     assert!(trigger.initial_value, "Level 2 has no other reading");
     assert!(trigger.persistent, "Level 2 knows no persistence");
 }
+
+#[test]
+fn a_parameter_a_rate_rule_determines_is_no_constant_without_the_attribute() {
+    let doc = read(&level2(
+        r#"<listOfParameters><parameter id="p" value="1"/></listOfParameters>
+           <listOfRules>
+             <rateRule variable="p">
+               <math xmlns="http://www.w3.org/1998/Math/MathML"><cn>1</cn></math>
+             </rateRule>
+           </listOfRules>"#,
+    ))
+    .unwrap();
+    // the default of Level 2 is a constant, which what a rule determines cannot be
+    assert!(!doc.model.parameters[0].constant);
+}
+
+#[test]
+fn a_parameter_an_event_assigns_is_no_constant_without_the_attribute() {
+    let doc = read(&level2(
+        r#"<listOfParameters><parameter id="p" value="1"/></listOfParameters>
+           <listOfEvents>
+             <event id="e">
+               <trigger><math xmlns="http://www.w3.org/1998/Math/MathML"><true/></math></trigger>
+               <listOfEventAssignments>
+                 <eventAssignment variable="p">
+                   <math xmlns="http://www.w3.org/1998/Math/MathML"><cn>2</cn></math>
+                 </eventAssignment>
+               </listOfEventAssignments>
+             </event>
+           </listOfEvents>"#,
+    ))
+    .unwrap();
+    assert!(!doc.model.parameters[0].constant);
+}
+
+#[test]
+fn a_parameter_an_algebraic_rule_reads_keeps_the_default_of_level_2() {
+    let doc = read(&level2(
+        r#"<listOfParameters><parameter id="k" value="2"/></listOfParameters>
+           <listOfRules>
+             <algebraicRule>
+               <math xmlns="http://www.w3.org/1998/Math/MathML">
+                 <apply><minus/><ci>x</ci><ci>k</ci></apply>
+               </math>
+             </algebraicRule>
+           </listOfRules>"#,
+    ))
+    .unwrap();
+    // Level 2 states the attribute, so the reader takes it as it stands, unlike Level 1
+    assert!(doc.model.parameters[0].constant);
+}

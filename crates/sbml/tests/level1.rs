@@ -210,3 +210,50 @@ fn a_formula_which_is_no_formula_names_the_element_it_is_on() {
     assert!(message.contains("parameterRule"), "{message}");
     assert!(message.contains("formula"), "{message}");
 }
+
+#[test]
+fn a_quantity_a_rule_determines_is_no_constant() {
+    let doc = read(&level1(
+        2,
+        r#"<listOfCompartments><compartment name="c" volume="1"/></listOfCompartments>
+           <listOfParameters>
+             <parameter name="p" value="1"/>
+             <parameter name="k" value="2"/>
+           </listOfParameters>
+           <listOfRules>
+             <parameterRule name="p" formula="k" type="rate"/>
+             <compartmentVolumeRule compartment="c" formula="p"/>
+           </listOfRules>"#,
+    ))
+    .unwrap();
+    let parameter = |id: &str| {
+        doc.model
+            .parameters
+            .iter()
+            .find(|p| p.id == id)
+            .unwrap_or_else(|| panic!("the parameter {id}"))
+    };
+    // Level 1 has no `constant`, so what a rule determines is no constant
+    assert!(!parameter("p").constant);
+    assert!(!doc.model.compartments[0].constant);
+    assert!(parameter("k").constant, "nothing determines it");
+}
+
+#[test]
+fn a_quantity_an_algebraic_rule_reads_is_no_constant() {
+    let doc = read(&level1(
+        2,
+        r#"<listOfParameters>
+             <parameter name="kf"/>
+             <parameter name="kr" value="0.25"/>
+           </listOfParameters>
+           <listOfRules><algebraicRule formula="kf + -0.75"/></listOfRules>"#,
+    ))
+    .unwrap();
+    // the rule determines `kf`, which has no value of its own
+    assert!(!doc.model.parameters[0].constant);
+    assert!(
+        doc.model.parameters[1].constant,
+        "the rule does not read it"
+    );
+}
