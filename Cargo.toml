@@ -14,6 +14,7 @@ members = [
     "crates/fit",
     "crates/cli",
     "crates/python",
+    "crates/wasm",
 ]
 
 [workspace.package]
@@ -29,3 +30,13 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 thiserror = "2"
 roxmltree = "0.20"
+
+# `compiler.wasm` of `crates/wasm`, the compiler in a browser: as small as the page which
+# fetches it needs, since the module is downloaded before the first model is compiled
+[profile.wasm]
+inherits = "release"
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

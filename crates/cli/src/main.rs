@@ -19,8 +19,10 @@
 //! and the simulations of the models of a benchmark file in wasmtime (`sbmlsim_cli::bench`).
 //!
 //! `sbmlsim-core runtime -o <dir>` writes the `engine.wasm` and `mathlib.wasm` of this build
-//! (the ones `simulate` embeds), which the JavaScript loader `js/loader.mjs` runs, and next to
-//! them `THIRD_PARTY.md`, the notices of the libraries `engine.wasm` links statically.
+//! (the ones `simulate` embeds), which the JavaScript loader `js/loader.mjs` runs,
+//! `compiler.wasm`, the compiler of `js/compile.mjs` which compiles a document in a page, and
+//! next to them `THIRD_PARTY.md`, the notices of the libraries `engine.wasm` links
+//! statically.
 
 use std::fs;
 use std::io::Write as _;
@@ -90,8 +92,8 @@ enum Command {
     Testsuite(TestsuiteArgs),
     /// Measures the models of a benchmark file (`bench/models.toml`) in wasmtime.
     Bench(BenchArgs),
-    /// Writes the `engine.wasm` and `mathlib.wasm` of this build and the notices of the
-    /// libraries of the engine (`THIRD_PARTY.md`) into a directory.
+    /// Writes the `engine.wasm`, `mathlib.wasm` and `compiler.wasm` of this build and the
+    /// notices of the libraries of the engine (`THIRD_PARTY.md`) into a directory.
     Runtime {
         /// The directory (created when missing).
         #[arg(short, long)]

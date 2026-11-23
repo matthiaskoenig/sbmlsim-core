@@ -56,6 +56,11 @@ pub static ENGINE_WASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/engine
 /// `mathlib.wasm` of this build (`sbmlsim-mathlib` for `wasm32-unknown-unknown`).
 pub static MATHLIB_WASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/mathlib.wasm"));
 
+/// `compiler.wasm` of this build (`sbmlsim-wasm` for `wasm32-unknown-unknown`), the compiler in
+/// a JavaScript host: `js/compile.mjs` compiles an SBML document with it and hands the module
+/// and the description to `js/loader.mjs`, so a page compiles and simulates without a server.
+pub static COMPILER_WASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/compiler.wasm"));
+
 /// The notices of the libraries [`ENGINE_WASM`] links statically (SUNDIALS, BSD-3-Clause; KLU
 /// and BTF, LGPL-2.1-or-later; AMD, COLAMD and SuiteSparse_config, BSD-3-Clause) with their
 /// versions, the commits of their submodules and their license texts: `THIRD_PARTY.md` of the

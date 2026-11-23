@@ -27,11 +27,13 @@
   "type": "module",
   "exports": {
     ".": "./loader.mjs",
+    "./compile": "./compile.mjs",
     "./pool": "./pool.mjs",
     "./panels": "./panels.mjs",
     "./worker": "./worker.mjs",
     "./runtime/engine.wasm": "./runtime/engine.wasm",
     "./runtime/mathlib.wasm": "./runtime/mathlib.wasm",
+    "./runtime/compiler.wasm": "./runtime/compiler.wasm",
     "./package.json": "./package.json"
   },
   "bin": {
@@ -39,12 +41,14 @@
   },
   "files": [
     "loader.mjs",
+    "compile.mjs",
     "pool.mjs",
     "worker.mjs",
     "panels.mjs",
     "simulate.mjs",
     "runtime/engine.wasm",
     "runtime/mathlib.wasm",
+    "runtime/compiler.wasm",
     "runtime/THIRD_PARTY.md",
     "LICENSE"
   ],

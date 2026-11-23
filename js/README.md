@@ -5,11 +5,12 @@ Simulate SBML models in browsers and in Node. [sbmlsim-core](https://matthiaskoe
 | module | import | what it is |
 |---|---|---|
 | `loader.mjs` | `sbmlsim-core` | runs `engine.wasm`, `mathlib.wasm` and a compiled `model.wasm` |
+| `compile.mjs` | `sbmlsim-core/compile` | compiles SBML text into `model.wasm` and its description with `compiler.wasm` |
 | `pool.mjs` (with `worker.mjs`) | `sbmlsim-core/pool` | a pool of Web Workers (worker threads in Node) which run the loader off the main thread |
 | `panels.mjs` | `sbmlsim-core/panels` | the routes of the panel service of sbmlsim, answered inside a page from an exported bundle |
 | `simulate.mjs` | the command `sbmlsim-core-simulate` | the CSV of a simulation in Node |
 
-A model is compiled ahead of time with the command line of the repository (`sbmlsim-core compile model.xml -o DIR`); compiling SBML in the browser is not part of this package yet.
+A model is compiled in the host with `compile.mjs`, or ahead of time with the command line of the repository (`sbmlsim-core compile model.xml -o DIR`). Both run the same compiler, so a model compiled in a page gives the `model.wasm` the command line writes, byte for byte.
 
 ## Install
 
@@ -77,6 +78,22 @@ await pool.addModel("model", modelWasm, modelJson);
 const result = await pool.simulate("model", request, { signal });
 pool.close();
 ```
+
+## Compile a model in the host
+
+```js
+import { createCompiler } from "sbmlsim-core/compile";
+
+const compiler = await createCompiler({
+  compiler: await file("sbmlsim-core/runtime/compiler.wasm"),
+});
+const { wasm, description } = compiler.compile(await readFile("model.xml", "utf8"));
+const instance = await runtime.instantiate(wasm, description);
+```
+
+`compiler.wasm` is the compiler of the command line built for `wasm32-unknown-unknown`: the same reader of SBML, the same model representation and the same code generation, so the module and the description are the ones of `sbmlsim-core compile`. It reads no file and imports nothing of the host, so a page compiles a model a visitor drops into it without a server.
+
+`compile` is synchronous and takes a few milliseconds for a model of the size of the repressilator; a model which the compiler refuses raises a `CompileError` with its message. `optimize: false` leaves the optimizer of the compiler out (the results are the same) and `jacobian` is `"auto"`, `"difference-quotient"` or `"analytic"`, as the command line takes them. One compiler compiles any number of models, one after the other.
 
 ## A static app of interactive panels
 
