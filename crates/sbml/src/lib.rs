@@ -1,4 +1,4 @@
-//! Reader of SBML Level 3 core, Version 1 and Version 2, and its MathML.
+//! Reader of SBML core, every level and version, and its MathML.
 //!
 //! [`read`] takes the text of a document and gives a [`Document`], a plain data model of the
 //! elements the compiler needs, without any file system access. Every list keeps the order of
@@ -35,9 +35,9 @@ use thiserror::Error;
 /// A failure to read a document.
 #[derive(Debug, Clone, PartialEq, Error)]
 pub enum ReadError {
-    /// The document is not SBML Level 3 Version 1 or 2.
-    #[error("SBML level {level} version {version} is not supported, only level 3 (version 1 or 2)")]
-    NotLevel3 {
+    /// The document is no level and version of SBML core the reader knows.
+    #[error("SBML level {level} version {version} is not supported")]
+    UnsupportedLevel {
         /// The level of the document.
         level: u32,
         /// The version of the document.
@@ -54,15 +54,19 @@ pub enum ReadError {
 /// An SBML document.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Document {
-    /// The SBML level, 3.
+    /// The SBML level, 1, 2 or 3.
     pub level: u32,
-    /// The SBML version, 1 or 2.
+    /// The version of the level.
     pub version: u32,
     /// The model.
     pub model: Model,
 }
 
-/// Reads the text of an SBML Level 3 Version 1 or 2 document.
+/// Reads the text of an SBML core document of any level and version.
+///
+/// A document of Level 1 or Level 2 is read into the model of Level 3: the built in units of
+/// the older levels become unit definitions and the defaults of the model, and what a later
+/// level states differently is read as the older level means it.
 pub fn read(sbml: &str) -> Result<Document, ReadError> {
     if deeper_than(sbml, MAX_XML_DEPTH).is_some() {
         return Err(ReadError::Xml(format!(

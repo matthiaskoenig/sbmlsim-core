@@ -21,14 +21,22 @@ fn reads_level_3_version_1() {
 }
 
 #[test]
-fn refuses_level_2() {
-    let err = read(&data("level2.xml")).expect_err("L2 is refused");
-    assert!(format!("{err}").contains("only level 3"));
+fn reads_level_2_version_4() {
+    let doc = read(&data("level2.xml")).expect("L2V4 is read");
+    assert_eq!((doc.level, doc.version), (2, 4));
+    assert_eq!(doc.model.id.as_deref(), Some("old"));
+}
+
+#[test]
+fn refuses_a_level_it_does_not_know() {
+    let text = r#"<sbml xmlns="http://www.sbml.org/sbml/level1" level="1" version="2">
+      <model name="m"/></sbml>"#;
+    let err = read(text).expect_err("level 1 is not read yet");
     assert_eq!(
         err,
-        ReadError::NotLevel3 {
-            level: 2,
-            version: 4
+        ReadError::UnsupportedLevel {
+            level: 1,
+            version: 2
         }
     );
 }

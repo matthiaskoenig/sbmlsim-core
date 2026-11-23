@@ -1,4 +1,13 @@
-//! The data model of an SBML Level 3 Version 1 or 2 core document and its reader.
+//! The data model of an SBML core document and its reader, every level and version.
+//!
+//! A document of Level 1 or Level 2 is read into the same model as one of Level 3, so a
+//! consumer sees one shape whatever the document says: the built in units `substance`,
+//! `volume`, `area`, `length` and `time` of the older levels become unit definitions and the
+//! default units of the model, the `<stoichiometryMath>` of a species reference becomes its
+//! stoichiometry or an assignment rule of its id, and an attribute a level does not have is
+//! read as that level means it (a reaction of Level 1 and 2 is reversible, its stoichiometry
+//! is 1, a compartment and a parameter are constant, the assignments of an event take the
+//! values of the trigger time).
 
 use crate::math::{self, Node};
 use crate::{Document, ReadError};
@@ -10,9 +19,41 @@ pub const SBML_NS_L3V2: &str = "http://www.sbml.org/sbml/level3/version2/core";
 /// The namespace of SBML Level 3 Version 1 core.
 pub const SBML_NS_L3V1: &str = "http://www.sbml.org/sbml/level3/version1/core";
 
-/// Whether `ns` is the namespace of SBML Level 3 core, version 1 or 2.
+/// The namespace of every level and version of SBML core, with the level and the version it
+/// names. A namespace which names no version (Level 1, and Level 2 Version 1, whose namespace
+/// carries the level alone) has `None` and takes the version from the attribute of `<sbml>`.
+const NAMESPACES: [(&str, u32, Option<u32>); 8] = [
+    (SBML_NS_L3V2, 3, Some(2)),
+    (SBML_NS_L3V1, 3, Some(1)),
+    ("http://www.sbml.org/sbml/level2/version5", 2, Some(5)),
+    ("http://www.sbml.org/sbml/level2/version4", 2, Some(4)),
+    ("http://www.sbml.org/sbml/level2/version3", 2, Some(3)),
+    ("http://www.sbml.org/sbml/level2/version2", 2, Some(2)),
+    // Level 2 Version 1 and Level 1 (Version 1 and Version 2) name no version in the namespace
+    ("http://www.sbml.org/sbml/level2", 2, Some(1)),
+    ("http://www.sbml.org/sbml/level1", 1, None),
+];
+
+/// Whether `ns` is the namespace of a level and version of SBML core.
 pub fn is_sbml_ns(ns: &str) -> bool {
-    ns == SBML_NS_L3V2 || ns == SBML_NS_L3V1
+    NAMESPACES.iter().any(|(uri, _, _)| *uri == ns)
+}
+
+/// The level and version of a document, which the readers of its elements follow.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Level {
+    /// The level.
+    pub level: u32,
+    /// The version of the level.
+    pub version: u32,
+}
+
+impl Level {
+    /// Whether the document is of Level 3, which states every attribute the older levels
+    /// default and carries the units of the model itself.
+    const fn is_level_3(self) -> bool {
+        self.level == 3
+    }
 }
 
 /// A unit definition as a unit expression, e.g. `0.001*mole*(60*second)**-1`.
@@ -403,25 +444,86 @@ fn unit_definition(n: X) -> Result<UnitDefinition, ReadError> {
     })
 }
 
-fn species_reference(n: X) -> Result<SpeciesReference, ReadError> {
+/// A species reference, with the rule of a `<stoichiometryMath>` which is no number appended
+/// to `rules`: the stoichiometry of Level 1 and Level 2 changes in time through that element,
+/// where Level 3 has an assignment rule of the id of the reference, so the reader writes one
+/// and gives the reference the id the rule assigns (`name`, generated when the reference has
+/// no id of its own).
+fn species_reference(
+    n: X,
+    lv: Level,
+    name: &str,
+    rules: &mut Vec<Rule>,
+) -> Result<SpeciesReference, ReadError> {
+    let stoichiometry = match (double(n, "stoichiometry")?, double(n, "denominator")?) {
+        // the denominator of Level 1 and Level 2 divides the stoichiometry
+        (Some(s), Some(d)) => Some(s / d),
+        (Some(s), None) => Some(s),
+        // Level 3 leaves the stoichiometry of a reference a rule determines unset
+        (None, _) if lv.is_level_3() => None,
+        (None, Some(d)) => Some(1.0 / d),
+        (None, None) => Some(1.0),
+    };
+    let id = opt(n, "id");
+    let Some(math) = child(n, "stoichiometryMath")
+        .map(math_of)
+        .transpose()?
+        .flatten()
+    else {
+        return Ok(SpeciesReference {
+            species: req(n, "species")?,
+            id,
+            stoichiometry,
+            // a stoichiometry of Level 1 and Level 2 is constant without the element
+            constant: flag(n, "constant", !lv.is_level_3())?,
+        });
+    };
+    if let Node::Number(value) = math {
+        // a number is the stoichiometry itself, no rule is needed for it
+        return Ok(SpeciesReference {
+            species: req(n, "species")?,
+            id,
+            stoichiometry: Some(value),
+            constant: true,
+        });
+    }
+    let id = id.unwrap_or_else(|| name.to_string());
+    rules.push(Rule::Assignment {
+        id: None,
+        variable: id.clone(),
+        math: Some(math),
+    });
     Ok(SpeciesReference {
         species: req(n, "species")?,
-        id: opt(n, "id"),
-        stoichiometry: double(n, "stoichiometry")?,
-        constant: flag(n, "constant", false)?,
+        id: Some(id),
+        stoichiometry: None,
+        constant: false,
     })
 }
 
-fn reaction(n: X) -> Result<Reaction, ReadError> {
-    let refs = |list, item| -> Result<Vec<SpeciesReference>, ReadError> {
-        items(n, list, item)
-            .into_iter()
-            .map(species_reference)
-            .collect()
-    };
+/// A reaction, with the rules of the stoichiometries which change in time appended to `rules`.
+fn reaction(n: X, lv: Level, rules: &mut Vec<Rule>) -> Result<Reaction, ReadError> {
+    let id = req(n, "id")?;
+    let mut refs =
+        |list: &str, item: &str, role: &str| -> Result<Vec<SpeciesReference>, ReadError> {
+            items(n, list, item)
+                .into_iter()
+                .enumerate()
+                .map(|(index, r)| {
+                    let name = format!("__stoichiometry_{id}_{role}_{index}");
+                    species_reference(r, lv, &name, rules)
+                })
+                .collect()
+        };
     let kinetic_law = child(n, "kineticLaw")
         .map(|k| -> Result<KineticLaw, ReadError> {
-            let local_parameters = items(k, "listOfLocalParameters", "localParameter")
+            // the local parameters of Level 1 and Level 2 are a list of parameters
+            let (list, item) = if lv.is_level_3() {
+                ("listOfLocalParameters", "localParameter")
+            } else {
+                ("listOfParameters", "parameter")
+            };
+            let local_parameters = items(k, list, item)
                 .into_iter()
                 .map(|p| {
                     Ok(LocalParameter {
@@ -438,13 +540,15 @@ fn reaction(n: X) -> Result<Reaction, ReadError> {
             })
         })
         .transpose()?;
+    let reactants = refs("listOfReactants", "speciesReference", "reactant")?;
+    let products = refs("listOfProducts", "speciesReference", "product")?;
     Ok(Reaction {
-        id: req(n, "id")?,
-        reversible: flag(n, "reversible", false)?,
+        // a reaction of Level 1 and Level 2 is reversible unless it says otherwise
+        reversible: flag(n, "reversible", !lv.is_level_3())?,
         fast: flag(n, "fast", false)?,
         compartment: opt(n, "compartment"),
-        reactants: refs("listOfReactants", "speciesReference")?,
-        products: refs("listOfProducts", "speciesReference")?,
+        reactants,
+        products,
         modifiers: items(n, "listOfModifiers", "modifierSpeciesReference")
             .into_iter()
             .map(|m| {
@@ -455,6 +559,7 @@ fn reaction(n: X) -> Result<Reaction, ReadError> {
             })
             .collect::<Result<_, ReadError>>()?,
         kinetic_law,
+        id,
     })
 }
 
@@ -515,21 +620,68 @@ fn rule(n: X) -> Result<Rule, ReadError> {
     })
 }
 
-fn read_model(m: X) -> Result<Model, ReadError> {
+/// The units every level before Level 3 defines itself, with the expression of a unit
+/// registry: a model which does not redefine them takes them as they are, and every one of them
+/// is a default of the model, which Level 3 states on `<model>` instead.
+const BUILT_IN_UNITS: [(&str, &str); 5] = [
+    ("substance", "mole"),
+    ("volume", "litre"),
+    ("area", "metre**2"),
+    ("length", "metre"),
+    ("time", "second"),
+];
+
+fn read_model(m: X, lv: Level) -> Result<Model, ReadError> {
     let list = |l: &str, i: &str| items(m, l, i);
+    let mut unit_definitions = list("listOfUnitDefinitions", "unitDefinition")
+        .into_iter()
+        .map(unit_definition)
+        .collect::<Result<Vec<_>, _>>()?;
+    if !lv.is_level_3() {
+        // the built in units of the level, unless the model redefines them
+        for (id, expression) in BUILT_IN_UNITS {
+            if !unit_definitions.iter().any(|u| u.id == id) {
+                unit_definitions.push(UnitDefinition {
+                    id: id.to_string(),
+                    expression: expression.to_string(),
+                });
+            }
+        }
+    }
+    let mut rules = child(m, "listOfRules")
+        .map(|l| {
+            l.children()
+                .filter(|c| {
+                    ["assignmentRule", "rateRule", "algebraicRule"]
+                        .iter()
+                        .any(|n| is_core(c, n))
+                })
+                .map(rule)
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+    let reactions = list("listOfReactions", "reaction")
+        .into_iter()
+        .map(|r| reaction(r, lv, &mut rules))
+        .collect::<Result<Vec<_>, _>>()?;
+    // the units of the model are the built in ones before Level 3, which states them itself;
+    // the extent of a reaction of those levels is a substance
+    let default_units = |name: &str, built_in: &str| match opt(m, name) {
+        Some(units) => Some(units),
+        None if lv.is_level_3() => None,
+        None => Some(built_in.to_string()),
+    };
     Ok(Model {
         id: opt(m, "id"),
-        substance_units: opt(m, "substanceUnits"),
-        time_units: opt(m, "timeUnits"),
-        extent_units: opt(m, "extentUnits"),
-        volume_units: opt(m, "volumeUnits"),
-        area_units: opt(m, "areaUnits"),
-        length_units: opt(m, "lengthUnits"),
+        substance_units: default_units("substanceUnits", "substance"),
+        time_units: default_units("timeUnits", "time"),
+        extent_units: default_units("extentUnits", "substance"),
+        volume_units: default_units("volumeUnits", "volume"),
+        area_units: default_units("areaUnits", "area"),
+        length_units: default_units("lengthUnits", "length"),
         conversion_factor: opt(m, "conversionFactor"),
-        unit_definitions: list("listOfUnitDefinitions", "unitDefinition")
-            .into_iter()
-            .map(unit_definition)
-            .collect::<Result<_, _>>()?,
+        unit_definitions,
         function_definitions: list("listOfFunctionDefinitions", "functionDefinition")
             .into_iter()
             .map(|f| {
@@ -547,7 +699,8 @@ fn read_model(m: X) -> Result<Model, ReadError> {
                     spatial_dimensions: double(c, "spatialDimensions")?,
                     size: double(c, "size")?,
                     units: opt(c, "units"),
-                    constant: flag(c, "constant", false)?,
+                    // a compartment of Level 1 and Level 2 is constant by default
+                    constant: flag(c, "constant", !lv.is_level_3())?,
                 })
             })
             .collect::<Result<_, ReadError>>()?,
@@ -574,7 +727,8 @@ fn read_model(m: X) -> Result<Model, ReadError> {
                     id: req(p, "id")?,
                     value: double(p, "value")?,
                     units: opt(p, "units"),
-                    constant: flag(p, "constant", false)?,
+                    // a parameter of Level 1 and Level 2 is constant by default
+                    constant: flag(p, "constant", !lv.is_level_3())?,
                 })
             })
             .collect::<Result<_, ReadError>>()?,
@@ -588,23 +742,8 @@ fn read_model(m: X) -> Result<Model, ReadError> {
                 })
             })
             .collect::<Result<_, ReadError>>()?,
-        rules: child(m, "listOfRules")
-            .map(|l| {
-                l.children()
-                    .filter(|c| {
-                        ["assignmentRule", "rateRule", "algebraicRule"]
-                            .iter()
-                            .any(|n| is_core(c, n))
-                    })
-                    .map(rule)
-                    .collect::<Result<_, _>>()
-            })
-            .transpose()?
-            .unwrap_or_default(),
-        reactions: list("listOfReactions", "reaction")
-            .into_iter()
-            .map(reaction)
-            .collect::<Result<_, _>>()?,
+        rules,
+        reactions,
         events: list("listOfEvents", "event")
             .into_iter()
             .map(event)
@@ -701,9 +840,23 @@ pub(crate) fn read_document(sbml: &str) -> Result<Document, ReadError> {
             .map_err(|_| err(format!("<sbml> {name} is no integer")))
     };
     let (level, version) = (number("level")?, number("version")?);
-    if level != 3 || !matches!(version, 1 | 2) {
-        return Err(ReadError::NotLevel3 { level, version });
+    if !matches!((level, version), (2, 1..=5) | (3, 1 | 2)) {
+        return Err(ReadError::UnsupportedLevel { level, version });
     }
+    let namespace = root
+        .tag_name()
+        .namespace()
+        .ok_or_else(|| err("<sbml> without a namespace".into()))?;
+    let (_, ns_level, ns_version) = NAMESPACES
+        .iter()
+        .find(|(uri, _, _)| *uri == namespace)
+        .ok_or_else(|| err(format!("{namespace} is no namespace of SBML core")))?;
+    if *ns_level != level || ns_version.is_some_and(|v| v != version) {
+        return Err(err(format!(
+            "the namespace {namespace} is no namespace of SBML level {level} version {version}"
+        )));
+    }
+    let lv = Level { level, version };
     for a in root.attributes() {
         if a.name() == "required"
             && let Some(ns) = a.namespace()
@@ -718,6 +871,6 @@ pub(crate) fn read_document(sbml: &str) -> Result<Document, ReadError> {
     Ok(Document {
         level,
         version,
-        model: read_model(model)?,
+        model: read_model(model, lv)?,
     })
 }
