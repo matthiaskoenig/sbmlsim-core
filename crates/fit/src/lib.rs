@@ -10,7 +10,8 @@
 //! This crate is that objective and the optimizers over it:
 //!
 //! - [`Definition`] is the fit as a host hands it over: the parameters with their bounds and
-//!   their scale, a request of `simulation/1` per condition and the data of every curve.
+//!   their scale, a request of `simulation/1` per condition, the data of every curve and the
+//!   priors of its parameters, which make its cost the negative log posterior.
 //! - [`Problem`] resolves it against a loaded model once (the prepared request of every
 //!   condition, the column and the row of every data point) and answers the
 //!   [`Problem::residuals`], the [`Problem::cost`] and the [`Problem::jacobian`] of a
@@ -37,15 +38,17 @@ mod optimize;
 mod problem;
 
 pub use contract::{
-    ConditionRequest, CurveRequest, FIT_CONTRACT, FitAnswer, FitRequest, FittedParameter,
-    Identifiability, OnRun, ParameterRequest, RunAnswer, fit, fit_models, fit_reporting,
-    fit_reporting_models, fit_with, problem_of, problem_of_models,
+    ConditionRequest, CorrelationRequest, CurveRequest, FIT_CONTRACT, FitAnswer, FitRequest,
+    FittedParameter, Identifiability, LikelihoodRequest, OnRun, ParameterRequest, PriorRequest,
+    RunAnswer, fit, fit_models, fit_reporting, fit_reporting_models, fit_with, problem_of,
+    problem_of_models,
 };
 pub use identifiability::{
     DELTA_95, Fisher, Profile, ProfilePoint, Walk, fisher, profile, profiles,
 };
 pub use optimize::{Algorithm, Evolution, Fit, Settings, Stop};
 pub use problem::{
-    Condition, Curve, DEFAULT_MODEL, DIFF_STEP, Definition, Derived, FAILED_RESIDUAL, FitError,
-    JacobianChoice, Parameter, Problem, Scale, Term,
+    Condition, Correlation, Curve, DEFAULT_MODEL, DIFF_STEP, Definition, Derived, FAILED_RESIDUAL,
+    FitError, JacobianChoice, LIKELIHOOD_OFFSET, LN_2, LN_2PI_HALF, Likelihood, NoiseKind,
+    Parameter, Prior, PriorKind, Problem, Scale, Term,
 };

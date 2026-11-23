@@ -1,6 +1,8 @@
 //! A fit of the decay model `y' = -k y`: its residuals, its jacobian and its optimum.
 
-use sbmlsim_fit::{Algorithm, JacobianChoice, Problem, Scale, Settings, Stop};
+use sbmlsim_fit::{
+    Algorithm, JacobianChoice, Likelihood, NoiseKind, Problem, Scale, Settings, Stop,
+};
 
 #[path = "support/fixture.rs"]
 mod fixture;
@@ -341,6 +343,7 @@ fn at_the_change(value: f64, after: Option<Vec<bool>>) -> Problem {
         noise: None,
         weight: 1.0,
         after_change: after,
+        likelihood: None,
     }];
     Problem::new(definition, model(), 1).unwrap()
 }
@@ -400,6 +403,7 @@ fn a_curve_of_more_flags_than_times_is_refused() {
         noise: None,
         weight: 1.0,
         after_change: Some(vec![true, false]),
+        likelihood: None,
     }];
 
     let error = Problem::new(definition, model(), 1).unwrap_err();
@@ -431,6 +435,7 @@ fn the_jacobian_of_a_measurement_after_a_change_is_the_one_of_the_row_it_reads()
             noise: None,
             weight: 1.0,
             after_change: flags,
+            likelihood: None,
         }];
         let problem = Problem::new(definition, model(), 1).unwrap();
         let x = problem.start();
@@ -578,6 +583,63 @@ fn a_measurement_of_an_infinite_standard_deviation_adds_a_row_of_zeros_to_the_ja
             .all(|(a, b)| a.to_bits() == b.to_bits())
     );
     assert_eq!(jacobian[kept.len()], 0.0);
+}
+
+#[test]
+fn both_rows_of_a_measurement_of_an_infinite_standard_deviation_of_a_likelihood_are_zero() {
+    // the sentinel of the noise says the same under a likelihood as without one: the
+    // measurement keeps both of its places in the residual vector and says nothing in either
+    // of them, and the rows of the measurements beside it are the ones of the curve without it
+    let (mut infinite, mut dropped) = with_an_infinite_last_point();
+    for definition in [&mut infinite, &mut dropped] {
+        definition.curves[0].likelihood = Some(Likelihood {
+            distribution: NoiseKind::Normal,
+            noise_column: None,
+        });
+    }
+    let infinite = Problem::new(infinite, model(), 1).unwrap();
+    let dropped = Problem::new(dropped, model(), 1).unwrap();
+
+    let residuals = infinite.residuals(&infinite.start()).unwrap();
+    let jacobian = infinite.jacobian(&infinite.start()).unwrap();
+    let kept = dropped.residuals(&dropped.start()).unwrap();
+    let kept_rows = dropped.jacobian(&dropped.start()).unwrap();
+
+    // `n` measurements are `2 n` rows, the data of all of them and then their scales
+    let n = kept.len() / 2 + 1;
+    assert_eq!(infinite.n_residuals(), 2 * n);
+    assert_eq!(residuals.len(), 2 * n);
+    assert_eq!(residuals[n - 1], 0.0, "the row of the data of the point");
+    assert_eq!(
+        residuals[2 * n - 1],
+        0.0,
+        "the row of the scale of its noise"
+    );
+    assert_eq!(jacobian[n - 1], 0.0, "the row of its data of the jacobian");
+    assert_eq!(
+        jacobian[2 * n - 1],
+        0.0,
+        "the row of its scale of the jacobian"
+    );
+    // the measurement at the start of the simulation is the initial value of `y`, which no
+    // parameter moves, so its row of the data is zero in either problem
+    assert!(kept.iter().any(|value| *value != 0.0), "{kept:?}");
+    assert!(kept_rows.iter().any(|value| *value != 0.0), "{kept_rows:?}");
+    for (rows, kept) in [(&residuals, &kept), (&jacobian, &kept_rows)] {
+        let others = [&rows[..n - 1], &rows[n..2 * n - 1]].concat();
+        assert_eq!(others.len(), kept.len());
+        assert!(
+            others
+                .iter()
+                .zip(kept.iter())
+                .all(|(a, b)| a.to_bits() == b.to_bits()),
+            "{others:?} are not {kept:?}"
+        );
+    }
+    assert_eq!(
+        infinite.cost(&infinite.start()).unwrap(),
+        dropped.cost(&dropped.start()).unwrap()
+    );
 }
 
 #[test]

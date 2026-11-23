@@ -74,6 +74,8 @@ fn definition(start: f64) -> Definition {
     let (times, values) = data(K);
     Definition {
         jacobian: Default::default(),
+        priors: Vec::new(),
+        prior_correlation: None,
         parameters: vec![Parameter {
             id: "k".to_string(),
             start,
@@ -90,6 +92,7 @@ fn definition(start: f64) -> Definition {
             noise: None,
             weight: 1.0,
             after_change: None,
+            likelihood: None,
         }],
     }
 }

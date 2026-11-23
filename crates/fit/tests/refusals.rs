@@ -7,7 +7,10 @@
 //! [`sbmlsim_fit::FAILED_RESIDUAL`].
 
 use sbmlsim_abi::{Output, SimulationRequest};
-use sbmlsim_fit::{Curve, Definition, FAILED_RESIDUAL, FitError, Parameter, Problem, Scale};
+use sbmlsim_fit::{
+    Correlation, Curve, Definition, FAILED_RESIDUAL, FitError, Parameter, Prior, PriorKind,
+    Problem, Scale,
+};
 
 #[path = "support/fixture.rs"]
 mod fixture;
@@ -35,12 +38,15 @@ fn curve() -> Curve {
         noise: None,
         weight: 1.0,
         after_change: None,
+        likelihood: None,
     }
 }
 
 fn definition() -> Definition {
     Definition {
         jacobian: Default::default(),
+        priors: Vec::new(),
+        prior_correlation: None,
         parameters: vec![parameter()],
         conditions: vec![request().into()],
         curves: vec![curve()],
@@ -124,6 +130,113 @@ fn a_parameter_which_cannot_be_searched_is_refused() {
                 ..definition()
             }),
             format!("the parameter 'k' {fault}")
+        );
+    }
+}
+
+/// A normal prior of `k` between the bounds of the parameter.
+fn prior() -> Prior {
+    Prior {
+        parameter: 0,
+        kind: PriorKind::Normal,
+        parameters: vec![0.5, 0.2],
+        offset: 2.0,
+        normalizer: 0.0,
+        lower: 0.1,
+        upper: 10.0,
+    }
+}
+
+#[test]
+fn a_prior_of_a_number_which_is_not_finite_is_refused() {
+    // the numbers no JSON of the contract carries, since it has neither an infinity nor a
+    // `NaN`, and which a host of the library can write: the row of such a prior would be
+    // `NaN` at every point of the search space and the fit would find nothing
+    for (fault, prior) in [
+        (
+            "of 'k' has the offset inf and the normalizer 0, one of which is not finite",
+            Prior {
+                offset: f64::INFINITY,
+                ..prior()
+            },
+        ),
+        (
+            "of 'k' has the offset 2 and the normalizer NaN, one of which is not finite",
+            Prior {
+                normalizer: f64::NAN,
+                ..prior()
+            },
+        ),
+        (
+            "of 'k' has the parameter NaN of its normal distribution, which is not finite",
+            Prior {
+                parameters: vec![f64::NAN, 0.2],
+                ..prior()
+            },
+        ),
+        (
+            "of 'k' is defined between 0.1 and inf, which are not increasing and finite",
+            Prior {
+                upper: f64::INFINITY,
+                ..prior()
+            },
+        ),
+    ] {
+        assert_eq!(
+            refusal(Definition {
+                priors: vec![prior],
+                ..definition()
+            }),
+            format!("the prior 0 {fault}")
+        );
+    }
+}
+
+#[test]
+fn a_correlation_of_a_number_which_is_no_value_of_it_is_refused() {
+    // the values a JSON of the contract cannot carry: an infinity, a `NaN` and, since the
+    // request carries the rows of the inverse and the problem one matrix, an inverse which is
+    // no square matrix of its parameters, whose row a whitened score would read past
+    let correlation = || Correlation {
+        parameters: vec![0],
+        log: vec![false],
+        location: vec![0.5],
+        scale: vec![0.2],
+        inverse: vec![1.0],
+        offsets: Vec::new(),
+        lower: vec![0.1],
+        upper: vec![10.0],
+    };
+
+    for (fault, correlation) in [
+        (
+            "has the value NaN of its inverse or of its offsets, which is not finite",
+            Correlation {
+                inverse: vec![f64::NAN],
+                ..correlation()
+            },
+        ),
+        (
+            "gives 'k' the location -inf, which is not finite",
+            Correlation {
+                location: vec![f64::NEG_INFINITY],
+                ..correlation()
+            },
+        ),
+        (
+            "has 1 parameters and the 2 values of its inverse, which is no 1 by 1 matrix",
+            Correlation {
+                inverse: vec![1.0, 0.0],
+                ..correlation()
+            },
+        ),
+    ] {
+        assert_eq!(
+            refusal(Definition {
+                prior_correlation: Some(correlation),
+                ..definition()
+            }),
+            format!("the correlation of the priors {fault}")
         );
     }
 }
