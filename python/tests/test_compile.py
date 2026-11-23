@@ -22,6 +22,24 @@ ALGEBRAIC_SBML = """<?xml version="1.0" encoding="UTF-8"?>
 </sbml>"""
 
 
+LEVEL2_SBML = """<?xml version="1.0" encoding="UTF-8"?>
+<sbml xmlns="http://www.sbml.org/sbml/level2/version4" level="2" version="4">
+  <model id="decay">
+    <listOfParameters>
+      <parameter id="y" value="1" constant="false"/>
+      <parameter id="k" value="0.5"/>
+    </listOfParameters>
+    <listOfRules>
+      <rateRule variable="y">
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+          <apply><times/><apply><minus/><ci>k</ci></apply><ci>y</ci></apply>
+        </math>
+      </rateRule>
+    </listOfRules>
+  </model>
+</sbml>"""
+
+
 @pytest.fixture(scope="module")
 def decay_sbml() -> str:
     """The SBML of the decay model of the host tests."""
@@ -30,8 +48,8 @@ def decay_sbml() -> str:
 
 @pytest.fixture(scope="module")
 def level2_sbml() -> str:
-    """A level 2 document, which the reader refuses."""
-    return (ROOT / "crates/sbml/tests/data/level2.xml").read_text(encoding="utf-8")
+    """The decay model as a level 2 version 4 document."""
+    return LEVEL2_SBML
 
 
 def test_compile_gives_a_module_and_a_description(decay_sbml: str) -> None:
@@ -62,9 +80,10 @@ def test_compile_names_the_entities_an_algebraic_rule_cannot_determine() -> None
         sbmlsim_core.compile_sbml(ALGEBRAIC_SBML)
 
 
-def test_compile_refuses_a_level_2_document(level2_sbml: str) -> None:
-    with pytest.raises(sbmlsim_core.CompileError, match="only level 3"):
-        sbmlsim_core.compile_sbml(level2_sbml)
+def test_compile_reads_a_level_2_document(level2_sbml: str) -> None:
+    compiled = sbmlsim_core.compile_sbml(level2_sbml)
+    assert compiled.wasm[:4] == b"\0asm"
+    assert [s["id"] for s in compiled.description["states"]] == ["y"]
 
 
 def test_loading_a_model_which_is_no_module_raises_a_load_error(
