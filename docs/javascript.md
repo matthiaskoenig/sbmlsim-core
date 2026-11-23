@@ -289,6 +289,21 @@ Byte inputs to `runtime.instantiate` and `pool.addModel` are validated before co
 
 A precompiled `WebAssembly.Module` is a **trusted input**: JavaScript reflection exposes imports and exports but cannot inspect these state sections. Supply bytes at the validation boundary, or only pass modules compiled from previously validated bytes. Neither metadata nor these structural checks prove that arbitrary model instructions respect borrowed buffers in the shared engine memory. Use compiler-produced models, and run untrusted execution in workers with resource limits. Direct main-thread loader calls are synchronous and cannot be interrupted by an `AbortSignal`.
 
+## The compiler
+
+```js
+import { createCompiler } from "./js/compile.mjs";
+
+// compiler: a WebAssembly.Module or the bytes of compiler.wasm
+const compiler = await createCompiler({ compiler });
+const { wasm, description } = compiler.compile(sbmlText);
+const instance = await runtime.instantiate(wasm, description);
+```
+
+`compiler.wasm` is the compiler of the command line built for `wasm32-unknown-unknown` (`crates/wasm`, the C ABI of `allocate`, `compile` and `deallocate` over the memory of the module): the same reader of SBML, the same model representation and the same code generation, so a model compiled in a page gives the `model.wasm` and the `model.json` of `sbmlsim-core compile`, byte for byte, which `js/test/compile.test.mjs` asserts. The module reads no file and imports nothing of its host, so a page compiles a document a visitor drops into it without a server; `sbmlsim-core runtime -o DIR` writes it next to `engine.wasm` and `mathlib.wasm`.
+
+`compiler.compile(sbml, { optimize = true, jacobian = "auto" })` gives `{ wasm, description }`, the bytes of the module and the description as an object, which `runtime.instantiate` takes as they are. The call is synchronous and takes a few milliseconds for a model of the size of the repressilator, so a page compiles on the main thread; a model of many reactions belongs in a worker next to the simulations. `optimize: false` leaves the optimizer out (the results are the same, the module is larger), `jacobian` is `"auto"`, `"difference-quotient"` or `"analytic"`, and a document the compiler refuses raises a `CompileError` with the message of the compiler. One compiler compiles any number of models, and `compiler.module` is the compiled `WebAssembly.Module`, which a worker gets to create a compiler of its own.
+
 ## The worker pool
 
 A simulation is one synchronous call of the engine. `pool.mjs` runs them in a pool of workers, each with a runtime of its own, so a page stays responsive and the points of a scan run in parallel:

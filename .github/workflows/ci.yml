@@ -59,6 +59,9 @@ jobs:
       - run: cargo build -p sbmlsim-ir --target wasm32-unknown-unknown
       - run: cargo build -p sbmlsim-codegen --target wasm32-unknown-unknown
       - run: cargo build -p sbmlsim-compiler --target wasm32-unknown-unknown --release
+      # `compiler.wasm`, the compiler of `js/compile.mjs`: the module of the npm package
+      - run: cargo build -p sbmlsim-wasm --target wasm32-unknown-unknown --profile wasm
+      - run: cargo test -p sbmlsim-wasm
   same_bits_as_wasmtime:
     # the JavaScript loader in Node: its tests, and every passing case of the SBML Test Suite
     # gives in Node the CSV of the wasmtime host byte for byte (js/test/same_bits.test.mjs)

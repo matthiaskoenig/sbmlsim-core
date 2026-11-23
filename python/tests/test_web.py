@@ -31,9 +31,9 @@ def _custom_sections(wasm: bytes) -> dict[str, bytes]:
     return sections
 
 
-def test_the_runtime_is_the_engine_and_the_math_library() -> None:
+def test_the_runtime_is_the_engine_the_math_library_and_the_compiler() -> None:
     files = sbmlsim_core.runtime_wasm()
-    assert sorted(files) == ["engine", "mathlib"]
+    assert sorted(files) == ["compiler", "engine", "mathlib"]
     for wasm in files.values():
         assert wasm[:4] == b"\0asm"
     section = json.loads(_custom_sections(files["engine"])["sbmlsim.engine"])

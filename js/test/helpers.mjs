@@ -1,10 +1,12 @@
 // What the tests of the loader share: the command line of sbmlsim-core (the wasmtime host, the
-// compiler), the `engine.wasm` and `mathlib.wasm` of its build, and compiled models.
+// compiler), the `engine.wasm`, `mathlib.wasm` and `compiler.wasm` of its build, and compiled
+// models.
 //
 // `SBMLSIM_CORE_CLI` is the command line to use; without it the tests build it with
 // `cargo build --release -p sbmlsim-cli` (which needs `WASI_SDK_PATH`, see the README) and use
-// `target/release/sbmlsim-core`. `SBMLSIM_CORE_RUNTIME` is a directory with `engine.wasm` and
-// `mathlib.wasm`; without it the tests write those of the command line into a temporary one.
+// `target/release/sbmlsim-core`. `SBMLSIM_CORE_RUNTIME` is a directory with `engine.wasm`,
+// `mathlib.wasm` and `compiler.wasm`; without it the tests write those of the command line
+// into a temporary one.
 
 import { execFileSync } from "node:child_process";
 import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -61,7 +63,7 @@ export function tempDir(prefix = "sbmlsim-core-") {
 
 let runtimeDirPath = null;
 
-/** The directory of `engine.wasm` and `mathlib.wasm` of the command line. */
+/** The directory of `engine.wasm`, `mathlib.wasm` and `compiler.wasm` of the command line. */
 export function runtimeDir() {
   if (runtimeDirPath) return runtimeDirPath;
   if (process.env.SBMLSIM_CORE_RUNTIME) {
@@ -106,6 +108,14 @@ export function readModel(dir) {
 
 /** The decay model of the tests of the wasmtime host. */
 export const DECAY = path.join(ROOT, "crates", "host", "tests", "decay-model");
+
+/** The SBML document the compiled decay model was compiled from. */
+export const DECAY_SBML = path.join(ROOT, "crates", "host", "tests", "decay.xml");
+
+/** The bytes of `compiler.wasm` of the runtime, the compiler of `js/compile.mjs`. */
+export function compilerWasm() {
+  return readFileSync(path.join(runtimeDir(), "compiler.wasm"));
+}
 
 /**
  * Whether the prepared cases of the SBML Test Suite exist; with `SBMLSIM_CORE_REQUIRE_CASES` set

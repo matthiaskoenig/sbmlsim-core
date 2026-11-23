@@ -128,13 +128,16 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }
 
-/// The bytes of the runtime this extension embeds, `engine.wasm` and `mathlib.wasm` (the ones of
-/// `sbmlsim-core runtime` and of the npm package of the release), by the keys `engine` and
-/// `mathlib`: what a page which simulates the models compiled here runs them with.
+/// The bytes of the runtime this extension embeds, `engine.wasm`, `mathlib.wasm` and
+/// `compiler.wasm` (the ones of `sbmlsim-core runtime` and of the npm package of the release),
+/// by the keys `engine`, `mathlib` and `compiler`: what a page which simulates the models
+/// compiled here runs them with, and the compiler it compiles a model of its own with
+/// (`js/compile.mjs`).
 #[pyfunction]
 fn runtime_wasm(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
     let files = PyDict::new(py);
     files.set_item("engine", PyBytes::new(py, sbmlsim_host::ENGINE_WASM))?;
     files.set_item("mathlib", PyBytes::new(py, sbmlsim_host::MATHLIB_WASM))?;
+    files.set_item("compiler", PyBytes::new(py, sbmlsim_host::COMPILER_WASM))?;
     Ok(files)
 }

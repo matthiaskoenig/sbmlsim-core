@@ -695,14 +695,18 @@ pub fn description_json(desc: &ModelDescription) -> anyhow::Result<Vec<u8>> {
     Ok(json)
 }
 
-/// Writes the `engine.wasm` and `mathlib.wasm` of this build into `dir`, and next to them
-/// `THIRD_PARTY.md`, the notices of the libraries `engine.wasm` links statically (a
-/// redistributed `engine.wasm` carries them).
+/// Writes the `engine.wasm`, `mathlib.wasm` and `compiler.wasm` of this build into `dir`, and
+/// next to them `THIRD_PARTY.md`, the notices of the libraries `engine.wasm` links statically
+/// (a redistributed `engine.wasm` carries them).
+///
+/// `compiler.wasm` is the compiler of a JavaScript host (`js/compile.mjs`), which compiles an
+/// SBML document in a page into the `model.wasm` the engine runs.
 pub fn write_runtime(dir: &Path) -> anyhow::Result<()> {
     fs::create_dir_all(dir).with_context(|| format!("cannot create {}", dir.display()))?;
     for (name, bytes) in [
         ("engine.wasm", sbmlsim_host::ENGINE_WASM),
         ("mathlib.wasm", sbmlsim_host::MATHLIB_WASM),
+        ("compiler.wasm", sbmlsim_host::COMPILER_WASM),
         (
             "THIRD_PARTY.md",
             sbmlsim_host::THIRD_PARTY_NOTICES.as_bytes(),

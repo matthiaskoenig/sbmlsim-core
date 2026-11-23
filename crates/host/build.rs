@@ -1,10 +1,13 @@
-//! Provides `engine.wasm` and `mathlib.wasm` in `OUT_DIR`, which `src/lib.rs` embeds.
+//! Provides `engine.wasm`, `mathlib.wasm` and `compiler.wasm` in `OUT_DIR`, which `src/lib.rs`
+//! embeds.
 //!
-//! With `SBMLSIM_CORE_WASM_DIR` both are copied from that directory. Otherwise they are built
-//! by a nested cargo, in a target directory of their own (`wasm-build` in the target directory
-//! of the workspace, kept between builds): the engine as a `cdylib` for `wasm32-wasip1` with an
-//! imported (and exported) memory, which needs `WASI_SDK_PATH` for the C of `sbmlsim-csolvers`,
-//! and mathlib for `wasm32-unknown-unknown`, both with the release profile.
+//! With `SBMLSIM_CORE_WASM_DIR` the three are copied from that directory. Otherwise they are
+//! built by a nested cargo, in a target directory of their own (`wasm-build` in the target
+//! directory of the workspace, kept between builds): the engine as a `cdylib` for
+//! `wasm32-wasip1` with an imported (and exported) memory, which needs `WASI_SDK_PATH` for the
+//! C of `sbmlsim-csolvers`, mathlib for `wasm32-unknown-unknown` with the release profile, and
+//! `compiler.wasm` (`sbmlsim-wasm`, the compiler in a browser) for `wasm32-unknown-unknown`
+//! with the profile `wasm`, which is the release profile for size.
 //!
 //! `engine.wasm` gets a custom section `sbmlsim.engine` (`sbmlsim_abi::ENGINE_SECTION`, when it
 //! has none) with the JSON `{"memory_minimum_pages":n,"output_format":k}`: the minimum of the
@@ -29,7 +32,7 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     if let Some(dir) = env::var_os(WASM_DIR) {
         let dir = PathBuf::from(dir);
-        for name in ["engine.wasm", "mathlib.wasm"] {
+        for name in ["engine.wasm", "mathlib.wasm", "compiler.wasm"] {
             let source = dir.join(name);
             println!("cargo:rerun-if-changed={}", source.display());
             std::fs::copy(&source, out.join(name)).unwrap_or_else(|e| {
@@ -51,7 +54,9 @@ fn main() {
     }
     let manifest = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
     let workspace = manifest.join("../..");
-    for crate_dir in ["abi", "engine", "csolvers", "mathlib"] {
+    for crate_dir in [
+        "abi", "engine", "csolvers", "mathlib", "sbml", "ir", "codegen", "compiler", "wasm",
+    ] {
         let dir = workspace.join("crates").join(crate_dir);
         for part in ["src", "csrc", "Cargo.toml", "build.rs"] {
             if dir.join(part).exists() {
@@ -123,8 +128,26 @@ fn main() {
         &[],
         "wasm32-unknown-unknown/release/sbmlsim_mathlib.wasm",
     );
+    let compiler = build(
+        &workspace,
+        &target_dir,
+        &[
+            "build",
+            "-p",
+            "sbmlsim-wasm",
+            "--lib",
+            "--target",
+            "wasm32-unknown-unknown",
+            "--profile",
+            "wasm",
+            "--locked",
+        ],
+        &[],
+        "wasm32-unknown-unknown/wasm/sbmlsim_wasm.wasm",
+    );
     std::fs::copy(engine, out.join("engine.wasm")).unwrap();
     std::fs::copy(mathlib, out.join("mathlib.wasm")).unwrap();
+    std::fs::copy(compiler, out.join("compiler.wasm")).unwrap();
     add_engine_section(&out.join("engine.wasm"));
 }
 
