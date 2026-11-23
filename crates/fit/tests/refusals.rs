@@ -212,9 +212,30 @@ fn a_curve_which_does_not_fit_its_condition_is_refused() {
             },
         ),
         (
-            "has the standard deviation 0, which is not positive and finite",
+            "has the standard deviation 0, which is no standard deviation of a curve; pass a positive value, or an infinity to drop the point",
             Curve {
                 noise: Some(vec![0.1, 0.0, 0.1]),
+                ..curve()
+            },
+        ),
+        (
+            "has the standard deviation NaN, which is no standard deviation of a curve; pass a positive value, or an infinity to drop the point",
+            Curve {
+                noise: Some(vec![0.1, f64::NAN, 0.1]),
+                ..curve()
+            },
+        ),
+        (
+            "has the standard deviation -inf, which is no standard deviation of a curve; pass a positive value, or an infinity to drop the point",
+            Curve {
+                noise: Some(vec![0.1, f64::NEG_INFINITY, 0.1]),
+                ..curve()
+            },
+        ),
+        (
+            "has the standard deviation -0.5, which is no standard deviation of a curve; pass a positive value, or an infinity to drop the point",
+            Curve {
+                noise: Some(vec![0.1, -0.5, 0.1]),
                 ..curve()
             },
         ),
@@ -367,4 +388,27 @@ fn a_fit_of_no_thread_is_refused() {
         matches!(err, FitError::Pool(_)),
         "{err} is no refusal of the pool"
     );
+}
+
+#[test]
+fn a_failed_condition_scores_a_point_of_an_infinite_standard_deviation_as_a_failure() {
+    // the failure is of the condition, so the point which carries no information is not
+    // scored 0 and hides nothing from the optimizer
+    let mut request = request();
+    request.settings.maximum_num_steps = 60;
+    let problem = Problem::new(
+        Definition {
+            conditions: vec![request.into()],
+            curves: vec![Curve {
+                noise: Some(vec![0.1, 0.1, f64::INFINITY]),
+                ..curve()
+            }],
+            ..definition()
+        },
+        model(),
+        2,
+    )
+    .unwrap();
+
+    assert_eq!(problem.residuals(&[2.0]).unwrap(), vec![FAILED_RESIDUAL; 3]);
 }

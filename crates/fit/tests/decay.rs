@@ -515,3 +515,93 @@ fn the_weight_of_a_curve_multiplies_the_residuals_it_divided() {
         assert_eq!(*got, want * 4.0);
     }
 }
+
+fn with_an_infinite_last_point() -> (sbmlsim_fit::Definition, sbmlsim_fit::Definition) {
+    // the data is shifted from the model so that every residual is nonzero
+    let mut infinite = definition(K * 1.5, Scale::Lin);
+    let points = infinite.curves[0].values.len();
+    infinite.curves[0].noise = Some(
+        (0..points)
+            .map(|i| if i + 1 == points { f64::INFINITY } else { 0.5 })
+            .collect(),
+    );
+    let mut dropped = infinite.clone();
+    {
+        let curve = &mut dropped.curves[0];
+        curve.times.pop();
+        curve.values.pop();
+        curve.noise.as_mut().unwrap().pop();
+    }
+    (infinite, dropped)
+}
+
+#[test]
+fn a_measurement_of_an_infinite_standard_deviation_adds_nothing_to_the_cost() {
+    let (infinite, dropped) = with_an_infinite_last_point();
+    let infinite = Problem::new(infinite, model(), 1).unwrap();
+    let dropped = Problem::new(dropped, model(), 1).unwrap();
+
+    let residuals = infinite.residuals(&infinite.start()).unwrap();
+    let kept = dropped.residuals(&dropped.start()).unwrap();
+
+    assert_eq!(residuals.len(), kept.len() + 1);
+    let last = residuals[residuals.len() - 1];
+    assert_eq!(last, 0.0);
+    assert!(
+        residuals[..kept.len()]
+            .iter()
+            .zip(kept.iter())
+            .all(|(a, b)| a.to_bits() == b.to_bits())
+    );
+    assert!(kept.iter().any(|r| *r != 0.0));
+    assert_eq!(
+        infinite.cost(&infinite.start()).unwrap(),
+        dropped.cost(&dropped.start()).unwrap()
+    );
+}
+
+#[test]
+fn a_measurement_of_an_infinite_standard_deviation_adds_a_row_of_zeros_to_the_jacobian() {
+    let (infinite, dropped) = with_an_infinite_last_point();
+    let infinite = Problem::new(infinite, model(), 1).unwrap();
+    let dropped = Problem::new(dropped, model(), 1).unwrap();
+
+    let jacobian = infinite.jacobian(&infinite.start()).unwrap();
+    let kept = dropped.jacobian(&dropped.start()).unwrap();
+
+    assert_eq!(jacobian.len(), kept.len() + 1);
+    assert!(kept.iter().any(|j| *j != 0.0));
+    assert!(
+        jacobian[..kept.len()]
+            .iter()
+            .zip(kept.iter())
+            .all(|(a, b)| a.to_bits() == b.to_bits())
+    );
+    assert_eq!(jacobian[kept.len()], 0.0);
+}
+
+#[test]
+fn the_residual_of_a_measurement_of_an_infinite_standard_deviation_keeps_its_sign() {
+    // Python gives `residual * sqrt(0.0)`, the engine `(simulated - measured) / inf`: both
+    // are -0.0 for a simulation below its measurement and +0.0 for one above it
+    for (shift, below) in [(1.0, true), (-1.0, false)] {
+        let mut definition = definition(K, Scale::Lin);
+        let points = definition.curves[0].values.len();
+        // the data is the model, so the shift alone sets the sign of the difference
+        definition.curves[0].values[points - 1] += shift;
+        definition.curves[0].noise = Some(
+            (0..points)
+                .map(|i| if i + 1 == points { f64::INFINITY } else { 1.0 })
+                .collect(),
+        );
+        let problem = Problem::new(definition, model(), 1).unwrap();
+
+        let residuals = problem.residuals(&problem.start()).unwrap();
+        let residual = residuals[points - 1];
+
+        assert_eq!(residual, 0.0);
+        assert_eq!(residual.is_sign_negative(), below, "{residual:?}");
+        let jacobian = problem.jacobian(&problem.start()).unwrap();
+        assert_eq!(jacobian[points - 1], 0.0);
+    }
+}
