@@ -90,6 +90,7 @@ fn definition(start: f64) -> Definition {
             noise: None,
             weight: 1.0,
             after_change: None,
+            likelihood: None,
         }],
     }
 }

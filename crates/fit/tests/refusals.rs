@@ -35,6 +35,7 @@ fn curve() -> Curve {
         noise: None,
         weight: 1.0,
         after_change: None,
+        likelihood: None,
     }
 }
 

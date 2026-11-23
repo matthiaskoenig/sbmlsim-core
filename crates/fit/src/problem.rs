@@ -24,6 +24,27 @@ pub const FAILED_RESIDUAL: f64 = 1e3;
 /// residuals and an optimizer stops next to its start.
 pub const DIFF_STEP: f64 = 1e-3;
 
+/// What the residual of the scale of the noise of a measurement carries on top of its term,
+/// the `LIKELIHOOD_OFFSET` of sbmlsim.
+///
+/// A least squares optimizer minimizes a sum of squares, so the negative log-likelihood of a
+/// measurement is written as two residuals whose squares add up to twice it: the one of its
+/// data and the one of the scale of its noise, `sqrt(2 term + offset)`. The term of a scale
+/// is `ln(sigma) + c` and is negative for a small standard deviation, which has no root, so
+/// every such row carries this offset. The cost of a fit is therefore the negative
+/// log-likelihood plus `0.5 * offset` per measurement, a constant of the data which the host
+/// subtracts: the engine never does, since the offset of a measurement of a log kind depends
+/// on its own value.
+pub const LIKELIHOOD_OFFSET: f64 = 100.0;
+
+/// Half the logarithm of `2 pi`, the normalization of the density of a normal distribution,
+/// the double python computes for `0.5 * np.log(2.0 * np.pi)`.
+pub const LN_2PI_HALF: f64 = 0.918_938_533_204_672_7;
+
+/// The logarithm of 2, the normalization of the density of a Laplace distribution, the
+/// double python computes for `np.log(2.0)`.
+pub const LN_2: f64 = std::f64::consts::LN_2;
+
 /// What is wrong with a fit, or with the engine under it.
 #[derive(Debug, Error)]
 pub enum FitError {
@@ -152,6 +173,60 @@ impl Scale {
     }
 }
 
+/// The distribution of the noise of the measurements of a curve.
+///
+/// A curve which names one is a curve of a likelihood: the residual of a measurement is the
+/// one of its data and one more of the scale of its noise, so that half the sum of their
+/// squares is the negative log-likelihood of the measurement up to [`LIKELIHOOD_OFFSET`].
+/// The log kinds are the ones of a measurement which is a logarithm (the log-normal noise of
+/// data of a geometric standard deviation), whose density carries the measurement itself.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum NoiseKind {
+    /// A normal noise of the standard deviation of the measurement.
+    Normal,
+    /// A normal noise of the logarithm of the measurement, whose column and values are
+    /// logarithms.
+    LogNormal,
+    /// A Laplace noise of the scale of the measurement, whose residual is the root of twice
+    /// its absolute deviation.
+    Laplace,
+    /// A Laplace noise of the logarithm of the measurement, whose column and values are
+    /// logarithms.
+    LogLaplace,
+}
+
+impl NoiseKind {
+    /// Whether the measurements and the column of the kind are logarithms, whose density
+    /// carries the measurement itself.
+    fn logarithmic(self) -> bool {
+        matches!(self, NoiseKind::LogNormal | NoiseKind::LogLaplace)
+    }
+
+    /// Whether the kind is a Laplace distribution, whose negative log-likelihood carries the
+    /// absolute deviation of a measurement and not half its square.
+    fn laplace(self) -> bool {
+        matches!(self, NoiseKind::Laplace | NoiseKind::LogLaplace)
+    }
+
+    /// The normalization of the density of the kind, the constant of the term of the scale of
+    /// its noise.
+    fn constant(self) -> f64 {
+        if self.laplace() { LN_2 } else { LN_2PI_HALF }
+    }
+}
+
+/// The noise model of a curve, which makes its residuals the ones of a likelihood.
+#[derive(Clone, Debug)]
+pub struct Likelihood {
+    /// The distribution of the noise of every measurement of the curve.
+    pub distribution: NoiseKind,
+    /// The column of the simulation of the condition which is the standard deviation of a
+    /// measurement, read in the row of that measurement; the `noise` of the curve when it is
+    /// absent, and the two together are refused.
+    pub noise_column: Option<String>,
+}
+
 /// A parameter of a fit: what it sets in the model, where it starts and where it may go.
 #[derive(Clone, Debug)]
 pub struct Parameter {
@@ -191,6 +266,10 @@ pub struct Curve {
     /// one flag per time; every measurement reads the state before a change when it is
     /// absent. See [`crate::CurveRequest::after_change`].
     pub after_change: Option<Vec<bool>>,
+    /// The noise model of the curve, which makes its residuals the ones of a likelihood:
+    /// two per measurement, the one of its data and the one of the scale of its noise. The
+    /// weighted least squares of [`Curve::noise`] when it is absent.
+    pub likelihood: Option<Likelihood>,
 }
 
 /// A fit as a host hands it over: the parameters, the conditions and the data.
@@ -278,10 +357,107 @@ struct Resolved {
     rows: Vec<usize>,
     /// The measurements.
     values: Vec<f64>,
-    /// The standard deviation of every measurement, which its residual is divided by.
+    /// The standard deviation of every measurement, which its residual is divided by; the
+    /// ones of a curve whose standard deviation is a column of its condition are never read.
     noise: Vec<f64>,
     /// The weight of the curve, which every residual of it is multiplied by.
     weight: f64,
+    /// The noise model of the curve, resolved against the table of its condition; `None` for
+    /// the weighted least squares of a curve without one.
+    likelihood: Option<ResolvedLikelihood>,
+}
+
+/// The noise model of a curve, with the column of its standard deviation resolved.
+#[derive(Clone, Copy, Debug)]
+struct ResolvedLikelihood {
+    /// The distribution of the noise of every measurement of the curve.
+    distribution: NoiseKind,
+    /// The column of the standard deviation of a measurement in the table of the condition,
+    /// `None` for a curve whose standard deviations are the numbers of its request.
+    noise_column: Option<usize>,
+}
+
+/// The two residual rows of one measurement of a curve of a likelihood and what their
+/// derivatives are built from, see [`Resolved::rows_of`].
+#[derive(Clone, Copy, Debug)]
+struct Rows {
+    /// The standard deviation of the measurement, which is positive and finite.
+    sigma: f64,
+    /// The deviation of the measurement over it, `(column - value) / sigma`.
+    r: f64,
+    /// The residual of the data, without the weight of the curve.
+    data: f64,
+    /// The root of `2 term + offset`, the residual of the scale of the noise, without the
+    /// weight of the curve as well; its derivative divides by it.
+    root: f64,
+}
+
+/// Whether a number is a standard deviation of a measurement of a likelihood: positive and
+/// finite.
+///
+/// A likelihood reads the logarithm of the standard deviation of a measurement, so an
+/// infinity is none of it, where the weighted least squares of a curve without a noise model
+/// takes it as a measurement which carries no information.
+fn usable_sigma(sigma: f64) -> bool {
+    sigma.is_finite() && sigma > 0.0
+}
+
+impl Resolved {
+    /// The number of rows of the curve in the residuals of the fit: one per measurement, and
+    /// one more per measurement for the scale of the noise of a likelihood.
+    fn n_rows(&self) -> usize {
+        self.rows.len() * if self.likelihood.is_some() { 2 } else { 1 }
+    }
+
+    /// The two residual rows of the measurement `at` of a curve of the likelihood, without
+    /// the weight of the curve, `None` for a measurement whose standard deviation is none
+    /// ([`FAILED_RESIDUAL`] for both of them).
+    ///
+    /// The row of the data is the deviation of the measurement over its standard deviation,
+    /// and for a Laplace kind the root of twice its absolute value with its sign, so that
+    /// half its square is the deviation the negative log-likelihood of that kind carries.
+    /// The row of the scale is `sqrt(2 term + offset)` of the term `ln(sigma) + c`, which a
+    /// log kind adds the measurement to, since its density carries it; the offset of the row
+    /// keeps the term of a small standard deviation above zero, see [`LIKELIHOOD_OFFSET`].
+    fn rows_of(
+        &self,
+        table: &SimulationResult,
+        columns: usize,
+        likelihood: ResolvedLikelihood,
+        at: usize,
+    ) -> Option<Rows> {
+        let row = self.rows[at];
+        let sigma = match likelihood.noise_column {
+            Some(column) => table.values[row * columns + column],
+            None => self.noise[at],
+        };
+        if !usable_sigma(sigma) {
+            return None;
+        }
+        let kind = likelihood.distribution;
+        let value = self.values[at];
+        // the difference is divided by the standard deviation and not multiplied by its
+        // reciprocal, which rounds once more, as the residual of a least squares is
+        let r = (table.values[row * columns + self.column] - value) / sigma;
+        let data = if kind.laplace() {
+            r.signum() * (2.0 * r.abs()).sqrt()
+        } else {
+            r
+        };
+        let term = sigma.ln() + if kind.logarithmic() { value } else { 0.0 } + kind.constant();
+        let offset = LIKELIHOOD_OFFSET
+            + if kind.logarithmic() {
+                (-2.0 * value).max(0.0)
+            } else {
+                0.0
+            };
+        Some(Rows {
+            sigma,
+            r,
+            data,
+            root: (2.0 * term + offset).max(0.0).sqrt(),
+        })
+    }
 }
 
 /// One condition of the fit: what to simulate and which residuals its table carries.
@@ -324,21 +500,38 @@ impl Point {
     }
 
     /// The residuals of the curves of the condition, in the order of the curves.
+    ///
+    /// The rows of a curve of a likelihood are the residuals of its data and then the ones of
+    /// the scale of their noise, which is the layout of its block of the jacobian as well.
     fn residuals(&self, table: &SimulationResult) -> Vec<f64> {
         let mut out = Vec::with_capacity(self.n_residuals);
         for curve in &self.curves {
-            for ((row, value), noise) in curve
-                .rows
-                .iter()
-                .zip(curve.values.iter())
-                .zip(curve.noise.iter())
-            {
-                // the difference is divided by the standard deviation and not
-                // multiplied by its reciprocal, which rounds once more: the
-                // residual is the one of the caller bitwise, e.g. `0.9 / 2.5`
-                // is `0.36` where `0.9 * (1.0 / 2.5)` is `0.36000000000000004`
-                let residual = (table.values[row * self.columns + curve.column] - value) / noise;
-                out.push(residual * curve.weight);
+            let Some(likelihood) = curve.likelihood else {
+                for ((row, value), noise) in curve
+                    .rows
+                    .iter()
+                    .zip(curve.values.iter())
+                    .zip(curve.noise.iter())
+                {
+                    // the difference is divided by the standard deviation and not
+                    // multiplied by its reciprocal, which rounds once more: the
+                    // residual is the one of the caller bitwise, e.g. `0.9 / 2.5`
+                    // is `0.36` where `0.9 * (1.0 / 2.5)` is `0.36000000000000004`
+                    let residual =
+                        (table.values[row * self.columns + curve.column] - value) / noise;
+                    out.push(residual * curve.weight);
+                }
+                continue;
+            };
+            // the rows of a measurement are made in both loops, which costs a division and
+            // a root and holds no buffer of the rows of the scales while the data is pushed
+            for at in 0..curve.rows.len() {
+                let rows = curve.rows_of(table, self.columns, likelihood, at);
+                out.push(rows.map_or(FAILED_RESIDUAL, |rows| rows.data * curve.weight));
+            }
+            for at in 0..curve.rows.len() {
+                let rows = curve.rows_of(table, self.columns, likelihood, at);
+                out.push(rows.map_or(FAILED_RESIDUAL, |rows| rows.root * curve.weight));
             }
         }
         out
@@ -351,6 +544,12 @@ impl Point {
     /// `factors` is, per varying target of the condition, the parameter of the search space it
     /// takes its value from and the derivative of that value in it ([`Scale::derivative`]),
     /// `None` for a target which is held at a value.
+    ///
+    /// The two rows of a measurement of a likelihood are the chain rule of its residuals: the
+    /// one of its data follows the column of the curve and, where its standard deviation is a
+    /// column of the condition, that column as well, the one of the scale of its noise only
+    /// the latter. The rows of a measurement whose standard deviation is none are zero, as
+    /// the derivative of its constant [`FAILED_RESIDUAL`] is.
     fn block(
         &self,
         table: &SimulationResult,
@@ -364,19 +563,56 @@ impl Point {
         };
         let targets = sensitivities.parameters.len();
         let mut out = vec![0.0; self.n_residuals * k];
+        let derivatives = |row: usize, column: usize| {
+            &sensitivities.values[(row * self.columns + column) * targets..][..targets]
+        };
         let mut at = 0;
         for curve in &self.curves {
-            for (row, noise) in curve.rows.iter().zip(curve.noise.iter()) {
-                let scale = curve.weight / noise;
-                let values = &sensitivities.values[(row * self.columns + curve.column) * targets..]
-                    [..targets];
-                for (value, factor) in values.iter().zip(factors) {
-                    if let Some((parameter, factor)) = factor {
-                        out[at * k + parameter] = value * scale * factor;
+            let Some(likelihood) = curve.likelihood else {
+                for (row, noise) in curve.rows.iter().zip(curve.noise.iter()) {
+                    let scale = curve.weight / noise;
+                    let values = derivatives(*row, curve.column);
+                    for (value, factor) in values.iter().zip(factors) {
+                        if let Some((parameter, factor)) = factor {
+                            out[at * k + parameter] = value * scale * factor;
+                        }
                     }
+                    at += 1;
                 }
-                at += 1;
+                continue;
+            };
+            let n = curve.rows.len();
+            for point in 0..n {
+                let Some(rows) = curve.rows_of(table, self.columns, likelihood, point) else {
+                    continue;
+                };
+                let dcolumn = derivatives(curve.rows[point], curve.column);
+                let dnoise = likelihood
+                    .noise_column
+                    .map(|column| derivatives(curve.rows[point], column));
+                // the residual of the data of a Laplace kind is divided by the root it
+                // carries, which has no derivative where the deviation is zero
+                let root = (2.0 * rows.r.abs()).sqrt();
+                for (target, factor) in factors.iter().enumerate() {
+                    let Some((parameter, factor)) = factor else {
+                        continue;
+                    };
+                    let dsigma = dnoise.map_or(0.0, |values| values[target]);
+                    let mut data = (dcolumn[target] - rows.r * dsigma) / rows.sigma;
+                    if likelihood.distribution.laplace() {
+                        data = if rows.r == 0.0 { 0.0 } else { data / root };
+                    }
+                    let scale = if rows.root > 0.0 {
+                        (dsigma / rows.sigma) / rows.root
+                    } else {
+                        0.0
+                    };
+                    let weight = curve.weight * factor;
+                    out[(at + point) * k + parameter] = data * weight;
+                    out[(at + n + point) * k + parameter] = scale * weight;
+                }
             }
+            at += 2 * n;
         }
         Ok(out)
     }
@@ -385,11 +621,11 @@ impl Point {
     fn write_block(&self, into: &mut [f64], block: &[f64], k: usize) {
         let mut at = 0;
         for curve in &self.curves {
-            for row in 0..curve.rows.len() {
+            for row in 0..curve.n_rows() {
                 let (from, to) = ((at + row) * k, (curve.offset + row) * k);
                 into[to..to + k].copy_from_slice(&block[from..from + k]);
             }
-            at += curve.rows.len();
+            at += curve.n_rows();
         }
     }
 
@@ -397,7 +633,7 @@ impl Point {
     fn write(&self, into: &mut [f64], residuals: &[f64]) {
         let mut at = 0;
         for curve in &self.curves {
-            let n = curve.rows.len();
+            let n = curve.n_rows();
             into[curve.offset..curve.offset + n].copy_from_slice(&residuals[at..at + n]);
             at += n;
         }
@@ -600,8 +836,8 @@ impl Problem {
                     ),
                 })?;
             let resolved = resolve(at, curve, &tables[curve.condition], n_residuals)?;
-            n_residuals += resolved.rows.len();
-            point.n_residuals += resolved.rows.len();
+            n_residuals += resolved.n_rows();
+            point.n_residuals += resolved.n_rows();
             point.curves.push(resolved);
         }
         Ok(Problem {
@@ -1313,6 +1549,46 @@ fn resolve(
             )));
         }
     }
+    let likelihood = match &curve.likelihood {
+        None => None,
+        Some(likelihood) => {
+            let column = match &likelihood.noise_column {
+                None if curve.noise.is_none() => {
+                    return Err(fault(
+                        "carries a likelihood and neither a 'noise' nor a 'noise_column': a \
+                         standard deviation of one is no noise model"
+                            .to_string(),
+                    ));
+                }
+                None => None,
+                Some(_) if curve.noise.is_some() => {
+                    return Err(fault(
+                        "carries a 'noise_column' and a 'noise' as well: the standard \
+                         deviation of a measurement is the column of its condition or the \
+                         number of its request, not both"
+                            .to_string(),
+                    ));
+                }
+                Some(name) => Some(
+                    table
+                        .columns
+                        .iter()
+                        .position(|column| *column == *name)
+                        .ok_or_else(|| {
+                            fault(format!(
+                                "reads the noise_column '{name}', which its condition does \
+                                 not select: {:?}",
+                                table.columns
+                            ))
+                        })?,
+                ),
+            };
+            Some(ResolvedLikelihood {
+                distribution: likelihood.distribution,
+                noise_column: column,
+            })
+        }
+    };
     let after = match &curve.after_change {
         None => vec![false; curve.times.len()],
         Some(after) if after.len() == curve.times.len() => after.clone(),
@@ -1345,6 +1621,7 @@ fn resolve(
         values: curve.values.clone(),
         noise,
         weight: curve.weight,
+        likelihood,
     })
 }
 

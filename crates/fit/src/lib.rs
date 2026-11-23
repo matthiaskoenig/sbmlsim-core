@@ -38,8 +38,8 @@ mod problem;
 
 pub use contract::{
     ConditionRequest, CurveRequest, FIT_CONTRACT, FitAnswer, FitRequest, FittedParameter,
-    Identifiability, OnRun, ParameterRequest, RunAnswer, fit, fit_models, fit_reporting,
-    fit_reporting_models, fit_with, problem_of, problem_of_models,
+    Identifiability, LikelihoodRequest, OnRun, ParameterRequest, RunAnswer, fit, fit_models,
+    fit_reporting, fit_reporting_models, fit_with, problem_of, problem_of_models,
 };
 pub use identifiability::{
     DELTA_95, Fisher, Profile, ProfilePoint, Walk, fisher, profile, profiles,
@@ -47,5 +47,6 @@ pub use identifiability::{
 pub use optimize::{Algorithm, Evolution, Fit, Settings, Stop};
 pub use problem::{
     Condition, Curve, DEFAULT_MODEL, DIFF_STEP, Definition, Derived, FAILED_RESIDUAL, FitError,
-    JacobianChoice, Parameter, Problem, Scale, Term,
+    JacobianChoice, LIKELIHOOD_OFFSET, LN_2, LN_2PI_HALF, Likelihood, NoiseKind, Parameter,
+    Problem, Scale, Term,
 };

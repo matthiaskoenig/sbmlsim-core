@@ -15,7 +15,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     Condition, Curve, DEFAULT_MODEL, Definition, Derived, Fisher, Fit, FitError, JacobianChoice,
-    Parameter, Problem, Profile, Scale, Settings, Stop, Term, Walk, fisher, profiles,
+    Likelihood, NoiseKind, Parameter, Problem, Profile, Scale, Settings, Stop, Term, Walk, fisher,
+    profiles,
 };
 
 /// Whether the jacobian of a request is the one of [`JacobianChoice::Auto`], which its
@@ -216,6 +217,47 @@ pub struct CurveRequest {
     /// behaviour of the releases before 0.16.0.
     #[serde(default)]
     pub after_change: Option<Vec<bool>>,
+    /// The noise distribution of the measurements of the curve, which makes its residuals the
+    /// ones of a likelihood.
+    ///
+    /// A curve with a likelihood has **twice** its measurements as residuals: the residual of
+    /// every measurement and then, in the same order, the residual of the scale of its noise,
+    /// so that half the sum of their squares is the negative log-likelihood of the curve up
+    /// to `0.5 * LIKELIHOOD_OFFSET` per measurement, a constant of the data which the host
+    /// subtracts (a measurement of a log kind carries `(-2 value).max(0)` more of it). A
+    /// curve without one is the weighted least squares of [`CurveRequest::noise`], one
+    /// residual per measurement, which no field of this block changes.
+    ///
+    /// The log kinds mean that the column of the curve and its values are logarithms: the
+    /// engine transforms nothing, a host which fits data of a geometric standard deviation
+    /// selects a column which is a logarithm and gives the logarithms of its measurements,
+    /// and the density of such a kind carries the measurement itself.
+    ///
+    /// The standard deviation of a measurement is the `noise` of the curve or the
+    /// `noise_column` of this block; a curve which carries both, and one which carries
+    /// neither, is refused.
+    ///
+    /// Absent, which is the request every release before 0.23.0 reads, there is none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub likelihood: Option<LikelihoodRequest>,
+}
+
+/// The noise distribution of the measurements of a curve, see [`CurveRequest::likelihood`].
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct LikelihoodRequest {
+    /// The distribution of the noise of every measurement of the curve: `"normal"`,
+    /// `"log-normal"`, `"laplace"` or `"log-laplace"`.
+    pub distribution: NoiseKind,
+    /// The column of the simulation of the condition which is the standard deviation of a
+    /// measurement, read in the row of that measurement, e.g. a parameter of the fit itself
+    /// or an assignment rule of the model over it, which is the noise a fit moves.
+    ///
+    /// The `noise` of the curve when it is absent, and a curve which carries the two together
+    /// is refused. The condition has to select the column, as it selects the one of the
+    /// curve, and the standard deviation of a measurement has to be positive and finite there
+    /// ([`crate::FAILED_RESIDUAL`] for both rows of a measurement where it is not).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub noise_column: Option<String>,
 }
 
 /// What a fit found.
@@ -564,6 +606,10 @@ fn definition_of(request: &FitRequest) -> Result<Definition, FitError> {
             noise: curve.noise.clone(),
             weight: curve.weight,
             after_change: curve.after_change.clone(),
+            likelihood: curve.likelihood.as_ref().map(|likelihood| Likelihood {
+                distribution: likelihood.distribution,
+                noise_column: likelihood.noise_column.clone(),
+            }),
         });
     }
     Ok(Definition {
