@@ -14,9 +14,9 @@ use sbmlsim_host::LoadedModel;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Condition, Curve, DEFAULT_MODEL, Definition, Derived, Fisher, Fit, FitError, JacobianChoice,
-    Likelihood, NoiseKind, Parameter, Problem, Profile, Scale, Settings, Stop, Term, Walk, fisher,
-    profiles,
+    Condition, Correlation, Curve, DEFAULT_MODEL, Definition, Derived, Fisher, Fit, FitError,
+    JacobianChoice, Likelihood, NoiseKind, Parameter, Prior, PriorKind, Problem, Profile, Scale,
+    Settings, Stop, Term, Walk, fisher, profiles,
 };
 
 /// Whether the jacobian of a request is the one of [`JacobianChoice::Auto`], which its
@@ -74,6 +74,96 @@ pub struct FitRequest {
     /// The identifiability of the optimum the fit finds; none of it when the block is absent.
     #[serde(default)]
     pub identifiability: Option<Identifiability>,
+    /// The priors of the parameters of the fit, one residual row each, which make the cost
+    /// of the fit its negative log posterior up to a constant of the problem, see
+    /// [`PriorRequest`]. A parameter whose prior is correlated carries none here.
+    ///
+    /// Absent, which is every request written before the block existed, the fit has none and
+    /// its cost is the one of its curves alone.
+    #[serde(default)]
+    pub priors: Vec<PriorRequest>,
+    /// The correlated priors of the fit, which are one multivariate normal of the scores of
+    /// their values, see [`CorrelationRequest`]; none when the block is absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prior_correlation: Option<CorrelationRequest>,
+}
+
+/// The prior of one parameter of a fit, which the engine evaluates without a simulation.
+///
+/// The row of a prior is `sqrt(c - 2 log p)` of its log density and of the offset `c` of this
+/// block, so that half the sum of the squares of every residual of the fit is its negative
+/// log posterior up to `0.5 * c` per prior, a constant of the problem which the host
+/// subtracts, as it subtracts the one of a likelihood. The rows of the priors come **after**
+/// every row of the curves, the ones of this block in its order and then the rows of
+/// [`FitRequest::prior_correlation`].
+///
+/// The engine evaluates the density of the kind and the host the normalization of the
+/// truncation at the bounds, [`PriorRequest::normalizer`]: a distribution function is no term
+/// of a density, and a host which truncates a prior at the bounds of its parameter has it
+/// already. The row of a value outside the bounds, and of one whose density is zero, is
+/// `NaN`: the prior is not defined there, which is no claim about the cost of such a point.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct PriorRequest {
+    /// The position of the parameter in the parameters of the fit.
+    pub parameter: usize,
+    /// The distribution of the prior: `"normal"`, `"log-normal"`, `"uniform"`,
+    /// `"log-uniform"`, `"laplace"` or `"log-laplace"`.
+    pub kind: PriorKind,
+    /// The two parameters of that distribution, the ones of PEtab: the mean and the standard
+    /// deviation of a normal kind, the location and the scale of a Laplace one and the bounds
+    /// of a uniform one, of the logarithm of the value for a kind whose name begins with
+    /// `log`.
+    pub parameters: Vec<f64>,
+    /// The offset `c` of the row, which keeps `c - 2 log p` positive between the bounds: the
+    /// density of a narrow distribution is larger than one, whose negative logarithm has no
+    /// root.
+    pub offset: f64,
+    /// The logarithm of the mass of the prior between the bounds, which the engine subtracts
+    /// from the density of the kind; zero for a prior the host does not truncate.
+    pub normalizer: f64,
+    /// The smallest value the prior is defined at, the lower bound of the parameter.
+    pub lower: f64,
+    /// The largest value it is defined at, the upper bound of the parameter.
+    pub upper: f64,
+}
+
+/// The correlated priors of a fit, one multivariate normal of the scores of their values.
+///
+/// The priors of several parameters are correlated when their normal scores
+/// `z_i = (v_i - location_i) / scale_i` carry a correlation, `v` being the value of the
+/// parameter or its logarithm where [`CorrelationRequest::log`] says so, i.e. a normal and a
+/// log-normal prior. Their rows are the whitened scores `w = L^-1 z` of the Cholesky factor
+/// `L` of that correlation, whose inverse this block carries, so that half the sum of their
+/// squares is the quadratic form of the multivariate normal, and one row more per logarithmic
+/// prior for the density of its logarithm in the value, `1 / x`.
+///
+/// The engine normalizes no truncation of a correlated prior: the normal is normalized
+/// without the bounds and its constant, `sum(ln(scale)) + ln(det(L)) + k ln(2 pi) / 2`, is a
+/// term of the offset of the cost which the host keeps, as it keeps the
+/// [`CorrelationRequest::offsets`] of the logarithmic rows. A parameter of this block carries
+/// no prior of [`FitRequest::priors`] of its own, which would be a second prior of it.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct CorrelationRequest {
+    /// The positions of the parameters in the parameters of the fit, `k` of them, every one
+    /// of them once.
+    pub parameters: Vec<usize>,
+    /// Whether the score of a prior is the one of the logarithm of the value, i.e. whether
+    /// the prior is log-normal; one flag per parameter.
+    pub log: Vec<bool>,
+    /// The mean of the value of every prior, or of its logarithm.
+    pub location: Vec<f64>,
+    /// Its standard deviation, which is positive.
+    pub scale: Vec<f64>,
+    /// The inverse of the lower Cholesky factor of the correlation, `k` rows of `k` values.
+    pub inverse: Vec<Vec<f64>>,
+    /// The offset `c` of the row `sqrt(c + 2 ln(x))` of every logarithmic prior, in the order
+    /// of the logarithmic priors.
+    pub offsets: Vec<f64>,
+    /// The smallest value of every parameter, its lower bound, which is positive for a
+    /// logarithmic prior.
+    pub lower: Vec<f64>,
+    /// Its largest value, its upper bound.
+    pub upper: Vec<f64>,
 }
 
 /// What to ask of the optimum of a fit: how well its data determines it.
@@ -294,7 +384,8 @@ pub struct FitAnswer {
     /// The time every run of the fit took together, without the identifiability of its
     /// optimum, which every profile of [`FitAnswer::profiles`] carries its own share of.
     pub seconds: f64,
-    /// The residuals of the optimum, in the order of the curves of the request.
+    /// The residuals of the optimum: the rows of the curves of the request, in their order,
+    /// and then the rows of its priors.
     pub residuals: Vec<f64>,
     /// Every run of the fit, in the order of its starts.
     pub runs: Vec<RunAnswer>,
@@ -663,7 +754,56 @@ fn definition_of(request: &FitRequest) -> Result<Definition, FitError> {
             })
             .collect(),
         curves,
+        priors: request
+            .priors
+            .iter()
+            .map(|prior| Prior {
+                parameter: prior.parameter,
+                kind: prior.kind,
+                parameters: prior.parameters.clone(),
+                offset: prior.offset,
+                normalizer: prior.normalizer,
+                lower: prior.lower,
+                upper: prior.upper,
+            })
+            .collect(),
+        prior_correlation: correlation_of(request.prior_correlation.as_ref())?,
     })
+}
+
+/// Resolves the correlated priors of a request: the rows of the inverse of the factor, which
+/// the problem holds as one row major matrix, flattened.
+fn correlation_of(
+    correlation: Option<&CorrelationRequest>,
+) -> Result<Option<Correlation>, FitError> {
+    let Some(correlation) = correlation else {
+        return Ok(None);
+    };
+    let k = correlation.parameters.len();
+    if correlation.inverse.len() != k {
+        return Err(FitError::Correlation(format!(
+            "has {k} parameters and the {} rows of its inverse",
+            correlation.inverse.len()
+        )));
+    }
+    for (at, row) in correlation.inverse.iter().enumerate() {
+        if row.len() != k {
+            return Err(FitError::Correlation(format!(
+                "has the row {at} of {} values of its inverse and {k} parameters",
+                row.len()
+            )));
+        }
+    }
+    Ok(Some(Correlation {
+        parameters: correlation.parameters.clone(),
+        log: correlation.log.clone(),
+        location: correlation.location.clone(),
+        scale: correlation.scale.clone(),
+        inverse: correlation.inverse.concat(),
+        offsets: correlation.offsets.clone(),
+        lower: correlation.lower.clone(),
+        upper: correlation.upper.clone(),
+    }))
 }
 
 /// The starts of a fit, the values of its parameters as given and the point of the search

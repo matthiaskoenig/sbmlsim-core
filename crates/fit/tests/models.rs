@@ -109,6 +109,8 @@ fn definition(start: f64, models: &[(String, Arc<LoadedModel>)]) -> Definition {
         .collect();
     Definition {
         jacobian: Default::default(),
+        priors: Vec::new(),
+        prior_correlation: None,
         parameters: vec![Parameter {
             id: "k".to_string(),
             start,
@@ -214,6 +216,8 @@ fn a_condition_of_a_fit_of_one_model_needs_no_model() {
     let (times, values) = data(&models[0].1, K);
     let definition = Definition {
         jacobian: Default::default(),
+        priors: Vec::new(),
+        prior_correlation: None,
         parameters: vec![Parameter {
             id: "k".to_string(),
             start: K,
