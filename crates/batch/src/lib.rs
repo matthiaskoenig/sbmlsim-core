@@ -37,6 +37,9 @@ pub enum BatchError {
     /// A number of threads which is none: fewer than one or more than [`MAX_THREADS`].
     #[error("threads must be at least 1 and at most {MAX_THREADS}, not {0}")]
     Threads(i64),
+    /// A pool of no model, which has nothing to simulate on.
+    #[error("a pool simulates at least one model")]
+    Models,
     /// A pool of threads which does not start.
     #[error("no pool of {threads} threads: {source}")]
     Pool {
@@ -100,9 +103,35 @@ pub struct Plan {
 type Slot = Mutex<Option<NativeInstance>>;
 
 /// The instances of the threads of a pool, which outlive a pool the batches grow.
+///
+/// A pool of several models holds one slot per thread and model, `slots[thread * models +
+/// model]`, so a thread makes an instance of a model at the first point of its own which
+/// simulates that model and keeps it for the points after it.
 struct Instances {
     slots: Vec<Slot>,
+    models: usize,
     made: AtomicUsize,
+}
+
+impl Instances {
+    /// Fresh slots for `threads` threads and `models` models.
+    fn of(threads: usize, models: usize) -> Instances {
+        Instances {
+            slots: (0..threads * models).map(|_| Mutex::new(None)).collect(),
+            models,
+            made: AtomicUsize::new(0),
+        }
+    }
+
+    /// The threads the slots are made for.
+    fn threads(&self) -> usize {
+        self.slots.len() / self.models
+    }
+
+    /// The slot of a thread and a model.
+    fn slot(&self, thread: usize, model: usize) -> Option<&Slot> {
+        self.slots.get(thread * self.models + model)
+    }
 }
 
 /// The message of the payload of a panic.
@@ -129,7 +158,7 @@ fn pool_of(threads: usize) -> Result<rayon::ThreadPool, BatchError> {
 
 /// A pool of threads with an engine instance per thread, which runs the points of a batch.
 pub struct Workers {
-    model: Arc<LoadedModel>,
+    models: Vec<Arc<LoadedModel>>,
     pool: rayon::ThreadPool,
     instances: Instances,
 }
@@ -138,42 +167,63 @@ impl Workers {
     /// A pool of `threads` threads on one loaded model, without an instance yet: a thread
     /// makes its own at its first point.
     pub fn new(model: Arc<LoadedModel>, threads: usize) -> Result<Workers, BatchError> {
-        Ok(Workers::of(model, pool_of(threads)?, threads))
+        Workers::of_models(vec![model], threads)
+    }
+
+    /// A pool of `threads` threads on several loaded models, the model of a point its index
+    /// in `models`, without an instance yet: a thread makes its own of a model at the first
+    /// point of its own which simulates that model.
+    ///
+    /// # Errors
+    ///
+    /// If `models` is empty or `threads` is no number of threads of a pool.
+    pub fn of_models(models: Vec<Arc<LoadedModel>>, threads: usize) -> Result<Workers, BatchError> {
+        if models.is_empty() {
+            return Err(BatchError::Models);
+        }
+        Ok(Workers::of(models, pool_of(threads)?, threads))
     }
 
     /// A pool with fresh slots for its threads.
-    fn of(model: Arc<LoadedModel>, pool: rayon::ThreadPool, threads: usize) -> Workers {
+    fn of(models: Vec<Arc<LoadedModel>>, pool: rayon::ThreadPool, threads: usize) -> Workers {
+        let instances = Instances::of(threads, models.len());
         Workers {
-            model,
+            models,
             pool,
-            instances: Instances {
-                slots: (0..threads).map(|_| Mutex::new(None)).collect(),
-                made: AtomicUsize::new(0),
-            },
+            instances,
         }
     }
 
     /// This pool on another pool of threads, which keeps the instances the threads of this one
     /// made; `threads` is at least the threads of this pool, so no instance is dropped.
+    ///
+    /// The slots are thread major, so the slots of the threads which are new are the ones
+    /// after the slots of the threads which are not, and every instance keeps its slot.
     fn with_pool(mut self, pool: rayon::ThreadPool, threads: usize) -> Workers {
         self.instances
             .slots
-            .resize_with(threads, || Mutex::new(None));
+            .resize_with(threads * self.instances.models, || Mutex::new(None));
         Workers {
-            model: self.model,
+            models: self.models,
             pool,
             instances: self.instances,
         }
     }
 
-    /// The model every point of a batch simulates.
+    /// The model the points of a batch simulate, the first of the models of a pool of
+    /// several, which is the one a point without a model of its own takes.
     pub fn model(&self) -> &Arc<LoadedModel> {
-        &self.model
+        &self.models[0]
+    }
+
+    /// The models of the pool, the model of a point its index in them.
+    pub fn models(&self) -> &[Arc<LoadedModel>] {
+        &self.models
     }
 
     /// The threads of the pool, which is the parallelism of a batch.
     pub fn threads(&self) -> usize {
-        self.instances.slots.len()
+        self.instances.threads()
     }
 
     /// How many points a caller which runs a batch in slices gives one slice, so that the work
@@ -218,13 +268,34 @@ impl Workers {
         R: Send,
         F: Fn(&mut NativeInstance, &T) -> Result<R, EngineError> + Sync,
     {
+        self.map_at(items, |_| 0, work)
+    }
+
+    /// Runs `work` on every item on the instance of the model `at` says it simulates, which
+    /// is an index of [`Workers::models`], and gives one outcome per item, in their order.
+    ///
+    /// This is [`Workers::map`] of a pool of several models: the instance a point works on is
+    /// the one of its thread and its own model, so two points of one thread on two models
+    /// never share an instance and a thread holds an instance of every model it met. A model
+    /// which is no model of the pool fails its own point ([`PointFailure::Internal`]).
+    pub fn map_at<T, R, F>(
+        &self,
+        items: &[T],
+        at: impl Fn(&T) -> usize + Sync,
+        work: F,
+    ) -> Vec<Outcome<R>>
+    where
+        T: Sync,
+        R: Send,
+        F: Fn(&mut NativeInstance, &T) -> Result<R, EngineError> + Sync,
+    {
         if items.is_empty() {
             return Vec::new();
         }
         self.pool.install(|| {
             items
                 .par_iter()
-                .map(|item| self.point(&work, item))
+                .map(|item| self.point(&work, item, at(item)))
                 .collect()
         })
     }
@@ -275,12 +346,12 @@ impl Workers {
     /// One point of a batch, whose panic fails the point and no other one: the instance of the
     /// point is dropped while it unwinds, so its thread gets a fresh one for its next point
     /// and the poisoned lock of its slot is read as the empty slot it is.
-    fn point<T, R, F>(&self, work: &F, item: &T) -> Outcome<R>
+    fn point<T, R, F>(&self, work: &F, item: &T, at: usize) -> Outcome<R>
     where
         F: Fn(&mut NativeInstance, &T) -> Result<R, EngineError> + Sync,
     {
         catch_unwind(AssertUnwindSafe(|| {
-            self.on_instance(|instance| work(instance, item))
+            self.on_instance(at, |instance| work(instance, item))
         }))
         .unwrap_or_else(|payload| {
             Err(PointFailure::Internal(format!(
@@ -290,21 +361,29 @@ impl Workers {
         })
     }
 
-    /// Runs the work of a point on the instance of the thread of the pool which runs it, which
-    /// it takes out of its slot while it works and puts back for the points after it.
+    /// Runs the work of a point on the instance of its model of the thread of the pool which
+    /// runs it, which it takes out of its slot while it works and puts back for the points
+    /// after it.
     fn on_instance<R>(
         &self,
+        at: usize,
         work: impl FnOnce(&mut NativeInstance) -> Result<R, EngineError>,
     ) -> Outcome<R> {
-        // the slot of the thread which runs the point, which no other thread reads, so that
-        // its lock is never contended; a point outside of the pool, which rayon does not run,
-        // and one whose slot a panic left empty work on an instance of their own
-        let slot =
-            rayon::current_thread_index().and_then(|thread| self.instances.slots.get(thread));
+        let Some(model) = self.models.get(at) else {
+            return Err(PointFailure::Internal(format!(
+                "the point simulates the model {at} of a pool of {} models",
+                self.models.len()
+            )));
+        };
+        // the slot of the thread which runs the point and of its model, which no other thread
+        // reads, so that its lock is never contended; a point outside of the pool, which
+        // rayon does not run, and one whose slot a panic left empty work on an instance of
+        // their own
+        let slot = rayon::current_thread_index().and_then(|thread| self.instances.slot(thread, at));
         let mut slot = slot.map(|slot| slot.lock().unwrap_or_else(PoisonError::into_inner));
         let mut instance = match slot.as_mut().and_then(|slot| slot.take()) {
             Some(instance) => instance,
-            None => match self.model.instantiate_native() {
+            None => match model.instantiate_native() {
                 Ok(instance) => {
                     self.instances.made.fetch_add(1, Ordering::Relaxed);
                     instance
@@ -378,7 +457,7 @@ impl WorkerPool {
             let pool = pool_of(threads)?;
             self.workers = Some(match self.workers.take() {
                 Some(workers) => workers.with_pool(pool, threads),
-                None => Workers::of(self.model.clone(), pool, threads),
+                None => Workers::of(vec![self.model.clone()], pool, threads),
             });
         }
         Ok(())

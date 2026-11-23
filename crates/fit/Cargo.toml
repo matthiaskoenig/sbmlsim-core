@@ -31,3 +31,5 @@ thiserror.workspace = true
 # the decay model of `crates/host/tests/decay-model`, which the tests fit
 serde_json.workspace = true
 wat = "1"
+# the two models of `tests/models.rs`, compiled from SBML so that they differ
+sbmlsim-compiler = { path = "../compiler" }

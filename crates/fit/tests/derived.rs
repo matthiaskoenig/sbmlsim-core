@@ -57,6 +57,7 @@ fn data(k: f64) -> (Vec<f64>, Vec<f64>) {
 fn condition() -> Condition {
     Condition {
         request: request(),
+        model: None,
         derived: vec![Derived {
             target: "y".to_string(),
             constant: CONSTANT,

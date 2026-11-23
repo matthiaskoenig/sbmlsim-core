@@ -25,6 +25,8 @@ from sbmlsim_core._core import (
     __allocator__,
     __version__,
     compile_sbml,
+    fit_models,
+    fit_problem_of_models,
     runtime_wasm,
 )
 from sbmlsim_core.batch import simulate_stream
@@ -54,6 +56,8 @@ __all__ = [
     "__allocator__",
     "__version__",
     "compile_sbml",
+    "fit_models",
+    "fit_problem_of_models",
     "runtime_wasm",
     "simulate_stream",
 ]

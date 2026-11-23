@@ -14,8 +14,8 @@ use sbmlsim_host::LoadedModel;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Condition, Curve, Definition, Derived, Fisher, Fit, FitError, JacobianChoice, Parameter,
-    Problem, Profile, Scale, Settings, Stop, Term, Walk, fisher, profiles,
+    Condition, Curve, DEFAULT_MODEL, Definition, Derived, Fisher, Fit, FitError, JacobianChoice,
+    Parameter, Problem, Profile, Scale, Settings, Stop, Term, Walk, fisher, profiles,
 };
 
 /// Whether the jacobian of a request is the one of [`JacobianChoice::Auto`], which its
@@ -132,6 +132,16 @@ pub struct ConditionRequest {
     /// The simulation of the condition, a request of `simulation/1` whose output is the times
     /// of the data of its curves.
     pub request: SimulationRequest,
+    /// The id of the model the condition simulates, one of the models of the fit.
+    ///
+    /// A fit of one model needs none, and every request written before 0.22.0 has none: the
+    /// condition simulates that model. A fit of several models names the model of every
+    /// condition, since nothing else says which one it simulates, e.g. the male and the
+    /// female body of a model whose data is the data of both.
+    ///
+    /// Absent, which is the request every release before 0.22.0 reads, there is one model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
     /// The values of the condition which follow the parameters of the fit, each a linear form
     /// over them which is evaluated before every simulation and set on its target.
     ///
@@ -314,6 +324,21 @@ pub fn problem_of(
     model: Arc<LoadedModel>,
     threads: Option<usize>,
 ) -> Result<Problem, FitError> {
+    problem_of_models(request, vec![(DEFAULT_MODEL.to_string(), model)], threads)
+}
+
+/// The problem of a request of `fit/1` of several models, each with the id its conditions
+/// name it by, see [`Problem::of_models`].
+///
+/// # Errors
+///
+/// As [`problem_of`], and for a condition which names a model the fit has not or names none
+/// although the fit has several.
+pub fn problem_of_models(
+    request: &FitRequest,
+    models: Vec<(String, Arc<LoadedModel>)>,
+    threads: Option<usize>,
+) -> Result<Problem, FitError> {
     if request.contract != FIT_CONTRACT {
         return Err(FitError::Request(format!(
             "is of the contract {} and not of {FIT_CONTRACT}",
@@ -324,7 +349,7 @@ pub fn problem_of(
     let threads = threads
         .or(request.threads)
         .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, Into::into));
-    Problem::new(definition, model, threads)
+    Problem::of_models(definition, models, threads)
 }
 
 /// What a fit calls with a run of it which finished, see [`fit_reporting`].
@@ -348,6 +373,21 @@ pub fn fit_with(
     fit_reporting(request, model, threads, stop, None)
 }
 
+/// Runs a fit of the contract `fit/1` of several models, each with the id its conditions name
+/// it by, see [`Problem::of_models`].
+///
+/// # Errors
+///
+/// As [`fit_reporting_models`].
+pub fn fit_models(
+    request: &FitRequest,
+    models: Vec<(String, Arc<LoadedModel>)>,
+    threads: Option<usize>,
+    stop: &Stop,
+) -> Result<FitAnswer, FitError> {
+    fit_reporting_models(request, models, threads, stop, None)
+}
+
 /// Runs a fit of the contract `fit/1` which reports every run of it as it finishes.
 ///
 /// The answer is the one of [`fit_with`] and carries every run as well: `on_run` is what a
@@ -364,7 +404,30 @@ pub fn fit_reporting(
     stop: &Stop,
     on_run: Option<OnRun<'_>>,
 ) -> Result<FitAnswer, FitError> {
-    let problem = problem_of(request, model, threads)?;
+    fit_reporting_models(
+        request,
+        vec![(DEFAULT_MODEL.to_string(), model)],
+        threads,
+        stop,
+        on_run,
+    )
+}
+
+/// Runs a fit of the contract `fit/1` of several models which reports every run of it as it
+/// finishes, see [`fit_reporting`] and [`Problem::of_models`].
+///
+/// # Errors
+///
+/// As [`fit_reporting`], and for a condition which names a model the fit has not or names
+/// none although the fit has several.
+pub fn fit_reporting_models(
+    request: &FitRequest,
+    models: Vec<(String, Arc<LoadedModel>)>,
+    threads: Option<usize>,
+    stop: &Stop,
+    on_run: Option<OnRun<'_>>,
+) -> Result<FitAnswer, FitError> {
+    let problem = problem_of_models(request, models, threads)?;
     let starts = starts_of(request, &problem)?;
     let began = std::time::Instant::now();
     // the starts do not depend on each other, so they run next to each other on the pool of
@@ -521,6 +584,7 @@ fn definition_of(request: &FitRequest) -> Result<Definition, FitError> {
             .iter()
             .map(|condition| Condition {
                 request: condition.request.clone(),
+                model: condition.model.clone(),
                 derived: condition
                     .derived
                     .as_ref()

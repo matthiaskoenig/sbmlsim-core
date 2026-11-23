@@ -1,6 +1,6 @@
 """Type stubs of the extension module `sbmlsim_core._core`."""
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from os import PathLike
 from pathlib import Path
 from typing import Any
@@ -142,6 +142,7 @@ class LoadedModel:
         request: dict[str, Any],
         *,
         threads: int | None = None,
+        on_run: Callable[[int, dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         """Fits the parameters of the model to data with a request of the contract `fit/1`."""
 
@@ -261,3 +262,20 @@ def compile_sbml(
 
 def runtime_wasm() -> dict[str, bytes]:
     """The bytes of `engine.wasm` and `mathlib.wasm` this extension embeds."""
+
+def fit_models(
+    models: Mapping[str, LoadedModel],
+    request: dict[str, Any],
+    *,
+    threads: int | None = None,
+    on_run: Callable[[int, dict[str, Any]], None] | None = None,
+) -> dict[str, Any]:
+    """Fits several models to data, each condition of the request on the model it names."""
+
+def fit_problem_of_models(
+    models: Mapping[str, LoadedModel],
+    request: dict[str, Any],
+    *,
+    threads: int | None = None,
+) -> FitProblem:
+    """The problem of a fit of several models, for an optimizer which stays in python."""

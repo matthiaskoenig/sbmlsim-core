@@ -121,6 +121,8 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PointError>()?;
     m.add_class::<SimulationOutput>()?;
     m.add_class::<OutputSensitivities>()?;
+    m.add_function(wrap_pyfunction!(runtime::fit_models, m)?)?;
+    m.add_function(wrap_pyfunction!(runtime::fit_problem_of_models, m)?)?;
     m.add_function(wrap_pyfunction!(compile_sbml, m)?)?;
     m.add_function(wrap_pyfunction!(runtime_wasm, m)?)?;
     Ok(())

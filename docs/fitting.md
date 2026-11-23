@@ -86,7 +86,17 @@ The conditions:
 |---|---|
 | `id` | the id of the condition, which the curves read it by |
 | `request` | the simulation, a request of `simulation/1` whose output is the times of the data of its curves |
+| `model` | the id of the model the condition simulates, one of the models of the fit; absent for a fit of one model, which every condition simulates (see below) |
 | `derived` | the values of the condition which follow the parameters of the fit, each a linear form over them, absent for a condition of numbers alone (see below) |
+
+A fit of one model needs no `model` of its conditions, and a fit of several, e.g. of the data
+of two builds of a model or of a model of two species, names the model of every condition:
+`sbmlsim_core.fit_models` and `Problem::of_models` take the models by the id their conditions
+name them by, a condition which names a model the fit has not or names none although the fit
+has several is refused before anything is simulated, and a thread of the fit holds an instance
+of every model its points met, so a fit of two models is twice the memory of a fit of one. The
+parameters of a fit are the same in every model it reads: a parameter is one value of the
+search, applied to its target in the model of every condition it reaches.
 
 A value of a request of `simulation/1` is a number, so a condition whose value is a parameter
 the fit estimates, e.g. the initial amount of a species which a PEtab condition assigns an
@@ -339,6 +349,11 @@ of the caller keeps running and `Ctrl-C` ends the fit where it is (the answer of
 is `UserRequested`). The request is a dict of `fit/1` and the answer a dict of the JSON above;
 `sbmlsim_core.FIT_CONTRACT` is the version of the contract this build carries.
 
+`sbmlsim_core.fit_models(models, request, threads=8)` is the same fit of several models, with
+the loaded models by the id the conditions of the request name them by, and
+`sbmlsim_core.fit_problem_of_models(models, request)` their problem for an optimizer which
+stays in python.
+
 A fit of many starts answers when the last of them finished, which is late for a fit of
 minutes, so `on_run` follows it while it runs:
 
@@ -385,6 +400,10 @@ let fit = problem.optimize(&Settings::default())?;
 let walked = profile(&problem, &Settings::default(), &fit.x, 0, &Walk::default(), &Stop::new())?;
 let information = fisher(&problem, &fit.x)?;
 ```
+
+`Problem::of_models` is the same problem of several models, which takes them by the id the
+conditions of the definition name them by; `Problem::new` is the fit of one model, whose
+conditions need no id of their own.
 
 `Problem::fixing` is what a profile holds a parameter with: the problem it gives shares the
 conditions, the curves and the pool of the batch of the fit, so a profile of hundreds of points

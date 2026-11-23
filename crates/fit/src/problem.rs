@@ -1,12 +1,13 @@
 //! The problem of a fit: its definition, its residuals and its jacobian on the batch.
 
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use sbmlsim_abi::{EngineError, Output, SimulationRequest, SimulationResult};
 use sbmlsim_batch::{BatchError, PointFailure, Workers};
-use sbmlsim_host::{LoadedModel, PreparedSimulation};
+use sbmlsim_host::{LoadedModel, NativeInstance, PreparedSimulation};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -211,6 +212,9 @@ pub struct Definition {
 pub struct Condition {
     /// The request of the simulation, whose values are numbers.
     pub request: SimulationRequest,
+    /// The id of the model the condition simulates, one of the models of the problem; `None`
+    /// for a condition of a problem of one model, which simulates that one.
+    pub model: Option<String>,
     /// The values which follow the parameters of the fit, set on their targets before every
     /// simulation, see [`Derived`]; empty for a condition of numbers alone.
     pub derived: Vec<Derived>,
@@ -239,6 +243,7 @@ impl From<SimulationRequest> for Condition {
     fn from(request: SimulationRequest) -> Self {
         Self {
             request,
+            model: None,
             derived: Vec::new(),
         }
     }
@@ -284,6 +289,8 @@ struct Resolved {
 struct Point {
     /// The request of the condition, with the parameters of the fit as its varying targets.
     prepared: PreparedSimulation,
+    /// The model of the condition, its index in the models of the pool of the problem.
+    model: usize,
     /// The same condition with the forward sensitivities of those targets, which give the
     /// block of the jacobian of the condition in one simulation; `None` for a condition the
     /// engine does not carry them for.
@@ -473,6 +480,30 @@ impl Problem {
         model: Arc<LoadedModel>,
         threads: usize,
     ) -> Result<Problem, FitError> {
+        Problem::of_models(
+            definition,
+            vec![(DEFAULT_MODEL.to_string(), model)],
+            threads,
+        )
+    }
+
+    /// Resolves a definition against several models, each with the id its conditions name it
+    /// by, and the pool of its batch.
+    ///
+    /// This is [`Problem::new`] of a fit of more than one model, e.g. of data which is the
+    /// data of two builds of a model: the condition of every simulation names the model it
+    /// simulates, a condition of a fit of one model needs no name, and a thread of the pool
+    /// holds an instance of every model its points met.
+    ///
+    /// # Errors
+    ///
+    /// As [`Problem::new`], and if the models are empty, if two of them share an id, or if a
+    /// condition names a model the fit has not or names none although the fit has several.
+    pub fn of_models(
+        definition: Definition,
+        models: Vec<(String, Arc<LoadedModel>)>,
+        threads: usize,
+    ) -> Result<Problem, FitError> {
         let Definition {
             parameters,
             conditions,
@@ -492,9 +523,18 @@ impl Problem {
             varyings.push(check_derived(at, condition, &varying)?);
         }
         let derived = conditions.iter().any(|c| !c.derived.is_empty());
-        let workers = Workers::new(model, threads)?;
+        let ats = models_of(&models, &conditions)?;
+        let workers = Workers::of_models(
+            models.into_iter().map(|(_, model)| model).collect(),
+            threads,
+        )?;
         let mut prepared = Vec::with_capacity(conditions.len());
-        for ((at, condition), varying) in conditions.iter().enumerate().zip(varyings.iter()) {
+        for (((at, condition), varying), model) in conditions
+            .iter()
+            .enumerate()
+            .zip(varyings.iter())
+            .zip(ats.iter())
+        {
             if matches!(condition.request.output, Output::IntegratorSteps) {
                 return Err(FitError::Condition {
                     at,
@@ -504,8 +544,7 @@ impl Problem {
                 });
             }
             prepared.push(
-                workers
-                    .model()
+                workers.models()[*model]
                     .prepare(&condition.request, varying)
                     .map_err(|err| FitError::Condition {
                         at,
@@ -517,7 +556,7 @@ impl Problem {
         // per varying target of a block of the jacobian cannot carry, so such a fit takes the
         // difference quotients of its optimizer
         let (sensitive, jacobian) = if jacobian == JacobianChoice::Sensitivities && !derived {
-            let prepared = sensitive_conditions(&workers, &conditions, &varying)?;
+            let prepared = sensitive_conditions(&workers, &conditions, &ats, &varying)?;
             (prepared, JacobianChoice::Sensitivities)
         } else {
             (
@@ -530,20 +569,24 @@ impl Problem {
             .iter()
             .map(|p| p.scale.to_model(p.scale.to_search(p.start)))
             .collect();
-        let tables = simulate(&workers, &prepared, &conditions, &start)?;
+        let tables = simulate(&workers, &prepared, &conditions, &ats, &start)?;
         let mut points: Vec<Point> = prepared
             .into_iter()
             .zip(sensitive)
             .zip(tables.iter())
             .zip(conditions.iter())
-            .map(|(((prepared, sensitive), table), condition)| Point {
-                prepared,
-                sensitive,
-                columns: table.columns.len(),
-                curves: Vec::new(),
-                n_residuals: 0,
-                derived: condition.derived.clone(),
-            })
+            .zip(ats.iter())
+            .map(
+                |((((prepared, sensitive), table), condition), model)| Point {
+                    prepared,
+                    model: *model,
+                    sensitive,
+                    columns: table.columns.len(),
+                    curves: Vec::new(),
+                    n_residuals: 0,
+                    derived: condition.derived.clone(),
+                },
+            )
             .collect();
         let mut n_residuals = 0;
         for (at, curve) in curves.iter().enumerate() {
@@ -879,15 +922,19 @@ impl Problem {
             .collect();
         self.simulations
             .fetch_add(shots.len() as u64, Ordering::Relaxed);
-        let outcomes = self.workers.map(&shots, |instance, shot| {
-            let Some(prepared) = &shot.point.sensitive else {
-                return Err(EngineError::Internal(
-                    "a condition of the fit carries no sensitivities".to_string(),
-                ));
-            };
-            let table = instance.simulate_prepared(prepared, shot.values)?;
-            shot.point.block(&table, &factors, k)
-        });
+        let outcomes = self.workers.map_at(
+            &shots,
+            |shot| shot.point.model,
+            |instance, shot| {
+                let Some(prepared) = &shot.point.sensitive else {
+                    return Err(EngineError::Internal(
+                        "a condition of the fit carries no sensitivities".to_string(),
+                    ));
+                };
+                let table = instance.simulate_prepared(prepared, shot.values)?;
+                shot.point.block(&table, &factors, k)
+            },
+        );
         let mut jacobian = vec![0.0; self.n_residuals * k];
         for (shot, outcome) in shots.iter().zip(outcomes) {
             match outcome {
@@ -957,11 +1004,15 @@ impl Problem {
     fn run(&self, shots: &[Shot<'_>]) -> Result<Vec<Vec<f64>>, FitError> {
         self.simulations
             .fetch_add(shots.len() as u64, Ordering::Relaxed);
-        let outcomes = self.workers.map(shots, |instance, shot| {
-            let values = shot.point.values(shot.values);
-            let table = instance.simulate_prepared(&shot.point.prepared, &values)?;
-            Ok(shot.point.residuals(&table))
-        });
+        let outcomes = self.workers.map_at(
+            shots,
+            |shot| shot.point.model,
+            |instance, shot| {
+                let values = shot.point.values(shot.values);
+                let table = instance.simulate_prepared(&shot.point.prepared, &values)?;
+                Ok(shot.point.residuals(&table))
+            },
+        );
         let mut residuals = Vec::with_capacity(shots.len());
         for (shot, outcome) in shots.iter().zip(outcomes) {
             residuals.push(match outcome {
@@ -978,6 +1029,53 @@ impl Problem {
     }
 }
 
+/// The id of the one model of a fit of one model, which a condition may name it by.
+pub const DEFAULT_MODEL: &str = "model";
+
+/// The model of every condition, its index in `models`, or why a condition has none.
+///
+/// A condition of a fit of one model needs no model of its own, and a condition of a fit of
+/// several names the one it simulates; a name is the id of a model of the fit whatever the
+/// number of models, so a typo is an error and not the first model.
+fn models_of(
+    models: &[(String, Arc<LoadedModel>)],
+    conditions: &[Condition],
+) -> Result<Vec<usize>, FitError> {
+    if models.is_empty() {
+        return Err(FitError::Empty("model"));
+    }
+    let mut by_id: HashMap<&str, usize> = HashMap::with_capacity(models.len());
+    for (at, (id, _)) in models.iter().enumerate() {
+        if by_id.insert(id.as_str(), at).is_some() {
+            return Err(FitError::Request(format!(
+                "two models of the fit have the id '{id}'"
+            )));
+        }
+    }
+    let mut ats = Vec::with_capacity(conditions.len());
+    for (at, condition) in conditions.iter().enumerate() {
+        let model = match &condition.model {
+            None if models.len() == 1 => 0,
+            None => {
+                return Err(FitError::Condition {
+                    at,
+                    message: format!(
+                        "names no model, and the fit has {} of them: every condition of a \
+                         fit of several models names the model it simulates",
+                        models.len()
+                    ),
+                });
+            }
+            Some(id) => *by_id.get(id.as_str()).ok_or_else(|| FitError::Condition {
+                at,
+                message: format!("simulates the model '{id}', which the fit has not"),
+            })?,
+        };
+        ats.push(model);
+    }
+    Ok(ats)
+}
+
 /// Every condition of a fit prepared with its forward sensitivities.
 ///
 /// A condition which carries none is refused: the jacobian of a fit is the one of the
@@ -986,14 +1084,25 @@ impl Problem {
 fn sensitive_conditions(
     workers: &Workers,
     conditions: &[Condition],
+    ats: &[usize],
     varying: &[String],
 ) -> Result<Vec<Option<PreparedSimulation>>, FitError> {
-    let mut instance = workers
-        .model()
-        .instantiate_native()
-        .map_err(|error| FitError::Request(format!("cannot be instantiated: {error}")))?;
+    // an instance per model of the conditions, made at the first condition of that model
+    let mut instances: Vec<Option<NativeInstance>> =
+        workers.models().iter().map(|_| None).collect();
     let mut prepared = Vec::with_capacity(conditions.len());
-    for (at, condition) in conditions.iter().enumerate() {
+    for ((at, condition), model) in conditions.iter().enumerate().zip(ats.iter()) {
+        let instance = match &mut instances[*model] {
+            Some(instance) => instance,
+            none => {
+                let made = workers.models()[*model]
+                    .instantiate_native()
+                    .map_err(|error| {
+                        FitError::Request(format!("cannot be instantiated: {error}"))
+                    })?;
+                none.insert(made)
+            }
+        };
         let mut request = condition.request.clone();
         request.sensitivities = varying.to_vec();
         match instance.prepare(&request, varying) {
@@ -1072,13 +1181,15 @@ fn simulate(
     workers: &Workers,
     prepared: &[PreparedSimulation],
     conditions: &[Condition],
+    ats: &[usize],
     values: &[f64],
 ) -> Result<Vec<SimulationResult>, FitError> {
     let mut tables = Vec::with_capacity(prepared.len());
-    let shots: Vec<(&PreparedSimulation, Cow<'_, [f64]>)> = prepared
+    let shots: Vec<(usize, &PreparedSimulation, Cow<'_, [f64]>)> = prepared
         .iter()
         .zip(conditions.iter())
-        .map(|(prepared, condition)| {
+        .zip(ats.iter())
+        .map(|((prepared, condition), model)| {
             let values = if condition.derived.is_empty() {
                 Cow::Borrowed(values)
             } else {
@@ -1086,12 +1197,14 @@ fn simulate(
                 all.extend(condition.derived.iter().map(|value| value.value(values)));
                 Cow::Owned(all)
             };
-            (prepared, values)
+            (*model, prepared, values)
         })
         .collect();
-    let outcomes = workers.map(&shots, |instance, (prepared, values)| {
-        instance.simulate_prepared(prepared, values)
-    });
+    let outcomes = workers.map_at(
+        &shots,
+        |(model, _, _)| *model,
+        |instance, (_, prepared, values)| instance.simulate_prepared(prepared, values),
+    );
     for (at, outcome) in outcomes.into_iter().enumerate() {
         match outcome {
             Ok(table) => tables.push(table),
