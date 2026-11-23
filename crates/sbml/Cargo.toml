@@ -2,11 +2,18 @@
 name = "sbmlsim-sbml"
 version.workspace = true
 edition.workspace = true
-# not on crates.io yet: the workspace builds from files outside the crate directories
-# (THIRD_PARTY.md, third_party)
-publish = false
 license.workspace = true
 authors.workspace = true
+repository.workspace = true
+# the crate is on crates.io, so a reader of SBML can be a dependency of a project which does
+# not build the engine: it holds nothing but its own sources and depends on two published
+# crates, where the rest of the workspace builds from files outside the crate directories
+# (THIRD_PARTY.md, third_party)
+description = "Reader of SBML core documents of every level and version into the model of level 3"
+documentation = "https://docs.rs/sbmlsim-sbml"
+readme = "README.md"
+keywords = ["sbml", "systems-biology", "mathml", "parser", "model"]
+categories = ["science", "parser-implementations"]
 
 [dependencies]
 roxmltree.workspace = true

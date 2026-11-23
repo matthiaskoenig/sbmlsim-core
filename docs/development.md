@@ -39,4 +39,16 @@ A release is made from `develop`. Since `develop` only accepts pull requests, th
 
 8. bump the live demo of the documentation, which is vendored from the published npm package and so can only follow the tag: set `NPM_VERSION` of `scripts/demo_assets.py` to the new version, run `uv run scripts/demo_assets.py` to vendor the package and compile the model again, compare it with `uv run scripts/demo_assets.py --check` and take `docs/demo/` through a pull request of its own. Nothing compares this one either, so a demo left behind keeps running the engine of the release before.
 
+## The crate on crates.io
+
+`sbmlsim-sbml`, the reader of SBML, is the one crate of the workspace which is published on [crates.io](https://crates.io/crates/sbmlsim-sbml): it holds nothing but its own sources and depends on two published crates, where the rest of the workspace builds `engine.wasm` and the solvers from files outside the crate directories. A reader of SBML is useful without the engine, and a git dependency is not: cargo clones the repository with its submodules, which fails on windows over the length of a path inside `third_party/sundials`.
+
+The crate versions with the workspace, so a release publishes the version of its tag:
+
+```bash
+cargo publish -p sbmlsim-sbml
+```
+
+`cargo package -p sbmlsim-sbml` is the same without the publication: it packs the crate and compiles it outside the workspace, which is what a dependent sees. Nothing of the publication is automated yet, since [trusted publishing](https://crates.io/docs/trusted-publishing) can only be configured for a crate which exists: once it is set up for this crate, the publication belongs in `publish.yml` next to PyPI and npm, so that a tag makes all of a release.
+
 `CORE_VERSION` of `js/panels.mjs` is the one version no check of a pull request compares, since `npm pack` runs only while the tag publishes; a release which gets it wrong fails after the tag exists.

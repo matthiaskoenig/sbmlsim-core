@@ -21,6 +21,7 @@ version = "0.21.0"
 edition = "2024"
 license = "MIT"
 authors = ["Matthias König"]
+repository = "https://github.com/matthiaskoenig/sbmlsim-core"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
