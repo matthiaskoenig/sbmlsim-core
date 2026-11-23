@@ -340,7 +340,7 @@ fn build_node_inner(
     budget: &mut BuildBudget,
 ) -> Result<Expr, CompileError> {
     Ok(match node {
-        Node::Number(x) => Expr::Number(*x),
+        Node::Number { value, .. } => Expr::Number(*value),
         Node::True => Expr::Bool(true),
         Node::False => Expr::Bool(false),
         Node::Pi => Expr::Number(std::f64::consts::PI),

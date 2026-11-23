@@ -80,26 +80,45 @@ fn reads_minimal_model() {
 
 #[test]
 fn number_is_double_of_text() {
-    assert_eq!(math("<cn> 1e-3 </cn>"), Node::Number(1e-3));
-    assert_eq!(math(r#"<cn type="real">0.1</cn>"#), Node::Number(0.1));
-    assert_eq!(math(r#"<cn type="integer"> 7 </cn>"#), Node::Number(7.0));
+    assert_eq!(math("<cn> 1e-3 </cn>"), Node::number(1e-3));
+    assert_eq!(math(r#"<cn type="real">0.1</cn>"#), Node::number(0.1));
+    assert_eq!(math(r#"<cn type="integer"> 7 </cn>"#), Node::number(7.0));
     assert_eq!(
         math(r#"<cn type="e-notation"> 2 <sep/> -3 </cn>"#),
-        Node::Number(2e-3)
+        Node::number(2e-3)
     );
     assert_eq!(
         math(r#"<cn type="e-notation">1.1<sep/>-5</cn>"#),
-        Node::Number(1.1e-5)
+        Node::number(1.1e-5)
     );
     assert_eq!(
         math(r#"<cn type="rational"> 1 <sep/> 3 </cn>"#),
-        Node::Number(1.0 / 3.0)
+        Node::number(1.0 / 3.0)
     );
+    // a number of level 3 keeps the units it carries
     assert_eq!(
         math(
             r#"<cn sbml:units="mole" xmlns:sbml="http://www.sbml.org/sbml/level3/version2/core">49</cn>"#
         ),
-        Node::Number(49.0)
+        Node::Number {
+            value: 49.0,
+            units: Some("mole".to_string())
+        }
+    );
+    // the attribute is read by its name, a document without the prefix means the same
+    assert_eq!(
+        math(r#"<cn units="mole">49</cn>"#),
+        Node::Number {
+            value: 49.0,
+            units: Some("mole".to_string())
+        }
+    );
+    assert_eq!(
+        math(r#"<cn type="e-notation" units="per_min">2<sep/>-3</cn>"#),
+        Node::Number {
+            value: 2e-3,
+            units: Some("per_min".to_string())
+        }
     );
     assert!(matches!(bad_math("<cn>abc</cn>"), ReadError::Xml(_)));
 }
@@ -472,7 +491,7 @@ fn csymbols() {
         *mm,
         Some(Node::Apply {
             op: Op::Delay,
-            args: vec![Node::Symbol("b".into()), Node::Number(2.0)]
+            args: vec![Node::Symbol("b".into()), Node::number(2.0)]
         })
     );
     assert!(matches!(&m.rules[2], Rule::Algebraic { .. }));
@@ -501,11 +520,11 @@ fn event_fields() {
         t0.math,
         Some(Node::Apply {
             op: Op::Gt,
-            args: vec![Node::Symbol("x".into()), Node::Number(1.0)]
+            args: vec![Node::Symbol("x".into()), Node::number(1.0)]
         })
     );
-    assert_eq!(e[0].priority, Some(Node::Number(5.0)));
-    assert_eq!(e[0].delay, Some(Node::Number(0.5)));
+    assert_eq!(e[0].priority, Some(Node::number(5.0)));
+    assert_eq!(e[0].delay, Some(Node::number(0.5)));
     assert_eq!(e[0].assignments.len(), 2);
     assert_eq!(e[0].assignments[1].variable, "y");
     assert_eq!(e[0].assignments[1].math, Some(Node::Symbol("x".into())));
@@ -539,14 +558,14 @@ fn mathml_constants_and_defaults() {
         math("<apply><log/><logbase><cn>2</cn></logbase><ci>x</ci></apply>"),
         Node::Apply {
             op: Op::Log,
-            args: vec![Node::Number(2.0), Node::Symbol("x".into())]
+            args: vec![Node::number(2.0), Node::Symbol("x".into())]
         }
     );
     assert_eq!(
         math("<apply><root/><degree><cn type=\"integer\">3</cn></degree><ci>x</ci></apply>"),
         Node::Apply {
             op: Op::Root,
-            args: vec![Node::Number(3.0), Node::Symbol("x".into())]
+            args: vec![Node::number(3.0), Node::Symbol("x".into())]
         }
     );
     assert_eq!(
@@ -583,19 +602,19 @@ fn piecewise_lambda_semantics_and_functions() {
         ),
         Node::Piecewise {
             pieces: vec![(
-                Node::Number(1.0),
+                Node::number(1.0),
                 Node::Apply {
                     op: Op::Lt,
-                    args: vec![Node::Symbol("x".into()), Node::Number(2.0)]
+                    args: vec![Node::Symbol("x".into()), Node::number(2.0)]
                 }
             )],
-            otherwise: Some(Box::new(Node::Number(3.0)))
+            otherwise: Some(Box::new(Node::number(3.0)))
         }
     );
     assert_eq!(
         math("<piecewise><piece><cn>1</cn><true/></piece></piecewise>"),
         Node::Piecewise {
-            pieces: vec![(Node::Number(1.0), Node::True)],
+            pieces: vec![(Node::number(1.0), Node::True)],
             otherwise: None
         }
     );
@@ -609,7 +628,7 @@ fn piecewise_lambda_semantics_and_functions() {
         math("<apply><ci>f</ci><cn>1</cn></apply>"),
         Node::Apply {
             op: Op::Function("f".into()),
-            args: vec![Node::Number(1.0)]
+            args: vec![Node::number(1.0)]
         }
     );
     let xml = r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2"><model>
@@ -831,7 +850,7 @@ fn case_01239_an_event_without_a_trigger_is_read() {
         r#"<listOfEvents><event id="E0"><listOfEventAssignments><eventAssignment variable="p">{M}<cn>1</cn></math></eventAssignment></listOfEventAssignments></event></listOfEvents>"#
     ));
     assert_eq!(m.events[0].trigger, None);
-    assert_eq!(m.events[0].assignments[0].math, Some(Node::Number(1.0)));
+    assert_eq!(m.events[0].assignments[0].math, Some(Node::number(1.0)));
 }
 
 #[test]

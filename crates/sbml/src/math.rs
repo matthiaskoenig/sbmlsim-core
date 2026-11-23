@@ -86,7 +86,15 @@ pub enum Op {
 #[derive(Debug, Clone, PartialEq)]
 #[allow(missing_docs)]
 pub enum Node {
-    Number(f64),
+    /// A number and the units of SBML level 3 it carries (`sbml:units` of its `<cn>`), which
+    /// a conversion to a format that gives every number units needs; the compiler does not
+    /// compute with units and ignores them.
+    Number {
+        /// The value.
+        value: f64,
+        /// The units, the id of a unit definition or the name of a unit kind.
+        units: Option<String>,
+    },
     Symbol(String),
     CsymbolTime,
     CsymbolAvogadro,
@@ -116,6 +124,12 @@ pub enum Node {
 }
 
 impl Node {
+    /// A number without units, the number of a document before level 3 and of a formula.
+    #[must_use]
+    pub const fn number(value: f64) -> Self {
+        Self::Number { value, units: None }
+    }
+
     /// The names of the symbols the node reads, in the order of the expression and with every
     /// repetition.
     #[must_use]
@@ -293,6 +307,16 @@ pub(crate) fn read_math(math: X) -> Result<Node, ReadError> {
 
 fn number(n: X) -> Result<Node, ReadError> {
     let kind = n.attribute("type").unwrap_or("real");
+    // `sbml:units` of level 3, by the name of the attribute and in any namespace: the reader
+    // validates nothing, and a document which writes it without the prefix means the same
+    let units = n
+        .attributes()
+        .find(|attribute| attribute.name() == "units")
+        .map(|attribute| attribute.value().to_string());
+    let value = |value: f64| Node::Number {
+        value,
+        units: units.clone(),
+    };
     let bad = |t: &str| err(format!("invalid number {t:?} in <cn type=\"{kind}\">"));
     let parts = || -> Result<(String, String), ReadError> {
         let mut head = String::new();
@@ -316,14 +340,14 @@ fn number(n: X) -> Result<Node, ReadError> {
     };
     let parse = |t: &str| t.parse::<f64>().map_err(|_| bad(t));
     match kind {
-        "real" | "integer" => Ok(Node::Number(parse(&text(n))?)),
+        "real" | "integer" => Ok(value(parse(&text(n))?)),
         "e-notation" => {
             let (m, e) = parts()?;
-            Ok(Node::Number(parse(&format!("{m}e{e}"))?))
+            Ok(value(parse(&format!("{m}e{e}"))?))
         }
         "rational" => {
             let (a, b) = parts()?;
-            Ok(Node::Number(parse(&a)? / parse(&b)?))
+            Ok(value(parse(&a)? / parse(&b)?))
         }
         other => Err(err(format!("unknown <cn> type {other:?}"))),
     }

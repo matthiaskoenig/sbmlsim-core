@@ -569,7 +569,7 @@ fn species_reference(
             constant: flag(n, "constant", !lv.is_level_3())?,
         });
     };
-    if let Node::Number(value) = math {
+    if let Node::Number { value, .. } = math {
         // a number is the stoichiometry itself, no rule is needed for it
         return Ok(SpeciesReference {
             species,

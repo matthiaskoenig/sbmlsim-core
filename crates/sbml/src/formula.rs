@@ -183,7 +183,10 @@ impl Parser<'_> {
         }
         if self.take('-') {
             return Ok(match self.signed()? {
-                Node::Number(value) => Node::Number(-value),
+                Node::Number { value, units } => Node::Number {
+                    value: -value,
+                    units,
+                },
                 node => Node::Apply {
                     op: Op::Minus,
                     args: vec![node],
@@ -198,7 +201,7 @@ impl Parser<'_> {
         match self.peek().cloned() {
             Some(Token::Number(value)) => {
                 self.at += 1;
-                Ok(Node::Number(value))
+                Ok(Node::number(value))
             }
             Some(Token::Name(name)) => {
                 self.at += 1;
@@ -259,13 +262,13 @@ fn call(name: &str, args: Vec<Node>) -> Result<Node, String> {
         "log10" if args.len() == 1 => {
             return Ok(Node::Apply {
                 op: Op::Log,
-                args: vec![Node::Number(10.0), args[0].clone()],
+                args: vec![Node::number(10.0), args[0].clone()],
             });
         }
         "sqrt" if args.len() == 1 => {
             return Ok(Node::Apply {
                 op: Op::Root,
-                args: vec![Node::Number(2.0), args[0].clone()],
+                args: vec![Node::number(2.0), args[0].clone()],
             });
         }
         _ => {}
