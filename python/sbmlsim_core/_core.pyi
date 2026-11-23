@@ -261,7 +261,7 @@ def compile_sbml(
     """Compiles the text of an SBML Level 3 document into `model.wasm` and its description."""
 
 def runtime_wasm() -> dict[str, bytes]:
-    """The bytes of `engine.wasm` and `mathlib.wasm` this extension embeds."""
+    """The bytes of `engine.wasm`, `mathlib.wasm` and `compiler.wasm` this extension embeds."""
 
 def fit_models(
     models: Mapping[str, LoadedModel],
