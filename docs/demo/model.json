@@ -1,6 +1,6 @@
 {
   "contract": "model/2",
-  "compiler": "sbmlsim-compiler 0.18.0",
+  "compiler": "sbmlsim-compiler 0.21.0",
   "id": "BIOMD0000000012",
   "states": [
     {
