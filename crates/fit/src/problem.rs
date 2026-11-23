@@ -188,8 +188,8 @@ pub enum NoiseKind {
     /// A normal noise of the logarithm of the measurement, whose column and values are
     /// logarithms.
     LogNormal,
-    /// A Laplace noise of the scale of the measurement, whose residual is the root of twice
-    /// its absolute deviation.
+    /// A Laplace noise of the scale of the measurement, which is its standard deviation over
+    /// `sqrt(2)`, and whose residual is the root of twice its absolute deviation.
     Laplace,
     /// A Laplace noise of the logarithm of the measurement, whose column and values are
     /// logarithms.
@@ -221,9 +221,10 @@ impl NoiseKind {
 pub struct Likelihood {
     /// The distribution of the noise of every measurement of the curve.
     pub distribution: NoiseKind,
-    /// The column of the simulation of the condition which is the standard deviation of a
-    /// measurement, read in the row of that measurement; the `noise` of the curve when it is
-    /// absent, and the two together are refused.
+    /// The column of the simulation of the condition which is the noise of a measurement,
+    /// read in the row of that measurement, its standard deviation for a normal kind and the
+    /// scale of its distribution for a Laplace one, as [`Curve::noise`] is; the `noise` of
+    /// the curve when it is absent, and the two together are refused.
     pub noise_column: Option<String>,
 }
 
@@ -256,9 +257,11 @@ pub struct Curve {
     /// The measurements, one per time.
     pub values: Vec<f64>,
     /// The standard deviation of every measurement, the residuals are divided by it; one
-    /// for every point when it is absent. A positive infinity is a measurement which
-    /// carries no information: its residual (`+-0.0`) and its row of the jacobian (zeros)
-    /// are zero, and the arithmetic needs no case of its own.
+    /// for every point when it is absent. It is the scale of the noise of a curve whose
+    /// [`Likelihood::distribution`] is a Laplace kind, whose standard deviation is `sqrt(2)`
+    /// times it. A positive infinity is a measurement which carries no information: its
+    /// residuals are `+-0.0` and its rows of the jacobian are zeros, the one row of a curve
+    /// without a likelihood and both rows of a curve with one.
     pub noise: Option<Vec<f64>>,
     /// The weight of the curve, which multiplies its residuals.
     pub weight: f64,
@@ -381,25 +384,28 @@ struct ResolvedLikelihood {
 /// derivatives are built from, see [`Resolved::rows_of`].
 #[derive(Clone, Copy, Debug)]
 struct Rows {
-    /// The standard deviation of the measurement, which is positive and finite.
+    /// The standard deviation of the measurement, which is positive and may be infinite.
     sigma: f64,
     /// The deviation of the measurement over it, `(column - value) / sigma`.
     r: f64,
     /// The residual of the data, without the weight of the curve.
     data: f64,
+    /// The root of `2 |r|`, which the residual of the data of a Laplace kind is with the
+    /// sign of `r`, and which the derivative of that residual divides by.
+    deviation_root: f64,
     /// The root of `2 term + offset`, the residual of the scale of the noise, without the
     /// weight of the curve as well; its derivative divides by it.
-    root: f64,
+    scale_root: f64,
 }
 
-/// Whether a number is a standard deviation of a measurement of a likelihood: positive and
-/// finite.
+/// Whether a number is a standard deviation of a measurement at runtime: positive, where an
+/// infinity is the one of a measurement which carries no information and zero, a negative
+/// value and `NaN` are none of it.
 ///
-/// A likelihood reads the logarithm of the standard deviation of a measurement, so an
-/// infinity is none of it, where the weighted least squares of a curve without a noise model
-/// takes it as a measurement which carries no information.
+/// The standard deviations a request gives are checked when the curve is resolved; a column
+/// of the simulation is whatever the model computes, so a fit reads it every time.
 fn usable_sigma(sigma: f64) -> bool {
-    sigma.is_finite() && sigma > 0.0
+    sigma > 0.0
 }
 
 impl Resolved {
@@ -419,6 +425,15 @@ impl Resolved {
     /// The row of the scale is `sqrt(2 term + offset)` of the term `ln(sigma) + c`, which a
     /// log kind adds the measurement to, since its density carries it; the offset of the row
     /// keeps the term of a small standard deviation above zero, see [`LIKELIHOOD_OFFSET`].
+    ///
+    /// Both rows of a measurement of an infinite standard deviation are zero. An infinity is
+    /// no claim that a measurement has infinite noise, whose density would carry the
+    /// logarithm of it; it is what [`Curve::noise`] says a measurement which carries no
+    /// information is, and such a measurement contributes nothing to the cost of a
+    /// likelihood as it contributes nothing to the one of a weighted least squares: its two
+    /// rows hold their places in the residual vector and say nothing in either of them. Its
+    /// deviation is `+-0.0` by the arithmetic itself and the term of its scale is the one
+    /// case of its own.
     fn rows_of(
         &self,
         table: &SimulationResult,
@@ -439,8 +454,9 @@ impl Resolved {
         // the difference is divided by the standard deviation and not multiplied by its
         // reciprocal, which rounds once more, as the residual of a least squares is
         let r = (table.values[row * columns + self.column] - value) / sigma;
+        let deviation_root = (2.0 * r.abs()).sqrt();
         let data = if kind.laplace() {
-            r.signum() * (2.0 * r.abs()).sqrt()
+            r.signum() * deviation_root
         } else {
             r
         };
@@ -455,7 +471,14 @@ impl Resolved {
             sigma,
             r,
             data,
-            root: (2.0 * term + offset).max(0.0).sqrt(),
+            deviation_root,
+            // the scale of a measurement which carries no information says nothing, where
+            // the term of an infinite standard deviation would be an infinity
+            scale_root: if sigma.is_finite() {
+                (2.0 * term + offset).max(0.0).sqrt()
+            } else {
+                0.0
+            },
         })
     }
 }
@@ -531,7 +554,7 @@ impl Point {
             }
             for at in 0..curve.rows.len() {
                 let rows = curve.rows_of(table, self.columns, likelihood, at);
-                out.push(rows.map_or(FAILED_RESIDUAL, |rows| rows.root * curve.weight));
+                out.push(rows.map_or(FAILED_RESIDUAL, |rows| rows.scale_root * curve.weight));
             }
         }
         out
@@ -549,7 +572,8 @@ impl Point {
     /// one of its data follows the column of the curve and, where its standard deviation is a
     /// column of the condition, that column as well, the one of the scale of its noise only
     /// the latter. The rows of a measurement whose standard deviation is none are zero, as
-    /// the derivative of its constant [`FAILED_RESIDUAL`] is.
+    /// the derivative of its constant [`FAILED_RESIDUAL`] is, and so are the rows of one
+    /// whose standard deviation is infinite, whose residuals are zero.
     fn block(
         &self,
         table: &SimulationResult,
@@ -590,26 +614,32 @@ impl Point {
                 let dnoise = likelihood
                     .noise_column
                     .map(|column| derivatives(curve.rows[point], column));
-                // the residual of the data of a Laplace kind is divided by the root it
-                // carries, which has no derivative where the deviation is zero
-                let root = (2.0 * rows.r.abs()).sqrt();
                 for (target, factor) in factors.iter().enumerate() {
                     let Some((parameter, factor)) = factor else {
                         continue;
                     };
                     let dsigma = dnoise.map_or(0.0, |values| values[target]);
-                    let mut data = (dcolumn[target] - rows.r * dsigma) / rows.sigma;
-                    if likelihood.distribution.laplace() {
-                        data = if rows.r == 0.0 { 0.0 } else { data / root };
-                    }
-                    let scale = if rows.root > 0.0 {
-                        (dsigma / rows.sigma) / rows.root
+                    let dr = (dcolumn[target] - rows.r * dsigma) / rows.sigma;
+                    let ddata = if likelihood.distribution.laplace() {
+                        // the residual of the data of a Laplace kind is the root it carries,
+                        // which has no derivative where the deviation is zero, the minimum
+                        // of that residual
+                        if rows.r == 0.0 {
+                            0.0
+                        } else {
+                            dr / rows.deviation_root
+                        }
+                    } else {
+                        dr
+                    };
+                    let dscale = if rows.scale_root > 0.0 {
+                        (dsigma / rows.sigma) / rows.scale_root
                     } else {
                         0.0
                     };
                     let weight = curve.weight * factor;
-                    out[(at + point) * k + parameter] = data * weight;
-                    out[(at + n + point) * k + parameter] = scale * weight;
+                    out[(at + point) * k + parameter] = ddata * weight;
+                    out[(at + n + point) * k + parameter] = dscale * weight;
                 }
             }
             at += 2 * n;

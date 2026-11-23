@@ -462,20 +462,23 @@ fn a_fit_which_is_stopped_reports_the_runs_which_finished() {
 // of its noise, so that half the sum of their squares is the negative log-likelihood of the
 // curve up to half of `LIKELIHOOD_OFFSET` per measurement, which the host subtracts.
 
-/// The decay model whose `sigma` is an assignment rule of `k`, so that a curve which reads
-/// that column has a standard deviation which follows the parameters of the fit.
-const SIGMA_SBML: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+/// The decay model whose `sigma` is the assignment rule `factor * k`, so that a curve which
+/// reads that column has a noise which follows the parameters of the fit.
+fn sigma_sbml(factor: f64) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
 <sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2">
   <model id="decay">
     <listOfParameters>
       <parameter id="y" value="1" constant="false"/>
       <parameter id="k" value="0.5" constant="true"/>
+      <parameter id="factor" value="{factor:e}" constant="true"/>
       <parameter id="sigma" value="0" constant="false"/>
     </listOfParameters>
     <listOfRules>
       <assignmentRule variable="sigma">
         <math xmlns="http://www.w3.org/1998/Math/MathML">
-          <apply><times/><cn>0.1</cn><ci>k</ci></apply>
+          <apply><times/><ci>factor</ci><ci>k</ci></apply>
         </math>
       </assignmentRule>
       <rateRule variable="y">
@@ -489,11 +492,13 @@ const SIGMA_SBML: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
     </listOfRules>
   </model>
 </sbml>
-"#;
+"#
+    )
+}
 
 /// That model, compiled and loaded in the runtime of the tests.
-fn sigma_model() -> Arc<LoadedModel> {
-    let compiled = compile(SIGMA_SBML, &CompileOptions::default()).unwrap();
+fn sigma_model(factor: f64) -> Arc<LoadedModel> {
+    let compiled = compile(&sigma_sbml(factor), &CompileOptions::default()).unwrap();
     Arc::new(
         runtime()
             .load(&compiled.wasm, &compiled.description)
@@ -834,9 +839,9 @@ fn a_noise_column_which_the_condition_does_not_select_is_refused() {
 
 #[test]
 fn the_block_of_a_likelihood_curve_is_the_chain_rule_of_its_rows() {
-    // the standard deviation of the curve is the column `sigma` of the model, `0.1 * k`, so
-    // both the residual of a measurement and the one of its scale follow the parameter
-    for distribution in ["normal", "laplace"] {
+    // the noise of the curve is the column `sigma` of the model, `0.1 * k`, so both the
+    // residual of a measurement and the one of its scale follow the parameter
+    for distribution in ["normal", "log-normal", "laplace", "log-laplace"] {
         let problem = problem_on(
             of_the_sigma_model(json!({
                 "condition": "decay",
@@ -845,7 +850,7 @@ fn the_block_of_a_likelihood_curve_is_the_chain_rule_of_its_rows() {
                 "values": [0.5, 0.4, 0.3],
                 "likelihood": {"distribution": distribution, "noise_column": "sigma"},
             })),
-            sigma_model(),
+            sigma_model(0.1),
         )
         .unwrap();
         let x = problem.start();
@@ -979,4 +984,98 @@ fn the_likelihood_of_a_curve_is_written_as_it_was_read() {
         column["curves"][0]["likelihood"],
         json!({"distribution": "normal"})
     );
+}
+
+#[test]
+fn a_noise_too_small_for_the_offset_of_a_scale_has_a_row_of_zero() {
+    // the term of the scale of such a noise is below `-0.5 * LIKELIHOOD_OFFSET`, which no
+    // root reaches: the row is zero and so is its derivative, although the noise follows the
+    // fit, and the rows of the data are the ones of the noise
+    let problem = problem_on(
+        of_the_sigma_model(json!({
+            "condition": "decay",
+            "column": "y",
+            "times": [1.0, 2.0],
+            "values": [0.5, 0.4],
+            "likelihood": {"distribution": "normal", "noise_column": "sigma"},
+        })),
+        sigma_model(1e-30),
+    )
+    .unwrap();
+    let x = problem.start();
+
+    let residuals = problem.residuals(&x).unwrap();
+    let block = problem.jacobian(&x).unwrap();
+
+    assert_eq!(
+        &residuals[2..],
+        &[0.0, 0.0],
+        "the rows of the scales of a noise of {} are not zero",
+        1e-30 * K
+    );
+    assert_eq!(&block[2..], &[0.0, 0.0], "their derivatives are not zero");
+    assert!(
+        residuals[..2].iter().all(|value| value.abs() > 1e20),
+        "the rows of the data of such a noise are {:?}",
+        &residuals[..2]
+    );
+}
+
+#[test]
+fn the_rows_of_a_likelihood_curve_do_not_reach_into_the_curve_beside_it() {
+    // two curves of one condition, the first of a likelihood and the second of the weighted
+    // least squares: the residual vector is [data, data, scale, scale, plain, plain] and the
+    // rows of the jacobian are in the same places
+    let (times, column) = after_the_start(2);
+    let noise = [0.5, 2.0];
+    let values: Vec<f64> = column.iter().map(|value| value - 0.25).collect();
+    let plain: Vec<f64> = column.iter().map(|value| value + 0.5).collect();
+    let mut request = of_a_curve(json!({
+        "condition": "decay",
+        "column": "y",
+        "times": times,
+        "values": values,
+        "noise": noise,
+        "likelihood": {"distribution": "normal"},
+    }));
+    request["curves"].as_array_mut().unwrap().push(json!({
+        "condition": "decay",
+        "column": "y",
+        "times": times,
+        "values": plain,
+        "noise": [1.0, 4.0],
+    }));
+    request["jacobian"] = json!("sensitivities");
+    let problem = problem(request).unwrap();
+    let x = problem.start();
+
+    let residuals = problem.residuals(&x).unwrap();
+    let block = problem.jacobian(&x).unwrap();
+
+    assert_eq!(problem.n_residuals(), 6, "two measurements twice and two");
+    assert_eq!(residuals.len(), 6);
+    assert_eq!(block.len(), 6);
+    for at in 0..2 {
+        let data = (column[at] - values[at]) / noise[at];
+        same(residuals[at], data, &format!("the data residual {at}"));
+        let scale = (2.0 * (noise[at].ln() + LN_2PI_HALF) + LIKELIHOOD_OFFSET).sqrt();
+        same(
+            residuals[2 + at],
+            scale,
+            &format!("the scale residual {at}"),
+        );
+        let other = (column[at] - plain[at]) / [1.0, 4.0][at];
+        same(
+            residuals[4 + at],
+            other,
+            &format!("the residual {at} of the curve beside it"),
+        );
+    }
+    // the rows of the scales of a fixed noise are the only zero ones, and the rows of the
+    // second curve are its own and not the ones of the first
+    assert_eq!(&block[2..4], &[0.0, 0.0], "{block:?}");
+    assert!(block[..2].iter().all(|value| *value != 0.0), "{block:?}");
+    assert!(block[4..].iter().all(|value| *value != 0.0), "{block:?}");
+    let apart = apart(&block, &central(&problem, &x));
+    assert!(apart < 1e-6, "the block of the two curves is {apart} off");
 }

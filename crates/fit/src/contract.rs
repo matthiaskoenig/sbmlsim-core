@@ -196,11 +196,13 @@ pub struct CurveRequest {
     pub times: Vec<f64>,
     /// The measurements, one per time.
     pub values: Vec<f64>,
-    /// The standard deviation of every measurement, which its residual is divided by.
+    /// The standard deviation of every measurement, which its residual is divided by; the
+    /// scale of the noise of a measurement for a curve whose `likelihood` is one of the
+    /// Laplace kinds, whose standard deviation is `sqrt(2)` times it.
     /// Every value is positive; a positive infinity is allowed and means the point carries
     /// no information: it stays in the residual vector and contributes nothing (its
-    /// residual is `+-0.0` and its row of the jacobian is zeros). Zero, a negative value
-    /// and `NaN` are refused.
+    /// residuals are `+-0.0` and its rows of the jacobian are zeros, both rows of a curve
+    /// of a likelihood). Zero, a negative value and `NaN` are refused.
     #[serde(default)]
     pub noise: Option<Vec<f64>>,
     /// The weight of the curve, which multiplies its residuals; one when it is absent.
@@ -233,11 +235,11 @@ pub struct CurveRequest {
     /// selects a column which is a logarithm and gives the logarithms of its measurements,
     /// and the density of such a kind carries the measurement itself.
     ///
-    /// The standard deviation of a measurement is the `noise` of the curve or the
-    /// `noise_column` of this block; a curve which carries both, and one which carries
-    /// neither, is refused.
+    /// The noise of a measurement is the `noise` of the curve or the `noise_column` of this
+    /// block, its standard deviation for a normal kind and the scale of its distribution for
+    /// a Laplace one; a curve which carries both, and one which carries neither, is refused.
     ///
-    /// Absent, which is the request every release before 0.23.0 reads, there is none.
+    /// Absent, which is every request written before the block existed, there is none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub likelihood: Option<LikelihoodRequest>,
 }
@@ -248,14 +250,20 @@ pub struct LikelihoodRequest {
     /// The distribution of the noise of every measurement of the curve: `"normal"`,
     /// `"log-normal"`, `"laplace"` or `"log-laplace"`.
     pub distribution: NoiseKind,
-    /// The column of the simulation of the condition which is the standard deviation of a
-    /// measurement, read in the row of that measurement, e.g. a parameter of the fit itself
-    /// or an assignment rule of the model over it, which is the noise a fit moves.
+    /// The column of the simulation of the condition which is the noise of a measurement,
+    /// read in the row of that measurement, e.g. a parameter of the fit itself or an
+    /// assignment rule of the model over it, which is the noise a fit moves. It is the
+    /// standard deviation of the measurement for the `normal` and `log-normal` kinds and the
+    /// scale of its distribution for the `laplace` and `log-laplace` kinds, whose standard
+    /// deviation is `sqrt(2)` times it, as the `noise` of the curve is.
     ///
     /// The `noise` of the curve when it is absent, and a curve which carries the two together
     /// is refused. The condition has to select the column, as it selects the one of the
-    /// curve, and the standard deviation of a measurement has to be positive and finite there
-    /// ([`crate::FAILED_RESIDUAL`] for both rows of a measurement where it is not).
+    /// curve. The value there is positive: an infinity is a measurement which carries no
+    /// information, both of whose rows are zero as a `noise` of an infinity makes them, and
+    /// zero, a negative value and `NaN` are no noise of a measurement
+    /// ([`crate::FAILED_RESIDUAL`] for both of its rows, which is what a failed integration
+    /// gives the rows of a curve; the point fails, the fit goes on).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub noise_column: Option<String>,
 }
