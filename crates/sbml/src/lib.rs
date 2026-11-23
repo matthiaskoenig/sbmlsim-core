@@ -26,6 +26,7 @@
 
 mod model;
 
+pub mod formula;
 pub mod math;
 
 pub use model::*;

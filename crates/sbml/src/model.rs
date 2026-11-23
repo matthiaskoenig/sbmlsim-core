@@ -9,6 +9,7 @@
 //! is 1, a compartment and a parameter are constant, the assignments of an event take the
 //! values of the trigger time).
 
+use crate::formula;
 use crate::math::{self, Node};
 use crate::{Document, ReadError};
 use roxmltree::Node as X;
@@ -53,6 +54,12 @@ impl Level {
     /// default and carries the units of the model itself.
     const fn is_level_3(self) -> bool {
         self.level == 3
+    }
+
+    /// Whether the document is of Level 1, which names an element by its `name` and holds its
+    /// mathematics as an infix formula instead of MathML.
+    const fn is_level_1(self) -> bool {
+        self.level == 1
     }
 }
 
@@ -347,6 +354,51 @@ fn items<'a, 'i>(n: X<'a, 'i>, list: &str, item: &str) -> Vec<X<'a, 'i>> {
         .unwrap_or_default()
 }
 
+impl Level {
+    /// The element of a species and the attribute which names one, `<specie>` and `specie` in
+    /// Level 1 Version 1, which Version 2 renamed.
+    const fn species_names(self) -> (&'static str, &'static str) {
+        if self.level == 1 && self.version == 1 {
+            ("specie", "specie")
+        } else {
+            ("species", "species")
+        }
+    }
+
+    /// The element of a species reference, `<specieReference>` in Level 1 Version 1.
+    const fn species_reference_name(self) -> &'static str {
+        if self.level == 1 && self.version == 1 {
+            "specieReference"
+        } else {
+            "speciesReference"
+        }
+    }
+}
+
+/// The identifier of an element: its `name` in Level 1, its `id` in every later level.
+fn sid(n: X, lv: Level) -> Result<String, ReadError> {
+    req(n, if lv.is_level_1() { "name" } else { "id" })
+}
+
+/// The identifier of an element which may have none.
+fn sid_opt(n: X, lv: Level) -> Option<String> {
+    opt(n, if lv.is_level_1() { "name" } else { "id" })
+}
+
+/// The mathematics of an element: the `formula` attribute in Level 1, the `<math>` child in
+/// every later level, absent when the element carries neither.
+fn math_or_formula(n: X, lv: Level) -> Result<Option<Node>, ReadError> {
+    if !lv.is_level_1() {
+        return math_of(n);
+    }
+    let Some(text) = n.attribute("formula") else {
+        return Ok(None);
+    };
+    formula::parse(text)
+        .map(Some)
+        .map_err(|message| err(format!("<{}> formula: {message}", n.tag_name().name())))
+}
+
 fn req(n: X, name: &str) -> Result<String, ReadError> {
     n.attribute(name).map(str::to_string).ok_or_else(|| {
         err(format!(
@@ -428,7 +480,7 @@ fn unit_term(u: X) -> Result<String, ReadError> {
     })
 }
 
-fn unit_definition(n: X) -> Result<UnitDefinition, ReadError> {
+fn unit_definition(n: X, lv: Level) -> Result<UnitDefinition, ReadError> {
     let terms = items(n, "listOfUnits", "unit")
         .into_iter()
         .map(unit_term)
@@ -439,7 +491,7 @@ fn unit_definition(n: X) -> Result<UnitDefinition, ReadError> {
         terms.join("*")
     };
     Ok(UnitDefinition {
-        id: req(n, "id")?,
+        id: sid(n, lv)?,
         expression,
     })
 }
@@ -465,13 +517,14 @@ fn species_reference(
         (None, None) => Some(1.0),
     };
     let id = opt(n, "id");
+    let species = req(n, lv.species_names().1)?;
     let Some(math) = child(n, "stoichiometryMath")
         .map(math_of)
         .transpose()?
         .flatten()
     else {
         return Ok(SpeciesReference {
-            species: req(n, "species")?,
+            species,
             id,
             stoichiometry,
             // a stoichiometry of Level 1 and Level 2 is constant without the element
@@ -481,7 +534,7 @@ fn species_reference(
     if let Node::Number(value) = math {
         // a number is the stoichiometry itself, no rule is needed for it
         return Ok(SpeciesReference {
-            species: req(n, "species")?,
+            species,
             id,
             stoichiometry: Some(value),
             constant: true,
@@ -494,7 +547,7 @@ fn species_reference(
         math: Some(math),
     });
     Ok(SpeciesReference {
-        species: req(n, "species")?,
+        species,
         id: Some(id),
         stoichiometry: None,
         constant: false,
@@ -503,7 +556,8 @@ fn species_reference(
 
 /// A reaction, with the rules of the stoichiometries which change in time appended to `rules`.
 fn reaction(n: X, lv: Level, rules: &mut Vec<Rule>) -> Result<Reaction, ReadError> {
-    let id = req(n, "id")?;
+    let id = sid(n, lv)?;
+    let reference = lv.species_reference_name();
     let mut refs =
         |list: &str, item: &str, role: &str| -> Result<Vec<SpeciesReference>, ReadError> {
             items(n, list, item)
@@ -527,7 +581,7 @@ fn reaction(n: X, lv: Level, rules: &mut Vec<Rule>) -> Result<Reaction, ReadErro
                 .into_iter()
                 .map(|p| {
                     Ok(LocalParameter {
-                        id: req(p, "id")?,
+                        id: sid(p, lv)?,
                         value: double(p, "value")?,
                         units: opt(p, "units"),
                     })
@@ -535,13 +589,13 @@ fn reaction(n: X, lv: Level, rules: &mut Vec<Rule>) -> Result<Reaction, ReadErro
                 .collect::<Result<_, ReadError>>()?;
             Ok(KineticLaw {
                 id: opt(k, "id"),
-                math: math_of(k)?,
+                math: math_or_formula(k, lv)?,
                 local_parameters,
             })
         })
         .transpose()?;
-    let reactants = refs("listOfReactants", "speciesReference", "reactant")?;
-    let products = refs("listOfProducts", "speciesReference", "product")?;
+    let reactants = refs("listOfReactants", reference, "reactant")?;
+    let products = refs("listOfProducts", reference, "product")?;
     Ok(Reaction {
         // a reaction of Level 1 and Level 2 is reversible unless it says otherwise
         reversible: flag(n, "reversible", !lv.is_level_3())?,
@@ -553,7 +607,7 @@ fn reaction(n: X, lv: Level, rules: &mut Vec<Rule>) -> Result<Reaction, ReadErro
             .into_iter()
             .map(|m| {
                 Ok(ModifierSpeciesReference {
-                    species: req(m, "species")?,
+                    species: req(m, lv.species_names().1)?,
                     id: opt(m, "id"),
                 })
             })
@@ -601,22 +655,56 @@ fn event(n: X) -> Result<Event, ReadError> {
     })
 }
 
-fn rule(n: X) -> Result<Rule, ReadError> {
-    Ok(match n.tag_name().name() {
-        "assignmentRule" => Rule::Assignment {
-            id: opt(n, "id"),
-            variable: req(n, "variable")?,
-            math: math_of(n)?,
-        },
-        "rateRule" => Rule::Rate {
-            id: opt(n, "id"),
-            variable: req(n, "variable")?,
-            math: math_of(n)?,
-        },
-        _ => Rule::Algebraic {
-            id: opt(n, "id"),
-            math: math_of(n)?,
-        },
+/// The elements a level names a rule with, and the attribute which names what the rule
+/// determines: Level 1 has one element per kind of variable and no `<assignmentRule>`, and
+/// tells an assignment from a rate by the attribute `type`.
+fn rule_elements(lv: Level) -> &'static [(&'static str, &'static str)] {
+    if lv.is_level_1() {
+        if lv.version == 1 {
+            &[
+                ("parameterRule", "name"),
+                ("specieConcentrationRule", "specie"),
+                ("compartmentVolumeRule", "compartment"),
+                ("algebraicRule", ""),
+            ]
+        } else {
+            &[
+                ("parameterRule", "name"),
+                ("speciesConcentrationRule", "species"),
+                ("compartmentVolumeRule", "compartment"),
+                ("algebraicRule", ""),
+            ]
+        }
+    } else {
+        &[
+            ("assignmentRule", "variable"),
+            ("rateRule", "variable"),
+            ("algebraicRule", ""),
+        ]
+    }
+}
+
+fn rule(n: X, lv: Level) -> Result<Rule, ReadError> {
+    let name = n.tag_name().name();
+    let math = math_or_formula(n, lv)?;
+    let id = opt(n, "id");
+    let Some((_, attribute)) = rule_elements(lv).iter().find(|(e, _)| *e == name) else {
+        return Ok(Rule::Algebraic { id, math });
+    };
+    if attribute.is_empty() {
+        return Ok(Rule::Algebraic { id, math });
+    }
+    let variable = req(n, attribute)?;
+    // Level 1 states the kind of a rule in its `type`, every later level in its element
+    let rate = if lv.is_level_1() {
+        n.attribute("type") == Some("rate")
+    } else {
+        name == "rateRule"
+    };
+    Ok(if rate {
+        Rule::Rate { id, variable, math }
+    } else {
+        Rule::Assignment { id, variable, math }
     })
 }
 
@@ -635,7 +723,7 @@ fn read_model(m: X, lv: Level) -> Result<Model, ReadError> {
     let list = |l: &str, i: &str| items(m, l, i);
     let mut unit_definitions = list("listOfUnitDefinitions", "unitDefinition")
         .into_iter()
-        .map(unit_definition)
+        .map(|u| unit_definition(u, lv))
         .collect::<Result<Vec<_>, _>>()?;
     if !lv.is_level_3() {
         // the built in units of the level, unless the model redefines them
@@ -651,12 +739,8 @@ fn read_model(m: X, lv: Level) -> Result<Model, ReadError> {
     let mut rules = child(m, "listOfRules")
         .map(|l| {
             l.children()
-                .filter(|c| {
-                    ["assignmentRule", "rateRule", "algebraicRule"]
-                        .iter()
-                        .any(|n| is_core(c, n))
-                })
-                .map(rule)
+                .filter(|c| rule_elements(lv).iter().any(|(n, _)| is_core(c, n)))
+                .map(|r| rule(r, lv))
                 .collect::<Result<Vec<_>, _>>()
         })
         .transpose()?
@@ -673,7 +757,7 @@ fn read_model(m: X, lv: Level) -> Result<Model, ReadError> {
         None => Some(built_in.to_string()),
     };
     Ok(Model {
-        id: opt(m, "id"),
+        id: sid_opt(m, lv),
         substance_units: default_units("substanceUnits", "substance"),
         time_units: default_units("timeUnits", "time"),
         extent_units: default_units("extentUnits", "substance"),
@@ -686,7 +770,7 @@ fn read_model(m: X, lv: Level) -> Result<Model, ReadError> {
             .into_iter()
             .map(|f| {
                 Ok(FunctionDefinition {
-                    id: req(f, "id")?,
+                    id: sid(f, lv)?,
                     math: math_of(f)?,
                 })
             })
@@ -695,24 +779,33 @@ fn read_model(m: X, lv: Level) -> Result<Model, ReadError> {
             .into_iter()
             .map(|c| {
                 Ok(Compartment {
-                    id: req(c, "id")?,
+                    id: sid(c, lv)?,
                     spatial_dimensions: double(c, "spatialDimensions")?,
-                    size: double(c, "size")?,
+                    // the size of a compartment of Level 1 is its volume
+                    size: double(c, if lv.is_level_1() { "volume" } else { "size" })?,
                     units: opt(c, "units"),
                     // a compartment of Level 1 and Level 2 is constant by default
                     constant: flag(c, "constant", !lv.is_level_3())?,
                 })
             })
             .collect::<Result<_, ReadError>>()?,
-        species: list("listOfSpecies", "species")
+        species: list("listOfSpecies", lv.species_names().0)
             .into_iter()
             .map(|s| {
                 Ok(Species {
-                    id: req(s, "id")?,
+                    id: sid(s, lv)?,
                     compartment: req(s, "compartment")?,
                     initial_amount: double(s, "initialAmount")?,
                     initial_concentration: double(s, "initialConcentration")?,
-                    substance_units: opt(s, "substanceUnits"),
+                    // the substance units of a species of Level 1 are its `units`
+                    substance_units: opt(
+                        s,
+                        if lv.is_level_1() {
+                            "units"
+                        } else {
+                            "substanceUnits"
+                        },
+                    ),
                     has_only_substance_units: flag(s, "hasOnlySubstanceUnits", false)?,
                     boundary_condition: flag(s, "boundaryCondition", false)?,
                     constant: flag(s, "constant", false)?,
@@ -724,7 +817,7 @@ fn read_model(m: X, lv: Level) -> Result<Model, ReadError> {
             .into_iter()
             .map(|p| {
                 Ok(Parameter {
-                    id: req(p, "id")?,
+                    id: sid(p, lv)?,
                     value: double(p, "value")?,
                     units: opt(p, "units"),
                     // a parameter of Level 1 and Level 2 is constant by default
@@ -840,7 +933,7 @@ pub(crate) fn read_document(sbml: &str) -> Result<Document, ReadError> {
             .map_err(|_| err(format!("<sbml> {name} is no integer")))
     };
     let (level, version) = (number("level")?, number("version")?);
-    if !matches!((level, version), (2, 1..=5) | (3, 1 | 2)) {
+    if !matches!((level, version), (1, 1 | 2) | (2, 1..=5) | (3, 1 | 2)) {
         return Err(ReadError::UnsupportedLevel { level, version });
     }
     let namespace = root

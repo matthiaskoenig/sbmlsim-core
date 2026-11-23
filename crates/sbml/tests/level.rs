@@ -28,15 +28,24 @@ fn reads_level_2_version_4() {
 }
 
 #[test]
-fn refuses_a_level_it_does_not_know() {
+fn reads_level_1_version_2() {
     let text = r#"<sbml xmlns="http://www.sbml.org/sbml/level1" level="1" version="2">
       <model name="m"/></sbml>"#;
-    let err = read(text).expect_err("level 1 is not read yet");
+    let doc = read(text).expect("L1V2 is read");
+    assert_eq!((doc.level, doc.version), (1, 2));
+    assert_eq!(doc.model.id.as_deref(), Some("m"));
+}
+
+#[test]
+fn refuses_a_level_it_does_not_know() {
+    let text = r#"<sbml xmlns="http://www.sbml.org/sbml/level1" level="4" version="1">
+      <model name="m"/></sbml>"#;
+    let err = read(text).expect_err("there is no level 4");
     assert_eq!(
         err,
         ReadError::UnsupportedLevel {
-            level: 1,
-            version: 2
+            level: 4,
+            version: 1
         }
     );
 }
