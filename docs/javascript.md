@@ -5,11 +5,12 @@
 | module | export of `js/package.json` | what it is |
 |---|---|---|
 | `loader.mjs` | `.` | runs `engine.wasm`, `mathlib.wasm` and a `model.wasm` with the bits of wasmtime |
+| `compile.mjs` | `./compile` | compiles an SBML document into `model.wasm` and its description with `compiler.wasm` |
 | `pool.mjs` (with `worker.mjs`) | `./pool` | a pool of workers which run the loader off the main thread |
 | `panels.mjs` | `./panels` | the routes of the panel service of sbmlsim, answered inside a page from a bundle |
 | `simulate.mjs` | the command `sbmlsim-core-simulate` | the CSV of `sbmlsim-core simulate` in Node |
 
-The package is published to npm as [`sbmlsim-core`](https://www.npmjs.com/package/sbmlsim-core), with the `engine.wasm` and `mathlib.wasm` of its release in `runtime/`:
+The package is published to npm as [`sbmlsim-core`](https://www.npmjs.com/package/sbmlsim-core), with the `compiler.wasm`, `engine.wasm` and `mathlib.wasm` of its release in `runtime/`:
 
 ```bash
 npm install sbmlsim-core
@@ -46,12 +47,12 @@ console.log(columns, nRows, values); // values: a Float64Array, row major
 
 ## A live simulation in this page
 
-The repressilator (Elowitz and Leibler 2000, [BIOMD0000000012](https://www.ebi.ac.uk/biomodels/BIOMD0000000012)) is three repressors in a ring, each one repressing the next. Whether the ring oscillates or settles depends on how cooperative the repression is, the Hill coefficient `n`. Move the slider: everything below is compiled, instantiated and integrated in this page, with no server and nothing but the files of this site.
+The repressilator (Elowitz and Leibler 2000, [BIOMD0000000012](https://www.ebi.ac.uk/biomodels/BIOMD0000000012)) is three repressors in a ring, each one repressing the next. Whether the ring oscillates or settles depends on how cooperative the repression is, the Hill coefficient `n`. Move the slider: the SBML of the model is compiled in this page by `compiler.wasm`, instantiated and integrated here, with no server and nothing but the files of this site.
 
 <div class="rp" data-base="../demo/">
 <div class="rp-head">
 <label class="rp-knob">Hill coefficient <b>n</b><input class="rp-range" type="range" min="1" max="4" step="0.05" value="2" aria-label="Hill coefficient n"><output class="rp-value">2.00</output></label>
-<p class="rp-state">loading the engine ...</p>
+<p class="rp-state">loading the compiler and the engine ...</p>
 </div>
 <svg class="rp-plot" viewBox="0 0 660 270" role="img" aria-label="The three repressilator proteins PX, PY and PZ over 200 time units. The same numbers are in the table below the figure."></svg>
 <details class="rp-table"><summary>The simulated values</summary><div></div></details>
@@ -100,7 +101,7 @@ const simulate = (n) =>
 const { columns, nRows, values } = simulate(2.0); // values: a Float64Array, row major
 ```
 
-`instance.simulate` is synchronous and takes one to two milliseconds here, which is why the slider can redraw on every `input` event without a worker. That is longer than the 0.2 ms the [benchmarks](benchmarks.md) report for this model, because this simulation runs twice as far, asks for four times the output rows and integrates at a hundred times the accuracy; the readout above is what the browser measures, coarsened to a tenth of a millisecond as browsers coarsen their clock. A model whose simulations are long enough to be felt belongs in `js/pool.mjs` instead, see [the worker pool](#the-worker-pool); `model.wasm` and `model.json` here are what `sbmlsim-core compile` wrote, and `docs/demo/` holds them with the vendored runtime (`scripts/demo_assets.py`).
+`instance.simulate` is synchronous and takes one to two milliseconds here, which is why the slider can redraw on every `input` event without a worker. That is longer than the 0.2 ms the [benchmarks](benchmarks.md) report for this model, because this simulation runs twice as far, asks for four times the output rows and integrates at a hundred times the accuracy; the readout above is what the browser measures, coarsened to a tenth of a millisecond as browsers coarsen their clock. A model whose simulations are long enough to be felt belongs in `js/pool.mjs` instead, see [the worker pool](#the-worker-pool); the module this page runs is what `compiler.wasm` compiled from the SBML next to it, byte for byte what `sbmlsim-core compile` writes, and `docs/demo/` holds the model with the vendored compiler and runtime (`scripts/demo_assets.py`).
 
 <style>
 .rp { margin: 1rem 0 1.4rem; --rp-a: #2a78d6; --rp-b: #eb6834; --rp-c: #1baf7a;
@@ -222,16 +223,19 @@ if (root) {
     seed: 0,
   });
   try {
+    const { createCompiler } = await import(base + "compile.mjs");
     const { createRuntime } = await import(base + "loader.mjs");
     const bytes = (name) => fetch(base + name).then((r) => r.arrayBuffer());
+    const compiler = await createCompiler({
+      compiler: await bytes("compiler.wasm"),
+    });
     const runtime = await createRuntime({
       engine: await bytes("engine.wasm"),
       mathlib: await bytes("mathlib.wasm"),
     });
-    const instance = await runtime.instantiate(
-      await bytes("model.wasm"),
-      await fetch(base + "model.json").then((r) => r.text()),
-    );
+    const sbml = await fetch(base + "repressilator.xml").then((r) => r.text());
+    const { wasm, description } = compiler.compile(sbml);
+    const instance = await runtime.instantiate(wasm, description);
     const run = () => {
       const n = Number(range.value);
       value.textContent = n.toFixed(2);

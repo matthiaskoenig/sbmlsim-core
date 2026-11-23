@@ -128,3 +128,14 @@ The compiler crates (`sbmlsim-abi`, `sbmlsim-sbml`, `sbmlsim-ir`, `sbmlsim-codeg
 ```bash
 cargo build -p sbmlsim-compiler --target wasm32-unknown-unknown --release
 ```
+
+`sbmlsim-wasm` (`crates/wasm`) is that build with a C ABI, `compiler.wasm` of the release, and `sbmlsim-core/compile` its JavaScript host ([JavaScript](javascript.md#the-compiler)):
+
+```js
+import { createCompiler } from "sbmlsim-core/compile";
+
+const compiler = await createCompiler({ compiler: compilerWasm });
+const { wasm, description } = compiler.compile(sbmlText);
+```
+
+A page compiles a model of any level and version this way and runs it with the engine, so a model which a reader brings needs no server. The module is `sbmlsim-core/runtime/compiler.wasm` of the npm package, `compiler.wasm` of `sbmlsim-core runtime -o DIR` and the key `compiler` of `sbmlsim_core.runtime_wasm()` of the python package. The [live simulation](javascript.md#a-live-simulation-in-this-page) of this documentation compiles its SBML with it.

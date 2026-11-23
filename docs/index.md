@@ -11,7 +11,7 @@ sbmlsim-core is an SBML to WebAssembly compiler and a CVODE/IDA simulation engin
 
 It is the simulation core of the web apps of [sbmlsim](https://matthiaskoenig.github.io/sbmlsim/): the semantics of a simulation are those of sbmlsim (PEtab v2), the integrator and the linear solvers those of libroadrunner (CVODE of SUNDIALS, KLU of SuiteSparse).
 
-Try it here: the [live repressilator](javascript.md#a-live-simulation-in-this-page) on the JavaScript page is compiled and integrated in your browser as you move its slider, by the same engine the command line and the python wheel run.
+Try it here: the [live repressilator](javascript.md#a-live-simulation-in-this-page) on the JavaScript page is compiled and integrated in your browser as you move its slider, by the same compiler and engine the command line and the python wheel run.
 
 See it run in the [glimepiride app](https://matthiaskoenig.github.io/sbmlsim-web/examples/glimepiride/) of the sbmlsim-web documentation: the whole-body PBPK model of glimepiride, its panels drawn by sbmlsim-web and every simulation run in the browser of the reader on a pool of workers ([the panel endpoint](javascript.md#the-panel-endpoint)).
 
