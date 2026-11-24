@@ -470,3 +470,39 @@ fn a_walk_of_steps_which_are_no_steps_is_no_profile() {
         );
     }
 }
+
+#[test]
+fn a_walk_which_reaches_a_bound_holds_the_parameter_at_that_bound() {
+    // the lower bound of `k` is a value which its way into the search space and back misses:
+    // a step onto the bound is the bound in that space, and `10^log10(0.0024)` is the number
+    // below it, which a problem refuses as a value outside the bounds of its parameter
+    const LOWER: f64 = 0.0024;
+    assert!(
+        10_f64.powf(LOWER.log10()) < LOWER,
+        "the bound returns from the search space as the number it went in as"
+    );
+    let mut definition = pair(0.5, 2.0, Scale::Log10);
+    definition.parameters[0].lower = LOWER;
+    let problem = Problem::new(definition, model(), 4).unwrap();
+    let at = problem.optimize(&Settings::default()).unwrap().x;
+
+    // a walk whose threshold no point crosses runs into the bounds of the parameter
+    let walk = Walk {
+        points: 40,
+        step: 0.25,
+        delta: 1e9,
+        ..Walk::default()
+    };
+    let profile: Profile =
+        profile(&problem, &Settings::default(), &at, 0, &walk, &Stop::new()).unwrap();
+
+    let lowest = profile.points.first().expect("the walk took no point");
+    assert_eq!(
+        lowest.value, LOWER,
+        "the lowest point of the profile is not the bound of the parameter"
+    );
+    assert!(
+        profile.points.iter().all(|point| point.value >= LOWER),
+        "a point of the profile holds the parameter below its bound"
+    );
+}
