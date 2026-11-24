@@ -6,10 +6,10 @@ The crates are built from this repository and version together with it, so depen
 
 ```toml
 [dependencies]
-sbmlsim-abi = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.24.0" }
-sbmlsim-compiler = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.24.0" }
-sbmlsim-host = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.24.0" }
-sbmlsim-batch = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.24.0" }
+sbmlsim-abi = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.24.1" }
+sbmlsim-compiler = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.24.1" }
+sbmlsim-host = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.24.1" }
+sbmlsim-batch = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.24.1" }
 anyhow = "1"
 
 # the reader alone, from crates.io
