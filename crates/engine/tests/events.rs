@@ -12,6 +12,7 @@ use sbmlsim_engine::{DELAY_FLAG, EVENT_LIMIT_FLAG, Engine, EngineError, simulate
 fn request(start: f64, end: f64, output: Output, seed: u64) -> SimulationRequest {
     SimulationRequest {
         sensitivities: vec![],
+        local_errors: false,
         contract: SIMULATION_CONTRACT.to_string(),
         start,
         end,

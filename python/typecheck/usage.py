@@ -62,6 +62,12 @@ def use(sbml: str, request: dict[str, Any], fit: dict[str, Any]) -> None:
     out: SimulationOutput = instance.simulate(request)
     columns: list[str] = out.columns
     table: numpy.typing.NDArray[numpy.float64] = out.values
+    local = out.local_errors
+    if local is not None:
+        states: list[str] = local.states
+        errors: numpy.typing.NDArray[numpy.float64] = local.errors
+        weights: numpy.typing.NDArray[numpy.float64] = local.weights
+        print(states, errors, weights)
     stats: dict[str, int | float] = instance.stats()
     prepared: PreparedSimulation = model.prepare(request, varying=["k"])
     n_values: int = prepared.n_values

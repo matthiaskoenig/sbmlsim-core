@@ -78,6 +78,7 @@ fn request(stiff: bool) -> SimulationRequest {
             "q".to_string(),
             "S".to_string(),
         ],
+        local_errors: false,
     }
 }
 

@@ -215,6 +215,8 @@ struct RunSettings {
     steady_state_after: Option<sbmlsim_abi::SteadyStateAfter>,
     before_events: bool,
     seed: u64,
+    /// Whether the rows carry the local error estimates of the integrator.
+    local_errors: bool,
 }
 
 #[derive(Default)]
@@ -481,6 +483,8 @@ pub(crate) struct Recorded {
     pub prefix: usize,
     /// The forward sensitivities of the columns, for a run which asked for them.
     pub sensitivities: Option<sbmlsim_abi::Sensitivities>,
+    /// The local error estimates of the integrator at the rows, for a run which asked for them.
+    pub local_errors: Option<sbmlsim_abi::LocalErrors>,
 }
 
 /// Recorded rows before their caller transfers or clones the resolved column names.
@@ -489,6 +493,7 @@ struct RecordedValues {
     values: Vec<f64>,
     prefix: usize,
     sensitivities: Option<sbmlsim_abi::Sensitivities>,
+    local_errors: Option<sbmlsim_abi::LocalErrors>,
 }
 
 impl RecordedValues {
@@ -503,6 +508,10 @@ impl RecordedValues {
                     values: sensitivities.values,
                 }
             }),
+            local_errors: recorder
+                .local_errors
+                .take()
+                .map(segments::LocalErrors::into_rows),
         }
     }
 
@@ -513,6 +522,7 @@ impl RecordedValues {
             values: self.values,
             prefix: self.prefix,
             sensitivities: self.sensitivities,
+            local_errors: self.local_errors,
         }
     }
 }
@@ -529,6 +539,7 @@ impl Recorded {
             n_rows: self.n_rows,
             values,
             sensitivities: self.sensitivities,
+            local_errors: self.local_errors,
         }
     }
 }
@@ -1129,6 +1140,7 @@ fn prepare(
         steady_state_after: req.steady_state_after.clone(),
         before_events: req.before_events,
         seed: req.seed,
+        local_errors: req.local_errors,
     };
     if n_cvode > n && matches!(req.settings.absolute_tolerance, Tolerance::PerState(_)) {
         req.settings.absolute_tolerance = Tolerance::Scalar(1.0);
@@ -1382,8 +1394,14 @@ fn run(
     }
 }
 
+/// The ids of the states of a model, in the order of its state vector.
+fn state_ids(desc: &ModelDescription) -> Vec<String> {
+    desc.states.iter().map(|state| state.id.clone()).collect()
+}
+
 fn record_point(
     model: &dyn ModelFns,
+    desc: &ModelDescription,
     plan: &Plan,
     scratch: &mut Scratch,
     max_output_values: usize,
@@ -1402,6 +1420,10 @@ fn record_point(
         prefix,
     )?;
     recorder.sensitivities = sensitivities;
+    if plan.req.local_errors {
+        // a run without an integrator takes no step, so its rows are `NaN`
+        recorder.local_errors = Some(segments::LocalErrors::new(state_ids(desc)));
+    }
     let times = if plan.req.steps {
         std::slice::from_ref(&plan.req.start)
     } else {
@@ -1470,6 +1492,7 @@ fn run_model<const DAE: bool, H: delay::Mode>(
     {
         return record_point(
             model,
+            desc,
             plan,
             scratch,
             metadata.max_output_values,
@@ -1551,6 +1574,9 @@ fn run_model<const DAE: bool, H: delay::Mode>(
         Some((rows, sensitivity)) => (Some(rows), Some(sensitivity)),
     };
     recorder.sensitivities = sensitivities;
+    if req.local_errors {
+        recorder.local_errors = Some(segments::LocalErrors::new(state_ids(desc)));
+    }
     if !req.steps {
         recorder.reserve(times.len())?;
     }
@@ -1662,6 +1688,7 @@ fn run_model<const DAE: bool, H: delay::Mode>(
                         &mut scratch.steady_rates,
                         None,
                     )?;
+                    recorder.last_step(cvode)?;
                     recorder.row(f64::INFINITY, &y0[..problem.n_model], &problem.p)?;
                 }
                 Ok(())
@@ -1723,6 +1750,9 @@ fn run_model<const DAE: bool, H: delay::Mode>(
                         &mut scratch.steady_rates,
                         constraints.as_deref_mut(),
                     )?;
+                    if let Some(cvode) = cvode.as_deref_mut() {
+                        recorder.last_step(cvode)?;
+                    }
                     recorder.row(f64::INFINITY, &y0[..problem.n_model], &problem.p)?;
                 }
                 Ok(())
@@ -1776,6 +1806,7 @@ mod tests {
             settings: IntegratorSettings::default(),
             seed: 0,
             sensitivities: vec![],
+            local_errors: false,
         };
         let plan = engine.prepare(&req, &["[S]".into()]).unwrap();
         engine.simulate_prepared(&plan, &[2.0]).unwrap();
@@ -1832,6 +1863,7 @@ mod tests {
             settings: IntegratorSettings::default(),
             seed: 0,
             sensitivities: vec![],
+            local_errors: false,
         };
         let model = Decay { k: 0.5 };
         let mut desc = model.description();

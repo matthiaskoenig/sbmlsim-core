@@ -29,6 +29,7 @@ fn load(body: &str, options: CompileOptions) -> LoadedModel {
 fn request(end: f64, output: Output, selections: &[&str]) -> SimulationRequest {
     SimulationRequest {
         sensitivities: vec![],
+        local_errors: false,
         contract: SIMULATION_CONTRACT.to_string(),
         start: 0.0,
         end,
@@ -650,4 +651,46 @@ fn the_unknown_of_an_algebraic_rule_is_not_settable() {
     set.preinit = vec![("x".to_string(), 2.0)];
     let result = engine.simulate(&set).unwrap();
     close(result.values[1], 2.0);
+}
+
+#[test]
+fn engine_wasm_refuses_the_local_errors_it_has_no_room_for() {
+    let loaded = decay(CompileOptions::default());
+    let mut req = request(2.0, Output::Uniform { steps: 4 }, &["x", "z"]);
+    req.local_errors = true;
+    let error = loaded.instantiate().unwrap().simulate(&req).unwrap_err();
+    assert!(
+        error.to_string().contains("local error estimates"),
+        "{error}"
+    );
+}
+
+#[cfg(feature = "native")]
+#[test]
+fn the_local_errors_of_a_dae_model_are_the_ones_of_ida() {
+    let loaded = decay(CompileOptions::default());
+    let mut req = request(2.0, Output::IntegratorSteps, &["x", "z"]);
+    req.local_errors = true;
+    let result = loaded.instantiate_native().unwrap().simulate(&req).unwrap();
+    let local = result.local_errors.as_ref().unwrap();
+    let n = local.states.len();
+    assert!(
+        local.states.iter().any(|state| state == "x"),
+        "{:?}",
+        local.states
+    );
+    assert_eq!(local.errors.len(), result.n_rows * n);
+    assert_eq!(local.weights.len(), result.n_rows * n);
+    assert!(local.errors[..n].iter().all(|x| x.is_nan()));
+    for row in 1..result.n_rows {
+        let (errors, weights) = (
+            &local.errors[row * n..][..n],
+            &local.weights[row * n..][..n],
+        );
+        assert!(
+            errors.iter().all(|e| e.is_finite()),
+            "row {row}: {errors:?}"
+        );
+        assert!(weights.iter().all(|&w| w > 0.0), "row {row}: {weights:?}");
+    }
 }

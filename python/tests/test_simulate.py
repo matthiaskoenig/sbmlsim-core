@@ -360,6 +360,37 @@ def test_a_request_without_sensitivities_has_none(decay):
     assert out.sensitivities is None
 
 
+def test_a_request_without_local_errors_has_none(decay):
+    out = decay.instance().simulate(request(end=1.0, steps=1))
+    assert out.local_errors is None
+
+
+def test_the_local_errors_of_a_run(decay):
+    # in the steps of the integrator a row is the end of a step and the row before it
+    # its start, whose state weighs the error test: 1 / (rtol |y| + atol)
+    req = request(end=4.0, steps=1)
+    req["output"] = "integrator_steps"
+    req["local_errors"] = True
+    out = decay.instance().simulate(req)
+    local = out.local_errors
+    assert local is not None
+    states = local.states
+    assert "y" in states
+    rows = out.values.shape[0]
+    assert local.errors.shape == local.weights.shape == (rows, len(states))
+    assert local.errors.dtype == numpy.float64 and local.errors.flags.c_contiguous
+    # the start, which no step precedes
+    assert numpy.isnan(local.errors[0]).all() and numpy.isnan(local.weights[0]).all()
+    # every step passed its error test
+    norms = numpy.sqrt(numpy.mean((local.errors[1:] * local.weights[1:]) ** 2, axis=1))
+    assert numpy.all(norms <= 1.0) and numpy.any(norms > 1e-3)
+    y = out.values[:, out.columns.index("y")]
+    at = states.index("y")
+    numpy.testing.assert_array_equal(
+        local.weights[1:, at], 1.0 / (1e-6 * numpy.abs(y[:-1]) + 1e-12)
+    )
+
+
 def test_the_forward_sensitivities_of_a_run(decay):
     # y' = -k y with y(0) = 1 and k = 0.5, so dy/dk = -t exp(-k t) and
     # d(t_half)/dk = -ln(2) / k^2; `time` is no function of a parameter

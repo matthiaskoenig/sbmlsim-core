@@ -24,6 +24,7 @@ fn main() -> anyhow::Result<()> {
         before_events: false,
         seed: 0,
         sensitivities: vec![],
+        local_errors: false,
     };
     let result = instance.simulate(&request)?;
 

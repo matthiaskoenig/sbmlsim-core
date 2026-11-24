@@ -722,6 +722,7 @@ mod tests {
             },
             seed: 42,
             sensitivities: vec!["k".to_string(), "V".to_string()],
+            local_errors: true,
         }
     }
 

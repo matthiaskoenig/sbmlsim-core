@@ -48,6 +48,7 @@ mod tests {
         ];
         let result = SimulationResult {
             sensitivities: None,
+            local_errors: None,
             columns: vec!["time".to_string()],
             n_rows: values.len(),
             values: values.clone(),
