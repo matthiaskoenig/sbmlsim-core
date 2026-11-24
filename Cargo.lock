@@ -2121,6 +2121,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "sbmlsim-chaos"
+version = "0.25.0"
+dependencies = [
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "sbmlsim-cli"
 version = "0.25.0"
 dependencies = [
@@ -2237,6 +2244,7 @@ dependencies = [
  "pythonize",
  "sbmlsim-abi",
  "sbmlsim-batch",
+ "sbmlsim-chaos",
  "sbmlsim-compiler",
  "sbmlsim-fit",
  "sbmlsim-host",

@@ -159,3 +159,20 @@ def the_runtime_and_the_inline_build() -> None:
     notices: str = sbmlsim_core.THIRD_PARTY
     script: str = web.script()
     print(engine, notices, script)
+
+
+def a_polynomial_chaos_expansion(u: numpy.typing.NDArray[numpy.float64]) -> None:
+    """The basis of an expansion, its design matrix and its surrogate."""
+    basis: numpy.typing.NDArray[numpy.int64] = sbmlsim_core.chaos_expansion(
+        22, 4, q=0.75, max_interaction=2
+    )
+    x: numpy.typing.NDArray[numpy.float64] = sbmlsim_core.chaos_design_matrix(
+        u, basis, threads=4
+    )
+    coefficients = numpy.ones((len(basis), 3))
+    values: numpy.typing.NDArray[numpy.float64] = sbmlsim_core.chaos_predict(
+        u, basis, coefficients
+    )
+    sbmlsim_core.chaos_expansion(22, 4, 0.75)  # ty: ignore[too-many-positional-arguments]
+    sbmlsim_core.chaos_design_matrix(u, basis, threads=1.5)  # ty: ignore[invalid-argument-type]
+    print(x, values)

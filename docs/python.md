@@ -98,6 +98,33 @@ The default directory is Wasmtime's platform cache location, for example `$XDG_C
 
 Wasmtime keys entries by the Wasm bytes, its compiler version, CPU features and compilation settings. A changed module or incompatible configuration is compiled again. Missing, unreadable or corrupt entries are treated as misses; an unavailable cache directory also falls back to compilation. Cache files can be deleted to reclaim disk space, and Wasmtime applies its default size and age cleanup policy. The cache contains executable machine code, so choose a local directory writable only by trusted users. It does not contain simulation results or share mutable model state. Memory limits and execution deadlines apply to each instance as before, and the wheels remain portable.
 
+## Polynomial chaos
+
+sbmlsim fits a polynomial chaos expansion to the outputs of a scan (`sbmlsim.sensitivity.chaos`) in the coordinates of the unit cube of its design: the products of the shifted Legendre polynomials normalized to one. The parts of it which are regular and cheap per entry run here; the least squares of the fit stay with sbmlsim, whose QR is the one of LAPACK.
+
+```python
+import numpy
+
+# the multi-indices of a truncated basis, a row per term: the degree 4 over 22 inputs,
+# the hyperbolic truncation q = 0.75 and at most two inputs per term (782 terms)
+basis = sbmlsim_core.chaos_expansion(22, 4, q=0.75, max_interaction=2)
+
+# the points of a sample of the unit cube, and its design matrix: a row per point and a
+# column per term
+u = numpy.random.default_rng(0).random((2048, 22))
+x = sbmlsim_core.chaos_design_matrix(u, basis)
+
+# the least squares of sbmlsim: the coefficients of a row per term and a column per
+# element of the outputs `y` at the points
+y = numpy.column_stack([u[:, 0] * u[:, 1], numpy.exp(u[:, 2])])
+coefficients = numpy.linalg.lstsq(x, y, rcond=None)[0]
+
+# the surrogate: the values of the expansion at other points
+values = sbmlsim_core.chaos_predict(numpy.full((5, 22), 0.5), basis, coefficients)
+```
+
+The multi-indices are those of `sbmlsim.sensitivity.chaos.expansion` in its order, and the design matrix is bitwise the one of its `design_matrix`. A term skips the inputs it does not read, so a basis of many inputs costs per term what its own inputs cost. `chaos_predict` is the product of the design matrix and the coefficients without the design matrix, so a scan of a surrogate of a million points holds no more than its values; coefficients of one value per term give one value per point. Both release the GIL and spread the points over `threads` threads (every CPU of the process by default); a value does not depend on them.
+
 ## A page of one file
 
 The package carries what a page needs to simulate the models compiled here without a server: `sbmlsim_core.runtime_wasm()` gives the bytes of `engine.wasm`, `mathlib.wasm` and `compiler.wasm` the extension embeds (`{"engine": ..., "mathlib": ..., "compiler": ...}`, the last one the compiler of a page, see [the compiler](javascript.md#the-compiler)), `sbmlsim_core.web.script()` the inline build of the JavaScript host, one classic script with the global `sbmlsimCore`, and `sbmlsim_core.THIRD_PARTY` the notices of the libraries of the engine, which a page that distributes it carries. `sbmlsimCore.createInlineEndpoint({ bundle, files, engine, mathlib })` is the panel endpoint ([JavaScript](javascript.md#the-panel-endpoint)) of a bundle held in memory: `bundle` the content of `bundle.json`, `files` its compiled models by their path in the bundle (`models/<key>/model.wasm` and `model.json`), and the workers of its pool start from a `blob:` URL of the worker the script embeds. So a page which embeds the script, the runtime, a bundle and its models as base64 opens from `file://` as well; sbmlsim writes the app of a model so.
