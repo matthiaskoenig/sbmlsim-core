@@ -230,6 +230,12 @@ pub fn profile(
         scale.to_search(subject.lower),
         scale.to_search(subject.upper),
     );
+    // the value a point holds the parameter at. A step which lands on a bound is that bound in
+    // the space the walk runs in, and the way back is not the number it came from: the lower
+    // bound 0.0024 of a parameter searched on `log10` returns as 0.0023999999999999994, which
+    // [`Problem::fixing`] refuses as a value outside the bounds of its parameter. The walk
+    // never leaves the bounds, so what a point holds is clamped to them.
+    let held_at = |x: f64| scale.to_model(x).clamp(subject.lower, subject.upper);
     let threshold = cost + walk.delta;
     // the most a single step may raise the cost, which is what the step of a walk follows
     let allowed = walk.rise * walk.delta;
@@ -263,7 +269,7 @@ pub fn profile(
                 if (next - bound) * direction > 0.0 {
                     next = bound;
                 }
-                let held = problem.fixing(&[(parameter, scale.to_model(next))])?;
+                let held = problem.fixing(&[(parameter, held_at(next))])?;
                 let fit = held.optimize_with(settings, &from, stop)?;
                 let rise = fit.cost - at_cost;
                 if rise > allowed && step > walk.min_step && !stop.stopped() {
@@ -274,7 +280,7 @@ pub fn profile(
             };
             let rise = fit.cost - at_cost;
             points.push(ProfilePoint {
-                value: scale.to_model(x),
+                value: held_at(x),
                 x,
                 cost: fit.cost,
                 values: fit.values.clone(),
