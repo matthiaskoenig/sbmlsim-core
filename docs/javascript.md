@@ -277,7 +277,7 @@ An instance is one model in one engine, for one thread:
 | method | what it gives |
 |---|---|
 | `instance.simulate(request)` | a request of `simulation/1` (an object or its JSON text); `{ columns, nRows, values }`, the values a `Float64Array` whose bits are the ones of wasmtime, NaN payloads too |
-| `instance.stats()` | the counters of the integrator of the last simulation, by the names of `STATS_NAMES` |
+| `instance.stats()` | the statistics of the integrator of the last simulation, by the names of `STATS_NAMES`: the first `STATS_COUNTS` are counts, the ones after them the times and steps of the state of the solver |
 | `instance.wasiCalls()` | the calls of the engine into WASI; the engine calls none while it loads or simulates |
 | `instance.memoryBytes()` | the size of the memory of the instance |
 

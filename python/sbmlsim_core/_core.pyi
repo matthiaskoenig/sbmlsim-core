@@ -116,8 +116,11 @@ class Instance:
     ) -> SimulationOutput:
         """Runs a prepared request with the ordered input values."""
 
-    def stats(self) -> dict[str, int]:
-        """The counters of the integrator of the last simulation."""
+    def stats(self) -> dict[str, int | float]:
+        """The statistics of the integrator of the last simulation.
+
+        The counts as integers, the times and steps of its state as floats.
+        """
 
 class LoadedModel:
     """A model compiled for an engine, which makes the instances that simulate it."""

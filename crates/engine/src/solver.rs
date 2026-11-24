@@ -393,8 +393,9 @@ impl Counts {
     }
 }
 
-/// The counters of the SUNDIALS integrator, summed over the (re)initializations of a simulation.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+/// The counters of the SUNDIALS integrator, summed over the (re)initializations of a
+/// simulation, and the state of the solver, which is that of the last of them.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub(crate) struct SolverCounts {
     /// The steps.
     pub steps: u64,
@@ -413,6 +414,28 @@ pub(crate) struct SolverCounts {
     pub jacobian_vector_evals: u64,
     pub preconditioner_evals: u64,
     pub preconditioner_solves: u64,
+    /// The reductions of the order of the BDF by the detection of the stability limit.
+    pub stability_order_reductions: u64,
+    /// The state of the solver at the last of the (re)initializations, which does not sum.
+    pub state: SolverState,
+}
+
+/// The state of the SUNDIALS integrator after a (re)initialization: the orders, the steps and
+/// the internal time, which are of the last step and not counts.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub(crate) struct SolverState {
+    /// The order of the last step, 0 before the first one.
+    pub last_order: u64,
+    /// The order of the next step, 0 before the first one.
+    pub current_order: u64,
+    /// The first step the integrator took.
+    pub actual_initial_time_step: f64,
+    /// The last step in time.
+    pub last_time_step: f64,
+    /// The step in time of the next step.
+    pub current_time_step: f64,
+    /// The internal time of the integrator.
+    pub current_time: f64,
 }
 
 impl SolverCounts {
@@ -432,6 +455,18 @@ impl SolverCounts {
             jacobian_vector_evals: self.jacobian_vector_evals + other.jacobian_vector_evals,
             preconditioner_evals: self.preconditioner_evals + other.preconditioner_evals,
             preconditioner_solves: self.preconditioner_solves + other.preconditioner_solves,
+            stability_order_reductions: self.stability_order_reductions
+                + other.stability_order_reductions,
+            // the state of the solver which stepped last: the one of the later internal
+            // time, and never one which took no step (the memory of the projection of the
+            // consistent initial values of a DAE model, which is added after the run)
+            state: if other.state.last_order > 0
+                && other.state.current_time >= self.state.current_time
+            {
+                other.state
+            } else {
+                self.state
+            },
         }
     }
 }
@@ -458,6 +493,13 @@ pub(crate) fn stats(counts: &Counts, cvode: &SolverCounts, probe_rhs: u64) -> Si
         jacobian_vector_evals: cvode.jacobian_vector_evals,
         preconditioner_evals: cvode.preconditioner_evals,
         preconditioner_solves: cvode.preconditioner_solves,
+        stability_order_reductions: cvode.stability_order_reductions,
+        last_order: cvode.state.last_order,
+        current_order: cvode.state.current_order,
+        actual_initial_time_step: cvode.state.actual_initial_time_step,
+        last_time_step: cvode.state.last_time_step,
+        current_time_step: cvode.state.current_time_step,
+        current_time: cvode.state.current_time,
         sensitivity_rhs_evals: counts.sensitivity_rhs,
         sensitivity_model_rhs_evals: counts.sensitivity_model_rhs,
         sensitivity_jac_p_evals: counts.sensitivity_jac_p,
@@ -877,6 +919,9 @@ pub(crate) struct Integrator<const DAE: bool, H: crate::delay::Mode = crate::del
     id: N_Vector,
     /// Start time at which consistent initial conditions are still needed.
     pending_ic: Option<f64>,
+    /// Whether the request asked IDA to leave the algebraic states out of its error test
+    /// (`suppress_algebraic`), which the engine turns on of its own at an algebraic jump.
+    suppress_algebraic: bool,
     matrix: SUNMatrix,
     solver: SUNLinearSolver,
     nonlinear: SUNNonlinearSolver,
@@ -908,6 +953,12 @@ pub(crate) struct Integrator<const DAE: bool, H: crate::delay::Mode = crate::del
     /// The user data of the right hand side of the sensitivities, which CVODES keeps as it is
     /// and which this memory owns, see [`SensData`].
     sens_data: Box<SensData>,
+}
+
+/// A count of the settings as the `int` of SUNDIALS, which the largest `int` bounds (a count
+/// above it is a count no integration reaches).
+fn clamp(count: u32) -> c_int {
+    c_int::try_from(count).unwrap_or(c_int::MAX)
 }
 
 // These SUNDIALS calls share signatures across CVODE and IDA.
@@ -1020,6 +1071,7 @@ impl<const DAE: bool, H: crate::delay::Mode> Integrator<DAE, H> {
             yp: ptr::null_mut(),
             id: ptr::null_mut(),
             pending_ic: None,
+            suppress_algebraic: false,
             matrix: ptr::null_mut(),
             solver: ptr::null_mut(),
             nonlinear: ptr::null_mut(),
@@ -1232,10 +1284,6 @@ impl<const DAE: bool, H: crate::delay::Mode> Integrator<DAE, H> {
                     self.initialized = true;
                 }
                 self.flag(IDASetId(self.mem, self.id), t0)?;
-                // CalcIC sets differential rates. For an explicitly time-dependent
-                // algebraic equation its initial algebraic derivative guess is zero.
-                // Permit enough reductions for IDA to estimate and control that rate.
-                self.flag(IDASetMaxErrTestFails(self.mem, 30), t0)?;
                 self.pending_ic = Some(t0);
             } else if self.initialized {
                 self.flag(CVodeReInit(self.mem, t0, self.y), t0)?;
@@ -1331,6 +1379,92 @@ impl<const DAE: bool, H: crate::delay::Mode> Integrator<DAE, H> {
                 ),
                 t0,
             )?;
+            // The order of the method the run uses: IDA integrates a DAE model with the BDF
+            // whatever `stiff` says, CVODE with the BDF or with Adams.
+            let order = if DAE || settings.stiff {
+                settings.maximum_bdf_order
+            } else {
+                settings.maximum_adams_order
+            };
+            if order > 0 {
+                self.flag(
+                    backend!(self, CVodeSetMaxOrd, IDASetMaxOrd, c_int::from(order)),
+                    t0,
+                )?;
+            }
+            // 0.0 is the default of CVODE and of IDA as well: no smallest step
+            self.flag(
+                backend!(
+                    self,
+                    CVodeSetMinStep,
+                    IDASetMinStep,
+                    settings.minimum_time_step
+                ),
+                t0,
+            )?;
+            // CalcIC sets differential rates. For an explicitly time-dependent algebraic
+            // equation its initial algebraic derivative guess is zero. Permit enough
+            // reductions for IDA to estimate and control that rate.
+            let failures = match (settings.maximum_error_test_failures, DAE) {
+                (0, false) => 0,
+                (0, true) => 30,
+                (given, _) => given,
+            };
+            if failures > 0 {
+                self.flag(
+                    backend!(
+                        self,
+                        CVodeSetMaxErrTestFails,
+                        IDASetMaxErrTestFails,
+                        clamp(failures)
+                    ),
+                    t0,
+                )?;
+            }
+            if settings.maximum_nonlinear_iterations > 0 {
+                self.flag(
+                    backend!(
+                        self,
+                        CVodeSetMaxNonlinIters,
+                        IDASetMaxNonlinIters,
+                        clamp(settings.maximum_nonlinear_iterations)
+                    ),
+                    t0,
+                )?;
+            }
+            if settings.maximum_convergence_failures > 0 {
+                self.flag(
+                    backend!(
+                        self,
+                        CVodeSetMaxConvFails,
+                        IDASetMaxConvFails,
+                        clamp(settings.maximum_convergence_failures)
+                    ),
+                    t0,
+                )?;
+            }
+            if settings.nonlinear_convergence_coefficient > 0.0 {
+                self.flag(
+                    backend!(
+                        self,
+                        CVodeSetNonlinConvCoef,
+                        IDASetNonlinConvCoef,
+                        settings.nonlinear_convergence_coefficient
+                    ),
+                    t0,
+                )?;
+            }
+            if !DAE {
+                // of the BDF, which `check_settings` has refused it without
+                self.flag(
+                    CVodeSetStabLimDet(self.mem, c_int::from(settings.stability_limit_detection)),
+                    t0,
+                )?;
+            } else {
+                // The engine turns it on of its own where an algebraic jump is interpolated
+                // over, see `Integrator::consistent`.
+                self.suppress_algebraic = settings.suppress_algebraic;
+            }
             self.flag(backend!(self, CVodeSetStopTime, IDASetStopTime, tstop), t0)?;
             let nr = c_int::try_from(n_roots).map_err(|_| {
                 EngineError::Request(format!(
@@ -1468,6 +1602,7 @@ impl<const DAE: bool, H: crate::delay::Mode> Integrator<DAE, H> {
         let (mut hinused, mut hlast, mut hcur, mut tcur) = (0.0, 0.0, 0.0, 0.0);
         let (mut nni, mut ncfn) = (0, 0);
         let (mut nli, mut nlcf, mut njv, mut npe, mut nps) = (0, 0, 0, 0, 0);
+        let mut nslred = 0;
         if self.initialized {
             // SAFETY: the memory is initialized; every out-pointer is a local
             unsafe {
@@ -1503,6 +1638,10 @@ impl<const DAE: bool, H: crate::delay::Mode> Integrator<DAE, H> {
                     CVodeGetNumPrecEvals(self.mem, &mut npe);
                     CVodeGetNumPrecSolves(self.mem, &mut nps);
                 }
+                // 0 where the detection is off, so it is read whatever the settings said
+                if !DAE {
+                    CVodeGetNumStabLimOrderReds(self.mem, &mut nslred);
+                }
             }
         }
         let count = |x: c_long| x.max(0) as u64;
@@ -1518,6 +1657,15 @@ impl<const DAE: bool, H: crate::delay::Mode> Integrator<DAE, H> {
             jacobian_vector_evals: count(njv),
             preconditioner_evals: count(npe),
             preconditioner_solves: count(nps),
+            stability_order_reductions: count(nslred),
+            state: SolverState {
+                last_order: count(c_long::from(qlast)),
+                current_order: count(c_long::from(qcur)),
+                actual_initial_time_step: hinused,
+                last_time_step: hlast,
+                current_time_step: hcur,
+                current_time: tcur,
+            },
         }
     }
 

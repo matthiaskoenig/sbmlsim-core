@@ -24,7 +24,16 @@
     "initial_time_step": 0.0,
     "stiff": false,
     "linear_solver": "auto",
-    "jacobian": "auto"
+    "jacobian": "auto",
+    "maximum_bdf_order": 0,
+    "maximum_adams_order": 0,
+    "minimum_time_step": 0.0,
+    "maximum_error_test_failures": 0,
+    "maximum_nonlinear_iterations": 0,
+    "maximum_convergence_failures": 0,
+    "nonlinear_convergence_coefficient": 0.0,
+    "stability_limit_detection": false,
+    "suppress_algebraic": false
   },
   "seed": 0
 }

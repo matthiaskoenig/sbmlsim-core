@@ -290,6 +290,46 @@ pub struct IntegratorSettings {
     pub linear_solver: LinearSolver,
     /// The source of the Jacobian.
     pub jacobian: JacobianChoice,
+    /// The largest order of the BDF, `1` to `5`; `0` is not set (CVODE and IDA take 5). It is
+    /// the order of IDA as well, which integrates a DAE model with the BDF whatever `stiff`
+    /// says.
+    #[serde(default)]
+    pub maximum_bdf_order: u8,
+    /// The largest order of the Adams method, `1` to `12`; `0` is not set (CVODE takes 12).
+    /// An ODE model of `stiff` false is integrated with it, a DAE model never.
+    #[serde(default)]
+    pub maximum_adams_order: u8,
+    /// The smallest step in time; `0.0` is not set (the integrator chooses).
+    #[serde(default)]
+    pub minimum_time_step: f64,
+    /// The largest number of error test failures of one step before the integration fails;
+    /// `0` is not set (CVODE takes 7 and IDA 10, of which the engine sets 30 for a DAE
+    /// model, whose consistent initial conditions cost failures of their own).
+    #[serde(default)]
+    pub maximum_error_test_failures: u32,
+    /// The largest number of iterations of the nonlinear solver of one step; `0` is not set
+    /// (CVODE and IDA take 3, 4 for the fixed point iteration of Adams).
+    #[serde(default)]
+    pub maximum_nonlinear_iterations: u32,
+    /// The largest number of convergence failures of the nonlinear solver of one step;
+    /// `0` is not set (CVODE takes 10 and IDA 10).
+    #[serde(default)]
+    pub maximum_convergence_failures: u32,
+    /// The safety factor of the convergence test of the nonlinear solver; `0.0` is not set
+    /// (CVODE takes 0.1 and IDA 0.33).
+    #[serde(default)]
+    pub nonlinear_convergence_coefficient: f64,
+    /// Whether CVODE detects the stability limit of the BDF of an order above 2 and lowers the
+    /// order, for a model of a dominant eigenvalue near the imaginary axis. It is a setting of
+    /// the BDF, which `stiff` false and a DAE model have none of.
+    #[serde(default)]
+    pub stability_limit_detection: bool,
+    /// Whether IDA leaves the algebraic states out of its error test, for a DAE model whose
+    /// algebraic states are not of interest. It is a setting of IDA, which an ODE model has
+    /// none of; the engine turns it on of its own at an algebraic jump, where the error of the
+    /// algebraic states does not go to zero with the step.
+    #[serde(default)]
+    pub suppress_algebraic: bool,
 }
 
 impl Default for IntegratorSettings {
@@ -303,6 +343,15 @@ impl Default for IntegratorSettings {
             stiff: true,
             linear_solver: LinearSolver::Auto,
             jacobian: JacobianChoice::Auto,
+            maximum_bdf_order: 0,
+            maximum_adams_order: 0,
+            minimum_time_step: 0.0,
+            maximum_error_test_failures: 0,
+            maximum_nonlinear_iterations: 0,
+            maximum_convergence_failures: 0,
+            nonlinear_convergence_coefficient: 0.0,
+            stability_limit_detection: false,
+            suppress_algebraic: false,
         }
     }
 }
@@ -353,7 +402,7 @@ pub struct Sensitivities {
 /// side or residual are counted where they are made: by the integrator (its nonlinear iteration, its error
 /// estimates, its own difference quotient), by the sparse difference quotient, by the probes of
 /// the triggers of the events and by the criterion of the steady state.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SimulationStats {
     /// The steps of the integrator.
@@ -414,13 +463,43 @@ pub struct SimulationStats {
     /// side, where the difference quotient of `df/dp` would take one right hand side.
     #[serde(default)]
     pub sensitivity_jac_p_evals: u64,
+    /// The reductions of the order of the BDF by the detection of the stability limit, 0 where
+    /// `stability_limit_detection` is off (`CVodeGetNumStabLimOrderReds`).
+    #[serde(default)]
+    pub stability_order_reductions: u64,
+    /// The order of the last step of the integrator, 0 before the first one.
+    #[serde(default)]
+    pub last_order: u64,
+    /// The order the integrator would take for the next step, 0 before the first one.
+    #[serde(default)]
+    pub current_order: u64,
+    /// The first step the integrator actually took, which is `initial_time_step` where the
+    /// request gave one.
+    #[serde(default)]
+    pub actual_initial_time_step: f64,
+    /// The last step in time the integrator took.
+    #[serde(default)]
+    pub last_time_step: f64,
+    /// The step in time the integrator would take for the next step.
+    #[serde(default)]
+    pub current_time_step: f64,
+    /// The internal time of the integrator, which is at or behind the end of the simulation
+    /// (the values of the end are interpolated).
+    #[serde(default)]
+    pub current_time: f64,
 }
 
 impl SimulationStats {
-    /// The number of counters, the `u64` words of `engine_stats_ptr`.
-    pub const WORDS: usize = 21;
+    /// The number of statistics, the `u64` words of `engine_stats_ptr`. The words of the
+    /// counters are the counts; the words of the four times and steps, which are no counts,
+    /// are the bits of their `f64` (`f64::to_bits`), so that one block carries both.
+    pub const WORDS: usize = 28;
 
-    /// The names of the counters in the order of [`SimulationStats::words`] (the fields).
+    /// The number of the leading words of [`SimulationStats::words`] which are counts. The
+    /// `WORDS - COUNTS` words after them are the bits of an `f64`, the times and steps.
+    pub const COUNTS: usize = 24;
+
+    /// The names of the statistics in the order of [`SimulationStats::words`] (the fields).
     pub const NAMES: [&'static str; Self::WORDS] = [
         "steps",
         "rhs_evals",
@@ -443,9 +522,17 @@ impl SimulationStats {
         "sensitivity_rhs_evals",
         "sensitivity_model_rhs_evals",
         "sensitivity_jac_p_evals",
+        "stability_order_reductions",
+        "last_order",
+        "current_order",
+        "actual_initial_time_step",
+        "last_time_step",
+        "current_time_step",
+        "current_time",
     ];
 
-    /// The counters in the order of the fields.
+    /// The statistics in the order of the fields, the times and steps as the bits of their
+    /// `f64`.
     pub fn words(&self) -> [u64; Self::WORDS] {
         [
             self.steps,
@@ -469,10 +556,17 @@ impl SimulationStats {
             self.sensitivity_rhs_evals,
             self.sensitivity_model_rhs_evals,
             self.sensitivity_jac_p_evals,
+            self.stability_order_reductions,
+            self.last_order,
+            self.current_order,
+            self.actual_initial_time_step.to_bits(),
+            self.last_time_step.to_bits(),
+            self.current_time_step.to_bits(),
+            self.current_time.to_bits(),
         ]
     }
 
-    /// The counters of [`SimulationStats::words`].
+    /// The statistics of [`SimulationStats::words`].
     pub fn from_words(w: [u64; Self::WORDS]) -> SimulationStats {
         SimulationStats {
             steps: w[0],
@@ -496,6 +590,13 @@ impl SimulationStats {
             sensitivity_rhs_evals: w[18],
             sensitivity_model_rhs_evals: w[19],
             sensitivity_jac_p_evals: w[20],
+            stability_order_reductions: w[21],
+            last_order: w[22],
+            current_order: w[23],
+            actual_initial_time_step: f64::from_bits(w[24]),
+            last_time_step: f64::from_bits(w[25]),
+            current_time_step: f64::from_bits(w[26]),
+            current_time: f64::from_bits(w[27]),
         }
     }
 

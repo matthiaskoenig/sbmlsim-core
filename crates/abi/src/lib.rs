@@ -710,6 +710,15 @@ mod tests {
                 stiff: false,
                 linear_solver: LinearSolver::Klu,
                 jacobian: JacobianChoice::DifferenceQuotient,
+                maximum_bdf_order: 3,
+                maximum_adams_order: 8,
+                minimum_time_step: 1e-9,
+                maximum_error_test_failures: 12,
+                maximum_nonlinear_iterations: 5,
+                maximum_convergence_failures: 11,
+                nonlinear_convergence_coefficient: 0.05,
+                stability_limit_detection: true,
+                suppress_algebraic: true,
             },
             seed: 42,
             sensitivities: vec!["k".to_string(), "V".to_string()],
@@ -735,13 +744,24 @@ mod tests {
 
     #[test]
     fn historical_stats_default_the_counters_after_them_to_zero() {
-        let words = std::array::from_fn(|i| i as u64 + 1);
+        let words: [u64; SimulationStats::WORDS] = std::array::from_fn(|i| {
+            // the words after the counts are the bits of an `f64`, so they are given as one
+            if i < SimulationStats::COUNTS {
+                i as u64 + 1
+            } else {
+                (i as f64 + 1.5).to_bits()
+            }
+        });
         let stats = SimulationStats::from_words(words);
         assert_eq!(stats.words(), words);
         let mut json = serde_json::to_value(stats).unwrap();
         let fields = json.as_object_mut().unwrap();
         for (index, name) in SimulationStats::NAMES.iter().enumerate() {
-            assert_eq!(fields[*name], words[index]);
+            if index < SimulationStats::COUNTS {
+                assert_eq!(fields[*name], words[index]);
+            } else {
+                assert_eq!(fields[*name], f64::from_bits(words[index]));
+            }
         }
         for name in &SimulationStats::NAMES[13..] {
             fields.remove(*name);

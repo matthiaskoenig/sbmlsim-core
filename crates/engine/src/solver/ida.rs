@@ -252,7 +252,10 @@ impl<const DAE: bool, H: crate::delay::Mode> Integrator<DAE, H> {
             // zero. Control differential LTE and project interpolated algebraic
             // outputs/roots with an independent IDA workspace in that case.
             self.flag(
-                IDASetSuppressAlg(self.mem, i32::from(problem.interpolation.is_some())),
+                IDASetSuppressAlg(
+                    self.mem,
+                    i32::from(problem.interpolation.is_some() || self.suppress_algebraic),
+                ),
                 t,
             )?;
             self.flag(

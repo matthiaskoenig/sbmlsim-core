@@ -338,6 +338,13 @@ unsafe extern "C" {
     pub fn CVodeSetMaxOrd(cvode_mem: *mut c_void, maxord: c_int) -> c_int;
     pub fn CVodeSetMaxNumSteps(cvode_mem: *mut c_void, mxsteps: c_long) -> c_int;
     pub fn CVodeSetMaxStep(cvode_mem: *mut c_void, hmax: sunrealtype) -> c_int;
+    pub fn CVodeSetMinStep(cvode_mem: *mut c_void, hmin: sunrealtype) -> c_int;
+    pub fn CVodeSetMaxErrTestFails(cvode_mem: *mut c_void, maxnef: c_int) -> c_int;
+    pub fn CVodeSetMaxNonlinIters(cvode_mem: *mut c_void, maxcor: c_int) -> c_int;
+    pub fn CVodeSetMaxConvFails(cvode_mem: *mut c_void, maxncf: c_int) -> c_int;
+    pub fn CVodeSetNonlinConvCoef(cvode_mem: *mut c_void, nlscoef: sunrealtype) -> c_int;
+    pub fn CVodeSetStabLimDet(cvode_mem: *mut c_void, stldet: sunbooleantype) -> c_int;
+    pub fn CVodeGetNumStabLimOrderReds(cvode_mem: *mut c_void, nslred: *mut c_long) -> c_int;
     pub fn CVodeSetInitStep(cvode_mem: *mut c_void, hin: sunrealtype) -> c_int;
     pub fn CVodeSetStopTime(cvode_mem: *mut c_void, tstop: sunrealtype) -> c_int;
     pub fn CVodeRootInit(cvode_mem: *mut c_void, nrtfn: c_int, g: CVRootFn) -> c_int;
@@ -515,6 +522,11 @@ unsafe extern "C" {
     pub fn IDAReInit(mem: *mut c_void, t: sunrealtype, y: N_Vector, yp: N_Vector) -> c_int;
     pub fn IDASetMaxErrTestFails(mem: *mut c_void, maxnef: c_int) -> c_int;
     pub fn IDASetSuppressAlg(mem: *mut c_void, suppressalg: sunbooleantype) -> c_int;
+    pub fn IDASetMaxOrd(mem: *mut c_void, maxord: c_int) -> c_int;
+    pub fn IDASetMinStep(mem: *mut c_void, hmin: sunrealtype) -> c_int;
+    pub fn IDASetMaxNonlinIters(mem: *mut c_void, maxcor: c_int) -> c_int;
+    pub fn IDASetMaxConvFails(mem: *mut c_void, maxncf: c_int) -> c_int;
+    pub fn IDASetNonlinConvCoef(mem: *mut c_void, epcon: sunrealtype) -> c_int;
     pub fn IDASetId(mem: *mut c_void, id: N_Vector) -> c_int;
     pub fn IDACalcIC(mem: *mut c_void, opt: c_int, tout: sunrealtype) -> c_int;
     pub fn IDAGetConsistentIC(mem: *mut c_void, y: N_Vector, yp: N_Vector) -> c_int;

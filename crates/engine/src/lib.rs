@@ -733,7 +733,7 @@ fn difference_of(desc: &ModelDescription) -> Difference {
 /// CVODE refuses negative tolerances; a tolerance of 0 is allowed (an absolute tolerance of 0
 /// is the pure relative error), but a relative tolerance of 0 needs every absolute tolerance
 /// above 0, else the error weights vanish where the state does and no step could be accepted.
-fn check_settings(settings: &IntegratorSettings, n: usize) -> Result<(), EngineError> {
+fn check_settings(settings: &IntegratorSettings, n: usize, dae: bool) -> Result<(), EngineError> {
     if settings.linear_solver == LinearSolver::Gmres && !settings.stiff {
         return Err(request(
             "settings.linear_solver \"gmres\" needs the Newton iteration of CVODE BDF, which \
@@ -775,6 +775,57 @@ fn check_settings(settings: &IntegratorSettings, n: usize) -> Result<(), EngineE
     }
     if settings.maximum_num_steps == 0 {
         return Err(request("maximum number of steps 0"));
+    }
+    if !valid(settings.minimum_time_step) {
+        return Err(request(format!(
+            "minimum time step {}",
+            settings.minimum_time_step
+        )));
+    }
+    let (min_step, max_step) = (settings.minimum_time_step, settings.maximum_time_step);
+    if min_step > 0.0 && max_step > 0.0 && min_step > max_step {
+        return Err(request(format!(
+            "settings.minimum_time_step {min_step} is larger than \
+             settings.maximum_time_step {max_step}"
+        )));
+    }
+    if !valid(settings.nonlinear_convergence_coefficient) {
+        return Err(request(format!(
+            "nonlinear convergence coefficient {}",
+            settings.nonlinear_convergence_coefficient
+        )));
+    }
+    for (name, order, largest) in [
+        ("settings.maximum_bdf_order", settings.maximum_bdf_order, 5),
+        (
+            "settings.maximum_adams_order",
+            settings.maximum_adams_order,
+            12,
+        ),
+    ] {
+        if order > largest {
+            return Err(request(format!(
+                "{name} {order} is above the largest order {largest} of the method; \
+                 0 is not set"
+            )));
+        }
+    }
+    if settings.stability_limit_detection && (dae || !settings.stiff) {
+        let method = if dae {
+            "which a model of algebraic states integrates with IDA instead"
+        } else {
+            "which settings.stiff false replaces with the Adams method"
+        };
+        return Err(request(format!(
+            "settings.stability_limit_detection is a setting of the BDF of CVODE, \
+             {method}; set settings.stability_limit_detection false"
+        )));
+    }
+    if settings.suppress_algebraic && !dae {
+        return Err(request(
+            "settings.suppress_algebraic is a setting of IDA, which only a model of \
+             algebraic states is integrated with; set settings.suppress_algebraic false",
+        ));
     }
     Ok(())
 }
@@ -993,7 +1044,7 @@ fn prepare(
         )));
     }
     let n = desc.states.len();
-    check_settings(&req.settings, n)?;
+    check_settings(&req.settings, n, desc.n_algebraic > 0)?;
     let (names, columns) = columns_of(desc, req, &metadata.selections)?;
     let times = output_times(
         &req.output,

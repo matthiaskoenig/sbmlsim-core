@@ -70,6 +70,13 @@ test("GMRES matches wasmtime bitwise and reports iterative counters", async () =
     }
     assert.equal(toCsv(instance.simulate(request)), expected);
     assert.deepEqual(instance.stats(), stats);
+    // the words after the counts are the bits of a float, which the loader reads as one
+    assert.ok(Number.isInteger(stats.steps), "steps");
+    assert.ok(stats.last_order >= 1, "last_order");
+    for (const name of ["actual_initial_time_step", "last_time_step", "current_time_step", "current_time"]) {
+      assert.ok(stats[name] > 0 && stats[name] < 1e6, `${name}: ${stats[name]}`);
+    }
+    assert.ok(stats.current_time >= request.end, "current_time");
   }
 });
 
