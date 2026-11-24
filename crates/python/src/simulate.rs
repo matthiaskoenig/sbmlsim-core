@@ -1,12 +1,12 @@
 //! The instance which simulates requests, the table it answers with, and the batch of requests
 //! over the threads of a pool of `sbmlsim-batch`.
 
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use numpy::{PyArray2, PyArray3};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
 use sbmlsim_abi::EngineError;
 use sbmlsim_abi::{SimulationRequest, SimulationResult, SimulationStats};
 use sbmlsim_batch::{Outcome, Plan, WorkerPool, Workers, thread_count};
@@ -64,8 +64,9 @@ impl Instance {
         output(py, result).map_err(InternalError::new_err)
     }
 
-    /// The counters of the integrator of the last simulation, by name.
-    fn stats(&self, py: Python<'_>) -> PyResult<HashMap<&'static str, u64>> {
+    /// The statistics of the integrator of the last simulation, by name: the counts as
+    /// integers, the times and steps after them as floats.
+    fn stats<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         // the native engine answers with the counters themselves and not with a result, since
         // reading them needs no call into a guest
         let stats = py
@@ -73,10 +74,19 @@ impl Instance {
                 Ok(self.instance.lock().map_err(poisoned)?.stats())
             })
             .map_err(simulation_error)?;
-        Ok(SimulationStats::NAMES
+        let out = PyDict::new(py);
+        for (at, (name, word)) in SimulationStats::NAMES
             .into_iter()
             .zip(stats.words())
-            .collect())
+            .enumerate()
+        {
+            if at < SimulationStats::COUNTS {
+                out.set_item(name, word)?;
+            } else {
+                out.set_item(name, f64::from_bits(word))?;
+            }
+        }
+        Ok(out)
     }
 }
 

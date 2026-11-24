@@ -201,6 +201,43 @@ def test_stats_counts_the_steps(decay):
     assert instance.stats()["steps"] > 0
 
 
+def test_stats_carry_the_state_of_the_solver(decay):
+    instance = decay.instance()
+    instance.simulate(request(end=10.0, steps=10))
+    stats = instance.stats()
+    assert isinstance(stats["steps"], int)
+    assert stats["last_order"] >= 1
+    # the times and the steps of the state are floats, not the bits of their words
+    for name in (
+        "actual_initial_time_step",
+        "last_time_step",
+        "current_time_step",
+        "current_time",
+    ):
+        assert isinstance(stats[name], float), name
+        assert stats[name] > 0.0, name
+    assert stats["current_time"] >= 10.0
+
+
+def test_the_maximum_bdf_order_bounds_the_order(decay):
+    instance = decay.instance()
+    free = request(end=10.0, steps=10, relative_tolerance=1e-10)
+    instance.simulate(free)
+    unbounded = instance.stats()
+    instance.simulate(free | {"settings": free["settings"] | {"maximum_bdf_order": 2}})
+    bounded = instance.stats()
+    assert unbounded["last_order"] > 2
+    assert bounded["last_order"] <= 2
+    assert bounded["steps"] > unbounded["steps"]
+
+
+def test_a_setting_of_the_wrong_method_is_refused(decay):
+    instance = decay.instance()
+    req = request(end=10.0, steps=10, stiff=False, stability_limit_detection=True)
+    with pytest.raises(sbmlsim_core.RequestError, match="stability_limit_detection"):
+        instance.simulate(req)
+
+
 def test_gmres_matches_decay_and_reports_iterative_counts(decay):
     instance = decay.instance()
     req = request(end=10.0, steps=10, linear_solver="gmres", relative_tolerance=1e-9)

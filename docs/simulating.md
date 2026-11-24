@@ -98,7 +98,16 @@ The CSV has the names of the columns in its first line, then one line per row; a
     "initial_time_step": 0.0,
     "stiff": false,
     "linear_solver": "auto",
-    "jacobian": "auto"
+    "jacobian": "auto",
+    "maximum_bdf_order": 0,
+    "maximum_adams_order": 0,
+    "minimum_time_step": 0.0,
+    "maximum_error_test_failures": 0,
+    "maximum_nonlinear_iterations": 0,
+    "maximum_convergence_failures": 0,
+    "nonlinear_convergence_coefficient": 0.0,
+    "stability_limit_detection": false,
+    "suppress_algebraic": false
   },
   "seed": 1
 }
@@ -132,6 +141,17 @@ The settings of the integrator:
 | `stiff` | `true` | CVODE BDF (`true`) or Adams (`false`); models with algebraic rules always use IDA BDF |
 | `linear_solver` | `"auto"` | `"auto"` (dense up to 12 states, KLU above), `"dense"`, `"klu"` or `"gmres"` (stiff ODEs) |
 | `jacobian` | `"auto"` | `"auto"`, `"analytic"` (refused for a model without one) or `"difference_quotient"` (the sparse difference quotient over the colors of the columns of the pattern, also for a model with an analytic Jacobian) |
+| `maximum_bdf_order` | `0` | the largest order of the BDF, 1 to 5; `0` is not set (CVODE and IDA take 5). It is the order of IDA as well, which integrates a model of algebraic rules with the BDF whatever `stiff` says (0.25.0) |
+| `maximum_adams_order` | `0` | the largest order of the Adams method, 1 to 12; `0` is not set (CVODE takes 12). Only `"stiff": false` takes it (0.25.0) |
+| `minimum_time_step` | `0.0` | the smallest step in time, `0.0` for none; above `maximum_time_step` it is refused (0.25.0) |
+| `maximum_error_test_failures` | `0` | the most failures of the local error test of one step before the integration fails; `0` is not set (CVODE takes 7, IDA the 30 the engine sets for the consistent initial values) (0.25.0) |
+| `maximum_nonlinear_iterations` | `0` | the most iterations of the nonlinear solver of one step; `0` is not set (CVODE takes 3, for its Newton iteration and for the fixed point iteration of Adams alike, and IDA 4) (0.25.0) |
+| `maximum_convergence_failures` | `0` | the most convergence failures of the nonlinear solver of one step; `0` is not set (10) (0.25.0) |
+| `nonlinear_convergence_coefficient` | `0.0` | the safety factor of the convergence test of the nonlinear solver; `0.0` is not set (CVODE takes 0.1, IDA 0.33) (0.25.0) |
+| `stability_limit_detection` | `false` | whether CVODE lowers the order of a BDF above 2 at the stability limit, for a model whose dominant eigenvalues lie near the imaginary axis. A setting of the BDF of CVODE: it is refused with `"stiff": false` and for a model of algebraic rules, which IDA integrates (0.25.0) |
+| `suppress_algebraic` | `false` | whether IDA leaves the algebraic states out of its error test. A setting of IDA: it is refused for a model without algebraic rules. The engine turns it on of its own where it interpolates over an algebraic jump (0.25.0) |
+
+**The order of the method.** `maximum_bdf_order` bounds the method the run uses, which is the BDF of CVODE (`"stiff": true`) or of IDA (a model of algebraic rules); `maximum_adams_order` bounds the Adams method of `"stiff": false`. The one of the method the run does not use is ignored. A second integration of the same request at a lower order is how a caller bounds the error of the solver itself: the same model, the same tolerances, a method of another order, and the difference of the two runs is an estimate of the error neither of them reports.
 
 With `"linear_solver": "gmres"`, CVODE BDF estimates each Jacobian-vector product by differencing the model's right hand side. GMRES uses a left preconditioner obtained by incomplete LU factorization with zero fill (ILU(0)) of the sparse Newton matrix. The `jacobian` setting controls how the engine evaluates the Jacobian for that preconditioner. Simulation statistics report the linear iterations, linear convergence failures, Jacobian-vector products, preconditioner evaluations and preconditioner solves.
 
@@ -211,7 +231,9 @@ call as a library.
 
 An error of the engine has a kind: `load` (the description is refused), `request` (the request is invalid, e.g. a tolerance which is not positive or an output beyond the limit of the values of a result), `unsupported`, `integration` (CVODE or IDA failed, with its `flag` and the `time`), or, in the hosts, `internal` (a trap of the engine or the model). The command line prints it, e.g. `integration failed at t = 0 (flag -4): ...`; the JavaScript loader throws an `EngineError`.
 
-The counters of the integrator of the last simulation (steps, calls of the right hand side and of the Jacobian, setups of the linear solver, error test and convergence failures, calls of the root functions, (re)initializations of the integrator, the calls of the probes of the triggers and of the criterion of a steady state, the calls of the right hand side of the forward sensitivities and, inside it, of the analytic `df/dp` of the model or of the difference quotient which stands in for it) are `Instance::stats` in wasmtime and `instance.stats()` in JavaScript; they are diagnostics, no part of a result.
+The statistics of the integrator of the last simulation are `Instance::stats` in wasmtime and `instance.stats()` in JavaScript; they are diagnostics, no part of a result. They are the counts of the work (steps, calls of the right hand side and of the Jacobian, setups of the linear solver, error test and convergence failures, calls of the root functions, (re)initializations of the integrator, the calls of the probes of the triggers and of the criterion of a steady state, the calls of the right hand side of the forward sensitivities and, inside it, of the analytic `df/dp` of the model or of the difference quotient which stands in for it, and the reductions of the order at the stability limit), and after them the state the solver ended in (0.25.0): `last_order` and `current_order`, the orders of the last step and of the next one, `actual_initial_time_step`, `last_time_step` and `current_time_step`, and `current_time`, the internal time of the integrator, which is at or past the end of the simulation, whose last values are interpolated. The state is that of the integration which stepped last, not of the projection of the consistent initial values of a model of algebraic rules.
+
+A run which seems to hang is read here: `current_time` says how far the integrator got, `current_time_step` how small its steps became, and `error_test_failures` against `nonlinear_convergence_failures` says which of the two tests drove them down. A run which reaches `maximum_num_steps` answers the same questions.
 
 The engine bounds delayed-event storage independently of the numerical settings:
 65,536 pending executions and 1,048,576 retained assignment values (8 MiB) by default.
@@ -228,7 +250,7 @@ cached per engine and reused across compatible simulations.
 | field | what it holds |
 |---|---|
 | `contract` | `"model/2"` |
-| `compiler` | the compiler and its version, e.g. `"sbmlsim-compiler 0.24.1"` |
+| `compiler` | the compiler and its version, e.g. `"sbmlsim-compiler 0.25.0"` |
 | `id` | the id of the model |
 | `states` | the states, in the order of the state vector (the order of a `per_state` tolerance) |
 | `parameters` | the parameters (with the compartments, the species which are not states and the species references), in the order of the parameter vector |
@@ -247,7 +269,7 @@ An entity of `states` and `parameters` is `{"id", "kind", "initial", "settable"}
 ```json
 {
   "contract": "model/2",
-  "compiler": "sbmlsim-compiler 0.24.1",
+  "compiler": "sbmlsim-compiler 0.25.0",
   "id": "toy",
   "states": [
     { "id": "A", "kind": { "species": { "compartment": "c", "has_only_substance_units": false, "stores_concentration": false } }, "initial": 20.0, "settable": true }

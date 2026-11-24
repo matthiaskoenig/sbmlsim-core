@@ -63,7 +63,7 @@ instance = model.instance()  # one per thread
 out = instance.simulate(request)  # request: a dict of simulation/1
 out.columns, out.values  # names, float64 array (rows, columns)
 out.sensitivities  # None, or the forward sensitivities the request asked for
-instance.stats()  # the counters of the integrator
+instance.stats()  # the statistics of the integrator, counts and the state of the solver
 # a batch on rayon threads, the results in the order of the requests
 results = model.simulate_many(requests, threads=None)
 ```

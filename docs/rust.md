@@ -6,10 +6,10 @@ The crates are built from this repository and version together with it, so depen
 
 ```toml
 [dependencies]
-sbmlsim-abi = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.24.1" }
-sbmlsim-compiler = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.24.1" }
-sbmlsim-host = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.24.1" }
-sbmlsim-batch = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.24.1" }
+sbmlsim-abi = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.25.0" }
+sbmlsim-compiler = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.25.0" }
+sbmlsim-host = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.25.0" }
+sbmlsim-batch = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.25.0" }
 anyhow = "1"
 
 # the reader alone, from crates.io
@@ -64,7 +64,7 @@ fn main() -> anyhow::Result<()> {
 
 This is `crates/host/examples/first_simulation.rs`, which `cargo clippy --all-targets` builds, so the example above cannot drift from the API. Run it with `cargo run --example first_simulation`.
 
-`result.values` is row major with one column per selection, the same layout the other two bindings return. `instance.stats()` gives the counters of the integrator (steps, right hand side evaluations, Jacobian evaluations, nonlinear iterations, error test failures), which are the same in every host for the same request.
+`result.values` is row major with one column per selection, the same layout the other two bindings return. `instance.stats()` gives the statistics of the integrator (steps, right hand side evaluations, Jacobian evaluations, nonlinear iterations, error test failures, and the orders, steps and internal time the solver ended at), which are the same in every host for the same request.
 
 ## A batch of simulations
 

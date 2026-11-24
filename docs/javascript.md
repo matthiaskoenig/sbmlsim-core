@@ -16,7 +16,7 @@ The package is published to npm as [`sbmlsim-core`](https://www.npmjs.com/packag
 npm install sbmlsim-core
 ```
 
-A page imports the modules from its own files or from a CDN (`https://cdn.jsdelivr.net/npm/sbmlsim-core@0.24.1/panels.mjs`); a pool of a module of another origin starts its workers through a module of the page's own origin, which browsers require of a worker. A checkout serves the files of `js/` with the runtime of a build (`sbmlsim-core runtime -o js/runtime`, see [Installation](installation.md#building)). A release publishes the package from the tag `vX.Y.Z` (`.github/workflows/publish.yml`, trusted publishing with provenance, together with the python package on PyPI); the version of `js/package.json` is the one of the crates and of `CORE_VERSION`, which `npm pack` checks.
+A page imports the modules from its own files or from a CDN (`https://cdn.jsdelivr.net/npm/sbmlsim-core@0.25.0/panels.mjs`); a pool of a module of another origin starts its workers through a module of the page's own origin, which browsers require of a worker. A checkout serves the files of `js/` with the runtime of a build (`sbmlsim-core runtime -o js/runtime`, see [Installation](installation.md#building)). A release publishes the package from the tag `vX.Y.Z` (`.github/workflows/publish.yml`, trusted publishing with provenance, together with the python package on PyPI); the version of `js/package.json` is the one of the crates and of `CORE_VERSION`, which `npm pack` checks.
 
 ## A first simulation
 
@@ -277,7 +277,7 @@ An instance is one model in one engine, for one thread:
 | method | what it gives |
 |---|---|
 | `instance.simulate(request)` | a request of `simulation/1` (an object or its JSON text); `{ columns, nRows, values }`, the values a `Float64Array` whose bits are the ones of wasmtime, NaN payloads too |
-| `instance.stats()` | the counters of the integrator of the last simulation, by the names of `STATS_NAMES` |
+| `instance.stats()` | the statistics of the integrator of the last simulation, by the names of `STATS_NAMES`: the first `STATS_COUNTS` are counts, the ones after them the times and steps of the state of the solver |
 | `instance.wasiCalls()` | the calls of the engine into WASI; the engine calls none while it loads or simulates |
 | `instance.memoryBytes()` | the size of the memory of the instance |
 
