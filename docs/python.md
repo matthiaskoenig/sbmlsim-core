@@ -109,11 +109,18 @@ import numpy
 # the hyperbolic truncation q = 0.75 and at most two inputs per term (782 terms)
 basis = sbmlsim_core.chaos_expansion(22, 4, q=0.75, max_interaction=2)
 
-u = numpy.random.default_rng(0).random((2048, 22))  # points of the unit cube
-x = sbmlsim_core.chaos_design_matrix(u, basis)       # a row per point, a column per term
+# the points of a sample of the unit cube, and its design matrix: a row per point and a
+# column per term
+u = numpy.random.default_rng(0).random((2048, 22))
+x = sbmlsim_core.chaos_design_matrix(u, basis)
 
-coefficients = numpy.linalg.lstsq(x, y, rcond=None)[0]  # a row per term, a column per element
-values = sbmlsim_core.chaos_predict(u_new, basis, coefficients)  # the surrogate
+# the least squares of sbmlsim: the coefficients of a row per term and a column per
+# element of the outputs `y` at the points
+y = numpy.column_stack([u[:, 0] * u[:, 1], numpy.exp(u[:, 2])])
+coefficients = numpy.linalg.lstsq(x, y, rcond=None)[0]
+
+# the surrogate: the values of the expansion at other points
+values = sbmlsim_core.chaos_predict(numpy.full((5, 22), 0.5), basis, coefficients)
 ```
 
 The multi-indices are those of `sbmlsim.sensitivity.chaos.expansion` in its order, and the design matrix is bitwise the one of its `design_matrix`. A term skips the inputs it does not read, so a basis of many inputs costs per term what its own inputs cost. `chaos_predict` is the product of the design matrix and the coefficients without the design matrix, so a scan of a surrogate of a million points holds no more than its values; coefficients of one value per term give one value per point. Both release the GIL and spread the points over `threads` threads (every CPU of the process by default); a value does not depend on them.
