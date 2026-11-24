@@ -269,6 +269,28 @@ fn the_suppression_of_the_algebraic_states_is_of_ida_alone() {
 }
 
 #[test]
+fn a_setting_of_a_simulation_before_does_not_stay_in_the_memory() {
+    // the instance keeps one CVODE memory for its simulations, so a setting which the next
+    // request does not name is the default of the solver again and not the one before
+    let mut instance = loaded(&robertson());
+    let req = request(40.0, 10, &["time", "y1", "y2", "y3"]);
+    let first = instance.simulate(&req).unwrap();
+    let free = instance.stats().unwrap();
+    let mut capped = req.clone();
+    capped.settings.maximum_bdf_order = 2;
+    capped.settings.maximum_error_test_failures = 3;
+    capped.settings.maximum_nonlinear_iterations = 2;
+    capped.settings.maximum_convergence_failures = 3;
+    capped.settings.nonlinear_convergence_coefficient = 0.01;
+    instance.simulate(&capped).unwrap();
+    let again = instance.simulate(&req).unwrap();
+    let stats = instance.stats().unwrap();
+    assert_eq!(again.values, first.values);
+    assert_eq!(stats.steps, free.steps, "{stats:?} {free:?}");
+    assert_eq!(stats.last_order, free.last_order, "{stats:?} {free:?}");
+}
+
+#[test]
 fn the_order_of_ida_is_bounded_as_well() {
     let mut instance = loaded(&dae());
     let req = request(10.0, 5, &["time", "y", "a"]);

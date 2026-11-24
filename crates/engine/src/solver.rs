@@ -955,9 +955,32 @@ pub(crate) struct Integrator<const DAE: bool, H: crate::delay::Mode = crate::del
     sens_data: Box<SensData>,
 }
 
-/// A count of the settings as the `int` of SUNDIALS, which the largest `int` bounds (a count
-/// above it is a count no integration reaches).
-fn clamp(count: u32) -> c_int {
+/// The largest order of the BDF of CVODE and of IDA, `BDF_Q_MAX` and `MAXORD_DEFAULT`.
+const BDF_ORDER: u8 = 5;
+/// The largest order of the Adams method of CVODE, `ADAMS_Q_MAX`.
+const ADAMS_ORDER: u8 = 12;
+/// The error test failures of one step CVODE allows, `MXNEF`.
+const CVODE_ERROR_TEST_FAILURES: u32 = 7;
+/// The error test failures of one step the engine allows IDA, above its own `MXNEF` of 10:
+/// the consistent initial values of an algebraic equation which depends on the time cost
+/// reductions of their own, see `Integrator::consistent`.
+const IDA_ERROR_TEST_FAILURES: u32 = 30;
+/// The iterations of the nonlinear solver of one step CVODE allows, `NLS_MAXCOR`.
+const CVODE_NONLINEAR_ITERATIONS: u32 = 3;
+/// The iterations of the nonlinear solver of one step IDA allows, `MAXIT`.
+const IDA_NONLINEAR_ITERATIONS: u32 = 4;
+/// The convergence failures of one step CVODE and IDA allow, `MXNCF` of either.
+const CONVERGENCE_FAILURES: u32 = 10;
+/// The safety factor of the convergence test of CVODE, `CORTES`.
+const CVODE_CONVERGENCE_COEFFICIENT: f64 = 0.1;
+/// The safety factor of the convergence test of IDA, `EPCON`.
+const IDA_CONVERGENCE_COEFFICIENT: f64 = 0.33;
+
+/// A count of the settings as the `int` of SUNDIALS, the default of the solver where the
+/// request left it at 0, bounded by the largest `int` (a count above it is a count no
+/// integration reaches).
+fn or_default(count: u32, default: u32) -> c_int {
+    let count = if count > 0 { count } else { default };
     c_int::try_from(count).unwrap_or(c_int::MAX)
 }
 
@@ -1380,18 +1403,20 @@ impl<const DAE: bool, H: crate::delay::Mode> Integrator<DAE, H> {
                 t0,
             )?;
             // The order of the method the run uses: IDA integrates a DAE model with the BDF
-            // whatever `stiff` says, CVODE with the BDF or with Adams.
-            let order = if DAE || settings.stiff {
-                settings.maximum_bdf_order
+            // whatever `stiff` says, CVODE with the BDF or with Adams. Every setting of this
+            // block is applied at every (re)initialization, with the default of the solver
+            // where the request leaves it at 0: the memory is reused between the simulations
+            // of an instance, and a setting of a simulation before would otherwise stay.
+            let (given, default) = if DAE || settings.stiff {
+                (settings.maximum_bdf_order, BDF_ORDER)
             } else {
-                settings.maximum_adams_order
+                (settings.maximum_adams_order, ADAMS_ORDER)
             };
-            if order > 0 {
-                self.flag(
-                    backend!(self, CVodeSetMaxOrd, IDASetMaxOrd, c_int::from(order)),
-                    t0,
-                )?;
-            }
+            let order = if given > 0 { given } else { default };
+            self.flag(
+                backend!(self, CVodeSetMaxOrd, IDASetMaxOrd, c_int::from(order)),
+                t0,
+            )?;
             // 0.0 is the default of CVODE and of IDA as well: no smallest step
             self.flag(
                 backend!(
@@ -1403,57 +1428,69 @@ impl<const DAE: bool, H: crate::delay::Mode> Integrator<DAE, H> {
                 t0,
             )?;
             // CalcIC sets differential rates. For an explicitly time-dependent algebraic
-            // equation its initial algebraic derivative guess is zero. Permit enough
-            // reductions for IDA to estimate and control that rate.
-            let failures = match (settings.maximum_error_test_failures, DAE) {
-                (0, false) => 0,
-                (0, true) => 30,
-                (given, _) => given,
+            // equation its initial algebraic derivative guess is zero. The default of a DAE
+            // model permits enough reductions for IDA to estimate and control that rate.
+            let failures = or_default(
+                settings.maximum_error_test_failures,
+                if DAE {
+                    IDA_ERROR_TEST_FAILURES
+                } else {
+                    CVODE_ERROR_TEST_FAILURES
+                },
+            );
+            self.flag(
+                backend!(
+                    self,
+                    CVodeSetMaxErrTestFails,
+                    IDASetMaxErrTestFails,
+                    failures
+                ),
+                t0,
+            )?;
+            let iterations = or_default(
+                settings.maximum_nonlinear_iterations,
+                if DAE {
+                    IDA_NONLINEAR_ITERATIONS
+                } else {
+                    CVODE_NONLINEAR_ITERATIONS
+                },
+            );
+            self.flag(
+                backend!(
+                    self,
+                    CVodeSetMaxNonlinIters,
+                    IDASetMaxNonlinIters,
+                    iterations
+                ),
+                t0,
+            )?;
+            let convergence_failures =
+                or_default(settings.maximum_convergence_failures, CONVERGENCE_FAILURES);
+            self.flag(
+                backend!(
+                    self,
+                    CVodeSetMaxConvFails,
+                    IDASetMaxConvFails,
+                    convergence_failures
+                ),
+                t0,
+            )?;
+            let coefficient = if settings.nonlinear_convergence_coefficient > 0.0 {
+                settings.nonlinear_convergence_coefficient
+            } else if DAE {
+                IDA_CONVERGENCE_COEFFICIENT
+            } else {
+                CVODE_CONVERGENCE_COEFFICIENT
             };
-            if failures > 0 {
-                self.flag(
-                    backend!(
-                        self,
-                        CVodeSetMaxErrTestFails,
-                        IDASetMaxErrTestFails,
-                        clamp(failures)
-                    ),
-                    t0,
-                )?;
-            }
-            if settings.maximum_nonlinear_iterations > 0 {
-                self.flag(
-                    backend!(
-                        self,
-                        CVodeSetMaxNonlinIters,
-                        IDASetMaxNonlinIters,
-                        clamp(settings.maximum_nonlinear_iterations)
-                    ),
-                    t0,
-                )?;
-            }
-            if settings.maximum_convergence_failures > 0 {
-                self.flag(
-                    backend!(
-                        self,
-                        CVodeSetMaxConvFails,
-                        IDASetMaxConvFails,
-                        clamp(settings.maximum_convergence_failures)
-                    ),
-                    t0,
-                )?;
-            }
-            if settings.nonlinear_convergence_coefficient > 0.0 {
-                self.flag(
-                    backend!(
-                        self,
-                        CVodeSetNonlinConvCoef,
-                        IDASetNonlinConvCoef,
-                        settings.nonlinear_convergence_coefficient
-                    ),
-                    t0,
-                )?;
-            }
+            self.flag(
+                backend!(
+                    self,
+                    CVodeSetNonlinConvCoef,
+                    IDASetNonlinConvCoef,
+                    coefficient
+                ),
+                t0,
+            )?;
             if !DAE {
                 // of the BDF, which `check_settings` has refused it without
                 self.flag(
