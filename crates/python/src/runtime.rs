@@ -233,9 +233,10 @@ impl LoadedModel {
     /// 0.3 s for a model of 700 kB of description), so give a batch as many points as you can
     /// rather than many small batches. `threads` is every CPU of the process when it is
     /// none; raises `ValueError` for fewer than 1 and for more than 1024 threads and for a
-    /// request which is none (an unknown field, a wrong type), before anything is simulated,
-    /// and `KeyboardInterrupt` for a batch which is interrupted, which drops the results of
-    /// the points which ran.
+    /// request which is none (an unknown field, a wrong type), and `KeyboardInterrupt` for a
+    /// batch which is interrupted. The batch reads its requests while its pool simulates the
+    /// ones it read before, so a request which is none and an interrupt stop it where it is
+    /// and drop the results of the points which ran.
     #[pyo3(signature = (requests, *, threads=None))]
     fn simulate_many(
         &self,

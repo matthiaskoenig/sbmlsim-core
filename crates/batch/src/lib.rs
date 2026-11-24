@@ -15,16 +15,15 @@
 
 use std::any::Any;
 use std::num::NonZeroUsize;
+use std::ops::Range;
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
 
 use rayon::prelude::*;
 use sbmlsim_abi::{EngineError, SimulationRequest, SimulationResult};
 use sbmlsim_host::{LoadedModel, NativeInstance, PreparedSimulation};
-
-/// How many points of a batch one thread of the pool gets per slice ([`Workers::slice_len`]).
-pub const SLICE_PER_THREAD: usize = 8;
 
 /// The most threads a batch runs on. More of them is no use for simulations, which are CPU
 /// work alone, and a thread costs a stack and an instance, so a number nothing bounds is an
@@ -226,12 +225,6 @@ impl Workers {
         self.instances.threads()
     }
 
-    /// How many points a caller which runs a batch in slices gives one slice, so that the work
-    /// of the threads is spread and a long batch is still interrupted between two slices.
-    pub fn slice_len(&self) -> usize {
-        SLICE_PER_THREAD * self.threads()
-    }
-
     /// How many instances the pool has made, which is one per thread of a batch which ran and
     /// one more per instance an internal error or a panic dropped.
     pub fn instances_made(&self) -> usize {
@@ -298,6 +291,97 @@ impl Workers {
                 .map(|item| self.point(&work, item, at(item)))
                 .collect()
         })
+    }
+
+    /// Runs `work` on `len` items which the calling thread reads while the pool simulates the
+    /// ones it read before, and gives one outcome per item, in their order, or the error which
+    /// stopped the batch.
+    ///
+    /// It is the batch of a caller whose items cost something to read on its own thread, such
+    /// as the requests of python, which only a thread holding the GIL may read: `feed` gives
+    /// the items of a range of the batch, first as many as the pool has threads and then twice
+    /// as many as the range before, and the points of a range run as soon as it is read, so
+    /// the pool simulates while the caller reads the rest instead of after it. No range waits
+    /// for another one, so the threads of the pool meet only after the last point. Once every
+    /// range is read, the calling thread asks `watch` every `interval` whether the batch goes
+    /// on, such as for the signals of python, which only the thread of the caller may check;
+    /// `watch` is not asked after the last point, so a batch shorter than `interval` never
+    /// asks it.
+    ///
+    /// An error of `feed` or `watch` stops the batch: the points which have not started do not
+    /// run, the points which run finish, and the batch answers the error after them, so no
+    /// thread of the pool works on the items after this returns. `feed` gives as many items as
+    /// its range holds; a range of any other length is a defect of the caller, which panics.
+    pub fn map_fed<T, R, E, F>(
+        &self,
+        len: usize,
+        mut feed: impl FnMut(Range<usize>) -> Result<Vec<T>, E>,
+        work: F,
+        interval: Duration,
+        mut watch: impl FnMut() -> Result<(), E>,
+    ) -> Result<Vec<Outcome<R>>, E>
+    where
+        T: Send + Sync,
+        R: Send,
+        F: Fn(&mut NativeInstance, &T) -> Result<R, EngineError> + Sync,
+    {
+        let stopped = AtomicBool::new(false);
+        let left = AtomicUsize::new(len);
+        let caller = std::thread::current();
+        let mut outcomes: Vec<Option<Outcome<R>>> =
+            std::iter::repeat_with(|| None).take(len).collect();
+        let stop = self.pool.in_place_scope(|scope| {
+            let (stopped, left, caller, work) = (&stopped, &left, &caller, &work);
+            let mut rest = outcomes.as_mut_slice();
+            let (mut start, mut size) = (0, self.threads());
+            while !rest.is_empty() {
+                let points = size.min(rest.len());
+                let (slots, after) = std::mem::take(&mut rest).split_at_mut(points);
+                rest = after;
+                let range = start..start + slots.len();
+                (start, size) = (range.end, 2 * size);
+                let items = match feed(range.clone()) {
+                    Ok(items) => items,
+                    Err(error) => {
+                        stopped.store(true, Ordering::Relaxed);
+                        return Some(error);
+                    }
+                };
+                assert_eq!(items.len(), range.len(), "the items of {range:?}");
+                scope.spawn(move |_| {
+                    let points = slots.len();
+                    items
+                        .par_iter()
+                        .zip(slots.par_iter_mut())
+                        .for_each(|(item, slot)| {
+                            if !stopped.load(Ordering::Relaxed) {
+                                *slot = Some(self.point(work, item, 0));
+                            }
+                        });
+                    if left.fetch_sub(points, Ordering::AcqRel) == points {
+                        caller.unpark();
+                    }
+                });
+            }
+            // the scope waits for the points which run when this returns
+            while left.load(Ordering::Acquire) > 0 {
+                std::thread::park_timeout(interval);
+                if left.load(Ordering::Acquire) > 0
+                    && let Err(error) = watch()
+                {
+                    stopped.store(true, Ordering::Relaxed);
+                    return Some(error);
+                }
+            }
+            None
+        });
+        if let Some(error) = stop {
+            return Err(error);
+        }
+        Ok(outcomes
+            .into_iter()
+            .map(|outcome| outcome.expect("every point of a batch which was not stopped ran"))
+            .collect())
     }
 
     /// Runs `work` on the pool of the batch and gives what it answers.

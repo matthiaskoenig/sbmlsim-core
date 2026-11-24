@@ -2,6 +2,7 @@
 //! over the threads of a pool of `sbmlsim-batch`.
 
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use numpy::{PyArray2, PyArray3};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
@@ -9,7 +10,8 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use sbmlsim_abi::EngineError;
 use sbmlsim_abi::{SimulationRequest, SimulationResult, SimulationStats};
-use sbmlsim_batch::{Outcome, Plan, WorkerPool, Workers, thread_count};
+use sbmlsim_batch::{Plan, WorkerPool, Workers, thread_count};
+use sbmlsim_host::NativeInstance;
 
 use crate::errors::{InternalError, PointError, batch_error, poisoned, simulation_error};
 
@@ -166,13 +168,23 @@ impl SimulationOutput {
 /// The request of `simulation/1` a python object describes; `at` names it in the message of a
 /// request which is none (`request`, `requests[3]`).
 pub(crate) fn request_of(object: &Bound<'_, PyAny>, at: &str) -> PyResult<SimulationRequest> {
-    serde_path_to_error::deserialize(&mut pythonize::Depythonizer::from_object(object)).map_err(
-        |error| {
+    parse_request(object).map_err(|message| PyValueError::new_err(format!("{at}: {message}")))
+}
+
+/// The request of `simulation/1` a python object describes, or the message of one which is
+/// none.
+///
+/// The request is read without the path of its fields first, and a request which is none
+/// is read again with it for the message: tracking the path costs as much as reading the
+/// rest of the request, and a batch reads all of its requests on the one thread which holds
+/// the GIL.
+fn parse_request(object: &Bound<'_, PyAny>) -> Result<SimulationRequest, String> {
+    pythonize::depythonize(object).or_else(|_| {
+        serde_path_to_error::deserialize(&mut pythonize::Depythonizer::from_object(object))
             // the path names the field (`settings.maximum_num_steps`), which serde alone
             // leaves out for a wrong type
-            PyValueError::new_err(format!("{at}: {}: {}", error.path(), error.inner()))
-        },
-    )
+            .map_err(|error| format!("{}: {}", error.path(), error.inner()))
+    })
 }
 
 /// The table of a result as the output of a simulation, or the message of a table which has no
@@ -212,54 +224,48 @@ fn output(py: Python<'_>, result: SimulationResult) -> Result<SimulationOutput, 
     })
 }
 
-/// The requests of a batch, read while the GIL is held, so that a request which is none is
-/// refused before anything is simulated.
-fn requests_of(requests: &Bound<'_, PyAny>) -> PyResult<Vec<SimulationRequest>> {
-    requests
+/// The objects of an iterable of a batch, its requests, points or plans, which the batch reads
+/// while its pool simulates the ones it read before.
+fn objects_of(items: &Bound<'_, PyAny>) -> PyResult<Vec<Py<PyAny>>> {
+    items
         .try_iter()?
-        .enumerate()
-        .map(|(at, object)| request_of(&object?, &format!("requests[{at}]")))
+        .map(|object| object.map(Bound::unbind))
         .collect()
 }
 
-/// The points of a prepared batch, which are the values of its varying targets.
-fn points_of(points: &Bound<'_, PyAny>) -> PyResult<Vec<Vec<f64>>> {
-    points
-        .try_iter()?
-        .enumerate()
-        .map(|(at, row)| {
-            row?.extract::<Vec<f64>>()
-                .map_err(|error| PyValueError::new_err(format!("points[{at}]: {error}")))
-        })
-        .collect()
+/// The request of the point `at` of a batch.
+fn request_at(object: &Bound<'_, PyAny>, at: usize) -> PyResult<SimulationRequest> {
+    parse_request(object)
+        .map_err(|message| PyValueError::new_err(format!("requests[{at}]: {message}")))
 }
 
-/// The plans of a batch, which are pairs of a prepared request and the values of its varying
+/// The point `at` of a prepared batch, which are the values of its varying targets.
+fn point_at(object: &Bound<'_, PyAny>, at: usize) -> PyResult<Vec<f64>> {
+    object
+        .extract::<Vec<f64>>()
+        .map_err(|error| PyValueError::new_err(format!("points[{at}]: {error}")))
+}
+
+/// The plan `at` of a batch, a pair of a prepared request and the values of its varying
 /// targets; `model` is the model of the pool the plans run on, which every one of them belongs
-/// to, so that a plan of another model is refused before anything is simulated.
-fn plans_of(
-    plans: &Bound<'_, PyAny>,
+/// to.
+fn plan_at(
+    object: &Bound<'_, PyAny>,
+    at: usize,
     model: &Arc<sbmlsim_host::LoadedModel>,
-) -> PyResult<Vec<Plan>> {
-    plans
-        .try_iter()?
-        .enumerate()
-        .map(|(at, plan)| {
-            let plan = plan?;
-            let (prepared, values) = plan
-                .extract::<(PyRef<'_, PreparedSimulation>, Vec<f64>)>()
-                .map_err(|error| PyValueError::new_err(format!("plans[{at}]: {error}")))?;
-            if !Arc::ptr_eq(model, &prepared.model) {
-                return Err(PyValueError::new_err(format!(
-                    "plans[{at}]: prepared simulation belongs to another model"
-                )));
-            }
-            Ok(Plan {
-                prepared: prepared.prepared.clone(),
-                values,
-            })
-        })
-        .collect()
+) -> PyResult<Plan> {
+    let (prepared, values) = object
+        .extract::<(PyRef<'_, PreparedSimulation>, Vec<f64>)>()
+        .map_err(|error| PyValueError::new_err(format!("plans[{at}]: {error}")))?;
+    if !Arc::ptr_eq(model, &prepared.model) {
+        return Err(PyValueError::new_err(format!(
+            "plans[{at}]: prepared simulation belongs to another model"
+        )));
+    }
+    Ok(Plan {
+        prepared: prepared.prepared.clone(),
+        values,
+    })
 }
 
 /// Simulates every request of a batch (`LoadedModel.simulate_many`) and gives one result per
@@ -274,7 +280,7 @@ pub(crate) fn batch(
     threads: Option<i64>,
 ) -> PyResult<Vec<Py<PyAny>>> {
     let threads = thread_count(threads).map_err(batch_error)?;
-    let requests = requests_of(requests)?;
+    let requests = objects_of(requests)?;
     if requests.is_empty() {
         return Ok(Vec::new());
     }
@@ -282,38 +288,54 @@ pub(crate) fn batch(
     let workers = py
         .detach(|| Workers::new(model.clone(), threads))
         .map_err(batch_error)?;
-    run_slices(py, &workers, &requests, |slice| workers.simulate(slice))
+    run_batch(py, &workers, &requests, request_at, |instance, request| {
+        instance.simulate(request)
+    })
 }
 
-/// Runs a batch in slices of `Workers::slice_len` points and gives one object per point, in
-/// the order of the points: the table of a point which ran and a `PointError` for one which
-/// failed.
+/// How often the thread of a batch checks the signals of python while the pool simulates.
+const SIGNALS: Duration = Duration::from_millis(20);
+
+/// Reads every object of a batch with `read` and runs `work` on it, and gives one object per
+/// item, in the order of the items: the table of a point which ran and a `PointError` for one
+/// which failed.
 ///
-/// The points of a slice run without the GIL and give the tables of the engine, which become
-/// the objects of python between two slices, where the GIL is held again, and where the
-/// signals are checked: a thread of the pool never reaches into python, and a long batch is
-/// interrupted there.
-fn run_slices<T: Sync>(
+/// The objects are read on the thread of the caller, which holds the GIL for a range of them
+/// at a time, while the pool simulates the points of the ranges before without it: reading a
+/// request costs a few percent of a short simulation, and every point read before the pool
+/// starts is a point the threads of the pool wait for. The tables of the engine become the
+/// objects of python after the last point. The thread of the caller checks the signals of
+/// python while the pool simulates, since a thread of the pool never reaches into python, and
+/// an interrupt, or an object which is none, stops the batch: the points which have not
+/// started do not run, and the error is raised once the points which run have finished.
+fn run_batch<T: Send + Sync>(
     py: Python<'_>,
     workers: &Workers,
-    items: &[T],
-    run: impl Fn(&[T]) -> Vec<Outcome<SimulationResult>> + Sync,
+    objects: &[Py<PyAny>],
+    read: impl Fn(&Bound<'_, PyAny>, usize) -> PyResult<T> + Sync,
+    work: impl Fn(&mut NativeInstance, &T) -> Result<SimulationResult, EngineError> + Sync,
 ) -> PyResult<Vec<Py<PyAny>>> {
-    let mut results = Vec::with_capacity(items.len());
-    for slice in items.chunks(workers.slice_len()) {
-        let points = py.detach(|| run(slice));
-        for outcome in points {
-            results.push(match outcome {
+    let points = py.detach(|| {
+        workers.map_fed(
+            objects.len(),
+            |range| Python::attach(|py| range.map(|at| read(objects[at].bind(py), at)).collect()),
+            &work,
+            SIGNALS,
+            || Python::attach(|py| py.check_signals()),
+        )
+    })?;
+    points
+        .into_iter()
+        .map(|outcome| {
+            Ok(match outcome {
                 Ok(table) => match output(py, table) {
                     Ok(out) => Py::new(py, out)?.into_any(),
                     Err(message) => Py::new(py, PointError::internal(message))?.into_any(),
                 },
                 Err(failure) => Py::new(py, PointError::of_failure(failure))?.into_any(),
-            });
-        }
-        py.check_signals()?;
-    }
-    Ok(results)
+            })
+        })
+        .collect()
 }
 
 /// A bounded reusable pool with one active submission at a time.
@@ -373,7 +395,7 @@ impl BatchExecutor {
         requests: &Bound<'_, PyAny>,
     ) -> PyResult<Vec<Py<PyAny>>> {
         let mut state = self.state()?;
-        let requests = requests_of(requests)?;
+        let requests = objects_of(requests)?;
         if requests.is_empty() {
             return Ok(Vec::new());
         }
@@ -383,7 +405,9 @@ impl BatchExecutor {
         py.detach(|| state.pool.ensure(requests.len()))
             .map_err(batch_error)?;
         let workers = state.pool.workers().expect("the pool of a batch which ran");
-        run_slices(py, workers, &requests, |slice| workers.simulate(slice))
+        run_batch(py, workers, &requests, request_at, |instance, request| {
+            instance.simulate(request)
+        })
     }
 
     /// Runs numeric rows in order on the retained workers.
@@ -399,7 +423,7 @@ impl BatchExecutor {
                 "prepared simulation belongs to another model",
             ));
         }
-        let points = points_of(points)?;
+        let points = objects_of(points)?;
         if points.is_empty() {
             return Ok(Vec::new());
         }
@@ -407,8 +431,8 @@ impl BatchExecutor {
         py.detach(|| state.pool.ensure(points.len()))
             .map_err(batch_error)?;
         let workers = state.pool.workers().expect("the pool of a batch which ran");
-        run_slices(py, workers, &points, |slice| {
-            workers.simulate_prepared(&prepared.prepared, slice)
+        run_batch(py, workers, &points, point_at, |instance, values| {
+            instance.simulate_prepared(&prepared.prepared, values)
         })
     }
 
@@ -418,7 +442,7 @@ impl BatchExecutor {
     /// batch instead of one call per condition.
     fn simulate_plans(&self, py: Python<'_>, plans: &Bound<'_, PyAny>) -> PyResult<Vec<Py<PyAny>>> {
         let mut state = self.state()?;
-        let plans = plans_of(plans, state.pool.model())?;
+        let plans = objects_of(plans)?;
         if plans.is_empty() {
             return Ok(Vec::new());
         }
@@ -426,7 +450,11 @@ impl BatchExecutor {
         py.detach(|| state.pool.ensure(plans.len()))
             .map_err(batch_error)?;
         let workers = state.pool.workers().expect("the pool of a batch which ran");
-        run_slices(py, workers, &plans, |slice| workers.simulate_plans(slice))
+        let model = workers.model().clone();
+        let read = move |plan: &Bound<'_, PyAny>, at: usize| plan_at(plan, at, &model);
+        run_batch(py, workers, &plans, read, |instance, plan| {
+            instance.simulate_prepared(&plan.prepared, &plan.values)
+        })
     }
 
     /// Idempotently releases retained resources. Concurrent calls raise RuntimeError.

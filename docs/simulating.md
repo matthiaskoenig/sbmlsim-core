@@ -323,8 +323,9 @@ is consumed ahead; only that chunk's requests and results are retained by the he
 Malformed input raises at its chunk, after earlier results may have been yielded.
 The caller owns and closes the executor, including when iteration ends early.
 
-Simulation work releases the GIL. Python signals are checked between slices, so
-interrupting a batch discards that call's results while leaving the executor usable.
+Simulation work releases the GIL. Python signals are checked while the pool
+simulates, so interrupting a batch stops it before its next points start and
+discards that call's results while leaving the executor usable.
 `close()` is idempotent, releases retained instances and workers, and prevents new
 submissions. The context manager closes on normal exit and exceptions; dropping the
 executor also releases its resources.
@@ -380,7 +381,9 @@ with model.batch_executor(threads=4) as executor:
 
 Every request of a batch of plans belongs to the loaded model of the executor; one of
 another model raises `ValueError` naming its plan (`plans[3]`), as a pair which is
-none does, before anything is simulated. The results keep the order of the plans and a
+none does. The batch reads its plans while its pool simulates the ones it read before,
+so the points before such a plan may have run; the batch stops there and gives no
+result. The results keep the order of the plans and a
 point which fails is a `PointError` in its own position, as in every other batch.
 `bench/OPTIMIZATION.md` measures what one batch of plans is worth to a fit.
 
