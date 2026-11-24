@@ -4,13 +4,13 @@
 //! The model is the decay model `y' = -k y` of `crates/host/tests/decay-model`, which the
 //! tests of the host and of the command line simulate as well.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 
 use sbmlsim_abi::{EngineError, ModelDescription, SimulationRequest, SimulationResult};
 use sbmlsim_batch::{
-    BatchError, MAX_THREADS, Plan, PointFailure, SLICE_PER_THREAD, WorkerPool, Workers,
-    thread_count,
+    BatchError, MAX_THREADS, Plan, PointFailure, WorkerPool, Workers, thread_count,
 };
 use sbmlsim_host::{LoadedModel, Runtime};
 
@@ -71,10 +71,112 @@ fn the_thread_count_of_no_number_is_within_the_bounds() {
 }
 
 #[test]
-fn a_slice_holds_its_points_per_thread() {
-    let workers = Workers::new(model(), 3).unwrap();
-    assert_eq!(workers.threads(), 3);
-    assert_eq!(workers.slice_len(), SLICE_PER_THREAD * 3);
+fn a_pool_has_the_threads_it_was_made_with() {
+    assert_eq!(Workers::new(model(), 3).unwrap().threads(), 3);
+}
+
+/// A batch of `requests` fed in the ranges `map_fed` asks for, which records the ranges.
+fn fed(
+    workers: &Workers,
+    requests: &[SimulationRequest],
+    ranges: &mut Vec<std::ops::Range<usize>>,
+) -> Result<Vec<f64>, String> {
+    let points = workers.map_fed(
+        requests.len(),
+        |range| {
+            ranges.push(range.clone());
+            Ok::<_, String>(requests[range].to_vec())
+        },
+        |instance, request| instance.simulate(request),
+        Duration::from_millis(1),
+        || Ok(()),
+    )?;
+    Ok(points
+        .iter()
+        .map(|point| last(point.as_ref().unwrap(), "time"))
+        .collect())
+}
+
+#[test]
+fn a_fed_batch_gives_the_points_in_their_order() {
+    let workers = Workers::new(model(), 4).unwrap();
+    let mut ranges = Vec::new();
+    let ends = fed(&workers, &requests(1..=50), &mut ranges).unwrap();
+    assert_eq!(ends, (1..=50).map(f64::from).collect::<Vec<f64>>());
+    // as many items as the pool has threads first, then twice the range before
+    assert_eq!(ranges, [0..4, 4..12, 12..28, 28..50]);
+}
+
+#[test]
+fn a_fed_batch_without_points_reads_and_asks_nothing() {
+    let workers = Workers::new(model(), 2).unwrap();
+    let points = workers.map_fed(
+        0,
+        |_| -> Result<Vec<SimulationRequest>, String> { panic!("fed a batch of no point") },
+        |instance, request| instance.simulate(request),
+        Duration::ZERO,
+        || panic!("watched a batch of no point"),
+    );
+    assert!(points.unwrap().is_empty());
+    assert_eq!(workers.instances_made(), 0);
+}
+
+#[test]
+fn an_error_of_the_feed_stops_the_batch() {
+    let workers = Workers::new(model(), 2).unwrap();
+    let requests = requests(1..=20);
+    let ran = AtomicUsize::new(0);
+    let points = workers.map_fed(
+        requests.len(),
+        |range| {
+            if range.start > 0 {
+                return Err(format!("no items at {}", range.start));
+            }
+            Ok(requests[range].to_vec())
+        },
+        |instance, request| {
+            ran.fetch_add(1, Ordering::SeqCst);
+            instance.simulate(request)
+        },
+        Duration::from_millis(1),
+        || Ok(()),
+    );
+    assert_eq!(points.unwrap_err(), "no items at 2");
+    // the first range was read before the error and may have started
+    assert!(ran.load(Ordering::SeqCst) <= 2);
+}
+
+#[test]
+fn a_stopped_batch_runs_no_point_after_the_stop() {
+    let workers = Workers::new(model(), 2).unwrap();
+    let requests = requests(1..=64);
+    let (started, ran) = (AtomicBool::new(false), AtomicUsize::new(0));
+    let points = workers.map_fed(
+        requests.len(),
+        |range| Ok::<_, &str>(requests[range].to_vec()),
+        |instance, request| {
+            started.store(true, Ordering::SeqCst);
+            // every point is long enough for the watch of the caller to stop the batch
+            // before the last one starts
+            std::thread::sleep(Duration::from_millis(5));
+            ran.fetch_add(1, Ordering::SeqCst);
+            instance.simulate(request)
+        },
+        Duration::from_millis(1),
+        || match started.load(Ordering::SeqCst) {
+            true => Err("stopped"),
+            false => Ok(()),
+        },
+    );
+    assert_eq!(points.unwrap_err(), "stopped");
+    // what ran is final once the batch answers: no thread of the pool works on after it
+    let after = ran.load(Ordering::SeqCst);
+    std::thread::sleep(Duration::from_millis(20));
+    assert_eq!(ran.load(Ordering::SeqCst), after);
+    assert!(
+        after < requests.len(),
+        "{after} points of a stopped batch ran"
+    );
 }
 
 #[test]

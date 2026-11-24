@@ -50,7 +50,7 @@ def request(**fields: Any) -> dict[str, Any]:
 def slow_request() -> dict[str, Any]:
     """A request of about 80 ms with 11 rows: a long time in small steps of the integrator.
 
-    A slice of such requests takes long enough to be told apart from no work at all,
+    A batch of such requests takes long enough to be told apart from no work at all,
     without the memory of a large table.
     """
     return request(
@@ -87,18 +87,17 @@ def test_a_batch_does_not_depend_on_the_number_of_threads(decay):
         assert a.values.tobytes() == b.values.tobytes() == c.values.tobytes()
 
 
-def test_a_batch_does_not_depend_on_how_it_is_sliced(decay):
-    # the batch runs in slices of 8 * threads requests, so 16 requests on two threads are one
-    # slice and 48 are three. The last 16 are the comparison, not the first: as the third
-    # slice of the long batch each of them runs on an instance which has simulated 16 points
-    # before it, as a batch of their own on a fresh instance, and both give the same bytes.
+def test_a_point_does_not_depend_on_the_points_before_it(decay):
+    # The last 16 requests are the comparison, not the first: in the long batch each of them
+    # runs on an instance which has simulated points before it, as a batch of their own on a
+    # fresh instance, and both give the same bytes.
     requests = [
         request(end=10.0, steps=10, preinit=[("y", 1.0 * n)]) for n in range(48)
     ]
-    three_slices = decay.simulate_many(requests, threads=2)
-    one_slice = decay.simulate_many(requests[32:], threads=2)
-    assert len(three_slices) == 48 and len(one_slice) == 16
-    for a, b in zip(one_slice, three_slices[32:], strict=True):
+    long = decay.simulate_many(requests, threads=2)
+    short = decay.simulate_many(requests[32:], threads=2)
+    assert len(long) == 48 and len(short) == 16
+    for a, b in zip(short, long[32:], strict=True):
         assert a.values.tobytes() == b.values.tobytes()
 
 
@@ -184,10 +183,27 @@ def test_a_point_the_engine_refuses_is_a_request_error(decay):
     assert "request" in repr(point)
 
 
-def test_a_request_which_is_none_is_refused_before_anything_runs(decay):
+def test_a_request_which_is_none_is_refused(decay):
     requests = [request(end=10.0, steps=10), request(end="ten", steps=10)]
     with pytest.raises(ValueError, match=r"requests\[1\]"):
         decay.simulate_many(requests, threads=2)
+
+
+@pytest.mark.parametrize("persistent", [False, True])
+def test_a_request_which_is_none_after_the_first_range_is_refused(decay, persistent):
+    # the batch reads its requests in ranges while the pool simulates the ones before, so the
+    # request at 30 is read after points ran; the batch stops there all the same, and the
+    # pool runs the next batch as if nothing had happened
+    requests = [request(end=10.0, steps=10) for _ in range(40)]
+    requests[30] = request(end="ten", steps=10)
+    if persistent:
+        with decay.batch_executor(threads=2) as executor:
+            with pytest.raises(ValueError, match=r"requests\[30\]"):
+                executor.simulate_many(requests)
+            assert len(executor.simulate_many(requests[:30])) == 30
+    else:
+        with pytest.raises(ValueError, match=r"requests\[30\]"):
+            decay.simulate_many(requests, threads=2)
 
 
 def test_threads_below_one_is_refused(decay):
@@ -201,24 +217,25 @@ def test_threads_below_one_is_refused(decay):
 
 @pytest.mark.parametrize("persistent", [False, True])
 def test_a_long_batch_is_interrupted(decay, persistent):
-    # The interrupt has to reach the batch while it runs, which only the check between two
-    # slices sees: an interrupt which is pending before the call is raised by the interpreter
+    # The interrupt has to reach the batch while it runs, which only the check of the signals
+    # while the pool simulates sees: an interrupt which is pending before the call is raised by the interpreter
     # at the call itself (CPython 3.14), and one which arrives after the batch returned says
     # nothing about the batch. The switch interval keeps the main thread from handing the GIL
     # to the timer in the eval loop, so the timer cannot run before the batch releases it for
-    # its pool, and the batch is 160 requests, ten slices of 16 and about 6 s of work, so it
-    # cannot have finished before the timer either.
+    # its pool, and the batch is 160 requests, ten times the 16 of the calibration and about
+    # 6 s of work, so it cannot have finished before the timer either.
     #
     # The interrupt is caught here rather than with `pytest.raises`, because the elapsed time
     # is the whole claim of the test and `pytest.raises` would not reach it: a batch which
     # never checks the signals returns, and the interrupt which is pending then is raised
     # inside `__exit__`, where it ends the session instead of failing the test.
     requests = [slow_request() for _ in range(160)]
-    # Calibrate one slice on this runner. An absolute threshold is unreliable when
-    # other test processes compete for CPU; a batch without signal checks runs ten slices.
+    # Calibrate a tenth of the batch on this runner. An absolute threshold is unreliable
+    # when other test processes compete for CPU; a batch without signal checks runs ten
+    # tenths.
     calibrated = time.perf_counter()
     decay.simulate_many(requests[:16], threads=2)
-    slice_seconds = time.perf_counter() - calibrated
+    tenth_seconds = time.perf_counter() - calibrated
     interrupt = threading.Timer(0.02, _thread.interrupt_main)
     switch = sys.getswitchinterval()
     sys.setswitchinterval(1000.0)
@@ -242,9 +259,9 @@ def test_a_long_batch_is_interrupted(decay, persistent):
         sys.setswitchinterval(switch)
     elapsed = time.perf_counter() - started
     assert interrupted, "the batch was never interrupted"
-    # Leave a five-slice margin for scheduling variation while still rejecting the
-    # ten-slice mutation that only delivers the interrupt after returning to Python.
-    assert elapsed < 5 * slice_seconds
+    # Leave a margin of five tenths for scheduling variation while still rejecting the
+    # whole batch of a mutation that only delivers the interrupt after returning to Python.
+    assert elapsed < 5 * tenth_seconds
 
 
 def test_executor_repeated_calls_and_failures_recover(decay):
