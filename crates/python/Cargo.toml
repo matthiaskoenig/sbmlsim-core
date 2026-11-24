@@ -21,6 +21,8 @@ pythonize = "0.30"
 sbmlsim-abi = { path = "../abi" }
 # the pool of the threads of a batch, with an engine instance per thread
 sbmlsim-batch = { path = "../batch" }
+# the basis of a polynomial chaos expansion: its multi-indices, its design matrix, its surrogate
+sbmlsim-chaos = { path = "../chaos" }
 # the fit of a model: the objective on the batch and the optimizers of basin (`fit/1`)
 sbmlsim-fit = { path = "../fit" }
 sbmlsim-compiler = { path = "../compiler" }

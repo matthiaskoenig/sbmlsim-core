@@ -282,3 +282,25 @@ def fit_problem_of_models(
     threads: int | None = None,
 ) -> FitProblem:
     """The problem of a fit of several models, for an optimizer which stays in python."""
+
+def chaos_expansion(
+    d: int, degree: int, *, q: float = 1.0, max_interaction: int | None = None
+) -> numpy.typing.NDArray[numpy.int64]:
+    """The multi-indices of a truncated basis of a polynomial chaos expansion."""
+
+def chaos_design_matrix(
+    u: numpy.typing.ArrayLike,
+    multi_indices: numpy.typing.ArrayLike,
+    *,
+    threads: int | None = None,
+) -> numpy.typing.NDArray[numpy.float64]:
+    """The values of the terms of a basis at points of the unit cube."""
+
+def chaos_predict(
+    u: numpy.typing.ArrayLike,
+    multi_indices: numpy.typing.ArrayLike,
+    coefficients: numpy.typing.ArrayLike,
+    *,
+    threads: int | None = None,
+) -> numpy.typing.NDArray[numpy.float64]:
+    """The values of a polynomial chaos expansion at points of the unit cube."""

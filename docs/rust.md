@@ -136,6 +136,7 @@ The pool is the one the [Python](python.md) bindings run `simulate_many` and `ba
 | `sbmlsim-engine` | the integrator, compiled to `engine.wasm` (CVODE, KLU) |
 | `sbmlsim-host` | the wasmtime host: `Runtime`, `LoadedModel`, `Instance` |
 | `sbmlsim-batch` | the pool of a batch of simulations: a thread per point, an instance per thread |
+| `sbmlsim-chaos` | the basis of a polynomial chaos expansion: its multi-indices, its design matrix and its surrogate |
 | `sbmlsim-csolvers` | CVODE and SuiteSparse, built from source for the engine and for the native host |
 | `sbmlsim-cli` | the command line `sbmlsim-core` |
 | `sbmlsim-sbml` | the reader of SBML core, every level and version, on crates.io |

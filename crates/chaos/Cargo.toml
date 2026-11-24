@@ -1,0 +1,12 @@
+[package]
+name = "sbmlsim-chaos"
+version.workspace = true
+edition.workspace = true
+# not on crates.io yet, as the rest of the workspace
+publish = false
+license.workspace = true
+authors.workspace = true
+description = "The basis of a polynomial chaos expansion of sbmlsim-core: its multi-indices, its design matrix and the surrogate it is"
+
+[dependencies]
+thiserror.workspace = true

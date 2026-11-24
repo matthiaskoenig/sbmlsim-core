@@ -12,6 +12,7 @@ members = [
     "crates/host",
     "crates/batch",
     "crates/fit",
+    "crates/chaos",
     "crates/cli",
     "crates/python",
     "crates/wasm",

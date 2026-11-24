@@ -70,6 +70,7 @@ mod allocator {
     pub const NAME: &str = "system";
 }
 
+mod chaos;
 mod compile;
 mod errors;
 mod fit;
@@ -125,6 +126,9 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(runtime::fit_problem_of_models, m)?)?;
     m.add_function(wrap_pyfunction!(compile_sbml, m)?)?;
     m.add_function(wrap_pyfunction!(runtime_wasm, m)?)?;
+    m.add_function(wrap_pyfunction!(chaos::chaos_expansion, m)?)?;
+    m.add_function(wrap_pyfunction!(chaos::chaos_design_matrix, m)?)?;
+    m.add_function(wrap_pyfunction!(chaos::chaos_predict, m)?)?;
     Ok(())
 }
 
