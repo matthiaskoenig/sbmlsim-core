@@ -145,7 +145,7 @@ The settings of the integrator:
 | `maximum_adams_order` | `0` | the largest order of the Adams method, 1 to 12; `0` is not set (CVODE takes 12). Only `"stiff": false` takes it (0.25.0) |
 | `minimum_time_step` | `0.0` | the smallest step in time, `0.0` for none; above `maximum_time_step` it is refused (0.25.0) |
 | `maximum_error_test_failures` | `0` | the most failures of the local error test of one step before the integration fails; `0` is not set (CVODE takes 7, IDA the 30 the engine sets for the consistent initial values) (0.25.0) |
-| `maximum_nonlinear_iterations` | `0` | the most iterations of the nonlinear solver of one step; `0` is not set (3, and 4 for the fixed point iteration of Adams) (0.25.0) |
+| `maximum_nonlinear_iterations` | `0` | the most iterations of the nonlinear solver of one step; `0` is not set (CVODE takes 3, for its Newton iteration and for the fixed point iteration of Adams alike, and IDA 4) (0.25.0) |
 | `maximum_convergence_failures` | `0` | the most convergence failures of the nonlinear solver of one step; `0` is not set (10) (0.25.0) |
 | `nonlinear_convergence_coefficient` | `0.0` | the safety factor of the convergence test of the nonlinear solver; `0.0` is not set (CVODE takes 0.1, IDA 0.33) (0.25.0) |
 | `stability_limit_detection` | `false` | whether CVODE lowers the order of a BDF above 2 at the stability limit, for a model whose dominant eigenvalues lie near the imaginary axis. A setting of the BDF of CVODE: it is refused with `"stiff": false` and for a model of algebraic rules, which IDA integrates (0.25.0) |

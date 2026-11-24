@@ -308,7 +308,8 @@ pub struct IntegratorSettings {
     #[serde(default)]
     pub maximum_error_test_failures: u32,
     /// The largest number of iterations of the nonlinear solver of one step; `0` is not set
-    /// (CVODE and IDA take 3, 4 for the fixed point iteration of Adams).
+    /// (CVODE takes 3, for its Newton iteration and for the fixed point iteration of Adams
+    /// alike, and IDA 4).
     #[serde(default)]
     pub maximum_nonlinear_iterations: u32,
     /// The largest number of convergence failures of the nonlinear solver of one step;
