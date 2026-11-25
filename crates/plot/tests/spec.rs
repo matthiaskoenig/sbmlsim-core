@@ -1,4 +1,4 @@
-use sbmlsim_plot::{ElementKind, FIGURE_CONTRACT, parse};
+use sbmlsim_plot::{ElementKind, FIGURE_CONTRACT, FontWeight, parse};
 
 fn base(plot: &str) -> String {
     format!(
@@ -40,8 +40,56 @@ fn defaults_apply() {
     let p = &f.plots[0];
     assert!(p.legend && p.row_span == 1 && p.x.label_visible);
     let e = &p.elements[0];
-    assert_eq!(e.style.line.width, 2.0);
+    assert_eq!(e.style.line_or_default().width, 2.0);
+    assert!(e.style.line.is_none());
     assert!(matches!(e.kind, ElementKind::Curve { .. }));
+    // the fonts of 0.28.0: titles bold, the rest normal, the y ticks of the x size
+    assert_eq!(f.fonts.title_weight, FontWeight::Bold);
+    assert_eq!(f.fonts.label_weight, FontWeight::Normal);
+    assert_eq!(f.fonts.y_tick(), 11.0);
+    assert!(p.x.marks_visible() && p.x.tick_marks_visible.is_none());
+}
+
+#[test]
+fn fields_of_0_28_are_checked() {
+    let curve = r#"{"id":"a","kind":"curve","label":"a","x":[1],"y":[2],
+        "style":{"marker":{"type":"circle","fill":"none"}}}"#;
+    // a hollow marker is no color
+    assert!(parse(&base(&plot("", curve))).is_ok());
+    let wrong = curve.replace("\"none\"", "\"nope\"");
+    assert_eq!(
+        parse(&base(&plot("", &wrong))).unwrap_err().path,
+        "plots[0].elements[0].style.marker.fill"
+    );
+    // a size of the y ticks is positive, a weight normal or bold
+    let fonts = base(&plot("", curve)).replacen("\"grid\"", "\"fonts\":{\"tick_y\":0},\"grid\"", 1);
+    assert_eq!(parse(&fonts).unwrap_err().path, "fonts.tick_y");
+    let weight = base(&plot("", curve)).replacen(
+        "\"grid\"",
+        "\"fonts\":{\"label_weight\":\"heavy\"},\"grid\"",
+        1,
+    );
+    assert!(
+        parse(&weight)
+            .unwrap_err()
+            .path
+            .starts_with("fonts.label_weight")
+    );
+    // the swatch of a legend group: a key is a group of the plot, its style is checked
+    let swatches = |extra: &str| base(&plot(extra, curve));
+    assert!(parse(&swatches(r#""legend_swatches":{"a":{"opacity":0.5}},"#)).is_ok());
+    assert_eq!(
+        parse(&swatches(r#""legend_swatches":{"b":{}},"#))
+            .unwrap_err()
+            .path,
+        "plots[0].legend_swatches.b"
+    );
+    assert_eq!(
+        parse(&swatches(r#""legend_swatches":{"a":{"opacity":2}},"#))
+            .unwrap_err()
+            .path,
+        "plots[0].legend_swatches.a.opacity"
+    );
 }
 
 #[test]
@@ -233,4 +281,105 @@ fn nan_and_infinity_are_no_json() {
     ));
     let e = parse(&s).unwrap_err();
     assert!(!e.message.contains("null"), "{e}");
+}
+
+const BAR: &str = r#"{"scale":{"name":"viridis","low":0,"high":1}}"#;
+const CURVE: &str = r#"{"id":"a","kind":"curve","x":[1],"y":[2]}"#;
+
+#[test]
+fn colorbar_and_colorbars_refused() {
+    let extra = format!(r#""colorbar":{BAR},"colorbars":[{BAR}],"#);
+    let e = parse(&base(&plot(&extra, CURVE))).unwrap_err();
+    assert_eq!(e.path, "plots[0].colorbars", "{e}");
+    assert!(e.message.contains("colorbar"), "{e}");
+    // either alone is a figure, the bars of `colorbars` each checked
+    parse(&base(&plot(&format!(r#""colorbar":{BAR},"#), CURVE))).unwrap();
+    let f = parse(&base(&plot(
+        &format!(r#""colorbars":[{BAR},{BAR}],"#),
+        CURVE,
+    )))
+    .unwrap();
+    assert_eq!(f.plots[0].colorbars.as_ref().map(Vec::len), Some(2));
+    let bad = r#""colorbars":[{"scale":{"name":"viridis","low":0,"high":1}},{"scale":{"name":"viridis","low":1,"high":0}}],"#;
+    let e = parse(&base(&plot(bad, CURVE))).unwrap_err();
+    assert_eq!(e.path, "plots[0].colorbars[1].scale.high", "{e}");
+}
+
+#[test]
+fn start_end_validated() {
+    let f = parse(&base(&plot(&format!(r#""colorbar":{BAR},"#), CURVE))).unwrap();
+    let s = &f.plots[0].colorbar.as_ref().unwrap().scale;
+    assert_eq!((s.start, s.end), (0.0, 1.0), "the whole map by default");
+    let at = |start: &str, end: &str| {
+        let bar = format!(
+            r#""colorbar":{{"scale":{{"name":"viridis","low":0,"high":1,"start":{start},"end":{end}}}}},"#
+        );
+        parse(&base(&plot(&bar, CURVE)))
+    };
+    at("0", "0.85").unwrap();
+    at("0.1", "1").unwrap();
+    for (start, end, field) in [
+        ("-0.1", "1", "start"),
+        ("0", "1.5", "end"),
+        ("0.5", "0.5", "end"),
+        ("0.6", "0.4", "end"),
+    ] {
+        let e = at(start, end).unwrap_err();
+        assert_eq!(e.path, format!("plots[0].colorbar.scale.{field}"), "{e}");
+    }
+    // the scale of a heatmap as well
+    let el = r#"{"id":"h","kind":"heatmap","rows":["a"],"columns":["b"],"values":[[1]],"scale":{"name":"viridis","low":0,"high":1,"start":0.9,"end":0.2}}"#;
+    let e = parse(&base(&plot("", el))).unwrap_err();
+    assert_eq!(e.path, "plots[0].elements[0].scale.end", "{e}");
+}
+
+#[test]
+fn colorbar_ticks_validated() {
+    let bar = |fields: &str| {
+        let bar =
+            format!(r#""colorbar":{{"scale":{{"name":"viridis","low":0,"high":4}},{fields}}},"#);
+        parse(&base(&plot(&bar, CURVE)))
+    };
+    bar(r#""ticks":[0,2,4]"#).unwrap();
+    bar(r#""ticks":[0,4],"tick_labels":["a","b"]"#).unwrap();
+    bar(r#""categorical":true,"ticks":[1,3],"tick_labels":["a","b"]"#).unwrap();
+    // a categorical bar takes a label per band (0..=4) without ticks
+    bar(r#""categorical":true,"tick_labels":["a","b","c","d","e"]"#).unwrap();
+    for labels in [r#"["a","b"]"#, r#"["a","b","c","d","e","f"]"#] {
+        let e = bar(&format!(r#""categorical":true,"tick_labels":{labels}"#)).unwrap_err();
+        assert_eq!(e.path, "plots[0].colorbar.tick_labels", "{e}");
+        assert!(e.message.contains("bands"), "{e}");
+    }
+    for (fields, path) in [
+        (r#""tick_labels":["a"]"#, "tick_labels"),
+        (r#""ticks":[0,4],"tick_labels":["a"]"#, "tick_labels"),
+        (r#""ticks":[0,5]"#, "ticks[1]"),
+        (r#""categorical":true,"ticks":[0.5]"#, "ticks[0]"),
+    ] {
+        let e = bar(fields).unwrap_err();
+        assert_eq!(e.path, format!("plots[0].colorbar.{path}"), "{fields}: {e}");
+    }
+    let e = parse(&base(&plot(
+        r#""colorbar":{"scale":{"name":"viridis","low":0,"high":2.5},"categorical":true},"#,
+        CURVE,
+    )))
+    .unwrap_err();
+    assert_eq!(e.path, "plots[0].colorbar.scale.high", "{e}");
+    let e = parse(&base(&plot(
+        r#""colorbar":{"scale":{"name":"viridis","low":1,"high":3,"log":true},"categorical":true},"#,
+        CURVE,
+    )))
+    .unwrap_err();
+    assert_eq!(e.path, "plots[0].colorbar.categorical", "{e}");
+    // at most 256 bands
+    let bar = |high: u32| {
+        parse(&base(&plot(
+            &format!(
+                r#""colorbar":{{"scale":{{"name":"viridis","low":0,"high":{high}}},"categorical":true}},"#
+            ),
+            CURVE,
+        )))
+    };
+    bar(255).unwrap();
+    assert_eq!(bar(256).unwrap_err().path, "plots[0].colorbar.scale.high");
 }

@@ -31,6 +31,8 @@
     "./pool": "./pool.mjs",
     "./panels": "./panels.mjs",
     "./plot": "./plot.mjs",
+    "./figure": "./figure.mjs",
+    "./hydrate": "./hydrate.mjs",
     "./worker": "./worker.mjs",
     "./runtime/engine.wasm": "./runtime/engine.wasm",
     "./runtime/mathlib.wasm": "./runtime/mathlib.wasm",
@@ -48,6 +50,8 @@
     "worker.mjs",
     "panels.mjs",
     "plot.mjs",
+    "figure.mjs",
+    "hydrate.mjs",
     "simulate.mjs",
     "runtime/engine.wasm",
     "runtime/mathlib.wasm",
@@ -69,6 +73,7 @@
     "provenance": true
   },
   "devDependencies": {
-    "esbuild": "0.28.2"
+    "esbuild": "0.28.2",
+    "linkedom": "0.18.15"
   }
 }

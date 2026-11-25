@@ -167,7 +167,8 @@ def the_runtime_and_the_inline_build() -> None:
     sbmlsim_core.plot_wasm("svg")  # ty: ignore[too-many-positional-arguments]
     notices: str = sbmlsim_core.THIRD_PARTY
     script: str = web.script()
-    print(engine, plot, notices, script)
+    page: str = web.figure_script()
+    print(engine, plot, notices, script, page)
 
 
 def a_polynomial_chaos_expansion(u: numpy.typing.NDArray[numpy.float64]) -> None:
@@ -197,10 +198,11 @@ def the_figures(values: list[float]) -> None:
     geometry: dict[str, Any] = sbmlsim_core.figure_geometry(spec)
     hit: dict[str, Any] | None = sbmlsim_core.pick(spec, 1.0, 2.0, radius=4.0)
     colors: list[str] = sbmlsim_core.color_scale(
-        "viridis", 0.0, 1.0, values, center=0.5, log=False
+        "viridis", 0.0, 1.0, values, center=0.5, log=False, start=0.0, end=0.85
     )
     sbmlsim_core.render_png(spec, dpi="x")  # ty: ignore[invalid-argument-type]
     sbmlsim_core.render_svg(1)  # ty: ignore[invalid-argument-type]
     sbmlsim_core.pick(spec, 1.0)  # ty: ignore[missing-argument]
     sbmlsim_core.color_scale("viridis", 0.0, 1.0)  # ty: ignore[missing-argument]
+    sbmlsim_core.color_scale("viridis", 0.0, 1.0, values, end="1")  # ty: ignore[invalid-argument-type]
     print(contract, svg, png, default_png, geometry, hit, colors)

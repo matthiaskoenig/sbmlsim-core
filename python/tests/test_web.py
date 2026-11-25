@@ -1,6 +1,8 @@
 """The runtime and the inline build of the JavaScript host which the package ships for a page."""
 
+import base64
 import json
+import re
 
 import sbmlsim_core
 from sbmlsim_core import web
@@ -55,3 +57,18 @@ def test_the_inline_build_is_one_classic_script_of_this_release() -> None:
     for module_syntax in ("import.meta", "\nexport ", "\nimport "):
         assert module_syntax not in text
     assert f'"{sbmlsim_core.__version__}"' in text
+
+
+def test_figure_script_is_self_contained() -> None:
+    text = web.figure_script()
+    assert text.startswith(web.script())
+    assert "hydrateFigures(document" in text
+    assert "DOMContentLoaded" in text
+    assert base64.b64encode(sbmlsim_core.plot_wasm()).decode() in text
+    # nothing to fetch: no URL but the inert origin of the inline build and the XML namespaces
+    urls = set(re.findall(r"https?://[^\s\"'`)<>]+", text))
+    assert all(
+        u.startswith(("https://sbmlsim-core.invalid", "http://www.w3.org/"))
+        for u in urls
+    ), urls
+    assert "fetch(" not in text.split("const PLOT_WASM")[1]

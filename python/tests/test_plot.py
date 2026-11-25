@@ -50,6 +50,12 @@ def test_render_svg_fixture() -> None:
     assert sbmlsim_core.render_svg(spec) == golden
 
 
+def test_render_svg_colorbars_fixture() -> None:
+    spec = (PLOT / "specs" / "v028.json").read_text()
+    golden = (PLOT / "golden" / "v028.svg").read_text()
+    assert sbmlsim_core.render_svg(spec) == golden
+
+
 def test_invalid_spec_value_error() -> None:
     spec = json.loads((PLOT / "specs" / "benchmark.json").read_text())
     spec["plots"][0]["elements"][0]["y"] = spec["plots"][0]["elements"][0]["y"][:-1]
@@ -136,6 +142,51 @@ def test_color_scale_viridis() -> None:
     assert colors[3] == "#d3d3d3"
     assert len(sbmlsim_core.color_scale("rdbu", -1.0, 1.0, [0.0], center=0.0)) == 1
     assert len(sbmlsim_core.color_scale("magma", 1.0, 100.0, [10.0], log=True)) == 1
+
+
+def test_color_scale_part_of_the_map() -> None:
+    # the lines of a scan on viridis over 0..0.85: the high end takes the colour at 0.85
+    full = sbmlsim_core.color_scale("viridis", 0.0, 1.0, [0.0, 0.85])
+    part = sbmlsim_core.color_scale("viridis", 2.0, 8.0, [2.0, 8.0, 100.0], end=0.85)
+    assert part == [full[0], full[1], full[1]]
+    assert part[1] != "#fde725"
+    shifted = sbmlsim_core.color_scale("viridis", 0.0, 1.0, [0.0], start=0.5)
+    assert shifted == sbmlsim_core.color_scale("viridis", 0.0, 1.0, [0.5])
+    for start, end in [(-0.1, 1.0), (0.0, 1.5), (0.5, 0.5), (0.6, 0.4)]:
+        with pytest.raises(ValueError, match="start"):
+            sbmlsim_core.color_scale("viridis", 0.0, 1.0, [0.5], start=start, end=end)
+
+
+def test_colorbars_render() -> None:
+    spec = {
+        "contract": "figure/1",
+        "width": 500,
+        "height": 400,
+        "grid": {"rows": 1, "columns": 1},
+        "plots": [
+            {
+                "id": "p",
+                "row": 0,
+                "column": 0,
+                "x": {},
+                "y": {},
+                "colorbars": [
+                    {
+                        "scale": {"name": "viridis", "low": 0, "high": 3, "end": 0.85},
+                        "categorical": True,
+                        "ticks": [0, 1, 2, 3],
+                        "tick_labels": ["a", "b", "c", "d"],
+                    },
+                    {"scale": {"name": "magma", "low": 1, "high": 100, "log": True}},
+                ],
+                "elements": [{"id": "c", "kind": "curve", "x": [0, 1], "y": [0, 1]}],
+            }
+        ],
+    }
+    svg = sbmlsim_core.render_svg(json.dumps(spec))
+    assert svg.count('class="sbmlsim-colorbar"') == 2
+    for color in sbmlsim_core.color_scale("viridis", 0, 3, [0, 1, 2, 3], end=0.85):
+        assert f'fill="{color}"' in svg
 
 
 def test_plot_wasm_magic() -> None:

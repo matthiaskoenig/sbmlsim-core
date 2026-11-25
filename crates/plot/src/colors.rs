@@ -6,7 +6,10 @@
 //! table and the values from `center` to `high` the upper half (matplotlib's `TwoSlopeNorm`).
 //! The colour of `t` is the entry `floor(256 t)` of the table, the first one below the scale and
 //! the last one above it, which is how matplotlib reads a colour map, so a value has the colour
-//! matplotlib gives it. A value without a colour (NaN, or not positive on a log scale) takes
+//! matplotlib gives it. A scale may take a part `start..end` of the table (since 0.28.0): the
+//! share `t`, held to `0..=1`, becomes `start + t (end - start)` before the table is read, so
+//! the values `low..high` take exactly the colours of that part and a value beyond an end the
+//! colour of that end. A value without a colour (NaN, or not positive on a log scale) takes
 //! [`NO_VALUE_COLOR`]. The tables are constant data and the logarithm is `libm`'s, so the native
 //! and the wasm build give the same colours.
 
@@ -92,17 +95,28 @@ pub(crate) fn color_at(name: ColorScaleName, t: f64) -> String {
     format!("#{:06x}", table(name)[index])
 }
 
+/// The share of the table of a scale a share of the scale reads: `start + t (end - start)`
+/// with `t` held to `0..=1`; NaN stays NaN.
+fn on_table(scale: &ColorScale, t: f64) -> f64 {
+    if t.is_nan() {
+        return f64::NAN;
+    }
+    scale.start + t.clamp(0.0, 1.0) * (scale.end - scale.start)
+}
+
+/// The colour `#rrggbb` of a value on a scale, [`NO_VALUE_COLOR`] for a value without one.
+pub(crate) fn color_of(scale: &ColorScale, v: f64) -> String {
+    color_at(scale.name, on_table(scale, share(scale, v)))
+}
+
 /// The colours `#rrggbb` of values on a colour scale, one per value.
 ///
-/// A value below `low` or above `high` takes the colour of that end; NaN, and a value which is
-/// not positive on a log scale, take [`NO_VALUE_COLOR`]. A scale whose ends are no span gives
-/// every value the middle colour. Used for the cells of a heatmap, a colour bar and the lines
-/// of a scan.
+/// The values `low..high` take the part `start..end` of the colour map. A value below `low` or
+/// above `high` takes the colour of that end; NaN, and a value which is not positive on a log
+/// scale, take [`NO_VALUE_COLOR`]. A scale whose ends are no span gives every value the middle
+/// colour of its part. Used for the cells of a heatmap, a colour bar and the lines of a scan.
 pub fn color_scale(scale: &ColorScale, values: &[f64]) -> Vec<String> {
-    values
-        .iter()
-        .map(|v| color_at(scale.name, share(scale, *v)))
-        .collect()
+    values.iter().map(|v| color_of(scale, *v)).collect()
 }
 
 /// Whether a dark text reads on a colour `#rrggbb`: the luminance of the colour (Rec. 709

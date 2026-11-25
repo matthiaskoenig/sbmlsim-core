@@ -507,7 +507,7 @@ fn trim_zeros(s: &str) -> &str {
 }
 
 /// The labels of the ticks of an axis, grown digit by digit until neighbours differ.
-fn tick_labels(ticks: &[f64]) -> Vec<String> {
+pub(crate) fn tick_labels(ticks: &[f64]) -> Vec<String> {
     let decimals = tick_decimals(ticks);
     let exponential = exponential_ticks(ticks) || decimals > PLAIN_DECIMALS;
     let mut digits = if exponential {

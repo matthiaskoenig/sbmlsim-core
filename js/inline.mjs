@@ -22,6 +22,12 @@ export { BUNDLE_CONTRACT, CORE_VERSION, ENGINE };
 // (`sbmlsim_core.plot_wasm()`), which a page which embeds everything gets from python
 export { Plot, PlotError, loadPlot } from "./plot.mjs";
 
+// the interaction layer of a figure, `sbmlsimCore.attachFigure(container, plot, spec)`
+export { FigureHandle, attachFigure, formatValue } from "./figure.mjs";
+
+// the page script of a static report, `sbmlsimCore.hydrateFigures(document, { wasm })`
+export { hydrateFigures } from "./hydrate.mjs";
+
 /** The source of the worker of the pool as one classic script, embedded by the build. */
 // eslint-disable-next-line no-undef
 export const WORKER_SOURCE = __SBMLSIM_CORE_WORKER__;

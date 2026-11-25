@@ -4,6 +4,7 @@
 
 mod colors;
 mod error;
+mod ink;
 mod interact;
 mod layout;
 #[cfg(feature = "png")]
@@ -23,7 +24,7 @@ pub use interact::{
 pub use png::{MAX_PIXELS, render_png};
 pub use render::render_svg;
 pub use spec::*;
-pub use text::text_width;
+pub use text::{text_width, text_width_weighted};
 
 /// The contract id of the figure spec, the value of its `contract` field.
 pub const FIGURE_CONTRACT: &str = "figure/1";

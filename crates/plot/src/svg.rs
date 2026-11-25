@@ -23,7 +23,8 @@ use charton::core::semantic::{AxisKind, Element as ChartonElement, Group, Role};
 use charton::error::ChartonError;
 use charton::prelude::SingleColor;
 
-use crate::spec::MarkerType;
+use crate::spec::{FontWeight, MarkerType};
+use crate::text::{LINE_HEIGHT, line_count, lines};
 
 /// The character which stands for the id prefix of the figure until the drawing is complete; it
 /// is no character of a text of the output, see [`escape`].
@@ -155,6 +156,57 @@ pub(crate) fn attr_css(out: &mut String, name: &str, css: &str) {
     attr_color(out, name, &SingleColor::new(css));
 }
 
+/// Writes ` font-weight="bold"` for the weight bold and nothing for the weight normal, the
+/// weight of a text without the attribute.
+pub(crate) fn attr_weight(out: &mut String, weight: FontWeight) {
+    if weight == FontWeight::Bold {
+        out.push_str(" font-weight=\"bold\"");
+    }
+}
+
+/// How the lines of a text of several lines stand to the position of the text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Stack {
+    /// The first line at the position, the others below it.
+    Down,
+    /// The lines centred on the position.
+    Centred,
+    /// The last line at the position, the others above it.
+    Up,
+}
+
+/// Writes the content of a `<text>` at `(x, y)` of a font size: a text of one line escaped, a
+/// text of several lines (split at `\n`) as a `<tspan>` per line at its own `x` and `y`,
+/// [`LINE_HEIGHT`] font sizes apart and placed by `stack`. The `x` and `y` are in the
+/// coordinates of the text, so the lines of a rotated text are rotated with it.
+pub(crate) fn text_lines(
+    out: &mut String,
+    text: &str,
+    (x, y): (f64, f64),
+    size: f64,
+    stack: Stack,
+) {
+    let n = line_count(text);
+    if n == 1 {
+        escape(out, text);
+        return;
+    }
+    let step = LINE_HEIGHT * size;
+    let before = match stack {
+        Stack::Down => 0.0,
+        Stack::Centred => (n - 1) as f64 / 2.0,
+        Stack::Up => (n - 1) as f64,
+    };
+    for (k, line) in lines(text).enumerate() {
+        out.push_str("<tspan");
+        attr_num(out, "x", x);
+        attr_num(out, "y", y + (k as f64 - before) * step);
+        out.push('>');
+        escape(out, line);
+        out.push_str("</tspan>");
+    }
+}
+
 /// The marker an element draws at every point Charton places.
 #[derive(Debug, Clone)]
 pub(crate) struct MarkerGlyph {
@@ -207,8 +259,14 @@ pub(crate) struct ElementTag {
 /// wasm).
 #[derive(Debug, Clone, Default)]
 pub(crate) struct AxisHooks {
-    /// Whether the ticks and tick labels are hidden.
-    pub ticks_hidden: bool,
+    /// Whether the tick labels are hidden.
+    pub labels_hidden: bool,
+    /// Whether the tick marks are hidden.
+    pub marks_hidden: bool,
+    /// The font size of the tick labels.
+    pub tick_size: f64,
+    /// The weight of the tick labels.
+    pub tick_weight: FontWeight,
     /// The rotation of the tick labels in the degrees of SVG (clockwise), 0 for none.
     pub label_angle: f64,
     /// The title, `None` when it is hidden or empty.
@@ -239,6 +297,10 @@ pub(crate) struct PlotHooks {
     pub y: AxisHooks,
     /// The font size of the axis titles.
     pub title_size: f64,
+    /// The weight of the axis titles.
+    pub title_weight: FontWeight,
+    /// The weight of the title of the plot.
+    pub plot_title_weight: FontWeight,
     /// The gap between the tick labels and the title of an axis.
     pub title_gap: f64,
     /// The grid lines.
@@ -259,6 +321,8 @@ struct Frame {
     mark: bool,
     /// Whether it is inside the group of the tick labels, whose text the writer rotates.
     tick_label: bool,
+    /// Whether it is inside the group of the title of the plot.
+    title: bool,
 }
 
 /// The backend Charton draws one plot through; it writes SVG into `body` and `defs`.
@@ -359,22 +423,32 @@ impl<'a> PlotWriter<'a> {
         let Some(title) = hooks.title.clone() else {
             return;
         };
-        let (size, gap, depth) = (
+        let (size, gap, depth, weight) = (
             self.hooks.title_size,
             self.hooks.title_gap,
             hooks.labels_depth,
+            self.hooks.title_weight,
         );
         let b = &mut self.body;
         b.push_str("<g class=\"charton-axis-title\"><text");
-        if self.axis == Some(AxisKind::X) {
-            attr_num(b, "x", panel.x + panel.width / 2.0);
-            attr_num(b, "y", panel.y + panel.height + depth + gap);
+        // a title of several lines stacks them outwards: below the bottom axis down from the
+        // line next to it, left of the left axis (up in the rotated text) from the line next
+        // to it
+        let (at, stack) = if self.axis == Some(AxisKind::X) {
+            let (x, y) = (
+                panel.x + panel.width / 2.0,
+                panel.y + panel.height + depth + gap,
+            );
+            attr_num(b, "x", x);
+            attr_num(b, "y", y);
             attr_num(b, "font-size", size);
+            attr_weight(b, weight);
             let _ = write!(
                 b,
                 " fill=\"{}\" text-anchor=\"middle\" dominant-baseline=\"hanging\">",
                 theme::FG
             );
+            ((x, y), Stack::Down)
         } else {
             let (x, y) = (
                 panel.x - (depth + gap + size / 2.0),
@@ -383,6 +457,7 @@ impl<'a> PlotWriter<'a> {
             attr_num(b, "x", x);
             attr_num(b, "y", y);
             attr_num(b, "font-size", size);
+            attr_weight(b, weight);
             let _ = write!(
                 b,
                 " fill=\"{}\" text-anchor=\"middle\" dominant-baseline=\"middle\" transform=\"rotate(-90 ",
@@ -392,8 +467,9 @@ impl<'a> PlotWriter<'a> {
             b.push(' ');
             num(b, y);
             b.push_str(")\">");
-        }
-        escape(b, &title);
+            ((x, y), Stack::Up)
+        };
+        text_lines(b, &title, at, size, stack);
         b.push_str("</text></g>");
     }
 
@@ -517,6 +593,14 @@ pub(crate) fn glyph(b: &mut String, m: &MarkerGlyph, x: f64, y: f64) {
     }
 }
 
+/// The CSS name of a weight.
+fn weight_name(weight: FontWeight) -> &'static str {
+    match weight {
+        FontWeight::Normal => "normal",
+        FontWeight::Bold => "bold",
+    }
+}
+
 /// Whether every value is a finite number.
 fn finite(values: &[f32]) -> bool {
     values.iter().all(|v| v.is_finite())
@@ -614,16 +698,35 @@ impl RenderBackend for PlotWriter<'_> {
             return Ok(());
         }
         let mut c = c;
-        if self.stack.last().is_some_and(|f| f.tick_label)
-            && let Some(a) = self.axis_hooks()
-            && a.label_angle != 0.0
-        {
-            // a rotated label of the bottom axis ends at its tick, as Charton draws it
-            if self.axis == Some(AxisKind::X) {
-                c.text_anchor = "end".into();
+        let (tick_label, title) = self
+            .stack
+            .last()
+            .map_or((false, false), |f| (f.tick_label, f.title));
+        if tick_label && let Some(a) = self.axis_hooks() {
+            // the size and the weight of the tick labels of the axis
+            c.font_size = a.tick_size as f32;
+            c.font_weight = weight_name(a.tick_weight).into();
+            if a.label_angle != 0.0 {
+                // a rotated label of the bottom axis ends at its tick, as Charton draws it
+                if self.axis == Some(AxisKind::X) {
+                    c.text_anchor = "end".into();
+                }
+                c.angle = a.label_angle as f32;
             }
-            c.angle = a.label_angle as f32;
         }
+        if title {
+            c.font_weight = weight_name(self.hooks.plot_title_weight).into();
+        }
+        // the lines of a plot title stack up from the line Charton places, into the room the
+        // layout reserves above it; the other texts (a text element, centred on its position)
+        // by their baseline
+        let stack = if title {
+            Stack::Up
+        } else if matches!(c.dominant_baseline.as_str(), "middle" | "central") {
+            Stack::Centred
+        } else {
+            Stack::Down
+        };
         let b = &mut self.body;
         b.push_str("<text");
         attr_num(b, "x", f64::from(c.x));
@@ -661,7 +764,19 @@ impl RenderBackend for PlotWriter<'_> {
             b.push_str(")\"");
         }
         b.push('>');
-        escape(b, &c.text);
+        if tick_label {
+            // a tick label is one line (as the layout measures it and 0.27.0 wrote it), a
+            // newline in it written as it is
+            escape(b, &c.text);
+        } else {
+            text_lines(
+                b,
+                &c.text,
+                (f64::from(c.x), f64::from(c.y)),
+                f64::from(c.font_size),
+                stack,
+            );
+        }
         b.push_str("</text>");
         Ok(())
     }
@@ -719,6 +834,7 @@ impl RenderBackend for PlotWriter<'_> {
     fn begin_group(&mut self, g: &Group<'_>) {
         let parent_suppress = self.suppressed();
         let parent_tick_label = self.stack.last().is_some_and(|f| f.tick_label);
+        let parent_title = self.stack.last().is_some_and(|f| f.title);
         let mut frame = Frame {
             wrote: false,
             suppress: parent_suppress,
@@ -726,6 +842,7 @@ impl RenderBackend for PlotWriter<'_> {
             axis: false,
             mark: false,
             tick_label: parent_tick_label,
+            title: parent_title || g.role == Role::Title,
         };
         match g.role {
             Role::Plot => {
@@ -757,9 +874,12 @@ impl RenderBackend for PlotWriter<'_> {
                 self.axis = Some(kind);
                 frame.axis = true;
             }
-            Role::Tick | Role::TickLabel => {
-                frame.suppress |= self.axis_hooks().is_some_and(|a| a.ticks_hidden);
-                frame.tick_label |= g.role == Role::TickLabel;
+            Role::Tick => {
+                frame.suppress |= self.axis_hooks().is_some_and(|a| a.marks_hidden);
+            }
+            Role::TickLabel => {
+                frame.suppress |= self.axis_hooks().is_some_and(|a| a.labels_hidden);
+                frame.tick_label = true;
             }
             // Charton gets no axis titles; the writer draws them, see `AxisHooks`
             Role::AxisTitle => frame.suppress = true,

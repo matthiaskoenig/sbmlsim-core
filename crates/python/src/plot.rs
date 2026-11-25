@@ -75,11 +75,13 @@ pub(crate) fn pick<'py>(
     }
 }
 
-/// The colours (`#rrggbb`) of `values` on a named colour scale.
+/// The colours (`#rrggbb`) of `values` on a named colour scale, the values `low..high` on the
+/// part `start..end` of the colour map.
 ///
-/// Raises `ValueError` for an unknown name.
+/// Raises `ValueError` for an unknown name and for a part which is not `0 <= start < end <= 1`.
 #[pyfunction]
-#[pyo3(signature = (name, low, high, values, center=None, log=false))]
+#[pyo3(signature = (name, low, high, values, center=None, log=false, start=0.0, end=1.0))]
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn color_scale(
     py: Python<'_>,
     name: &str,
@@ -88,7 +90,14 @@ pub(crate) fn color_scale(
     values: Vec<f64>,
     center: Option<f64>,
     log: bool,
+    start: f64,
+    end: f64,
 ) -> PyResult<Vec<String>> {
+    if !(start >= 0.0 && start < end && end <= 1.0) {
+        return Err(PyValueError::new_err(format!(
+            "start {start} and end {end} are no part of the colour map, expected 0 <= start < end <= 1"
+        )));
+    }
     let name = match name {
         "viridis" => ColorScaleName::Viridis,
         "magma" => ColorScaleName::Magma,
@@ -108,6 +117,8 @@ pub(crate) fn color_scale(
         high,
         center,
         log,
+        start,
+        end,
     };
     Ok(py.detach(|| sbmlsim_plot::color_scale(&scale, &values)))
 }

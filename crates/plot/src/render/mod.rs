@@ -22,12 +22,12 @@ use std::fmt::Write as _;
 use charton::prelude::*;
 
 use crate::layout::{self, LegendOwner, PAD, Rect};
-use crate::spec::{AxisScale, Element, Figure, Plot, YAxisRef};
+use crate::spec::{AxisScale, Element, Figure, Fonts, Plot, YAxisRef};
 use crate::svg::{
     self, AxisHooks, ElementTag, FONT_FAMILY, GridLines, ID_PLACEHOLDER, PanelProbe, PlotHooks,
-    PlotWriter, escape, theme,
+    PlotWriter, Stack, escape, text_lines, theme,
 };
-use crate::text::{label_extent, text_width};
+use crate::text::{extra_lines, label_extent, text_width_one_line};
 use axis::{ResolvedAxis, X_TICK_ROOM, Y_TICK_ROOM, axis_title};
 use heatmap::ColorBarLayout;
 use right_axis::RightAxis;
@@ -141,31 +141,42 @@ struct AxisLayout {
 
 /// Lays out an axis over its tick labels: the bottom axis when `bottom`, else the left one.
 ///
-/// The crate measures the rotated labels with the Inter table; Charton gets them unrotated and
-/// no title, and the writer rotates the labels and draws the title at the Inter depth.
+/// The crate measures the rotated labels with the Inter table of the tick weight; Charton gets
+/// them unrotated and no title, and the writer rotates the labels and draws the title at the
+/// Inter depth, the lines of a title of several lines stacked outwards.
 fn axis_layout(
     axis: &crate::spec::Axis,
     labels: &[(f64, String)],
-    tick: f64,
-    title: f64,
+    fonts: &Fonts,
     bottom: bool,
 ) -> AxisLayout {
     let angle = axis.tick_rotation;
+    let tick = if bottom { fonts.tick } else { fonts.y_tick() };
     let inter = labels
         .iter()
-        .map(|(_, l)| label_extent(text_width(l, tick), tick, angle, bottom))
+        .map(|(_, l)| {
+            label_extent(
+                text_width_one_line(l, tick, fonts.tick_weight),
+                tick,
+                angle,
+                bottom,
+            )
+        })
         .fold(0.0, f64::max);
     let name = axis_title(axis);
-    let title_text = (axis.label_visible && !name.is_empty()).then_some(name);
-    let title_room = if title_text.is_some() {
-        TITLE_GAP + title
+    let title_room = if axis.label_visible && !name.is_empty() {
+        TITLE_GAP + fonts.label + extra_lines(&name, fonts.label)
     } else {
         0.0
     };
+    let title_text = (axis.label_visible && !name.is_empty()).then_some(name);
     let labels_depth = TICK_LENGTH + TICK_LABEL_PADDING + inter;
     AxisLayout {
         hooks: AxisHooks {
-            ticks_hidden: !axis.ticks_visible,
+            labels_hidden: !axis.ticks_visible,
+            marks_hidden: !axis.marks_visible(),
+            tick_size: tick,
+            tick_weight: fonts.tick_weight,
             label_angle: -angle,
             title: title_text,
             labels_depth,
@@ -201,7 +212,7 @@ pub(crate) struct Prepared {
     xl: AxisLayout,
     yl: AxisLayout,
     right: Option<RightAxis>,
-    bar: Option<ColorBarLayout>,
+    bars: Vec<ColorBarLayout>,
     grid: GridLines,
     /// The colour of every element.
     pub colors: Vec<String>,
@@ -234,10 +245,11 @@ pub(crate) fn prepare(figure: &Figure, plot: &Plot, panel: (f64, f64)) -> Prepar
     }
     ext.xs.extend_from_slice(&ext2.xs);
     ext.x_sticky.extend_from_slice(&ext2.x_sticky);
-    let bar = plot
-        .colorbar
-        .as_ref()
-        .map(|b| heatmap::colorbar_layout(b, fonts, panel_height));
+    let bars: Vec<ColorBarLayout> = plot
+        .color_bars()
+        .iter()
+        .map(|b| heatmap::colorbar_layout(b, fonts, panel_height))
+        .collect();
     let xa = axis::resolve(x_axis, &ext.xs, &ext.x_sticky, panel_width, X_TICK_ROOM);
     let ya = axis::resolve(y_axis, &ext.ys, &ext.y_sticky, panel_height, Y_TICK_ROOM);
     let y2a = plot
@@ -251,11 +263,13 @@ pub(crate) fn prepare(figure: &Figure, plot: &Plot, panel: (f64, f64)) -> Prepar
         .map(|(a, r)| right_axis::layout(a, r, fonts));
     let x_labels = tick_labels(&xa, x_axis.ticks_visible);
     let y_labels = tick_labels(&ya, y_axis.ticks_visible);
-    let xl = axis_layout(x_axis, &x_labels, fonts.tick, fonts.label, true);
-    let yl = axis_layout(y_axis, &y_labels, fonts.tick, fonts.label, false);
+    let xl = axis_layout(x_axis, &x_labels, fonts, true);
+    let yl = axis_layout(y_axis, &y_labels, fonts, false);
     // the last tick label of an unrotated x axis reaches half its width past the panel
     let overhang = match x_labels.last() {
-        Some((_, l)) if x_axis.tick_rotation == 0.0 => text_width(l, fonts.tick) / 2.0,
+        Some((_, l)) if x_axis.tick_rotation == 0.0 => {
+            text_width_one_line(l, fonts.tick, fonts.tick_weight) / 2.0
+        }
         _ => 0.0,
     };
     let grid = GridLines {
@@ -297,9 +311,16 @@ pub(crate) fn prepare(figure: &Figure, plot: &Plot, panel: (f64, f64)) -> Prepar
         }
         Err(_) => Sides::default(),
     };
-    let right_room = right.as_ref().map_or(0.0, |r| r.depth) + bar.as_ref().map_or(0.0, |b| b.room);
+    let right_room =
+        right.as_ref().map_or(0.0, |r| r.depth) + bars.iter().map(|b| b.room).sum::<f64>();
+    // a plot title of several lines stacks its lines up from the line Charton places, into
+    // room above the band Charton reserves for one line
+    let title_lines = plot
+        .title
+        .as_deref()
+        .map_or(0.0, |t| extra_lines(t, fonts.label));
     let depth = Sides {
-        top: bands.top,
+        top: bands.top + title_lines,
         right: bands.right.max(overhang).max(right_room),
         bottom: bands.bottom.max(xl.depth),
         left: bands.left.max(yl.depth),
@@ -314,7 +335,7 @@ pub(crate) fn prepare(figure: &Figure, plot: &Plot, panel: (f64, f64)) -> Prepar
         xl,
         yl,
         right,
-        bar,
+        bars,
         grid,
         bands,
         depth,
@@ -372,6 +393,8 @@ pub(crate) fn render_plot(
         x: prep.xl.hooks.clone(),
         y: prep.yl.hooks.clone(),
         title_size: fonts.label,
+        title_weight: fonts.label_weight,
+        plot_title_weight: fonts.title_weight,
         title_gap: TITLE_GAP,
         grid: prep.grid.clone(),
     };
@@ -430,16 +453,19 @@ pub(crate) fn render_plot(
         right_axis::draw(&mut body, y2, y2a, right, fonts, drawn);
         bar_from += right.depth;
     }
-    if let (Some(b), Some(layout)) = (&plot.colorbar, &prep.bar) {
+    // the colour bars stacked right of the panel and the right axis, in their order
+    for (k, (b, layout)) in plot.color_bars().iter().zip(&prep.bars).enumerate() {
         heatmap::draw_colorbar(
             &mut body,
             &mut defs,
             &prefix,
+            k,
             b,
             layout,
             fonts,
             (drawn.x, drawn.y, bar_from, drawn.height),
         );
+        bar_from += layout.room;
     }
     if let Some(e) = failed {
         error_text(&mut body, canvas, &e.to_string());
@@ -710,12 +736,14 @@ pub(crate) fn render_planned(figure: &Figure, plan: &layout::Plan) -> String {
         svg::attr_num(&mut out, "x", band.x + band.width / 2.0);
         svg::attr_num(&mut out, "y", band.y + band.height / 2.0);
         svg::attr_num(&mut out, "font-size", fonts.title);
+        svg::attr_weight(&mut out, fonts.title_weight);
         let _ = write!(
             out,
-            " font-weight=\"bold\" text-anchor=\"middle\" dominant-baseline=\"middle\" fill=\"{}\">",
+            " text-anchor=\"middle\" dominant-baseline=\"middle\" fill=\"{}\">",
             theme::FG
         );
-        escape(&mut out, title);
+        let at = (band.x + band.width / 2.0, band.y + band.height / 2.0);
+        text_lines(&mut out, title, at, fonts.title, Stack::Centred);
         out.push_str("</text></g>");
     }
     out.push_str(&plots);

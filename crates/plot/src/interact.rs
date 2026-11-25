@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::layout::{self, LegendOwner, Plan, Rect};
 use crate::render::axis::ResolvedAxis;
 use crate::render::stats_marks::{BAR_WIDTH, BOX_WIDTH, VIOLIN_WIDTH, base_of, box_body, spacing};
-use crate::spec::{AxisScale, ElementKind, Figure, Orientation, YAxisRef};
+use crate::spec::{AxisScale, ElementKind, Figure, LineType, Orientation, YAxisRef};
 
 /// A figure laid out once: the plan the geometry and the pick read.
 pub struct FigurePlan(Plan);
@@ -201,6 +201,7 @@ pub fn pick(figure: &Figure, x: f64, y: f64, radius: f64) -> Option<Pick> {
 /// filter, not the crate's.
 ///
 /// The hit area of a point is its pixel for a curve, a text and a heatmap cell (the cell), the
+/// segments of the line of a curve which draws one (a segment picks its nearer end), the
 /// vertical segment between the edges at its x for a band and an area, the rectangle of a bar,
 /// of a histogram bin and, for a violin, the bounding rectangle of its density (its widest
 /// width over its range of values), the rectangle of a box together with its whisker line, and
@@ -246,7 +247,9 @@ pub fn pick_in(figure: &Figure, plan: &FigurePlan, x: f64, y: f64, radius: f64) 
             let Some(ya) = ya else { continue };
             best.plot = pi;
             best.element = ei;
-            measure(&e.kind, &Map { ya, ..map }, &mut best);
+            let line = e.style.line_or_default();
+            let lined = line.kind != LineType::None && line.width > 0.0;
+            measure(&e.kind, lined, &Map { ya, ..map }, &mut best);
         }
     }
     let hit = best.hit?;
@@ -351,7 +354,12 @@ fn values(pairs: &[(&str, f64)]) -> BTreeMap<String, f64> {
 }
 
 /// The distance of a pixel to the segment `a`-`b`.
-fn to_segment((px, py): (f64, f64), a: (f64, f64), b: (f64, f64)) -> f64 {
+fn to_segment(at: (f64, f64), a: (f64, f64), b: (f64, f64)) -> f64 {
+    segment_foot(at, a, b).0
+}
+
+/// The distance of a pixel to a segment and the point of the segment nearest to it.
+fn segment_foot((px, py): (f64, f64), a: (f64, f64), b: (f64, f64)) -> (f64, (f64, f64)) {
     let (dx, dy) = (b.0 - a.0, b.1 - a.1);
     let len2 = dx * dx + dy * dy;
     let t = if len2 > 0.0 {
@@ -359,7 +367,42 @@ fn to_segment((px, py): (f64, f64), a: (f64, f64), b: (f64, f64)) -> f64 {
     } else {
         0.0
     };
-    (px - (a.0 + t * dx)).hypot(py - (a.1 + t * dy))
+    let foot = (a.0 + t * dx, a.1 + t * dy);
+    ((px - foot.0).hypot(py - foot.1), foot)
+}
+
+/// Offers the segments of the line of a curve: a segment joins two consecutive points whose
+/// pixels are finite (a gap or a value a log axis cannot show breaks the line, as it is drawn),
+/// is measured where it is drawn (its nearest point inside the panel) and picks its nearer end,
+/// an end inside the panel before one outside, so a pointer on the line between two sparse
+/// points picks the curve.
+fn curve_segments(
+    x: &[f64],
+    y: &[f64],
+    m: &Map,
+    best: &mut Best,
+    build: impl Fn(usize) -> (BTreeMap<String, f64>, Option<String>),
+) {
+    let at = best.at;
+    let pixel = |i: usize| {
+        let p = (m.px(m.xa.u(x[i])), m.py(m.ya.u(y[i])));
+        (p.0.is_finite() && p.1.is_finite()).then_some(p)
+    };
+    for i in 1..x.len().min(y.len()) {
+        let (Some(a), Some(b)) = (pixel(i - 1), pixel(i)) else {
+            continue;
+        };
+        if at.0 < a.0.min(b.0) - best.limit || at.0 > a.0.max(b.0) + best.limit {
+            continue;
+        }
+        let (distance, foot) = segment_foot(at, a, b);
+        if distance > best.limit || !m.inside(foot.0, foot.1) {
+            continue;
+        }
+        let rank = |p: (f64, f64)| (!m.inside(p.0, p.1), (at.0 - p.0).hypot(at.1 - p.1));
+        let end = if rank(b) < rank(a) { i } else { i - 1 };
+        best.offer(distance, end, || build(end));
+    }
 }
 
 /// The distance of a pixel to a rectangle given by two opposite corners, 0 inside.
@@ -379,8 +422,8 @@ fn overlaps(m: &Map, a: (f64, f64), b: (f64, f64)) -> bool {
         && a.1.min(b.1) <= r.bottom()
 }
 
-/// Offers the points of an element to the search.
-fn measure(kind: &ElementKind, m: &Map, best: &mut Best) {
+/// Offers the points of an element to the search; `lined` when the element draws its line.
+fn measure(kind: &ElementKind, lined: bool, m: &Map, best: &mut Best) {
     let at = best.at;
     let no_label = None::<String>;
     // the distance to the rectangle of an area-like mark, corners in data, `None` off the panel
@@ -409,6 +452,17 @@ fn measure(kind: &ElementKind, m: &Map, best: &mut Best) {
                     let v = values(&[
                         ("x", *xv),
                         ("y", *yv),
+                        ("xerr", err(xerr, i)),
+                        ("yerr", err(yerr, i)),
+                    ]);
+                    (v, no_label.clone())
+                });
+            }
+            if lined {
+                curve_segments(x, y, m, best, |i| {
+                    let v = values(&[
+                        ("x", x[i]),
+                        ("y", y[i]),
                         ("xerr", err(xerr, i)),
                         ("yerr", err(yerr, i)),
                     ]);
