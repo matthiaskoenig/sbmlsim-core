@@ -342,14 +342,18 @@ def render_svg(spec: str) -> str:
     """
 
 def render_png(spec: str, dpi: float = 144.0) -> bytes:
-    """The PNG of a figure at `dpi` (the size of the spec is at 72 dpi).
+    """The PNG of a figure at `dpi`, of its drawn size (`figure_geometry`) times `dpi / 72`.
 
     Raises `ValueError` for an invalid spec and `RuntimeError` for a figure which cannot be
-    rasterized.
+    rasterized, e.g. an image of more than 64 Mpx.
     """
 
 def figure_geometry(spec: str) -> dict[str, Any]:
-    """The panels, scales and legend entries of a figure in its pixels."""
+    """The drawn size, panels, scales and legend entries of a figure in its pixels.
+
+    `width` and `height` are the size the figure is drawn at, the size of the spec grown by
+    the legends outside the plots.
+    """
 
 def pick(spec: str, x: float, y: float, radius: float = 8.0) -> dict[str, Any] | None:
     """The data point nearest to the pixel `(x, y)` within `radius` pixels, or `None`."""

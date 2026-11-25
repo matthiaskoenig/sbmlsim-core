@@ -102,9 +102,9 @@ const instance = await runtime.instantiate(wasm, description);
 ```js
 import { loadPlot } from "sbmlsim-core/plot";
 
-const plot = await loadPlot(new URL("./plot.wasm", import.meta.url)); // a URL, a path (Node), an ArrayBuffer or a Uint8Array
+const plot = await loadPlot(new URL("./plot.wasm", import.meta.url)); // a URL, a path (Node), an ArrayBuffer, a Uint8Array or a WebAssembly.Module
 const svg = plot.render(spec); // a `figure/1` object or its JSON text
-const { plots, legend_entries } = plot.geometry(spec);
+const { width, height, plots, legend_entries } = plot.geometry(spec); // width, height: the drawn size, grown by legends outside
 const hit = plot.pick(spec, x, y, 8); // { plot, element, index, values } in data units, or null
 ```
 

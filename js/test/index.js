@@ -15,3 +15,4 @@ import "./golden.test.mjs";
 import "./inline.test.mjs";
 import "./dosing.test.mjs";
 import "./dde.test.mjs";
+import "./plot.test.mjs";

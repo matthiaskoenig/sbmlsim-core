@@ -1793,9 +1793,10 @@ var sbmlsimCore = (() => {
     return typeof process !== "undefined" && Boolean(process.versions?.node);
   }
   async function bytesOf(source) {
+    if (source instanceof WebAssembly.Module) return source;
     if (source instanceof ArrayBuffer || ArrayBuffer.isView(source)) return source;
     if (!(source instanceof URL) && typeof source !== "string") {
-      throw new TypeError("loadPlot takes a URL, a path, an ArrayBuffer or a Uint8Array");
+      throw new TypeError("loadPlot takes a URL, a path, an ArrayBuffer, a Uint8Array or a WebAssembly.Module");
     }
     const text = String(source);
     const nodeFs = "node:fs/promises";
@@ -1998,7 +1999,9 @@ var sbmlsimCore = (() => {
       return this.#call(spec, (p, n, out) => this.#exports.render(p, n, out));
     }
     /**
-     * The geometry of a figure in its pixels: its `plots`, their scales and the `legend_entries`.
+     * The geometry of a figure in its pixels: the `width` and `height` it is drawn at (the size of
+     * the spec grown by the legends outside the plots, the size of the SVG), its `plots`, their
+     * scales and the `legend_entries`.
      *
      * @param {object|string} spec a `figure/1` spec
      * @returns {object} the geometry

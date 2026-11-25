@@ -71,6 +71,40 @@ def test_render_png_size() -> None:
 def test_render_png_error() -> None:
     with pytest.raises(ValueError):
         sbmlsim_core.render_png("{}")
+    # 600 x 400 at 1224 dpi is 10200 x 6800 pixels, more than the 64 Mpx of an image
+    with pytest.raises(RuntimeError, match=r"10200 by 6800 pixels"):
+        sbmlsim_core.render_png(json.dumps(CURVE), 72.0 * 17)
+    with pytest.raises(RuntimeError, match="dpi"):
+        sbmlsim_core.render_png(json.dumps(CURVE), 0.0)
+
+
+def test_nan_is_no_json() -> None:
+    spec = json.loads(json.dumps(CURVE))
+    spec["plots"][0]["elements"][0]["y"][1] = float("nan")
+    # json.dumps writes the token NaN, which is no JSON: the error names the gap of JSON
+    with pytest.raises(
+        ValueError, match=r"plots\[0\]\.elements\[0\]\.y\[1\]: .*`null`"
+    ):
+        sbmlsim_core.render_svg(json.dumps(spec))
+    # a gap written as None is null
+    spec["plots"][0]["elements"][0]["y"][1] = None
+    assert sbmlsim_core.render_svg(json.dumps(spec, allow_nan=False)).startswith("<svg")
+
+
+def test_geometry_reports_the_drawn_size() -> None:
+    geometry: dict[str, Any] = sbmlsim_core.figure_geometry(json.dumps(CURVE))
+    assert (geometry["width"], geometry["height"]) == (600, 400)
+    outside = {**CURVE, "legend": {"position": "outside"}}
+    spec = json.dumps(outside)
+    geometry = sbmlsim_core.figure_geometry(spec)
+    assert geometry["width"] > 600
+    svg = sbmlsim_core.render_svg(spec)
+    assert f' width="{geometry["width"]:g}"' in svg.split(">", 1)[0]
+    png = sbmlsim_core.render_png(spec, 144.0)
+    assert struct.unpack(">II", png[16:24]) == (
+        round(geometry["width"] * 2),
+        round(geometry["height"] * 2),
+    )
 
 
 def test_geometry_and_pick() -> None:

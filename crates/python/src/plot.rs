@@ -26,10 +26,10 @@ pub(crate) fn render_svg(py: Python<'_>, spec: &str) -> PyResult<String> {
         .map_err(spec_error)
 }
 
-/// The PNG of a figure at `dpi`.
+/// The PNG of a figure at `dpi`, of the drawn size of the figure times `dpi / 72`.
 ///
 /// Raises `ValueError` for an invalid spec and `RuntimeError` for a figure which cannot be
-/// rasterized.
+/// rasterized, e.g. an image of more than 64 Mpx.
 #[pyfunction]
 #[pyo3(signature = (spec, dpi=144.0))]
 pub(crate) fn render_png<'py>(
@@ -47,7 +47,8 @@ pub(crate) fn render_png<'py>(
     Ok(pyo3::types::PyBytes::new(py, &png))
 }
 
-/// The panels, scales and legend entries of a figure in its pixels.
+/// The drawn size (`width`, `height`), panels, scales and legend entries of a figure in its
+/// pixels; legends outside the plots make the drawn size larger than the size of the spec.
 #[pyfunction]
 pub(crate) fn figure_geometry<'py>(py: Python<'py>, spec: &str) -> PyResult<Bound<'py, PyAny>> {
     let figure = figure_of(py, spec)?;

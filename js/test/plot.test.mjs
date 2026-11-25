@@ -46,12 +46,30 @@ test("same bytes as native", async () => {
   }
 });
 
-test("a source is a path, bytes or an ArrayBuffer", async () => {
+test("a source is a path, bytes, an ArrayBuffer or a WebAssembly.Module", async () => {
   const bytes = readFileSync(wasm());
   const expected = (await loadPlot(wasm())).render(SIMPLE);
   assert.equal((await loadPlot(new Uint8Array(bytes))).render(SIMPLE), expected);
   const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
   assert.equal((await loadPlot(buffer)).render(JSON.stringify(SIMPLE)), expected);
+  // a module compiled once gives instances of their own
+  const module = await WebAssembly.compile(bytes);
+  const [a, b] = [await loadPlot(module), await loadPlot(module)];
+  assert.equal(a.render(SIMPLE), expected);
+  assert.equal(b.render(SIMPLE), expected);
+  await assert.rejects(loadPlot(42), TypeError);
+});
+
+test("the geometry reports the size the figure is drawn at", async () => {
+  const plot = await loadPlot(wasm());
+  const [plot0] = SIMPLE.plots;
+  const labelled = { ...plot0, elements: [{ ...plot0.elements[0], label: "concentration" }] };
+  const outside = { ...SIMPLE, legend: { position: "outside" }, plots: [labelled] };
+  const geometry = plot.geometry(outside);
+  const width = Number(/<svg[^>]* width="([0-9.]+)"/.exec(plot.render(outside))[1]);
+  assert.equal(geometry.width, width);
+  assert.ok(geometry.width > SIMPLE.width, `${geometry.width}`);
+  assert.equal(geometry.height, SIMPLE.height);
 });
 
 test("render under 16 ms (asserted with SBMLSIM_CORE_BENCH=1)", async () => {

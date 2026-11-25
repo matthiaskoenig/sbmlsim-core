@@ -3,9 +3,9 @@
 // pointer.
 //
 //   import { loadPlot } from "sbmlsim-core/plot";
-//   const plot = await loadPlot(bytesOrUrlOrPath); // `plot.wasm`
+//   const plot = await loadPlot(source);             // `plot.wasm`: a URL, a path, its bytes or its WebAssembly.Module
 //   const svg = plot.render(spec);                  // synchronous
-//   const { plots, legend_entries } = plot.geometry(spec);
+//   const { width, height, plots, legend_entries } = plot.geometry(spec);
 //   const hit = plot.pick(spec, x, y);              // `null` when no point is near
 //
 //   // a figure which is asked many times (a pointer moving over it) is prepared once: its spec is
@@ -63,15 +63,17 @@ function isNode() {
 }
 
 /**
- * The bytes of `plot.wasm` from where `source` says.
+ * The bytes of `plot.wasm` from where `source` says, or the module when it is compiled already.
  *
- * @param {URL|string|ArrayBuffer|Uint8Array} source a URL, a path (Node), or the bytes
- * @returns {Promise<BufferSource>} the bytes
+ * @param {URL|string|ArrayBuffer|Uint8Array|WebAssembly.Module} source a URL, a path (Node), the
+ *   bytes or the module
+ * @returns {Promise<BufferSource|WebAssembly.Module>} the bytes or the module
  */
 async function bytesOf(source) {
+  if (source instanceof WebAssembly.Module) return source;
   if (source instanceof ArrayBuffer || ArrayBuffer.isView(source)) return source;
   if (!(source instanceof URL) && typeof source !== "string") {
-    throw new TypeError("loadPlot takes a URL, a path, an ArrayBuffer or a Uint8Array");
+    throw new TypeError("loadPlot takes a URL, a path, an ArrayBuffer, a Uint8Array or a WebAssembly.Module");
   }
   const text = String(source);
   // a specifier which is no literal, so a bundle for a browser does not resolve it
@@ -304,7 +306,9 @@ export class Plot {
   }
 
   /**
-   * The geometry of a figure in its pixels: its `plots`, their scales and the `legend_entries`.
+   * The geometry of a figure in its pixels: the `width` and `height` it is drawn at (the size of
+   * the spec grown by the legends outside the plots, the size of the SVG), its `plots`, their
+   * scales and the `legend_entries`.
    *
    * @param {object|string} spec a `figure/1` spec
    * @returns {object} the geometry
@@ -442,8 +446,9 @@ export class PreparedFigure {
 /**
  * Loads `plot.wasm` into a new `Plot`.
  *
- * @param {URL|string|ArrayBuffer|Uint8Array} source a URL, a path (Node; in a browser a string is
- *   a URL) or the bytes of the module
+ * @param {URL|string|ArrayBuffer|Uint8Array|WebAssembly.Module} source a URL, a path (Node; in a
+ *   browser a string is a URL), the bytes of the module or the module compiled already (which a
+ *   page that loads several renderers compiles once and is not compiled again)
  * @returns {Promise<Plot>} a renderer of its own instance
  */
 export async function loadPlot(source) {
