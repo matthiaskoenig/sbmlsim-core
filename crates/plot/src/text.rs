@@ -192,6 +192,13 @@ pub fn text_width_weighted(text: &str, size: f64, weight: FontWeight) -> f64 {
     units as f64 * size / UNITS_PER_EM
 }
 
+/// The width of a text SVG draws on one line (since 0.28.0): its newlines read as spaces, as an
+/// SVG text without `tspan`s renders them. Tick labels and the texts of heatmap cells are drawn
+/// so.
+pub(crate) fn text_width_one_line(text: &str, size: f64, weight: FontWeight) -> f64 {
+    text_width_weighted(&text.replace('\n', " "), size, weight)
+}
+
 /// The extent across its axis of a tick label of a width, rotated by `angle` degrees: the side
 /// of its rotated line box (the line is one em, the font size) which the axis band reserves, as
 /// Charton computes it, with the sine and cosine of `libm`.

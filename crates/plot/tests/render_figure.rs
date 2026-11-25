@@ -892,6 +892,13 @@ fn golden_styles() {
     assert_golden("styles", &render(&spec_text("styles")));
 }
 
+/// The colour bars of 0.28.0: start and end of a scale, ticks and their labels, categorical
+/// bands, bars stacked beside an outside legend and a right axis, a log bar with start and end.
+#[test]
+fn golden_v028() {
+    assert_golden("v028", &render(&spec_text("v028")));
+}
+
 /// The lines of a text: the texts of its `tspan`s with their `y` in the text, or its own text.
 fn text_lines(n: Node) -> Vec<(String, f64)> {
     let spans: Vec<Node> = n.children().filter(|c| c.has_tag_name("tspan")).collect();
@@ -1290,4 +1297,91 @@ fn right_axis_of_lines_marks_and_weights() {
     assert_eq!(label.attribute("font-weight"), Some("bold"));
     let (l2, l3) = (legends(&d2)[0].frame, legends(&d3)[0].frame);
     assert!(l3.width > l2.width, "{l2:?} {l3:?}");
+}
+
+/// A figure of one plot with a heatmap whose row labels and cell text are given.
+fn heatmap_figure(row: &str, cell: &str) -> String {
+    let heat = format!(
+        r#"{{"id": "h", "kind": "heatmap", "rows": ["{row}"], "columns": ["x", "y"],
+            "values": [[1, 2]], "text": [["{cell}", "{cell}"]],
+            "scale": {{"name": "viridis", "low": 1, "high": 2}}}}"#
+    );
+    figure(
+        160.0,
+        300.0,
+        "",
+        1,
+        1,
+        &[format!(
+            r#"{{"id": "p", "row": 0, "column": 0, "x": {{}}, "y": {{}}, "elements": [{heat}]}}"#
+        )],
+    )
+}
+
+/// The font sizes of the texts of a figure, in the order of the document.
+fn font_sizes(svg: &str) -> Vec<String> {
+    let doc = Document::parse(svg).unwrap();
+    doc.descendants()
+        .filter(|n| n.has_tag_name("text"))
+        .filter_map(|n| n.attribute("font-size").map(str::to_string))
+        .collect()
+}
+
+/// A category label or a cell text is one line in SVG, so a newline in it is measured as the
+/// space it renders as and not as a break which makes the label as wide as its widest line.
+#[test]
+fn newline_in_a_tick_label_or_cell_text_is_one_line() {
+    let long = "wide label here";
+    let broken = render(&heatmap_figure(&long.replace(' ', "\\n"), "ww ww"));
+    let spaced = render(&heatmap_figure(long, "ww ww"));
+    let (a, b) = (
+        Document::parse(&broken).unwrap(),
+        Document::parse(&spaced).unwrap(),
+    );
+    assert_eq!(panel(&a, "p"), panel(&b, "p"));
+    // the cell text of one size whether its words are broken or not
+    let cell = |c: &str| font_sizes(&render(&heatmap_figure("r", c)));
+    assert_eq!(cell("wwwww\\nwwwww"), cell("wwwww wwwww"));
+    assert_ne!(cell("wwwww\\nwwwww"), cell("wwwww"));
+}
+
+/// The panel of a figure with a category axis rotated to the vertical, whose label is given.
+fn category_panel(label: &str) -> Rect {
+    let bar = r#"{"id": "b", "kind": "bar", "x": [0, 1], "height": [1, 2]}"#;
+    let plot = format!(
+        r#"{{"id": "p", "row": 0, "column": 0,
+            "x": {{"scale": "category", "categories": ["{label}", "b"], "tick_rotation": 90}},
+            "y": {{}}, "elements": [{bar}]}}"#
+    );
+    let svg = render(&figure(400.0, 300.0, "", 1, 1, &[plot]));
+    panel(&Document::parse(&svg).unwrap(), "p")
+}
+
+#[test]
+fn newline_in_a_category_label_reserves_the_one_line_width() {
+    let broken = category_panel("a long label\\nshort");
+    assert_eq!(broken, category_panel("a long label short"));
+    assert!(broken.height < category_panel("a long label").height);
+}
+
+/// A categorical colour bar with labels and no ticks has a tick at the middle of every band.
+#[test]
+fn categorical_bar_labels_without_ticks() {
+    let bar = r#""colorbar": {"scale": {"name": "viridis", "low": 0, "high": 2},
+        "categorical": true, "tick_labels": ["lo", "mid", "hi"]},"#;
+    let svg = render(&figure(
+        400.0,
+        300.0,
+        "",
+        1,
+        1,
+        &[plot("p", 0, 0, bar, &[curve("c", "", "[0, 1]", "[0, 1]")])],
+    ));
+    let doc = Document::parse(&svg).unwrap();
+    let labels = doc
+        .descendants()
+        .find(|n| has_class(*n, "sbmlsim-colorbar-tick-labels"))
+        .unwrap();
+    let texts: Vec<_> = labels.children().filter_map(|n| n.text()).collect();
+    assert_eq!(texts, ["lo", "mid", "hi"]);
 }

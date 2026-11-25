@@ -27,7 +27,7 @@ use crate::svg::{
     self, AxisHooks, ElementTag, FONT_FAMILY, GridLines, ID_PLACEHOLDER, PanelProbe, PlotHooks,
     PlotWriter, Stack, escape, text_lines, theme,
 };
-use crate::text::{extra_lines, label_extent, text_width_weighted};
+use crate::text::{extra_lines, label_extent, text_width_one_line};
 use axis::{ResolvedAxis, X_TICK_ROOM, Y_TICK_ROOM, axis_title};
 use heatmap::ColorBarLayout;
 use right_axis::RightAxis;
@@ -156,7 +156,7 @@ fn axis_layout(
         .iter()
         .map(|(_, l)| {
             label_extent(
-                text_width_weighted(l, tick, fonts.tick_weight),
+                text_width_one_line(l, tick, fonts.tick_weight),
                 tick,
                 angle,
                 bottom,
@@ -268,7 +268,7 @@ pub(crate) fn prepare(figure: &Figure, plot: &Plot, panel: (f64, f64)) -> Prepar
     // the last tick label of an unrotated x axis reaches half its width past the panel
     let overhang = match x_labels.last() {
         Some((_, l)) if x_axis.tick_rotation == 0.0 => {
-            text_width_weighted(l, fonts.tick, fonts.tick_weight) / 2.0
+            text_width_one_line(l, fonts.tick, fonts.tick_weight) / 2.0
         }
         _ => 0.0,
     };

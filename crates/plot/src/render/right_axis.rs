@@ -13,7 +13,7 @@ use super::{TICK_LABEL_PADDING, TICK_LENGTH, TITLE_GAP};
 use crate::layout::Rect;
 use crate::spec::{Axis, Fonts};
 use crate::svg::{Stack, attr_num, attr_weight, escape, num, text_lines, theme};
-use crate::text::{extra_lines, label_extent, text_width_weighted};
+use crate::text::{extra_lines, label_extent, text_width_one_line};
 
 /// The right axis laid out over its ticks.
 #[derive(Debug, Clone)]
@@ -46,7 +46,7 @@ pub(crate) fn layout(axis: &Axis, resolved: &ResolvedAxis, fonts: &Fonts) -> Rig
         .iter()
         .map(|(_, l)| {
             label_extent(
-                text_width_weighted(l, tick, fonts.tick_weight),
+                text_width_one_line(l, tick, fonts.tick_weight),
                 tick,
                 axis.tick_rotation,
                 false,

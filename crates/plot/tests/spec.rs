@@ -343,6 +343,13 @@ fn colorbar_ticks_validated() {
     bar(r#""ticks":[0,2,4]"#).unwrap();
     bar(r#""ticks":[0,4],"tick_labels":["a","b"]"#).unwrap();
     bar(r#""categorical":true,"ticks":[1,3],"tick_labels":["a","b"]"#).unwrap();
+    // a categorical bar takes a label per band (0..=4) without ticks
+    bar(r#""categorical":true,"tick_labels":["a","b","c","d","e"]"#).unwrap();
+    for labels in [r#"["a","b"]"#, r#"["a","b","c","d","e","f"]"#] {
+        let e = bar(&format!(r#""categorical":true,"tick_labels":{labels}"#)).unwrap_err();
+        assert_eq!(e.path, "plots[0].colorbar.tick_labels", "{e}");
+        assert!(e.message.contains("bands"), "{e}");
+    }
     for (fields, path) in [
         (r#""tick_labels":["a"]"#, "tick_labels"),
         (r#""ticks":[0,4],"tick_labels":["a"]"#, "tick_labels"),

@@ -50,6 +50,12 @@ def test_render_svg_fixture() -> None:
     assert sbmlsim_core.render_svg(spec) == golden
 
 
+def test_render_svg_colorbars_fixture() -> None:
+    spec = (PLOT / "specs" / "v028.json").read_text()
+    golden = (PLOT / "golden" / "v028.svg").read_text()
+    assert sbmlsim_core.render_svg(spec) == golden
+
+
 def test_invalid_spec_value_error() -> None:
     spec = json.loads((PLOT / "specs" / "benchmark.json").read_text())
     spec["plots"][0]["elements"][0]["y"] = spec["plots"][0]["elements"][0]["y"][:-1]

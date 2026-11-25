@@ -1100,6 +1100,11 @@ fn check_colorbar(path: &str, b: &ColorBar) -> Result<(), SpecError> {
         }
     }
     match (&b.ticks, &b.tick_labels) {
+        // a categorical bar without ticks takes the integers from low to high, one per band
+        (None, Some(l)) if b.categorical => {
+            let bands = (s.high - s.low) as usize + 1;
+            same_len(path, "tick_labels", l.len(), "bands", bands)
+        }
         (None, Some(_)) => err(format!("{path}.tick_labels"), "tick labels need ticks"),
         (Some(t), Some(l)) => same_len(path, "tick_labels", l.len(), "ticks", t.len()),
         _ => Ok(()),

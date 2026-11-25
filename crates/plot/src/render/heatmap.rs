@@ -27,12 +27,13 @@ use charton::prelude::*;
 use super::axis::{self, ResolvedAxis};
 use super::marks::{Layers, dataset};
 use super::stats_marks::rings_layer;
+use crate::FontWeight;
 use crate::colors::{color_of, color_scale, dark_text_on};
 use crate::spec::{
     Axis, AxisScale, ColorBar, ColorScale, ElementKind, Fonts, Plot, Style, YAxisRef,
 };
 use crate::svg::{self, LayerInfo, escape, theme};
-use crate::text::{extra_lines, text_width, text_width_weighted};
+use crate::text::{extra_lines, text_width_one_line};
 
 /// The share of the width of a cell its text may take.
 const CELL_TEXT_WIDTH: f64 = 0.9;
@@ -161,7 +162,7 @@ pub(crate) fn heatmap_layers(
     let widest = text
         .iter()
         .flatten()
-        .map(|t| text_width(t, fonts.tick))
+        .map(|t| text_width_one_line(t, fonts.tick, FontWeight::Normal))
         .fold(0.0, f64::max);
     let mut size = fonts.tick.min(cell_h * CELL_TEXT_HEIGHT);
     if widest > 0.0 {
@@ -253,7 +254,14 @@ pub(crate) fn colorbar_layout(bar: &ColorBar, fonts: &Fonts, length: f64) -> Col
     let resolved = || axis::resolve(&scale_axis, &[], &[], length, COLORBAR_TICK_ROOM);
     // the shares of the ticks from the bottom of the bar with their labels
     let n = bands(s);
-    let ticks: Vec<(f64, String)> = match &bar.ticks {
+    // a categorical bar with labels and no ticks has a tick per band
+    let band_ticks: Option<Vec<f64>> = match (&bar.ticks, &bar.tick_labels) {
+        (None, Some(_)) if bar.categorical => {
+            Some((0..n as usize).map(|k| s.low + k as f64).collect())
+        }
+        _ => None,
+    };
+    let ticks: Vec<(f64, String)> = match bar.ticks.as_ref().or(band_ticks.as_ref()) {
         Some(values) => {
             let labels = match &bar.tick_labels {
                 Some(l) => l.clone(),
@@ -289,7 +297,7 @@ pub(crate) fn colorbar_layout(bar: &ColorBar, fonts: &Fonts, length: f64) -> Col
     };
     let labels_width = ticks
         .iter()
-        .map(|(_, l)| text_width_weighted(l, fonts.y_tick(), fonts.tick_weight))
+        .map(|(_, l)| text_width_one_line(l, fonts.y_tick(), fonts.tick_weight))
         .fold(0.0, f64::max);
     // a label of several lines stacks them outwards, away from the bar
     let label = match bar.label.as_deref() {
