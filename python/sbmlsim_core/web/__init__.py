@@ -42,7 +42,7 @@ def figure_script() -> str:
         + f'\n;(() => {{\nconst PLOT_WASM = "{wasm}";\n'
         + "const start = () => {\n"
         + "  const bytes = Uint8Array.from(atob(PLOT_WASM), (c) => c.charCodeAt(0));\n"
-        + "  sbmlsimCore.hydrateFigures(document, { wasm: bytes });\n"
+        + "  sbmlsimCore.hydrateFigures(document, { wasm: bytes }).catch((error) => console.warn(`figures stay static: ${error?.message ?? error}`));\n"
         + "};\n"
         + 'if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start);\n'
         + "else start();\n"

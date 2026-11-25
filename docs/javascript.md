@@ -50,6 +50,38 @@ figure.dispose();  // the static figure again, without listeners
 
 A legend entry is a toggle button (a click, Enter or Space; `aria-pressed` says whether its group is shown) which hides every element of its group, and Shift+Enter on it selects its group. A click on a data point or on the line of a curve selects its group and dims the others, a click on it again or Escape (with the focus or the pointer last in the figure) clears the selection, and a tooltip (`role="status"`) reads out the point under the pointer with the units of the axes, once per animation frame, never a point of a hidden group and the selected group first; it is announced (`aria-live="polite"`) when a click shows it and not while the pointer moves; `format(value, unit)` replaces the default text of a value, 4 significant digits and the unit. The state is the classes `sbmlsim-hidden`, `sbmlsim-selected` and `sbmlsim-dimmed` on the `[data-element]` groups of the SVG, styled by a stylesheet the module injects once per document (`#sbmlsim-figure-style`). The inline build has it as `sbmlsimCore.attachFigure`.
 
+### Interactive figures
+
+`hydrateFigures` (`hydrate.mjs`, since 0.28.0) is the page script of a static report: every `<figure data-figure="KEY">` holds the inline SVG of a figure and, as a direct child, `<script type="application/json" data-figure-spec="KEY">` with its `figure/1` spec (`</` written as `<\/`, which JSON reads back). It attaches `attachFigure` to each of them:
+
+```html
+<figure data-figure="dose">
+  <svg class="sbmlsim-figure">...</svg>
+  <script type="application/json" data-figure-spec="dose">{"contract": "figure/1", ...}</script>
+</figure>
+```
+
+```js
+import { hydrateFigures } from "sbmlsim-core/hydrate";
+
+const handles = await hydrateFigures(document, { wasm: bytes }); // or { plot }
+```
+
+`hydrateFigures(root = document, options = {})` returns a promise of the `FigureHandle`s of the figures which attached. `options.wasm` is the source of `plot.wasm` (anything `loadPlot` takes) and `options.plot` a `Plot` to reuse instead; a page without a figure loads nothing. A figure whose spec does not parse or render keeps its static SVG and gets one `console.warn` naming its key. An attached figure gets the attribute `data-hydrated`, which a second call skips, so calling it twice attaches once. The inline build has it as `sbmlsimCore.hydrateFigures`.
+
+In Python `sbmlsim_core.web.figure_script()` is the script of a report, written once beside its pages (`<script src="figures.js">`): the inline build plus `plot.wasm` as base64 (decoded with `atob`), which calls `hydrateFigures` on `DOMContentLoaded` (or at once when the document is loaded) and warns once when that fails. It loads nothing from the network and works from `file://`.
+
+`attachFigure(container, plot, spec, options = {})` returns a `FigureHandle` with these methods:
+
+| method | what it does |
+|---|---|
+| `hidden()` | the hidden legend groups |
+| `selected()` | the selected legend group or `null` |
+| `update(spec)` | draws another spec, keeping the hidden and selected groups by their id; a refused spec raises a `PlotError` and leaves the figure as it was |
+| `dispose()` | restores the static figure and removes the listeners |
+
+Its options are `readout`, `select` and `toggle` (each true: the tooltip, the selection by a click and the legend toggles) and `format(value, unit)`. The classes, the attributes and the keyboard are the contract of [Figures](plot.md#semantic-classes-of-the-svg).
+
 ## A first simulation
 
 ```js

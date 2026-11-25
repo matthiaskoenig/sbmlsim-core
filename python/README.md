@@ -33,6 +33,8 @@ results = model.simulate_many(requests, threads=None)
 
 `model.wasm` and `model.json` written from `compiled.wasm` and `compiled.description` are what the JavaScript host loads, so a model compiled in python is simulated in a page without a server. The request and its fields, the errors and the semantics are documented on the [pages of sbmlsim-core](https://matthiaskoenig.github.io/sbmlsim-core/python/).
 
+`sbmlsim_core.web.figure_script()` is the script of a static report whose `<figure data-figure="KEY">` elements hold an inline SVG and a child `<script type="application/json" data-figure-spec="KEY">` with its `figure/1` spec: the inline build plus the renderer (`plot_wasm()`) as base64, which makes the figures interactive (legend toggles, selection, read-out) when the page loads, with no network.
+
 ## License
 
 MIT for the code of sbmlsim-core. The extension embeds `engine.wasm`, which links SUNDIALS (BSD-3-Clause) and KLU and BTF of SuiteSparse (LGPL-2.1-or-later), so the wheel is under `MIT AND BSD-3-Clause AND LGPL-2.1-or-later` and carries `LICENSE` and `THIRD_PARTY.md`.

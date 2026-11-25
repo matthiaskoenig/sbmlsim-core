@@ -157,7 +157,19 @@ The SVG carries plain light-theme values as presentation attributes and nothing 
 
 The gradient of a color bar is a `<linearGradient>` with the id `<plot>-colorbar` for the first bar of a plot and `<plot>-colorbar-<k>` for the bar `k` (counting from 0, so `-colorbar-1` is the second) of `colorbars`; a categorical bar has no gradient: its bands are one `<rect>` per integer, from the bottom up, inside its `sbmlsim-colorbar` group.
 
-A page toggles the elements of a legend group (the groups with the same `data-legend`) by clicking the entry of that `data-legend`.
+A page toggles the elements of a legend group (the groups with the same `data-legend`) by clicking the entry of that `data-legend`; `attachFigure` and `hydrateFigures` (see [JavaScript](javascript.md#interactive-figures)) do so, and add the following to the SVG of the figure, which is not part of the SVG `figure/1` writes (since 0.28.0):
+
+| class or attribute | on | what it is |
+|---|---|---|
+| `sbmlsim-hidden` | `[data-element]` | the element is in a hidden legend group (`display: none`) |
+| `sbmlsim-selected` | `[data-element]` | the element is in the selected legend group |
+| `sbmlsim-dimmed` | `[data-element]` | another group is selected, so the element is drawn at a quarter of its opacity |
+| `role="button"`, `tabindex="0"`, `aria-pressed` | `.sbmlsim-legend-entry[data-legend]` | the entry is a toggle button; `aria-pressed="true"` means its group is shown, `"false"` that it is hidden |
+| `sbmlsim-tooltip` | `<div>` in the container | the read-out of the point under the pointer, `role="status"` |
+| `sbmlsim-figure-style` | `<style>` (an id) | the stylesheet of these classes, injected once per document |
+| `data-figure="<key>"`, `data-figure-spec="<key>"`, `data-hydrated` | `<figure>`, `<script type="application/json">`, `<figure>` | the markup of a figure of a static report: the container of the inline SVG, its `figure/1` spec as a child, and the mark of a figure which was attached |
+
+The keyboard on a legend entry: Enter or Space toggles its group, Shift+Enter selects it, and Escape clears the selection (with the focus or the pointer last in the figure). A click on a data point or on the line of a curve selects its group, a click on it again clears it. The script of a spec must be a direct child of its `figure[data-figure]`, and its text is the JSON of the spec with `</` written as `<\/`.
 
 Coordinates have at most two decimals, and a primitive with a coordinate which is no finite number is not written.
 

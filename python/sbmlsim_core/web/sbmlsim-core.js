@@ -2791,7 +2791,7 @@ var sbmlsimCore = (() => {
 
   // hydrate.mjs
   async function hydrateFigures(root = globalThis.document, options = {}) {
-    const figures = [...root.querySelectorAll("figure[data-figure]")];
+    const figures = [...root.querySelectorAll("figure[data-figure]:not([data-hydrated])")];
     const found = figures.map((figure) => ({
       figure,
       script: [...figure.children].find(
@@ -2806,6 +2806,7 @@ var sbmlsimCore = (() => {
       const key = figure.getAttribute("data-figure");
       try {
         handles.push(attachFigure(figure, plot, JSON.parse(script.textContent)));
+        figure.setAttribute("data-hydrated", "");
       } catch (error) {
         console.warn(`figure ${key} stays static: ${error?.message ?? error}`);
       }

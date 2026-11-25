@@ -2,8 +2,10 @@
 // static SVG and warns once.
 
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import vm from "node:vm";
 import { test } from "node:test";
 
 import { parseHTML } from "linkedom";
@@ -60,4 +62,50 @@ test("broken_spec_keeps_static_svg", async () => {
 
 test("a_page_without_figures_loads_nothing", async () => {
   assert.deepEqual(await hydrateFigures(report(), { wasm: undefined }), []);
+});
+
+test("a_second_call_attaches_nothing_again", async () => {
+  const grid = readFileSync(path.join(SPECS, "grid.json"), "utf8");
+  const document = report(figure("a", grid));
+  const first = await hydrateFigures(document, { wasm: wasm() });
+  assert.equal(first.length, 1);
+  assert.equal(document.querySelector("figure").getAttribute("data-hydrated"), "");
+  assert.deepEqual(await hydrateFigures(document, { wasm: wasm() }), []);
+  assert.equal(document.querySelectorAll("figure > svg").length, 1);
+});
+
+test("the_generated_page_script_hydrates_a_report", async (t) => {
+  const python = path.join(ROOT, ".venv", "bin", "python");
+  let text;
+  try {
+    text = execFileSync(python, ["-c", "from sbmlsim_core import web; print(web.figure_script())"], {
+      encoding: "utf8",
+      maxBuffer: 1 << 28,
+    });
+  } catch {
+    t.skip("the python package is not installed in .venv");
+    return;
+  }
+  const grid = readFileSync(path.join(SPECS, "grid.json"), "utf8");
+  const { document, window } = parseHTML(
+    `<!doctype html><html><head></head><body>${figure("a", grid)}</body></html>`,
+  );
+  window.requestAnimationFrame = () => 0;
+  window.requestIdleCallback = () => 0;
+  window.atob = (data) => Buffer.from(data, "base64").toString("latin1");
+  const context = vm.createContext(window);
+  context.console = console;
+  context.URL = URL;
+  context.TextDecoder = TextDecoder;
+  context.TextEncoder = TextEncoder;
+  context.WebAssembly = WebAssembly;
+  context.Uint8Array = Uint8Array;
+  vm.runInContext(text, context);
+  for (let i = 0; i < 100 && !document.querySelector("figure[data-hydrated]"); i++) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  const svg = document.querySelector("figure svg");
+  assert.ok(document.querySelector("figure[data-hydrated]"));
+  assert.ok(svg.querySelector("[data-element]"));
+  assert.ok(!svg.textContent.includes("static"));
 });
