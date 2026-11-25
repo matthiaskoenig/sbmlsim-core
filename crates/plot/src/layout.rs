@@ -39,6 +39,7 @@ use crate::render::axis::{ResolvedAxis, Transform};
 use crate::render::legend::{self, Entry};
 use crate::render::{self, Prepared, Sides};
 use crate::spec::{AxisScale, Figure, LegendPosition, LegendScope, Plot};
+use crate::text::extra_lines;
 
 /// The padding at the edges of the figure and the least gap between the axes of two
 /// neighbouring plots, in pixels.
@@ -290,12 +291,12 @@ fn room(figure: &Figure, depths: &[Sides]) -> Room {
     r
 }
 
-/// The height of the title band of a figure: twice the title font, 0 without a title.
+/// The height of the title band of a figure: twice the title font and the lines of a title
+/// of several lines after its first, 0 without a title.
 fn title_band(figure: &Figure) -> f64 {
-    if figure.title.is_some() {
-        2.0 * figure.fonts.title
-    } else {
-        0.0
+    match &figure.title {
+        Some(t) => 2.0 * figure.fonts.title + extra_lines(t, figure.fonts.title),
+        None => 0.0,
     }
 }
 
@@ -345,10 +346,9 @@ fn estimate(figure: &Figure) -> Vec<(f64, f64)> {
         .iter()
         .map(|p| {
             let right = if p.y2.is_some() { ESTIMATE_ROOM.0 } else { 0.0 };
-            let top = if p.title.is_some() {
-                2.0 * figure.fonts.label
-            } else {
-                0.0
+            let top = match &p.title {
+                Some(t) => 2.0 * figure.fonts.label + extra_lines(t, figure.fonts.label),
+                None => 0.0,
             };
             (
                 (f64::from(p.column_span) * cw - ESTIMATE_ROOM.0 - right).max(MIN_PANEL),
@@ -628,7 +628,7 @@ pub(crate) fn plan(figure: &Figure) -> Plan {
     });
     let mut boxes = Vec::with_capacity(legends.len());
     for (owner, rect, list) in legends {
-        let rects = legend::entry_rects(rect, list.len(), fonts);
+        let rects = legend::entry_rects(rect, &list, fonts);
         boxes.push(LegendBox {
             owner,
             rect,
@@ -754,7 +754,14 @@ mod tests {
     /// upgrade which changes that fails here first. Keep it.
     #[test]
     fn panels_land_on_the_layout() {
-        for name in ["grid", "every_kind", "benchmark", "rotated", "curve"] {
+        for name in [
+            "grid",
+            "every_kind",
+            "benchmark",
+            "rotated",
+            "curve",
+            "styles",
+        ] {
             let figure = fixture(name);
             let lay = plan(&figure).layout;
             let drawn = drawn_panels(&crate::render_svg(&figure));

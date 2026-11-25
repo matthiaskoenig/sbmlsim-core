@@ -9,7 +9,7 @@
 mod support;
 
 use roxmltree::{Document, Node};
-use sbmlsim_plot::{parse, render_svg, text_width};
+use sbmlsim_plot::{geometry, parse, render_svg, text_width};
 use support::{assert_golden, spec_text};
 
 /// Renders a figure of JSON text.
@@ -883,4 +883,411 @@ fn golden_grid() {
 #[test]
 fn golden_legends() {
     assert_golden("legends", &render(&spec_text("legends")));
+}
+
+/// The fields of 0.28.0: font weights, the y tick size, hollow markers, texts of several
+/// lines, outlined bars, tick marks without labels and the swatch of a legend group.
+#[test]
+fn golden_styles() {
+    assert_golden("styles", &render(&spec_text("styles")));
+}
+
+/// The lines of a text: the texts of its `tspan`s with their `y` in the text, or its own text.
+fn text_lines(n: Node) -> Vec<(String, f64)> {
+    let spans: Vec<Node> = n.children().filter(|c| c.has_tag_name("tspan")).collect();
+    if spans.is_empty() {
+        return vec![(n.text().unwrap_or_default().to_string(), number(n, "y"))];
+    }
+    spans
+        .iter()
+        .map(|s| (s.text().unwrap_or_default().to_string(), number(*s, "y")))
+        .collect()
+}
+
+#[test]
+fn multi_line_legend_entry_grows_the_legend() {
+    let elements = |second: &str| {
+        [
+            curve("one", r#""label": "dose 1","#, "[0, 1, 2]", "[0, 2, 1]"),
+            curve(
+                "two",
+                &format!(r#""label": "{second}","#),
+                "[0, 1, 2]",
+                "[0, 1, 0.5]",
+            ),
+            curve("three", r#""label": "dose 3","#, "[0, 1, 2]", "[1, 1, 1]"),
+        ]
+    };
+    let one = one_plot(r#"{"position": "outside"}"#, &elements("dose 2"));
+    let two = one_plot(
+        r#"{"position": "outside"}"#,
+        &elements(r"dose 2\nwith a long second line"),
+    );
+    let (s1, s2) = (render(&one), render(&two));
+    let (d1, d2) = (Document::parse(&s1).unwrap(), Document::parse(&s2).unwrap());
+    let (l1, l2) = (legends(&d1)[0].frame, legends(&d2)[0].frame);
+    // one more line of the legend font: 1.2 times 11 pixels taller, and as wide as the widest
+    // line
+    assert!((l2.height - l1.height - 13.2).abs() < 0.02, "{l1:?} {l2:?}");
+    assert!(
+        (l2.width
+            - l1.width
+            - (text_width("with a long second line", 11.0) - text_width("dose 3", 11.0)))
+        .abs()
+            < 0.02,
+        "{l1:?} {l2:?}"
+    );
+    // the entries of the geometry: the second one taller, the third one below it
+    let g = geometry(&parse(&two).unwrap());
+    let e = &g.legend_entries;
+    assert_eq!(e.len(), 3);
+    assert!((e[1].rect.height - e[0].rect.height - 13.2).abs() < 1e-9);
+    assert!((e[2].rect.y - (e[1].rect.y + e[1].rect.height)).abs() < 1e-9);
+    assert!((e[2].rect.height - e[0].rect.height).abs() < 1e-9);
+    // the label: two lines centred on its entry, the swatch at the middle of the entry
+    let entry = d2
+        .descendants()
+        .filter(|n| has_class(*n, "sbmlsim-legend-entry"))
+        .nth(1)
+        .unwrap();
+    let label = entry
+        .descendants()
+        .find(|n| has_class(*n, "sbmlsim-legend-label"))
+        .unwrap();
+    let lines = text_lines(label);
+    assert_eq!(
+        lines.iter().map(|l| l.0.as_str()).collect::<Vec<_>>(),
+        ["dose 2", "with a long second line"]
+    );
+    let middle = e[1].rect.y + e[1].rect.height / 2.0;
+    assert!(((lines[0].1 + lines[1].1) / 2.0 - middle).abs() < 0.02);
+    assert!((lines[1].1 - lines[0].1 - 13.2).abs() < 0.02);
+    let swatch = entry
+        .descendants()
+        .find(|n| has_class(*n, "sbmlsim-legend-swatch"))
+        .unwrap();
+    let transform = swatch.attribute("transform").unwrap();
+    let cy: f64 = transform
+        .trim_end_matches(')')
+        .rsplit(' ')
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!((cy - middle).abs() < 0.02, "{transform} {middle}");
+}
+
+#[test]
+fn outside_legend_with_multi_line_entries_keeps_rows_apart() {
+    // six entries of three lines: a legend taller than its row, which grows the row
+    let labels: Vec<String> = (1..=6)
+        .map(|k| {
+            curve(
+                &format!("{{p}}_{k}"),
+                &format!(r#""label": "dose {k}\nof the study\nin mg","#),
+                "[0, 1]",
+                "[0, 1]",
+            )
+        })
+        .collect();
+    let of = |p: &str| -> Vec<String> { labels.iter().map(|e| e.replace("{p}", p)).collect() };
+    for scope in ["plot", "row"] {
+        let json = figure(
+            500.0,
+            320.0,
+            &format!(r#""legend": {{"position": "outside", "scope": "{scope}"}},"#),
+            2,
+            1,
+            &[plot("a", 0, 0, "", &of("a")), plot("b", 1, 0, "", &of("b"))],
+        );
+        let svg = render(&json);
+        let doc = Document::parse(&svg).unwrap();
+        let found = legends(&doc);
+        assert_eq!(found.len(), 2, "{scope}");
+        let (a, b) = (panel(&doc, "a"), panel(&doc, "b"));
+        let (la, lb) = (found[0].frame, found[1].frame);
+        // six entries of three lines each
+        assert!(
+            (la.height - (12.0 + 6.0 * (1.6 * 11.0 + 2.0 * 13.2))).abs() < 0.02,
+            "{scope}: {la:?}"
+        );
+        assert!(la.height > a.height, "{scope}: {la:?} {a:?}");
+        for (what, r) in [("panel", b), ("legend", lb)] {
+            assert!(
+                !la.overlaps(&r),
+                "{scope}: the legend of row 0 {la:?} overlaps the {what} of row 1 {r:?}"
+            );
+        }
+        for t in plot_node(&doc, "b")
+            .descendants()
+            .filter(|n| n.has_tag_name("text"))
+        {
+            let (_, dy) = offset(t);
+            assert!(number(t, "y") + dy > la.bottom(), "{scope}: {:?}", t.text());
+        }
+        let (_, h) = figure_size(&doc);
+        assert!(
+            lb.bottom() <= h,
+            "{scope}: {lb:?} below the figure of height {h}"
+        );
+    }
+}
+
+#[test]
+fn legend_swatches() {
+    // the lines of a scan in one legend group: mixed colours, drawn neutral without a swatch
+    // of their own; the swatch of the group in the middle colour of the map with it
+    let lines: Vec<String> = ["#440154", "#21918c", "#fde725"]
+        .iter()
+        .enumerate()
+        .map(|(k, c)| {
+            curve(
+                &format!("s{k}"),
+                &format!(r#""label": "scan", "legend": "scan", "style": {{"color": "{c}"}},"#),
+                "[0, 1]",
+                &format!("[{k}, {}]", k + 1),
+            )
+        })
+        .collect();
+    let swatch_paint = |json: &str| {
+        let svg = render(json);
+        let doc = Document::parse(&svg).unwrap();
+        let swatch = doc
+            .descendants()
+            .find(|n| has_class(*n, "sbmlsim-legend-swatch"))
+            .expect("a swatch");
+        let path = swatch
+            .descendants()
+            .find(|n| n.has_tag_name("path"))
+            .map(|p| {
+                (
+                    p.attribute("stroke").unwrap().to_string(),
+                    p.attribute("stroke-width").unwrap().to_string(),
+                    p.attribute("stroke-dasharray").is_some(),
+                )
+            });
+        let marker = swatch
+            .descendants()
+            .find(|n| n.has_tag_name("circle"))
+            .map(|c| c.attribute("fill").unwrap().to_string());
+        (path, marker)
+    };
+    let neutral = swatch_paint(&one_plot(r#"{"position": "outside"}"#, &lines));
+    assert_eq!(neutral.0.unwrap().0, "#5b6472");
+    let styled = figure(
+        500.0,
+        400.0,
+        r#""legend": {"position": "outside"},"#,
+        1,
+        1,
+        &[plot(
+            "p",
+            0,
+            0,
+            r##""legend_swatches": {"scan": {"color": "#21918c",
+                "line": {"type": "dashed", "width": 3}, "marker": {"type": "circle"}}},"##,
+            &lines,
+        )],
+    );
+    let (path, marker) = swatch_paint(&styled);
+    assert_eq!(path, Some(("#21918c".to_string(), "3".to_string(), true)));
+    assert_eq!(marker.as_deref(), Some("#21918c"));
+    // a key which is no legend group of the plot is refused with its path
+    let wrong = styled.replace(
+        "\"legend_swatches\": {\"scan\"",
+        "\"legend_swatches\": {\"scans\"",
+    );
+    let e = parse(&wrong).unwrap_err().to_string();
+    assert!(e.starts_with("plots[0].legend_swatches.scans:"), "{e}");
+}
+
+#[test]
+fn titles_of_lines_and_weights() {
+    // the figure title: bold by default, normal with its weight; two lines grow its band
+    let plain = spanning_grid(r#""title": "Figure title","#);
+    let two = spanning_grid(
+        r#""title": "Figure title\nand its subtitle", "fonts": {"title_weight": "normal"},"#,
+    );
+    let (s1, s2) = (render(&plain), render(&two));
+    let (d1, d2) = (Document::parse(&s1).unwrap(), Document::parse(&s2).unwrap());
+    let title = |doc: &Document| {
+        doc.descendants()
+            .find(|n| n.has_tag_name("g") && has_class(*n, "sbmlsim-figure-title"))
+            .and_then(|g| g.descendants().find(|n| n.has_tag_name("text")))
+            .map(|t| {
+                (
+                    t.attribute("font-weight").map(str::to_string),
+                    text_lines(t),
+                )
+            })
+            .unwrap()
+    };
+    let (t1, t2) = (title(&d1), title(&d2));
+    assert_eq!(t1.0.as_deref(), Some("bold"));
+    assert_eq!(t2.0, None);
+    assert_eq!(t2.1.len(), 2);
+    // the band: twice the font plus a line of 1.2 times 16 pixels, the lines centred in it
+    let band = 2.0 * 16.0 + 19.2;
+    assert!(((t2.1[0].1 + t2.1[1].1) / 2.0 - band / 2.0).abs() < 0.02);
+    assert!((t2.1[1].1 - t2.1[0].1 - 19.2).abs() < 0.02);
+    let (a1, a2) = (panel(&d1, "a"), panel(&d2, "a"));
+    assert!((a2.y - a1.y - 19.2).abs() < 0.02, "{a1:?} {a2:?}");
+    // a plot title of two lines: the last line where the one line was, the first above it,
+    // the panel a line lower; its weight is the title weight
+    let plot_title = |doc: &Document, id: &str| {
+        plot_node(doc, id)
+            .descendants()
+            .find(|n| has_class(*n, "charton-title"))
+            .and_then(|g| g.descendants().find(|n| n.has_tag_name("text")))
+            .map(|t| {
+                let (_, dy) = offset(t);
+                (
+                    t.attribute("font-weight").map(str::to_string),
+                    text_lines(t)
+                        .into_iter()
+                        .map(|(l, y)| (l, y + dy))
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .unwrap()
+    };
+    let single = figure(
+        500.0,
+        400.0,
+        "",
+        1,
+        1,
+        &[plot(
+            "p",
+            0,
+            0,
+            r#""title": "plasma","#,
+            &[curve("c", "", "[0, 1]", "[0, 1]")],
+        )],
+    );
+    let double = single.replace(
+        "\"title\": \"plasma\"",
+        "\"title\": \"plasma\\nof the arm\"",
+    );
+    let normal = double.replacen(
+        "\"grid\"",
+        r#""fonts": {"title_weight": "normal"}, "grid""#,
+        1,
+    );
+    let (s1, s2, s3) = (render(&single), render(&double), render(&normal));
+    let (d1, d2, d3) = (
+        Document::parse(&s1).unwrap(),
+        Document::parse(&s2).unwrap(),
+        Document::parse(&s3).unwrap(),
+    );
+    let (p1, p2) = (panel(&d1, "p"), panel(&d2, "p"));
+    let lh = 1.2 * 13.0;
+    assert!((p2.y - p1.y - lh).abs() < 0.02, "{p1:?} {p2:?}");
+    let (t1, t2, t3) = (
+        plot_title(&d1, "p"),
+        plot_title(&d2, "p"),
+        plot_title(&d3, "p"),
+    );
+    assert_eq!(t1.0.as_deref(), Some("bold"));
+    assert_eq!(t2.0.as_deref(), Some("bold"));
+    assert_eq!(t3.0, None);
+    assert_eq!(t2.1.len(), 2);
+    // the distance of the last line to the panel is the one of the one line
+    assert!(((p2.y - t2.1[1].1) - (p1.y - t1.1[0].1)).abs() < 0.02);
+    assert!((t2.1[1].1 - t2.1[0].1 - lh).abs() < 0.02);
+}
+
+#[test]
+fn right_axis_of_lines_marks_and_weights() {
+    let json = r##"{"contract": "figure/1", "width": 600, "height": 400,
+        "grid": {"rows": 1, "columns": 1},
+        "plots": [{"id": "p", "row": 0, "column": 0,
+            "x": {"label": "time", "min": 0, "max": 10},
+            "y": {"label": "c", "min": 0, "max": 1},
+            "y2": {"label": "amount", "unit": "mg", "min": 0, "max": 1000},
+            "elements": [
+              {"id": "left", "kind": "curve", "label": "left", "x": [0, 10], "y": [0, 1]},
+              {"id": "right", "kind": "curve", "axis": "y2", "x": [0, 10], "y": [0, 1000]}
+            ]}]}"##;
+    let two = json.replace("\"label\": \"amount\"", "\"label\": \"amount\\nin urine\"");
+    let styled = two
+        .replace(
+            "\"unit\": \"mg\",",
+            "\"unit\": \"mg\", \"ticks_visible\": false, \"tick_marks_visible\": true,",
+        )
+        .replacen(
+            "\"grid\"",
+            r#""fonts": {"label_weight": "bold", "legend_weight": "bold", "tick_y": 9}, "grid""#,
+            1,
+        );
+    let (s1, s2, s3) = (render(json), render(&two), render(&styled));
+    let (d1, d2, d3) = (
+        Document::parse(&s1).unwrap(),
+        Document::parse(&s2).unwrap(),
+        Document::parse(&s3).unwrap(),
+    );
+    let (p1, p2) = (panel(&d1, "p"), panel(&d2, "p"));
+    // a second line of the title takes 1.2 times 13 pixels more right of the panel
+    assert!(
+        ((p1.right() - p2.right()) - 15.6).abs() < 0.02,
+        "{p1:?} {p2:?}"
+    );
+    let title = |doc: &Document| {
+        plot_node(doc, "p")
+            .descendants()
+            .filter(|n| {
+                n.ancestors()
+                    .any(|a| a.attribute("data-axis") == Some("y2"))
+                    && n.ancestors().any(|a| has_class(a, "charton-axis-title"))
+            })
+            .find(|n| n.has_tag_name("text"))
+            .map(|t| {
+                (
+                    number(t, "y"),
+                    t.attribute("font-weight").map(str::to_string),
+                    text_lines(t),
+                )
+            })
+            .unwrap()
+    };
+    // the first line next to the axis, the second further out: lower in the rotated text
+    let (y, weight, lines) = title(&d2);
+    assert_eq!(weight, None);
+    assert_eq!(lines.len(), 2);
+    assert!((lines[0].1 - y).abs() < 0.02 && (lines[1].1 - y - 15.6).abs() < 0.02);
+    assert_eq!(title(&d3).1.as_deref(), Some("bold"));
+    // marks without labels on the right axis, the room of the marks alone
+    assert!(axis_texts(&d3, "p", "y2").is_empty());
+    let marks = plot_node(&d3, "p")
+        .descendants()
+        .filter(|n| {
+            n.has_tag_name("path")
+                && n.ancestors()
+                    .any(|a| a.attribute("data-axis") == Some("y2"))
+                && n.ancestors().any(|a| has_class(a, "charton-tick"))
+        })
+        .count();
+    assert!(marks >= 3);
+    // the left tick labels of the y size and a bold legend
+    let y_ticks: Vec<Node> = plot_node(&d3, "p")
+        .descendants()
+        .filter(|n| {
+            n.has_tag_name("text")
+                && n.ancestors().any(|a| a.attribute("data-axis") == Some("y"))
+                && n.ancestors().any(|a| has_class(a, "charton-tick-label"))
+        })
+        .collect();
+    assert!(!y_ticks.is_empty());
+    assert!(
+        y_ticks
+            .iter()
+            .all(|n| n.attribute("font-size") == Some("9"))
+    );
+    let label = d3
+        .descendants()
+        .find(|n| has_class(*n, "sbmlsim-legend-label"))
+        .unwrap();
+    assert_eq!(label.attribute("font-weight"), Some("bold"));
+    let (l2, l3) = (legends(&d2)[0].frame, legends(&d3)[0].frame);
+    assert!(l3.width > l2.width, "{l2:?} {l3:?}");
 }

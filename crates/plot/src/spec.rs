@@ -8,7 +8,7 @@
 // a negated comparison also refuses NaN, which is intended
 #![allow(clippy::neg_cmp_op_on_partial_ord)]
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use serde::de::Error as _;
 use serde::ser::Error as _;
@@ -77,7 +77,31 @@ pub struct Figure {
     pub plots: Vec<Plot>,
 }
 
-/// Font sizes in points.
+/// The weight of a font: regular or bold (since 0.28.0).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FontWeight {
+    /// Inter Regular.
+    #[default]
+    Normal,
+    /// Inter Bold.
+    Bold,
+}
+
+impl FontWeight {
+    fn is_normal(&self) -> bool {
+        *self == FontWeight::Normal
+    }
+    fn is_bold(&self) -> bool {
+        *self == FontWeight::Bold
+    }
+}
+
+fn bold() -> FontWeight {
+    FontWeight::Bold
+}
+
+/// Font sizes in points and font weights.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Fonts {
@@ -87,12 +111,35 @@ pub struct Fonts {
     /// Axis label font size, 13 by default.
     #[serde(default = "d_label")]
     pub label: f64,
-    /// Tick label font size, 11 by default.
+    /// Tick label font size of the x axis, 11 by default, and of the y axes without `tick_y`.
     #[serde(default = "d_tick")]
     pub tick: f64,
     /// Legend font size, 11 by default.
     #[serde(default = "d_tick")]
     pub legend: f64,
+    /// Tick label font size of the y axes and the colour bars, `tick` when absent (since
+    /// 0.28.0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tick_y: Option<f64>,
+    /// Weight of the figure and plot titles, bold by default (since 0.28.0).
+    #[serde(default = "bold", skip_serializing_if = "FontWeight::is_bold")]
+    pub title_weight: FontWeight,
+    /// Weight of the axis titles and colour bar labels, normal by default (since 0.28.0).
+    #[serde(default, skip_serializing_if = "FontWeight::is_normal")]
+    pub label_weight: FontWeight,
+    /// Weight of the tick labels, normal by default (since 0.28.0).
+    #[serde(default, skip_serializing_if = "FontWeight::is_normal")]
+    pub tick_weight: FontWeight,
+    /// Weight of the legend labels, normal by default (since 0.28.0).
+    #[serde(default, skip_serializing_if = "FontWeight::is_normal")]
+    pub legend_weight: FontWeight,
+}
+
+impl Fonts {
+    /// The tick label font size of the y axes and the colour bars: `tick_y`, else `tick`.
+    pub fn y_tick(&self) -> f64 {
+        self.tick_y.unwrap_or(self.tick)
+    }
 }
 fn d_title() -> f64 {
     16.0
@@ -110,6 +157,11 @@ impl Default for Fonts {
             label: 13.0,
             tick: 11.0,
             legend: 11.0,
+            tick_y: None,
+            title_weight: FontWeight::Bold,
+            label_weight: FontWeight::Normal,
+            tick_weight: FontWeight::Normal,
+            legend_weight: FontWeight::Normal,
         }
     }
 }
@@ -212,6 +264,12 @@ pub struct Plot {
     /// elements under others (frozen runs under the live curves) and still list them last.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub legend_order: Option<Vec<String>>,
+    /// The swatches of legend groups by group (since 0.28.0): the swatch of a group drawn with
+    /// this style instead of the style of its first element (or of the neutral one of a group
+    /// of elements of different colours), its kind the kind of that element; a style without a
+    /// colour takes the colour the swatch would have. Every key is a legend group of the plot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub legend_swatches: Option<BTreeMap<String, Style>>,
     /// The elements drawn in the plot.
     pub elements: Vec<Element>,
 }
@@ -276,12 +334,23 @@ pub struct Axis {
     /// Whether the label is shown, true by default.
     #[serde(default = "yes")]
     pub label_visible: bool,
-    /// Whether the ticks are shown, true by default.
+    /// Whether the tick labels are shown, true by default, and the tick marks without
+    /// `tick_marks_visible`.
     #[serde(default = "yes")]
     pub ticks_visible: bool,
+    /// Whether the tick marks are shown (since 0.28.0); absent, they follow `ticks_visible`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tick_marks_visible: Option<bool>,
     /// Rotation of the tick labels in degrees.
     #[serde(default)]
     pub tick_rotation: f64,
+}
+
+impl Axis {
+    /// Whether the tick marks are shown: `tick_marks_visible`, else `ticks_visible`.
+    pub fn marks_visible(&self) -> bool {
+        self.tick_marks_visible.unwrap_or(self.ticks_visible)
+    }
 }
 
 /// The side of the y axis an element belongs to.
@@ -788,7 +857,7 @@ pub enum LineType {
 }
 
 /// A line style.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Line {
     /// Type, solid by default.
@@ -840,7 +909,8 @@ pub struct Marker {
     /// Size in pixels, 6 by default.
     #[serde(default = "six")]
     pub size: f64,
-    /// Fill color.
+    /// Fill color, or `none` for a hollow marker (since 0.28.0), whose edge is drawn without
+    /// a fill; absent, the color of the element.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fill: Option<String>,
     /// Edge color.
@@ -884,9 +954,10 @@ pub struct Style {
     /// Opacity, 1 by default.
     #[serde(default = "one_f")]
     pub opacity: f64,
-    /// Line.
-    #[serde(default)]
-    pub line: Line,
+    /// Line; absent, the default line, which a bar does not draw: a bar draws the line of its
+    /// style as its outline only when the style gives one (since 0.28.0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<Line>,
     /// Marker.
     #[serde(default)]
     pub marker: Marker,
@@ -899,10 +970,17 @@ impl Default for Style {
         Style {
             color: None,
             opacity: 1.0,
-            line: Line::default(),
+            line: None,
             marker: Marker::default(),
             fill: None,
         }
+    }
+}
+
+impl Style {
+    /// The line of the style: the line it gives, else the default line.
+    pub fn line_or_default(&self) -> Line {
+        self.line.unwrap_or_default()
     }
 }
 
@@ -926,6 +1004,31 @@ fn check_color(path: String, color: &Option<String>) -> Result<(), SpecError> {
             c.len() == 7 && c.starts_with('#') && c[1..].chars().all(|h| h.is_ascii_hexdigit());
         if !ok {
             return err(path, format!("color `{c}` is not of the form #rrggbb"));
+        }
+    }
+    Ok(())
+}
+
+fn check_style(path: &str, style: &Style) -> Result<(), SpecError> {
+    if !(0.0..=1.0).contains(&style.opacity) {
+        return err(format!("{path}.opacity"), "must be between 0 and 1");
+    }
+    if style.line_or_default().width < 0.0 {
+        return err(format!("{path}.line.width"), "must not be negative");
+    }
+    if style.marker.size < 0.0 {
+        return err(format!("{path}.marker.size"), "must not be negative");
+    }
+    check_color(format!("{path}.color"), &style.color)?;
+    // a hollow marker has no fill
+    if style.marker.fill.as_deref() != Some("none") {
+        check_color(format!("{path}.marker.fill"), &style.marker.fill)?;
+    }
+    check_color(format!("{path}.marker.edge"), &style.marker.edge)?;
+    if let Some(fill) = &style.fill {
+        check_color(format!("{path}.fill.color"), &fill.color)?;
+        if !(0.0..=1.0).contains(&fill.opacity) {
+            return err(format!("{path}.fill.opacity"), "must be between 0 and 1");
         }
     }
     Ok(())
@@ -1212,6 +1315,7 @@ pub(crate) fn validate(f: &Figure) -> Result<(), SpecError> {
         ("label", f.fonts.label),
         ("tick", f.fonts.tick),
         ("legend", f.fonts.legend),
+        ("tick_y", f.fonts.y_tick()),
     ] {
         if !(v > 0.0) {
             return err(format!("fonts.{name}"), "must be positive");
@@ -1316,28 +1420,17 @@ pub(crate) fn validate(f: &Figure) -> Result<(), SpecError> {
                     "the element uses y2 but the plot has no y2 axis",
                 );
             }
-            if !(0.0..=1.0).contains(&e.style.opacity) {
-                return err(format!("{ep}.style.opacity"), "must be between 0 and 1");
-            }
-            if e.style.line.width < 0.0 {
-                return err(format!("{ep}.style.line.width"), "must not be negative");
-            }
-            if e.style.marker.size < 0.0 {
-                return err(format!("{ep}.style.marker.size"), "must not be negative");
-            }
-            check_color(format!("{ep}.style.color"), &e.style.color)?;
-            check_color(format!("{ep}.style.marker.fill"), &e.style.marker.fill)?;
-            check_color(format!("{ep}.style.marker.edge"), &e.style.marker.edge)?;
-            if let Some(fill) = &e.style.fill {
-                check_color(format!("{ep}.style.fill.color"), &fill.color)?;
-                if !(0.0..=1.0).contains(&fill.opacity) {
-                    return err(
-                        format!("{ep}.style.fill.opacity"),
-                        "must be between 0 and 1",
-                    );
-                }
-            }
+            check_style(&format!("{ep}.style"), &e.style)?;
             check_kind(&ep, &e.kind)?;
+        }
+        if let Some(swatches) = &p.legend_swatches {
+            for (group, style) in swatches {
+                let sp = format!("{pp}.legend_swatches.{group}");
+                if !p.elements.iter().any(|e| e.legend_group() == Some(group)) {
+                    return err(sp, format!("`{group}` is no legend group of the plot"));
+                }
+                check_style(&sp, style)?;
+            }
         }
     }
     Ok(())

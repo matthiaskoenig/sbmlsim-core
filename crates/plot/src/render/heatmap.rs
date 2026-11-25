@@ -32,7 +32,7 @@ use crate::spec::{
     Axis, AxisScale, ColorBar, ColorScale, ElementKind, Fonts, Plot, Style, YAxisRef,
 };
 use crate::svg::{self, LayerInfo, escape, theme};
-use crate::text::text_width;
+use crate::text::{extra_lines, text_width, text_width_weighted};
 
 /// The share of the width of a cell its text may take.
 const CELL_TEXT_WIDTH: f64 = 0.9;
@@ -247,6 +247,7 @@ pub(crate) fn colorbar_layout(bar: &ColorBar, fonts: &Fonts, length: f64) -> Col
         grid: false,
         label_visible: true,
         ticks_visible: true,
+        tick_marks_visible: None,
         tick_rotation: 0.0,
     };
     let resolved = || axis::resolve(&scale_axis, &[], &[], length, COLORBAR_TICK_ROOM);
@@ -288,10 +289,11 @@ pub(crate) fn colorbar_layout(bar: &ColorBar, fonts: &Fonts, length: f64) -> Col
     };
     let labels_width = ticks
         .iter()
-        .map(|(_, l)| text_width(l, fonts.tick))
+        .map(|(_, l)| text_width_weighted(l, fonts.y_tick(), fonts.tick_weight))
         .fold(0.0, f64::max);
+    // a label of several lines stacks them outwards, away from the bar
     let label = match bar.label.as_deref() {
-        Some(l) if !l.is_empty() => COLORBAR_LABEL_GAP + fonts.label,
+        Some(l) if !l.is_empty() => COLORBAR_LABEL_GAP + fonts.label + extra_lines(l, fonts.label),
         _ => 0.0,
     };
     ColorBarLayout {
@@ -449,7 +451,8 @@ pub(crate) fn draw_colorbar(
         "<g class=\"sbmlsim-colorbar-tick-labels\" fill=\"{}\"",
         theme::FG_SOFT
     );
-    attr(body, "font-size", fonts.tick);
+    attr(body, "font-size", fonts.y_tick());
+    svg::attr_weight(body, fonts.tick_weight);
     body.push('>');
     let lx = right + COLORBAR_TICK + COLORBAR_TICK_PADDING;
     for (t, label) in &layout.ticks {
@@ -470,6 +473,7 @@ pub(crate) fn draw_colorbar(
         attr(body, "x", tx);
         attr(body, "y", ty);
         attr(body, "font-size", fonts.label);
+        svg::attr_weight(body, fonts.label_weight);
         let _ = write!(
             body,
             " fill=\"{}\" text-anchor=\"middle\" dominant-baseline=\"middle\" transform=\"rotate(-90 ",
@@ -479,7 +483,8 @@ pub(crate) fn draw_colorbar(
         body.push(' ');
         svg::num(body, ty);
         body.push_str(")\">");
-        escape(body, label);
+        // the lines stack outwards, right of the bar: down in the rotated text
+        svg::text_lines(body, label, (tx, ty), fonts.label, svg::Stack::Down);
         body.push_str("</text></g>");
     }
     body.push_str("</g>");

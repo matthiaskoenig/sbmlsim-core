@@ -18,7 +18,7 @@ use charton::prelude::*;
 use super::axis::ResolvedAxis;
 use super::cut::{Span, XEnds, cut_runs, linear};
 use super::{heatmap, stats_marks};
-use crate::spec::{Element, ElementKind, Fonts, LineType, MarkerType, Orientation, Style};
+use crate::spec::{Element, ElementKind, Fonts, Line, LineType, MarkerType, Orientation, Style};
 use crate::svg::{LayerInfo, MarkerGlyph, theme};
 
 /// The opacity of a band or an area without a fill of its own (`band-opacity` of sbmlsim-web).
@@ -75,10 +75,15 @@ pub(crate) struct Stroke {
 impl Stroke {
     /// The stroke of the line of a style, `None` for a style without a line.
     pub(crate) fn of_line(style: &Style, color: &str) -> Option<Stroke> {
-        (style.line.kind != LineType::None && style.line.width > 0.0).then(|| Stroke {
+        Self::of(style.line_or_default(), style, color)
+    }
+
+    /// The stroke of a line in the colour and the opacity of a style, `None` for no line.
+    pub(crate) fn of(line: Line, style: &Style, color: &str) -> Option<Stroke> {
+        (line.kind != LineType::None && line.width > 0.0).then(|| Stroke {
             color: color.to_string(),
-            width: style.line.width,
-            dash: dash(style.line.kind, style.line.width),
+            width: line.width,
+            dash: dash(line.kind, line.width),
             opacity: style.opacity,
         })
     }

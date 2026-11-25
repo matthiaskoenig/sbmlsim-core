@@ -954,3 +954,163 @@ fn every_kind_draws() {
 fn golden_every_kind() {
     assert_golden("every_kind", &render(&spec_text("every_kind")));
 }
+
+#[test]
+fn hollow_marker() {
+    let json = figure(
+        "{}",
+        "{}",
+        "",
+        r##"{"id": "hollow", "kind": "curve", "label": "hollow", "x": [0, 1, 2], "y": [0, 1, 2],
+            "style": {"color": "#aa0000", "line": {"type": "none"},
+                      "marker": {"type": "circle", "fill": "none", "edge_width": 1.5}}},
+           {"id": "edged", "kind": "curve", "x": [0, 1, 2], "y": [2, 1, 0],
+            "style": {"color": "#aa0000", "line": {"type": "none"},
+                      "marker": {"type": "square", "fill": "none", "edge": "#0000aa"}}}"##,
+    );
+    let svg = render(&json);
+    let doc = Document::parse(&svg).unwrap();
+    // no fill, the edge in the colour of the series
+    let circles: Vec<Node> = element_group(&doc, "hollow")
+        .descendants()
+        .filter(|n| n.has_tag_name("circle"))
+        .collect();
+    assert_eq!(circles.len(), 3);
+    for c in &circles {
+        assert_eq!(c.attribute("fill"), Some("none"));
+        assert_eq!(c.attribute("stroke"), Some("#aa0000"));
+        assert_eq!(c.attribute("stroke-width"), Some("1.5"));
+    }
+    // an edge of its own
+    let squares: Vec<Node> = element_group(&doc, "edged")
+        .descendants()
+        .filter(|n| n.has_tag_name("rect"))
+        .collect();
+    assert_eq!(squares.len(), 3);
+    assert!(
+        squares.iter().all(
+            |s| s.attribute("fill") == Some("none") && s.attribute("stroke") == Some("#0000aa")
+        )
+    );
+    // the swatch of the legend is hollow as well
+    let swatch = doc
+        .descendants()
+        .find(|n| n.attribute("class") == Some("sbmlsim-legend-swatch"))
+        .unwrap();
+    let glyph = swatch
+        .descendants()
+        .find(|n| n.has_tag_name("circle"))
+        .unwrap();
+    assert_eq!(glyph.attribute("fill"), Some("none"));
+    assert_eq!(glyph.attribute("stroke"), Some("#aa0000"));
+}
+
+#[test]
+fn bar_outline() {
+    let json = figure(
+        "{}",
+        "{}",
+        "",
+        r##"{"id": "plain", "kind": "bar", "label": "plain", "x": [0, 1], "height": [1, 2],
+            "style": {"color": "#aa0000"}},
+           {"id": "outlined", "kind": "bar", "label": "outlined", "x": [2, 3], "height": [2, 1],
+            "style": {"color": "#aa0000", "line": {"type": "dashed", "width": 1.5}}},
+           {"id": "none", "kind": "bar", "x": [4], "height": [1],
+            "style": {"line": {"type": "none", "width": 3}}}"##,
+    );
+    let svg = render(&json);
+    let doc = Document::parse(&svg).unwrap();
+    let rings = |id: &str| -> Vec<Node> {
+        paths(element_group(&doc, id))
+            .into_iter()
+            .filter(|p| p.attribute("d").is_some_and(|d| d.contains('Z')))
+            .collect()
+    };
+    // a bar without a line has no outline, as before 0.28.0
+    for id in ["plain", "none"] {
+        let r = rings(id);
+        assert!(!r.is_empty());
+        assert!(r.iter().all(|p| p.attribute("stroke").is_none()), "{id}");
+    }
+    // a line outlines the bars with its type and width, in the colour of the bars
+    // (a filled ring and a stroked ring per bar, the fill under the outline)
+    let outlined: Vec<Node> = rings("outlined")
+        .into_iter()
+        .filter(|p| p.attribute("stroke").is_some())
+        .collect();
+    assert_eq!(outlined.len(), 2);
+    for p in &outlined {
+        assert_eq!(p.attribute("fill"), Some("none"));
+        assert_eq!(p.attribute("stroke"), Some("#aa0000"));
+        assert_eq!(p.attribute("stroke-width"), Some("1.5"));
+        assert!(p.attribute("stroke-dasharray").is_some());
+    }
+    // the swatch shows the outline
+    let swatches: Vec<Node> = doc
+        .descendants()
+        .filter(|n| n.attribute("class") == Some("sbmlsim-legend-swatch"))
+        .collect();
+    assert_eq!(swatches.len(), 2);
+    let edge = |s: &Node| {
+        s.descendants()
+            .find(|n| n.has_tag_name("rect"))
+            .and_then(|r| r.attribute("stroke"))
+            .map(str::to_string)
+    };
+    assert_eq!(edge(&swatches[0]), None);
+    assert_eq!(edge(&swatches[1]).as_deref(), Some("#aa0000"));
+}
+
+#[test]
+fn colorbar_label_of_lines_and_weights() {
+    let json = figure(
+        "{}",
+        "{}",
+        r#""colorbar": {"scale": {"name": "viridis", "low": 0, "high": 10},
+                        "label": "dose"},"#,
+        r#"{"id": "c", "kind": "curve", "x": [0, 1], "y": [0, 1]}"#,
+    );
+    let two = json.replace("\"label\": \"dose\"", "\"label\": \"dose\\nof HCTZ\"");
+    let bold = two.replacen(
+        "\"grid\"",
+        r#""fonts": {"label_weight": "bold", "tick_weight": "bold", "tick_y": 9}, "grid""#,
+        1,
+    );
+    let room = |svg: &str| {
+        let doc = Document::parse(svg).unwrap();
+        let p = panel(&doc);
+        500.0 - (p.x + p.width)
+    };
+    let (s1, s2, s3) = (render(&json), render(&two), render(&bold));
+    // a second line of the label: 1.2 times 13 pixels more room right of the panel
+    assert!((room(&s2) - room(&s1) - 15.6).abs() < 0.02);
+    let doc = Document::parse(&s3).unwrap();
+    let bar = colorbars(&doc)[0];
+    let label = bar
+        .descendants()
+        .find(|n| n.attribute("class") == Some("sbmlsim-colorbar-label"))
+        .and_then(|g| g.descendants().find(|n| n.has_tag_name("text")))
+        .unwrap();
+    assert_eq!(label.attribute("font-weight"), Some("bold"));
+    let spans: Vec<Node> = label
+        .children()
+        .filter(|n| n.has_tag_name("tspan"))
+        .collect();
+    assert_eq!(spans.len(), 2);
+    let (x, y) = (
+        label.attribute("x").unwrap().parse::<f64>().unwrap(),
+        label.attribute("y").unwrap().parse::<f64>().unwrap(),
+    );
+    // rotated to the right of the bar: the first line where the one line was, the second
+    // further out (lower in the rotated text)
+    let at = |n: &Node, a: &str| n.attribute(a).unwrap().parse::<f64>().unwrap();
+    assert_near(at(&spans[0], "x"), x, "first line");
+    assert_near(at(&spans[0], "y"), y, "first line");
+    assert_near(at(&spans[1], "y"), y + 15.6, "second line");
+    let ticks = bar
+        .descendants()
+        .find(|n| n.attribute("class") == Some("sbmlsim-colorbar-tick-labels"))
+        .unwrap();
+    assert_eq!(ticks.attribute("font-weight"), Some("bold"));
+    assert_eq!(ticks.attribute("font-size"), Some("9"));
+}

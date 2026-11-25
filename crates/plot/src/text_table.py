@@ -1,9 +1,12 @@
-"""Writes the advance table of Inter of `text.rs` (UNITS_PER_EM, ASCII, OTHER) to stdout.
+"""Writes the advance tables of Inter of `text.rs` to stdout.
 
-    uv run --with fonttools python text_table.py Inter-Regular.ttf
+    uv run --no-project --with fonttools python text_table.py Inter-Regular.ttf Inter-Bold.ttf
 
-The font is `assets/fonts/Inter-Regular.ttf` of Charton 0.9.1 (Inter 4.001, git 9221beed3).
-The advance of a character is the one of its glyph in `hmtx`, found through the best `cmap`.
+The tables are UNITS_PER_EM, ASCII and OTHER of the regular font and, since 0.28.0,
+ASCII_BOLD and OTHER_BOLD of the bold one. The regular font is `assets/fonts/Inter-Regular.ttf`
+of Charton 0.9.1 (Inter 4.001, git 9221beed3), the bold one `crates/plot/fonts/Inter-Bold.ttf`
+of the same version. The advance of a character is the one of its glyph in `hmtx`, found
+through the best `cmap`.
 """
 
 import sys
@@ -33,8 +36,8 @@ OTHER = (
 )
 
 
-def main(path: str) -> None:
-    """Prints the glyph advance tables of the font at `path` as rust source."""
+def tables(path: str, suffix: str) -> tuple[int, list[str]]:
+    """The units per em of the font at `path` and its advance tables as rust source."""
     font = TTFont(path)
     cmap = font.getBestCmap()
     hmtx = font["hmtx"]
@@ -45,27 +48,36 @@ def main(path: str) -> None:
 
     ascii_ = [advance(c) for c in range(0x20, 0x7F)]
     others = [c for c in OTHER if c in cmap]
-    out = [
-        f"/// Font units per em of the table.\npub(crate) const UNITS_PER_EM: f64 = {upem}.0;\n"
-    ]
-    out.append("/// Advances of U+0020 to U+007E in font units.\n#[rustfmt::skip]")
-    out.append("pub(crate) const ASCII: [u16; 95] = [")
+    weight = " in the bold font" if suffix else ""
+    out = [f"/// Advances of U+0020 to U+007E{weight} in font units.\n#[rustfmt::skip]"]
+    out.append(f"pub(crate) const ASCII{suffix}: [u16; 95] = [")
     for i in range(0, 95, 16):
         out.append("    " + ", ".join(str(a) for a in ascii_[i : i + 16]) + ",")
     out.append("];\n")
     out.append(
-        "/// Advances of the other characters of the table in font units, sorted by character."
+        f"/// Advances of the other characters of the table{weight} in font units, sorted by"
+        " character."
     )
     out.append(
-        f"#[rustfmt::skip]\npub(crate) const OTHER: [(u32, u16); {len(others)}] = ["
+        f"#[rustfmt::skip]\npub(crate) const OTHER{suffix}: [(u32, u16); {len(others)}] = ["
     )
     for i in range(0, len(others), 6):
         out.append(
             "    " + " ".join(f"(0x{c:04x}, {advance(c)})," for c in others[i : i + 6])
         )
     out.append("];")
-    print("\n".join(out))
+    return upem, out
+
+
+def main(regular: str, bold: str) -> None:
+    """Prints the glyph advance tables of the regular and the bold font as rust source."""
+    upem, out = tables(regular, "")
+    bold_upem, bold_out = tables(bold, "_BOLD")
+    if bold_upem != upem:
+        raise SystemExit(f"units per em differ: {upem} and {bold_upem}")
+    head = f"/// Font units per em of the table.\npub(crate) const UNITS_PER_EM: f64 = {upem}.0;\n"
+    print("\n".join([head, *out, "", *bold_out]))
 
 
 if __name__ == "__main__":
-    main(sys.argv[1])
+    main(sys.argv[1], sys.argv[2])

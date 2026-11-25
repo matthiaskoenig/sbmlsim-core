@@ -1,7 +1,8 @@
 //! The legends of a figure, drawn by the crate (decision (a) of the spike: Charton's legend
 //! draws a point per category only).
 //!
-//! A legend has one entry per legend group of its elements ([`Element::legend_group`]), in the
+//! A legend has one entry per legend group of its elements
+//! ([`Element::legend_group`](crate::spec::Element::legend_group)), in the
 //! order the groups first appear: the label of the first element of the group which has one
 //! (else the name of the group) and the swatch of that element as it is drawn, a line with its
 //! dash, a marker, both, or a filled box with its edge. A legend of a row merges the entries of
@@ -12,18 +13,25 @@
 //! `Plot::legend_order` puts the groups it lists first, in its order, so a writer draws frozen
 //! runs under the live curves and still lists them last (as `plot.ts` does). A group whose
 //! elements differ in colour, a frozen run of every series of a panel, belongs to none of them:
-//! its swatch is drawn in the neutral colour `FG_SOFT`, with its dash. The frame of a legend is
-//! the room it takes in the layout ([`room`]), which holds the largest legend it may show, so
-//! nothing moves when entries come and go; the entries drawn now fill it from the top.
+//! its swatch is drawn in the neutral colour `FG_SOFT`, with its dash. `Plot::legend_swatches`
+//! (since 0.28.0) gives the swatch of a group a style of its own (the lines of a scan in the
+//! middle colour of their map), drawn as the kind of the element the entry stands for. The
+//! frame of a legend is the room it takes in the layout ([`room`]), which holds the largest
+//! legend it may show, so nothing moves when entries come and go; the entries drawn now fill it
+//! from the top. A label of several lines (since 0.28.0) makes its entry taller by its lines
+//! after the first, the lines centred on the entry and its swatch at its middle.
 
 use std::fmt::Write as _;
 
 use super::marks::{ERROR_WIDTH, Stroke, fill_of};
 use super::stats_marks::{outline_of, solid_fill};
 use crate::layout::Rect;
-use crate::spec::{Element, ElementKind, Fonts, MarkerType, Plot};
-use crate::svg::{MarkerGlyph, attr_css, attr_dash, attr_num, attr_opacity, escape, glyph, theme};
-use crate::text::text_width;
+use crate::spec::{ElementKind, Fonts, MarkerType, Plot, Style};
+use crate::svg::{
+    MarkerGlyph, Stack, attr_css, attr_dash, attr_num, attr_opacity, attr_weight, escape, glyph,
+    text_lines, theme,
+};
+use crate::text::{extra_lines, text_width_weighted};
 
 /// The padding inside the frame of a legend in pixels.
 pub(crate) const PADDING: f64 = 6.0;
@@ -88,10 +96,21 @@ pub(crate) fn plot_entries(plot: &Plot, colors: &[String], fonts: &Fonts) -> Vec
                 .filter(|(_, m)| m.legend_group() == Some(g));
             let mixed = members.any(|(k, _)| colors[k] != colors[i]);
             let color = if mixed { theme::FG_SOFT } else { &colors[i] };
+            // the swatch the plot gives the group, in its colour or the one of the entry
+            let given = plot.legend_swatches.as_ref().and_then(|s| s.get(g));
+            let swatch = match given {
+                Some(style) => swatch(
+                    &e.kind,
+                    style,
+                    style.color.as_deref().unwrap_or(color),
+                    fonts,
+                ),
+                None => swatch(&e.kind, &e.style, color, fonts),
+            };
             Entry {
                 legend: g.to_string(),
                 label: e.label.clone().unwrap_or_else(|| g.to_string()),
-                swatch: swatch(e, color, fonts),
+                swatch,
             }
         })
         .collect()
@@ -109,9 +128,10 @@ pub(crate) fn merge(lists: impl IntoIterator<Item = Vec<Entry>>) -> Vec<Entry> {
     out
 }
 
-/// The height of one entry in pixels.
-fn entry_height(fonts: &Fonts) -> f64 {
-    ENTRY_HEIGHT * fonts.legend
+/// The height of the entry of a label in pixels: [`ENTRY_HEIGHT`] font sizes and the lines of
+/// the label after its first.
+fn entry_height(label: &str, fonts: &Fonts) -> f64 {
+    ENTRY_HEIGHT * fonts.legend + extra_lines(label, fonts.legend)
 }
 
 /// The width and height of a legend of entries in pixels.
@@ -121,14 +141,18 @@ pub(crate) fn size(entries: &[Entry], fonts: &Fonts) -> (f64, f64) {
 
 /// The width and height of a legend of entries of these labels in pixels.
 fn size_of_labels<'a>(labels: impl IntoIterator<Item = &'a str>, fonts: &Fonts) -> (f64, f64) {
-    let (mut widest, mut rows) = (0.0f64, 0usize);
+    let (mut widest, mut height) = (0.0f64, 0.0f64);
     for label in labels {
-        widest = widest.max(text_width(label, fonts.legend));
-        rows += 1;
+        widest = widest.max(text_width_weighted(
+            label,
+            fonts.legend,
+            fonts.legend_weight,
+        ));
+        height += entry_height(label, fonts);
     }
     (
         2.0 * PADDING + SWATCH_WIDTH + SWATCH_GAP + widest,
-        2.0 * PADDING + rows as f64 * entry_height(fonts),
+        2.0 * PADDING + height,
     )
 }
 
@@ -167,15 +191,21 @@ pub(crate) fn room(entries: &[Entry], declared: &[&[String]], fonts: &Fonts) -> 
     Some((width, height))
 }
 
-/// The rectangles of the entries of a legend whose frame is `frame`.
-pub(crate) fn entry_rects(frame: Rect, count: usize, fonts: &Fonts) -> Vec<Rect> {
-    let h = entry_height(fonts);
-    (0..count)
-        .map(|k| Rect {
-            x: frame.x + PADDING,
-            y: frame.y + PADDING + k as f64 * h,
-            width: frame.width - 2.0 * PADDING,
-            height: h,
+/// The rectangles of the entries of a legend whose frame is `frame`, from its top.
+pub(crate) fn entry_rects(frame: Rect, entries: &[Entry], fonts: &Fonts) -> Vec<Rect> {
+    let mut y = frame.y + PADDING;
+    entries
+        .iter()
+        .map(|e| {
+            let height = entry_height(&e.label, fonts);
+            let r = Rect {
+                x: frame.x + PADDING,
+                y,
+                width: frame.width - 2.0 * PADDING,
+                height,
+            };
+            y += height;
+            r
         })
         .collect()
 }
@@ -203,7 +233,7 @@ pub(crate) fn draw(
         theme::BACKGROUND,
         theme::GRID
     );
-    for (e, r) in entries.iter().zip(entry_rects(frame, entries.len(), fonts)) {
+    for (e, r) in entries.iter().zip(entry_rects(frame, entries, fonts)) {
         let cy = r.y + r.height / 2.0;
         out.push_str("<g class=\"sbmlsim-legend-entry\" data-legend=\"");
         escape(out, &e.legend);
@@ -218,15 +248,17 @@ pub(crate) fn draw(
             out.push_str("</g>");
         }
         out.push_str("<text class=\"sbmlsim-legend-label\"");
-        attr_num(out, "x", r.x + SWATCH_WIDTH + SWATCH_GAP);
+        let x = r.x + SWATCH_WIDTH + SWATCH_GAP;
+        attr_num(out, "x", x);
         attr_num(out, "y", cy);
         attr_num(out, "font-size", fonts.legend);
+        attr_weight(out, fonts.legend_weight);
         let _ = write!(
             out,
             " fill=\"{}\" dominant-baseline=\"central\">",
             theme::FG
         );
-        escape(out, &e.label);
+        text_lines(out, &e.label, (x, cy), fonts.legend, Stack::Centred);
         out.push_str("</text></g>");
     }
     out.push_str("</g>");
@@ -273,11 +305,10 @@ fn filled(out: &mut String, (fill, opacity): (&str, f64), edge: Option<&Stroke>,
     out.push_str("/>");
 }
 
-/// The swatch of an element as it is drawn.
-fn swatch(e: &Element, color: &str, fonts: &Fonts) -> String {
-    let style = &e.style;
+/// The swatch of an element of a kind drawn with a style in a colour.
+fn swatch(kind: &ElementKind, style: &Style, color: &str, fonts: &Fonts) -> String {
     let mut out = String::new();
-    match &e.kind {
+    match kind {
         ElementKind::Curve { xerr, yerr, .. } => {
             if let Some(s) = Stroke::of_line(style, color) {
                 line(&mut out, &s);
@@ -323,7 +354,13 @@ fn swatch(e: &Element, color: &str, fonts: &Fonts) -> String {
             let (fill, opacity) = fill_of(style, color);
             filled(&mut out, (&fill, opacity), None, fonts);
         }
-        ElementKind::Bar { .. } | ElementKind::Histogram { .. } => {
+        ElementKind::Bar { .. } => {
+            // the outline of the bars: the line the style gives
+            let (fill, opacity) = solid_fill(style, color);
+            let edge = style.line.and_then(|l| Stroke::of(l, style, color));
+            filled(&mut out, (&fill, opacity), edge.as_ref(), fonts);
+        }
+        ElementKind::Histogram { .. } => {
             let (fill, opacity) = solid_fill(style, color);
             filled(&mut out, (&fill, opacity), None, fonts);
         }

@@ -1,4 +1,4 @@
-use sbmlsim_plot::{ElementKind, FIGURE_CONTRACT, parse};
+use sbmlsim_plot::{ElementKind, FIGURE_CONTRACT, FontWeight, parse};
 
 fn base(plot: &str) -> String {
     format!(
@@ -40,8 +40,56 @@ fn defaults_apply() {
     let p = &f.plots[0];
     assert!(p.legend && p.row_span == 1 && p.x.label_visible);
     let e = &p.elements[0];
-    assert_eq!(e.style.line.width, 2.0);
+    assert_eq!(e.style.line_or_default().width, 2.0);
+    assert!(e.style.line.is_none());
     assert!(matches!(e.kind, ElementKind::Curve { .. }));
+    // the fonts of 0.28.0: titles bold, the rest normal, the y ticks of the x size
+    assert_eq!(f.fonts.title_weight, FontWeight::Bold);
+    assert_eq!(f.fonts.label_weight, FontWeight::Normal);
+    assert_eq!(f.fonts.y_tick(), 11.0);
+    assert!(p.x.marks_visible() && p.x.tick_marks_visible.is_none());
+}
+
+#[test]
+fn fields_of_0_28_are_checked() {
+    let curve = r#"{"id":"a","kind":"curve","label":"a","x":[1],"y":[2],
+        "style":{"marker":{"type":"circle","fill":"none"}}}"#;
+    // a hollow marker is no color
+    assert!(parse(&base(&plot("", curve))).is_ok());
+    let wrong = curve.replace("\"none\"", "\"nope\"");
+    assert_eq!(
+        parse(&base(&plot("", &wrong))).unwrap_err().path,
+        "plots[0].elements[0].style.marker.fill"
+    );
+    // a size of the y ticks is positive, a weight normal or bold
+    let fonts = base(&plot("", curve)).replacen("\"grid\"", "\"fonts\":{\"tick_y\":0},\"grid\"", 1);
+    assert_eq!(parse(&fonts).unwrap_err().path, "fonts.tick_y");
+    let weight = base(&plot("", curve)).replacen(
+        "\"grid\"",
+        "\"fonts\":{\"label_weight\":\"heavy\"},\"grid\"",
+        1,
+    );
+    assert!(
+        parse(&weight)
+            .unwrap_err()
+            .path
+            .starts_with("fonts.label_weight")
+    );
+    // the swatch of a legend group: a key is a group of the plot, its style is checked
+    let swatches = |extra: &str| base(&plot(extra, curve));
+    assert!(parse(&swatches(r#""legend_swatches":{"a":{"opacity":0.5}},"#)).is_ok());
+    assert_eq!(
+        parse(&swatches(r#""legend_swatches":{"b":{}},"#))
+            .unwrap_err()
+            .path,
+        "plots[0].legend_swatches.b"
+    );
+    assert_eq!(
+        parse(&swatches(r#""legend_swatches":{"a":{"opacity":2}},"#))
+            .unwrap_err()
+            .path,
+        "plots[0].legend_swatches.a.opacity"
+    );
 }
 
 #[test]

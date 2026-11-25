@@ -12,14 +12,19 @@ use super::axis::{ResolvedAxis, axis_title};
 use super::{TICK_LABEL_PADDING, TICK_LENGTH, TITLE_GAP};
 use crate::layout::Rect;
 use crate::spec::{Axis, Fonts};
-use crate::svg::{attr_num, escape, num, theme};
-use crate::text::{label_extent, text_width};
+use crate::svg::{Stack, attr_num, attr_weight, escape, num, text_lines, theme};
+use crate::text::{extra_lines, label_extent, text_width_weighted};
 
 /// The right axis laid out over its ticks.
 #[derive(Debug, Clone)]
 pub(crate) struct RightAxis {
-    /// The ticks as coordinates of the axis with their labels.
+    /// The ticks as coordinates of the axis with their labels, none when neither the marks nor
+    /// the labels are shown.
     ticks: Vec<(f64, String)>,
+    /// Whether the tick marks are shown.
+    marks: bool,
+    /// Whether the tick labels are shown.
+    labels: bool,
     /// The title, `None` when it is hidden or empty.
     title: Option<String>,
     /// The distance from the spine to the far side of the tick labels.
@@ -30,37 +35,40 @@ pub(crate) struct RightAxis {
 
 /// Lays out the right axis `axis`, resolved as `resolved`.
 pub(crate) fn layout(axis: &Axis, resolved: &ResolvedAxis, fonts: &Fonts) -> RightAxis {
-    let ticks = if axis.ticks_visible {
+    let (labels, marks) = (axis.ticks_visible, axis.marks_visible());
+    let ticks = if labels || marks {
         resolved.tick_coordinates()
     } else {
         Vec::new()
     };
+    let tick = fonts.y_tick();
     let widest = ticks
         .iter()
         .map(|(_, l)| {
             label_extent(
-                text_width(l, fonts.tick),
-                fonts.tick,
+                text_width_weighted(l, tick, fonts.tick_weight),
+                tick,
                 axis.tick_rotation,
                 false,
             )
         })
         .fold(0.0, f64::max);
-    let labels_depth = if axis.ticks_visible {
+    let labels_depth = if labels {
         TICK_LENGTH + TICK_LABEL_PADDING + widest
+    } else if marks {
+        TICK_LENGTH
     } else {
         0.0
     };
     let name = axis_title(axis);
+    // a title of several lines stacks them outwards, away from the axis
+    let title_room = TITLE_GAP + fonts.label + extra_lines(&name, fonts.label);
     let title = (axis.label_visible && !name.is_empty()).then_some(name);
-    let depth = labels_depth
-        + if title.is_some() {
-            TITLE_GAP + fonts.label
-        } else {
-            0.0
-        };
+    let depth = labels_depth + if title.is_some() { title_room } else { 0.0 };
     RightAxis {
         ticks,
+        marks,
+        labels,
         title,
         labels_depth,
         depth,
@@ -92,7 +100,7 @@ pub(crate) fn draw(
         "\" fill=\"none\" stroke=\"{}\" stroke-width=\"1\"/></g>",
         theme::FG_SOFT
     );
-    if !layout.ticks.is_empty() {
+    if layout.marks && !layout.ticks.is_empty() {
         out.push_str("<g class=\"charton-tick\">");
         for (u, _) in &layout.ticks {
             let y = y_of(*u);
@@ -110,7 +118,10 @@ pub(crate) fn draw(
                 theme::FG_SOFT
             );
         }
-        out.push_str("</g><g class=\"charton-tick-label\">");
+        out.push_str("</g>");
+    }
+    if layout.labels && !layout.ticks.is_empty() {
+        out.push_str("<g class=\"charton-tick-label\">");
         // a label rotated about the middle of its start reaches half its line height times the
         // sine back towards the axis; it starts that much further out, so the rotated label
         // spans `label_extent` from the padding on, as the layout reserved
@@ -119,13 +130,15 @@ pub(crate) fn draw(
         } else {
             libm::sin(axis.tick_rotation * std::f64::consts::PI / 180.0).abs()
         };
-        let lx = x + TICK_LENGTH + TICK_LABEL_PADDING + fonts.tick / 2.0 * sin;
+        let tick = fonts.y_tick();
+        let lx = x + TICK_LENGTH + TICK_LABEL_PADDING + tick / 2.0 * sin;
         for (u, label) in &layout.ticks {
             let y = y_of(*u);
             out.push_str("<text");
             attr_num(out, "x", lx);
             attr_num(out, "y", y);
-            attr_num(out, "font-size", fonts.tick);
+            attr_num(out, "font-size", tick);
+            attr_weight(out, fonts.tick_weight);
             let _ = write!(
                 out,
                 " fill=\"{}\" dominant-baseline=\"central\"",
@@ -155,6 +168,7 @@ pub(crate) fn draw(
         attr_num(out, "x", tx);
         attr_num(out, "y", ty);
         attr_num(out, "font-size", fonts.label);
+        attr_weight(out, fonts.label_weight);
         let _ = write!(
             out,
             " fill=\"{}\" text-anchor=\"middle\" dominant-baseline=\"middle\" transform=\"rotate(-90 ",
@@ -164,7 +178,8 @@ pub(crate) fn draw(
         out.push(' ');
         num(out, ty);
         out.push_str(")\">");
-        escape(out, title);
+        // the lines stack outwards, right of the axis: down in the rotated text
+        text_lines(out, title, (tx, ty), fonts.label, Stack::Down);
         out.push_str("</text></g>");
     }
     out.push_str("</g>");

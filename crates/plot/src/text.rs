@@ -1,19 +1,30 @@
 //! The width of a text in the bundled font, Inter, from a table of its advances.
 //!
 //! Every width the crate lays out with is measured here, so a figure is laid out the same
-//! natively and in wasm, whatever fonts the machine has. The table is the advance of every
+//! natively and in wasm, whatever fonts the machine has. The tables are the advance of every
 //! character of ASCII, Latin-1, Greek and of a few signs of units and numbers in
 //! `Inter-Regular.ttf` 4.001 (git 9221beed3), the font Charton 0.9.1 bundles
-//! (`assets/fonts/Inter-Regular.ttf`). It was written by `text_table.py` next to this file,
-//! with fontTools, outside of the uv project of the repository:
+//! (`assets/fonts/Inter-Regular.ttf`), and, since 0.28.0, in `Inter-Bold.ttf` of the same
+//! version (`crates/plot/fonts/Inter-Bold.ttf`), which measures a text of the weight bold. They
+//! were written by `text_table.py` next to this file, with fontTools, outside of the uv project
+//! of the repository:
 //!
 //! ```text
-//! uv run --no-project --with fonttools python crates/plot/src/text_table.py Inter-Regular.ttf
+//! uv run --no-project --with fonttools python crates/plot/src/text_table.py \
+//!     crates/plot/fonts/Inter-Regular.ttf crates/plot/fonts/Inter-Bold.ttf
 //! ```
 //!
 //! which takes `head.unitsPerEm` and, for every character of the ranges, the
 //! advance of its glyph in `hmtx` through the best `cmap`. Kerning is not applied; a character
 //! outside of the table takes the advance of the digit zero.
+//!
+//! A text of several lines (since 0.28.0) is split at every `\n`: it is as wide as its widest
+//! line, and its lines are [`LINE_HEIGHT`] font sizes apart.
+
+use crate::spec::FontWeight;
+
+/// The distance of two lines of a text in font sizes.
+pub(crate) const LINE_HEIGHT: f64 = 1.2;
 
 /// Font units per em of the table.
 pub(crate) const UNITS_PER_EM: f64 = 2048.0;
@@ -74,21 +85,110 @@ pub(crate) const OTHER: [(u32, u16); 239] = [
     (0x221e, 1917), (0x2248, 1355), (0x2260, 1355), (0x2264, 1355), (0x2265, 1355),
 ];
 
-/// The advance of a character in font units.
-fn advance(c: char) -> u16 {
+/// Advances of U+0020 to U+007E in the bold font in font units.
+#[rustfmt::skip]
+pub(crate) const ASCII_BOLD: [u16; 95] = [
+    485, 692, 1130, 1329, 1341, 2080, 1376, 694, 772, 772, 1145, 1390, 684, 958, 684, 795,
+    1381, 883, 1290, 1322, 1385, 1274, 1330, 1191, 1333, 1330, 684, 702, 1390, 1390, 1390, 1146,
+    2081, 1529, 1355, 1515, 1479, 1244, 1202, 1537, 1530, 575, 1197, 1473, 1158, 1908, 1561, 1578,
+    1327, 1591, 1345, 1341, 1367, 1499, 1529, 2125, 1512, 1497, 1360, 772, 795, 772, 997, 975,
+    748, 1189, 1291, 1205, 1291, 1220, 815, 1294, 1275, 555, 555, 1188, 555, 1869, 1275, 1256,
+    1291, 1291, 834, 1147, 750, 1275, 1228, 1741, 1188, 1233, 1173, 960, 761, 960, 1390,
+];
+
+/// Advances of the other characters of the table in the bold font in font units, sorted by character.
+#[rustfmt::skip]
+pub(crate) const OTHER_BOLD: [(u32, u16); 239] = [
+    (0x00a0, 485), (0x00a1, 692), (0x00a2, 1205), (0x00a3, 1308), (0x00a4, 1560), (0x00a5, 1168),
+    (0x00a6, 694), (0x00a7, 1164), (0x00a8, 1275), (0x00a9, 1872), (0x00aa, 950), (0x00ab, 1352),
+    (0x00ac, 1390), (0x00ae, 1356), (0x00af, 899), (0x00b0, 941), (0x00b1, 1390), (0x00b2, 942),
+    (0x00b3, 966), (0x00b4, 748), (0x00b5, 1286), (0x00b6, 1226), (0x00b7, 684), (0x00b8, 746),
+    (0x00b9, 682), (0x00ba, 1003), (0x00bb, 1352), (0x00bc, 1732), (0x00bd, 1805), (0x00be, 1884),
+    (0x00bf, 1146), (0x00c0, 1529), (0x00c1, 1529), (0x00c2, 1529), (0x00c3, 1529), (0x00c4, 1529),
+    (0x00c5, 1529), (0x00c6, 2094), (0x00c7, 1515), (0x00c8, 1244), (0x00c9, 1244), (0x00ca, 1244),
+    (0x00cb, 1244), (0x00cc, 575), (0x00cd, 575), (0x00ce, 575), (0x00cf, 575), (0x00d0, 1556),
+    (0x00d1, 1561), (0x00d2, 1578), (0x00d3, 1578), (0x00d4, 1578), (0x00d5, 1578), (0x00d6, 1578),
+    (0x00d7, 1390), (0x00d8, 1578), (0x00d9, 1499), (0x00da, 1499), (0x00db, 1499), (0x00dc, 1499),
+    (0x00dd, 1497), (0x00de, 1370), (0x00df, 1346), (0x00e0, 1189), (0x00e1, 1189), (0x00e2, 1189),
+    (0x00e3, 1189), (0x00e4, 1189), (0x00e5, 1189), (0x00e6, 1864), (0x00e7, 1205), (0x00e8, 1220),
+    (0x00e9, 1220), (0x00ea, 1220), (0x00eb, 1220), (0x00ec, 555), (0x00ed, 555), (0x00ee, 555),
+    (0x00ef, 555), (0x00f0, 1227), (0x00f1, 1275), (0x00f2, 1256), (0x00f3, 1256), (0x00f4, 1256),
+    (0x00f5, 1256), (0x00f6, 1256), (0x00f7, 1390), (0x00f8, 1256), (0x00f9, 1275), (0x00fa, 1275),
+    (0x00fb, 1275), (0x00fc, 1275), (0x00fd, 1233), (0x00fe, 1291), (0x00ff, 1233), (0x0374, 598),
+    (0x0375, 600), (0x0376, 1561), (0x037a, 602), (0x037b, 1205), (0x037c, 1205), (0x037d, 1205),
+    (0x037e, 702), (0x037f, 1197), (0x0384, 698), (0x0385, 1477), (0x0386, 1529), (0x0387, 684),
+    (0x0388, 1628), (0x0389, 1914), (0x038a, 959), (0x038c, 1885), (0x038e, 1967), (0x038f, 1894),
+    (0x0390, 633), (0x0391, 1529), (0x0392, 1355), (0x0393, 1193), (0x0394, 1521), (0x0395, 1244),
+    (0x0396, 1360), (0x0397, 1530), (0x0398, 1578), (0x0399, 575), (0x039a, 1473), (0x039b, 1529),
+    (0x039c, 1908), (0x039d, 1561), (0x039e, 1408), (0x039f, 1578), (0x03a0, 1530), (0x03a1, 1327),
+    (0x03a3, 1420), (0x03a4, 1367), (0x03a5, 1497), (0x03a6, 1829), (0x03a7, 1512), (0x03a8, 1831),
+    (0x03a9, 1601), (0x03aa, 575), (0x03ab, 1497), (0x03ac, 1421), (0x03ad, 1142), (0x03ae, 1275),
+    (0x03af, 633), (0x03b0, 1274), (0x03b1, 1421), (0x03b2, 1248), (0x03b3, 1228), (0x03b4, 1239),
+    (0x03b5, 1142), (0x03b6, 1094), (0x03b7, 1275), (0x03b8, 1284), (0x03b9, 633), (0x03ba, 1201),
+    (0x03bb, 1398), (0x03bc, 1286), (0x03bd, 1259), (0x03be, 1143), (0x03bf, 1256), (0x03c0, 1309),
+    (0x03c1, 1291), (0x03c2, 1203), (0x03c3, 1333), (0x03c4, 1045), (0x03c5, 1274), (0x03c6, 1635),
+    (0x03c7, 1233), (0x03c8, 1700), (0x03c9, 1707), (0x03ca, 633), (0x03cb, 1274), (0x03cc, 1256),
+    (0x03cd, 1274), (0x03ce, 1707), (0x03cf, 1473), (0x03d0, 1371), (0x03d1, 1368), (0x03d2, 1452),
+    (0x03d3, 1888), (0x03d4, 1452), (0x03d5, 1535), (0x03d6, 1899), (0x03d7, 1201), (0x03dc, 1223),
+    (0x03dd, 1100), (0x03f0, 1560), (0x03f1, 1371), (0x03f2, 1205), (0x03f3, 555), (0x03f4, 1578),
+    (0x03f5, 980), (0x03f6, 980), (0x03f9, 1515), (0x03fa, 1908), (0x03fc, 1291), (0x03fd, 1515),
+    (0x03fe, 1515), (0x03ff, 1515), (0x2013, 1024), (0x2014, 2048), (0x2018, 636), (0x2019, 636),
+    (0x201c, 1106), (0x201d, 1089), (0x2022, 971), (0x2026, 2052), (0x2030, 2846), (0x2032, 562),
+    (0x2033, 1121), (0x2070, 1015), (0x2074, 997), (0x2075, 971), (0x2076, 973), (0x2077, 869),
+    (0x2078, 985), (0x2079, 973), (0x207a, 963), (0x207b, 964), (0x2080, 1015), (0x2081, 682),
+    (0x2082, 942), (0x2083, 966), (0x2084, 997), (0x2085, 971), (0x2086, 973), (0x2087, 869),
+    (0x2088, 985), (0x2089, 973), (0x2190, 1954), (0x2192, 1954), (0x2212, 1390), (0x221a, 1371),
+    (0x221e, 2008), (0x2248, 1390), (0x2260, 1390), (0x2264, 1390), (0x2265, 1390),
+];
+
+/// The advance of a character in font units, in the regular or the bold font.
+fn advance(c: char, weight: FontWeight) -> u16 {
+    let (ascii, other) = match weight {
+        FontWeight::Normal => (&ASCII, &OTHER[..]),
+        FontWeight::Bold => (&ASCII_BOLD, &OTHER_BOLD[..]),
+    };
     let code = c as u32;
     if (0x20..0x7f).contains(&code) {
-        return ASCII[(code - 0x20) as usize];
+        return ascii[(code - 0x20) as usize];
     }
-    match OTHER.binary_search_by_key(&code, |&(c, _)| c) {
-        Ok(i) => OTHER[i].1,
-        Err(_) => ASCII[(u32::from('0') - 0x20) as usize],
+    match other.binary_search_by_key(&code, |&(c, _)| c) {
+        Ok(i) => other[i].1,
+        Err(_) => ascii[(u32::from('0') - 0x20) as usize],
     }
 }
 
-/// The width of a text in pixels at a font size in pixels, in Inter Regular.
+/// The lines of a text: its parts between the `\n`.
+pub(crate) fn lines(text: &str) -> std::str::Split<'_, char> {
+    text.split('\n')
+}
+
+/// The number of lines of a text, at least one.
+pub(crate) fn line_count(text: &str) -> usize {
+    text.matches('\n').count() + 1
+}
+
+/// The pixels the lines of a text after its first take at a font size, 0 for one line.
+pub(crate) fn extra_lines(text: &str, size: f64) -> f64 {
+    (line_count(text) - 1) as f64 * LINE_HEIGHT * size
+}
+
+/// The width of a text in pixels at a font size in pixels, in Inter Regular: the width of its
+/// widest line.
 pub fn text_width(text: &str, size: f64) -> f64 {
-    let units: u64 = text.chars().map(|c| u64::from(advance(c))).sum();
+    text_width_weighted(text, size, FontWeight::Normal)
+}
+
+/// The width of a text in pixels at a font size in pixels, in Inter of a weight (since 0.28.0):
+/// the width of its widest line.
+pub fn text_width_weighted(text: &str, size: f64, weight: FontWeight) -> f64 {
+    let units = lines(text)
+        .map(|line| {
+            line.chars()
+                .map(|c| u64::from(advance(c, weight)))
+                .sum::<u64>()
+        })
+        .max()
+        .unwrap_or(0);
     units as f64 * size / UNITS_PER_EM
 }
 
@@ -137,6 +237,19 @@ mod tests {
     #[test]
     fn table_is_sorted() {
         assert!(OTHER.windows(2).all(|w| w[0].0 < w[1].0));
+        assert!(OTHER_BOLD.windows(2).all(|w| w[0].0 < w[1].0));
         assert!(text_width("µ°²αβ", 10.0) > 0.0);
+    }
+
+    #[test]
+    fn bold_and_lines() {
+        // fontTools on Inter-Bold.ttf at 13 px
+        let bold = text_width_weighted("Smith2001", 13.0, FontWeight::Bold);
+        assert!((bold - 68.08).abs() < 0.01, "{bold}");
+        assert!(bold > text_width("Smith2001", 13.0));
+        assert_eq!(text_width("a\nbbb\ncc", 10.0), text_width("bbb", 10.0));
+        assert_eq!(line_count("a\nb\n"), 3);
+        assert_eq!(extra_lines("one", 10.0), 0.0);
+        assert!((extra_lines("one\ntwo", 10.0) - 12.0).abs() < 1e-12);
     }
 }

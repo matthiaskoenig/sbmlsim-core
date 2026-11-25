@@ -128,15 +128,16 @@ pub(crate) fn solid_fill(style: &Style, color: &str) -> (String, f64) {
 /// The lines of a box or a violin: the line of the style, a solid line of [`ERROR_WIDTH`] for
 /// a style without one, since a box is its lines.
 pub(crate) fn outline_of(style: &Style, color: &str) -> Stroke {
-    let width = if style.line.width > 0.0 {
-        style.line.width
+    let line = style.line_or_default();
+    let width = if line.width > 0.0 {
+        line.width
     } else {
         ERROR_WIDTH
     };
     Stroke {
         color: color.to_string(),
         width,
-        dash: dash(style.line.kind, width),
+        dash: dash(line.kind, width),
         opacity: style.opacity,
     }
 }
@@ -177,7 +178,8 @@ pub(crate) struct Bars<'a> {
     pub width: Option<f64>,
 }
 
-/// The layers of bars: one ring per bar from 0 to its height, and a line per error.
+/// The layers of bars: one ring per bar from 0 to its height, outlined by the line the style
+/// gives (none without one), and a line per error.
 pub(crate) fn bar_layers(
     layers: &mut Layers,
     index: usize,
@@ -200,7 +202,9 @@ pub(crate) fn bar_layers(
         })
         .collect();
     let (fill, opacity) = solid_fill(style, color);
-    if let Some(l) = rings_layer(&rings, Some((&fill, opacity)), None)? {
+    // the outline of the bars: the line of the style when it gives one (since 0.28.0)
+    let outline = style.line.and_then(|l| Stroke::of(l, style, color));
+    if let Some(l) = rings_layer(&rings, Some((&fill, opacity)), outline.as_ref())? {
         layers.push(l, info(index));
     }
     if let Some(err) = bars.err {

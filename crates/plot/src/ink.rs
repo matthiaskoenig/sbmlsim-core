@@ -223,8 +223,9 @@ impl Ink {
         // pixels from the coordinates of the axes, and from values
         let pu = move |x: f64, y: f64| (w * xa.share(x), h * (1.0 - ya.share(y)));
         let at = move |x: f64, y: f64| pu(xa.u(x), ya.u(y));
-        let lined = style.line.kind != LineType::None && style.line.width > 0.0;
-        let line_width = if lined { style.line.width } else { 0.0 };
+        let line = style.line_or_default();
+        let lined = line.kind != LineType::None && line.width > 0.0;
+        let line_width = if lined { line.width } else { 0.0 };
         let marker = &style.marker;
         match kind {
             ElementKind::Curve { x, y, xerr, yerr } => {
@@ -292,7 +293,7 @@ impl Ink {
             }
             ElementKind::Box { positions, stats } => {
                 let bw = BOX_WIDTH * spacing(positions);
-                let stroke = if lined { style.line.width } else { ERROR_WIDTH };
+                let stroke = if lined { line.width } else { ERROR_WIDTH };
                 let size = if marker.kind != MarkerType::None {
                     marker.size
                 } else {

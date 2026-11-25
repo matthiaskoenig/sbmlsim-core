@@ -40,14 +40,16 @@ The contract id is `figure/1` (`FIGURE_CONTRACT` in python, `sbmlsim_plot::FIGUR
 | `contract` | text | required | must be `figure/1` |
 | `width`, `height` | number | required | size of the figure in pixels, positive and at most 16384; legends outside the plots make the figure drawn larger, see below |
 | `title` | text | none | title above all plots |
-| `fonts` | Fonts | see below | font sizes |
+| `fonts` | Fonts | see below | font sizes and weights |
 | `grid` | Grid | required | the grid the plots are placed in |
 | `legend` | LegendSettings | see below | legend settings of the figure |
 | `plots` | list of Plot | required | the plots |
 
-`Fonts` has `title` (16), `label` (13), `tick` (11) and `legend` (11), in points, each positive. `Grid` has `rows` and `columns` (at least 1 and at most 64) and `wspace` and `hspace` (0.3), the space between plots as a fraction of a plot, not negative. `LegendSettings` has `scope` (`plot`, a legend per plot, or `row`, one legend per row of the grid) and `position` (`inside` or `outside`, right of the plot).
+`Fonts` has `title` (16), `label` (13), `tick` (11) and `legend` (11), in points, each positive. Since 0.28.0 it also has `tick_y` (the size of the tick labels of the y axes and the color bars, positive; absent, `tick`, which then is the size of the x tick labels only) and the weights `title_weight` (`bold`, the figure title and the plot titles), `label_weight` (`normal`, the axis titles and the color bar labels), `tick_weight` (`normal`, every tick label) and `legend_weight` (`normal`, the legend labels), each `normal` or `bold`; a text of the weight `bold` is measured with the advances of Inter Bold and drawn with `font-weight="bold"`, so the room of bold tick labels and legend labels is their bold width. `Grid` has `rows` and `columns` (at least 1 and at most 64) and `wspace` and `hspace` (0.3), the space between plots as a fraction of a plot, not negative. `LegendSettings` has `scope` (`plot`, a legend per plot, or `row`, one legend per row of the grid) and `position` (`inside` or `outside`, right of the plot).
 
 A legend `inside` goes into the corner of the panel of its plot (of a row: of its rightmost plot with a legend) whose frame covers the least ink of the data, the upper right, upper left, lower right and lower left corner in this order on a tie. The ink is everything the data draws: every line (sampled at the pixel resolution of the panel, with its width), every marker and error bar, every bar, box, histogram bin and heatmap, and the interiors of bands, areas, violins and polygons, rasterized into a grid of 4 pixel cells over the panel. Since 0.28.0 a legend whose best corner still covers more than `INSIDE_LIMIT` (0.05) of its frame with ink goes outside, right of its plot (of its row), as a legend which does not fit into its panel does, so a legend is never drawn over a crowded panel; before 0.28.0 the corners were scored by the lines and points of the data alone, and bars, error bars, bands, areas and heatmaps did not count.
+
+Since 0.28.0 every text of the spec, a figure or plot title, an axis label with its unit, a legend label, a text element and a color bar label, may hold `\n`, which splits it into lines 1.2 font sizes apart, each a `<tspan>` with its own `x` and `y`; a text is as wide as its widest line. The figure title band grows by the lines after the first, its lines centred in it; the lines of a plot title stack up from the line of a one-line title, which keeps its place above the panel; the lines of an axis title or a color bar label stack outwards from the line next to the axis or the bar (below the x axis, left of the y axis, right of the right axis and of a bar), so the room of the axis grows by them; a legend entry grows by them, its lines centred on the entry and its swatch at its middle, and the legend, its placement and the room of an outside legend in its row take the grown entries; the lines of a text element are centred on its position.
 
 The `width` and `height` of the spec are the size of the figure before its legends grow it: a legend right of a plot or of a row (`outside`, or an `inside` legend which does not fit into its panel or would cover too much of its data, see above, and is placed right of it) widens the figure by its room, and a legend taller than its row heightens it, while the panels keep their size. The SVG has the grown size as its `width`, `height` and `viewBox`, the PNG is the grown size times `dpi / 72`, and the geometry reports it as `width` and `height`, so a page sizes its container from the geometry and not from the spec.
 
@@ -65,6 +67,7 @@ The `width` and `height` of the spec are the size of the figure before its legen
 | `colorbar` | ColorBar | none | a color bar |
 | `colorbars` | list of ColorBar | none | several color bars, stacked right of the panel in their order, each with its own label; refused together with `colorbar` (since 0.28.0) |
 | `declared_legends` | list of list of text | none | the legends the plot may show in some state of a page, each a list of entry labels: the legend takes the room of the largest of them, so the plot and the figure keep their size when entries come and go, and a label without an element is not drawn; absent, the legend takes the room of the entries drawn |
+| `legend_swatches` | map of text to Style | none | the swatch of a legend group by group, drawn with this style instead of the style of the element of its entry (or of the neutral color of a group of elements of different colors), as the kind of that element; a style without `color` takes the color of the entry; every key must be a legend group of the plot; e.g. the lines of a scan in one group shown with the middle color of their map (since 0.28.0) |
 | `legend_order` | list of text | none | the order of the legend entries as legend groups: the listed groups first in this order, the others after them in the order their elements first appear; a listed group without elements is ignored, a group listed twice is refused; it lets a writer draw elements under others and still list them last |
 | `elements` | list of Element | required | what the plot draws, in the order of drawing |
 
@@ -82,7 +85,8 @@ The `width` and `height` of the spec are the size of the figure before its legen
 | `reverse` | boolean | false | reversed direction |
 | `grid` | boolean | false | grid lines |
 | `label_visible` | boolean | true | whether the label is shown |
-| `ticks_visible` | boolean | true | whether the ticks are shown |
+| `ticks_visible` | boolean | true | whether the tick labels are shown, and the tick marks without `tick_marks_visible` |
+| `tick_marks_visible` | boolean | none | whether the tick marks are shown, independent of the labels; absent, the marks follow `ticks_visible` as before 0.28.0 (since 0.28.0) |
 | `tick_rotation` | number | 0 | rotation of the tick labels in degrees |
 
 ### Element
@@ -103,7 +107,7 @@ An element is one flat object with the common fields and the fields of its `kind
 | `curve` | `x`, `y`, optional `xerr`, `yerr` | a line and/or markers with error bars, all of the length of `x` |
 | `band` | `x`, `low`, `high`, optional `median` | a band between two curves with a median line |
 | `area` | `x`, `from`, `to` | a filled area between two curves |
-| `bar` | `x`, `height`, optional `err`, `horizontal` (false), `width` | bars at positions or category indices; `width` in axis units, positive |
+| `bar` | `x`, `height`, optional `err`, `horizontal` (false), `width` | bars at positions or category indices; `width` in axis units, positive; a bar is outlined by the `line` of its style when the style gives one and its type is not `none` (since 0.28.0), and has no outline without it |
 | `box` | `positions`, `stats` | box plots, `stats` one per position: `low_whisker <= q1 <= median <= q3 <= high_whisker` and `outliers` (default empty) |
 | `violin` | `positions`, `densities` | violins, one `Density` (`values` and `density` of one length) per position |
 | `histogram` | `edges`, `counts` | `edges` has one more value than `counts` and is not empty |
@@ -114,7 +118,7 @@ An element is one flat object with the common fields and the fields of its `kind
 
 ### Style
 
-`color` (`#rrggbb`; absent, the cycle by element position), `opacity` (1, between 0 and 1), `line` (`type` of `solid`, `dashed`, `dotted`, `dashdot`, `none`, default `solid`, and `width` in pixels, 2, not negative), `marker` (`type` of `none`, `circle`, `square`, `triangle`, `diamond`, `cross`, `plus`, `x`, default `none`; `size` 6; `fill` and `edge` colors; `edge_width` 1) and `fill` (`color` and `opacity` 1).
+`color` (`#rrggbb`; absent, the cycle by element position), `opacity` (1, between 0 and 1), `line` (`type` of `solid`, `dashed`, `dotted`, `dashdot`, `none`, default `solid`, and `width` in pixels, 2, not negative; absent, this default line, which every kind draws but a bar, whose outline is a line the style gives, since 0.28.0), `marker` (`type` of `none`, `circle`, `square`, `triangle`, `diamond`, `cross`, `plus`, `x`, default `none`; `size` 6; `fill` and `edge` colors, absent the color of the element; `fill` may be `none` for a hollow marker, drawn as its edge alone, since 0.28.0; `edge_width` 1) and `fill` (`color` and `opacity` 1).
 
 ### Color scales
 
@@ -126,7 +130,7 @@ The python function `color_scale(name, low, high, values, center=None, log=False
 
 ### Errors
 
-A spec the renderer refuses is reported as `path: what is wrong`, the path in the notation of the spec, e.g. `plots[0].elements[1].y: 3 values, x has 4`, `plots[0].x.categories: a category axis needs categories`, `plots[0].elements[0].scale.name: unknown color scale ...` or `contract: expected figure/1, got ...`. Besides the shapes above the checks are: the plot ids and the element ids are unique within the figure (the element ids of all plots together), a plot lies in the grid, an element on `y2` needs the axis, colors are `#rrggbb`, opacities lie between 0 and 1, widths and sizes are not negative, a plot has `colorbar` or `colorbars` and not both and a color bar has ticks between the ends of its scale and as many tick labels as ticks.
+A spec the renderer refuses is reported as `path: what is wrong`, the path in the notation of the spec, e.g. `plots[0].elements[1].y: 3 values, x has 4`, `plots[0].x.categories: a category axis needs categories`, `plots[0].elements[0].scale.name: unknown color scale ...` or `contract: expected figure/1, got ...`. Besides the shapes above the checks are: the plot ids and the element ids are unique within the figure (the element ids of all plots together), a plot lies in the grid, an element on `y2` needs the axis, colors are `#rrggbb` (a marker fill may also be `none`), a key of `legend_swatches` is a legend group of its plot (`plots[0].legend_swatches.<group>: ... is no legend group of the plot`), opacities lie between 0 and 1, widths and sizes are not negative, a plot has `colorbar` or `colorbars` and not both and a color bar has ticks between the ends of its scale and as many tick labels as ticks.
 
 ## Semantic classes of the SVG
 
