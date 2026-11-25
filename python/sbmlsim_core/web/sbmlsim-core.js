@@ -2054,6 +2054,12 @@ var sbmlsimCore = (() => {
       return new PreparedFigure(this, handle);
     }
   };
+  var REGISTRY = new FinalizationRegistry(({ plot, handle }) => {
+    try {
+      plot._release(handle);
+    } catch {
+    }
+  });
   var PreparedFigure = class {
     #plot;
     #handle;
@@ -2066,6 +2072,7 @@ var sbmlsimCore = (() => {
       this.#plot = plot;
       this.#handle = handle;
       this.#exports = plot._exports;
+      REGISTRY.register(this, { plot, handle }, this);
     }
     /** The handle, or a throw for a disposed figure. */
     #live() {
@@ -2102,11 +2109,12 @@ var sbmlsimCore = (() => {
       const handle = this.#live();
       return JSON.parse(this.#plot._callPrepared((out) => this.#exports.pick_prepared(handle, x, y, radius, out)));
     }
-    /** Frees the figure in the module; a disposed figure throws when it is used, and disposing it again does nothing. */
+    /** Frees the figure in the module (a figure dropped without it is freed when it is garbage collected, at a time nobody decides); a disposed figure throws when it is used, and disposing it again does nothing. */
     dispose() {
       if (this.#handle === 0) return;
       const handle = this.#handle;
       this.#handle = 0;
+      REGISTRY.unregister(this);
       this.#plot._release(handle);
     }
   };

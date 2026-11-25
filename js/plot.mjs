@@ -363,6 +363,15 @@ export class Plot {
   }
 }
 
+/** Releases the handle of a prepared figure which was dropped without `dispose()`. */
+const REGISTRY = new FinalizationRegistry(({ plot, handle }) => {
+  try {
+    plot._release(handle);
+  } catch {
+    // the instance failed meanwhile: its memory is gone with it
+  }
+});
+
 /** A figure of a `Plot` whose spec is parsed and whose layout is planned, see `Plot.prepare`. */
 export class PreparedFigure {
   #plot;
@@ -377,6 +386,8 @@ export class PreparedFigure {
     this.#plot = plot;
     this.#handle = handle;
     this.#exports = plot._exports;
+    // the garbage collector releases a figure which is dropped without `dispose()`
+    REGISTRY.register(this, { plot, handle }, this);
   }
 
   /** The handle, or a throw for a disposed figure. */
@@ -418,11 +429,12 @@ export class PreparedFigure {
     return JSON.parse(this.#plot._callPrepared((out) => this.#exports.pick_prepared(handle, x, y, radius, out)));
   }
 
-  /** Frees the figure in the module; a disposed figure throws when it is used, and disposing it again does nothing. */
+  /** Frees the figure in the module (a figure dropped without it is freed when it is garbage collected, at a time nobody decides); a disposed figure throws when it is used, and disposing it again does nothing. */
   dispose() {
     if (this.#handle === 0) return;
     const handle = this.#handle;
     this.#handle = 0;
+    REGISTRY.unregister(this);
     this.#plot._release(handle);
   }
 }

@@ -115,7 +115,7 @@ const figure = plot.prepare(spec); // parsed and laid out once
 canvas.onpointermove = (event) => show(figure.pick(event.offsetX, event.offsetY));
 figure.svg(); // the same bytes as plot.render(spec)
 figure.geometry();
-figure.dispose(); // frees it in the module; a disposed figure throws when it is used
+figure.dispose(); // frees it in the module; a disposed figure throws when it is used; a figure dropped without `dispose()` is released when it is garbage collected, which is no deterministic point, so dispose it
 ```
 
 A spec the renderer refuses raises a `PlotError` whose message is `path: what is wrong`, and the `Plot` stays usable. Any other failure out of the module (a panic, which aborts it, a trap, a stack overflow, an exhausted memory) leaves its memory in an unknown state, so that `Plot` is broken: the call throws an `Error` which carries the message of the panic, every later call throws too, and `loadPlot` gives a new instance. A string is a path in Node and a URL in a browser. A page which inlines everything uses `sbmlsimCore.loadPlot` of the inline build with the bytes of `sbmlsim_core.plot_wasm()`.

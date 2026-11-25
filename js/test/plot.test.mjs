@@ -12,6 +12,8 @@ import { ROOT, runtimeDir } from "./helpers.mjs";
 
 const SPECS = path.join(ROOT, "crates", "plot", "tests", "specs");
 const GOLDEN = path.join(ROOT, "crates", "plot", "tests", "golden");
+/** Timing assertions apply only with SBMLSIM_CORE_BENCH=1: a shared runner is too noisy for them. */
+const BENCH = process.env.SBMLSIM_CORE_BENCH === "1";
 const wasm = () => path.join(runtimeDir(), "plot.wasm");
 const spec = (name) => JSON.parse(readFileSync(path.join(SPECS, `${name}.json`), "utf8"));
 
@@ -52,7 +54,7 @@ test("a source is a path, bytes or an ArrayBuffer", async () => {
   assert.equal((await loadPlot(buffer)).render(JSON.stringify(SIMPLE)), expected);
 });
 
-test("render under 16 ms", async () => {
+test("render under 16 ms (asserted with SBMLSIM_CORE_BENCH=1)", async () => {
   const plot = await loadPlot(wasm());
   const figure = spec("benchmark");
   plot.render(figure);
@@ -66,8 +68,10 @@ test("render under 16 ms", async () => {
   const median = (times[9] + times[10]) / 2;
   const p95 = times[18];
   console.log(`# render median ${median.toFixed(2)} ms, p95 ${p95.toFixed(2)} ms`);
-  assert.ok(median < 16, `median ${median} ms`);
-  assert.ok(p95 < 16, `p95 ${p95} ms`);
+  if (BENCH) {
+    assert.ok(median < 16, `median ${median} ms`);
+    assert.ok(p95 < 16, `p95 ${p95} ms`);
+  }
 });
 
 test("pick in data units", async () => {
@@ -117,7 +121,7 @@ test("prepared figure equals the unprepared answers", async () => {
   }
 });
 
-test("prepared figure picks without re-parsing", async () => {
+test("prepared figure picks without re-parsing (timing asserted with SBMLSIM_CORE_BENCH=1)", async () => {
   const plot = await loadPlot(wasm());
   const figure = plot.prepare(spec("benchmark"));
   const panel = figure.geometry().plots[0].rect;
@@ -132,7 +136,7 @@ test("prepared figure picks without re-parsing", async () => {
   times.sort((a, b) => a - b);
   const median = times[25];
   console.log(`# prepared pick median ${median.toFixed(3)} ms`);
-  assert.ok(median < 0.5, `median ${median} ms`);
+  if (BENCH) assert.ok(median < 0.5, `median ${median} ms`);
   figure.dispose();
 });
 
