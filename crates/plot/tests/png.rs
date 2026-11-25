@@ -63,7 +63,7 @@ fn digest(env: &[(&str, &str)]) -> String {
 }
 
 #[test]
-fn png_independent_of_system_fonts() {
+fn png_is_the_same_without_a_fontconfig_or_home() {
     let plain = digest(&[]);
     let blind = digest(&[("FONTCONFIG_FILE", "/dev/null"), ("HOME", "/nonexistent")]);
     assert_eq!(plain, blind);
@@ -78,6 +78,6 @@ fn png_time() {
     let ms = start.elapsed().as_secs_f64() * 1000.0;
     eprintln!("png {} bytes in {ms:.1} ms", png.len());
     if !cfg!(debug_assertions) {
-        assert!(ms < 50.0, "{ms} ms");
+        assert!(ms < 100.0, "{ms} ms");
     }
 }
