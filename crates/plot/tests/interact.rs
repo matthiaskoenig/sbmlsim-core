@@ -79,14 +79,18 @@ fn pick_misses() {
     let f = figure(LIN, LIN, "", CURVE);
     let g = geometry(&f);
     let (px, py) = pixel(&g, 3.0, 8.0, false);
-    assert!(pick(&f, px + 30.0, py + 30.0, 5.0).is_none());
+    // above the highest point, away from the points and the line
+    assert!(pick(&f, px, py - 30.0, 5.0).is_none());
     assert!(pick(&f, -50.0, -50.0, 5.0).is_none());
 }
 
 #[test]
 fn pick_nearest_of_two() {
-    let two = r#"{"id": "a", "kind": "curve", "x": [0, 1], "y": [0, 1]},
-        {"id": "b", "kind": "curve", "x": [0, 1], "y": [0.05, 1.5]}"#;
+    // markers without lines, so the points alone are measured
+    let two = r#"{"id": "a", "kind": "curve", "x": [0, 1], "y": [0, 1],
+            "style": {"line": {"type": "none"}, "marker": {"type": "circle"}}},
+        {"id": "b", "kind": "curve", "x": [0, 1], "y": [0.05, 1.5],
+            "style": {"line": {"type": "none"}, "marker": {"type": "circle"}}}"#;
     let f = figure(LIN, LIN, "", two);
     let g = geometry(&f);
     let (ax, ay) = pixel(&g, 1.0, 1.0, false);
@@ -409,4 +413,56 @@ fn pick_cost_on_the_benchmark() {
     times.sort_by(f64::total_cmp);
     println!("pick median {:.4} ms, max {:.4} ms", times[100], times[199]);
     assert!(times[100] < 0.1);
+}
+
+/// Two points of a curve about 100 pixels apart, on axes from 0 to 6.
+const SPARSE_AXIS: &str = r#"{"label": "t", "min": 0, "max": 6}"#;
+
+#[test]
+fn pick_curve_segment_between_sparse_points() {
+    let sparse = r#"{"id": "c", "label": "conc", "kind": "curve", "x": [1, 2], "y": [1, 2]}"#;
+    let f = figure(SPARSE_AXIS, SPARSE_AXIS, "", sparse);
+    let g = geometry(&f);
+    let (ax, ay) = pixel(&g, 1.0, 1.0, false);
+    let (bx, by) = pixel(&g, 2.0, 2.0, false);
+    assert!(
+        (bx - ax).hypot(by - ay) >= 100.0,
+        "{}",
+        (bx - ax).hypot(by - ay)
+    );
+    // the middle of the segment, off it by 2 pixels, is far from both points
+    let (mx, my) = ((ax + bx) / 2.0, (ay + by) / 2.0 + 2.0);
+    let p = pick(&f, mx, my, 8.0).expect("the line picks the curve");
+    assert_eq!(p.element, "c");
+    assert!(p.index <= 1);
+    // the nearer end is the pick
+    let near_a = pick(&f, ax + (bx - ax) * 0.3, ay + (by - ay) * 0.3, 8.0).unwrap();
+    assert_eq!(
+        (near_a.index, near_a.values["x"], near_a.values["y"]),
+        (0, 1.0, 1.0)
+    );
+    let near_b = pick(&f, ax + (bx - ax) * 0.7, ay + (by - ay) * 0.7, 8.0).unwrap();
+    assert_eq!(
+        (near_b.index, near_b.values["x"], near_b.values["y"]),
+        (1, 2.0, 2.0)
+    );
+    // away from the line: none
+    assert!(pick(&f, mx, my + 20.0, 8.0).is_none());
+}
+
+#[test]
+fn pick_curve_without_line_or_across_a_gap_takes_points_only() {
+    let points = r#"{"id": "c", "kind": "curve", "x": [1, 2], "y": [1, 2],
+        "style": {"line": {"type": "none"}, "marker": {"type": "circle"}}}"#;
+    let f = figure(SPARSE_AXIS, SPARSE_AXIS, "", points);
+    let g = geometry(&f);
+    let (ax, ay) = pixel(&g, 1.0, 1.0, false);
+    let (bx, by) = pixel(&g, 2.0, 2.0, false);
+    let middle = ((ax + bx) / 2.0, (ay + by) / 2.0);
+    assert!(pick(&f, middle.0, middle.1, 8.0).is_none());
+    assert_eq!(pick(&f, ax, ay, 8.0).unwrap().index, 0);
+    // a gap breaks the line, as it is drawn
+    let gap = r#"{"id": "c", "kind": "curve", "x": [1, 1.5, 2], "y": [1, null, 2]}"#;
+    let f = figure(SPARSE_AXIS, SPARSE_AXIS, "", gap);
+    assert!(pick(&f, middle.0, middle.1, 8.0).is_none());
 }

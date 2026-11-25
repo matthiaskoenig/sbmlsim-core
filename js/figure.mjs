@@ -15,18 +15,22 @@
 // inline SVG of a static report as well.
 //
 // - A legend entry (`.sbmlsim-legend-entry[data-legend]`) is a toggle button: a click, Enter or
-//   Space hides or shows every element of its group (`aria-pressed` is whether they are shown).
-// - A click on a data point selects its legend group, which is drawn as it is while every other
-//   element is dimmed; a click on it again or Escape clears the selection.
+//   Space hides or shows every element of its group (`aria-pressed` is whether they are shown),
+//   Shift+Enter selects the group.
+// - A click on a data point (or on the line of a curve between its points) selects its legend
+//   group, which is drawn as it is while every other element is dimmed; a click on it again or
+//   Escape (with the focus or the pointer last in the figure) clears the selection.
 // - The read-out is a tooltip (`role="status"`) in the container with the point the pointer is
 //   near: its label, its values with the units of the axes. A hidden group is never read out
 //   and the selected group is preferred over a nearer point of another one.
 //
 // The renderer picks the nearest point of every element (`PreparedFigure.pick`); the filters of
-// the read-out pick on a figure of the elements they keep, whose axes are pinned to the ends the
-// whole figure has, so its data lies at the pixels of the drawn figure. Where that figure is laid
-// out otherwise than the drawn one (which `geometry` tells), the nearest point of the whole
-// figure is taken and dropped when the filter does not keep it.
+// the read-out pick, per plot, on a figure of the elements they keep in that plot, whose axes are
+// pinned to the ends and categories the whole figure has, so its data lies at the pixels of the
+// drawn figure. Such figures are prepared in idle time after a toggle or a selection. Where one
+// is laid out otherwise than the drawn plot (which `geometry` tells), the nearest point of the
+// whole figure is taken and dropped when the filter does not keep it. The read-out runs once per
+// animation frame, on the last pointer move; it is a live region only when a click shows it.
 
 /** The id of the stylesheet the module injects, once per document. */
 export const STYLE_ID = "sbmlsim-figure-style";
@@ -127,23 +131,41 @@ function sameScale(a, b) {
 }
 
 /**
- * The spec of the elements `keep` keeps: no legends (which may move a panel but never change its
- * size) and the axes pinned to the ends the drawn figure has (`geometry`), so the kept data
- * keeps its pixels within each panel.
+ * The categories of an axis the drawn figure has as categories without the spec naming them,
+ * i.e. the columns (x) or the rows (y) of the first heatmap of the plot, or `null`.
  */
-function filteredSpec(spec, geometry, keep) {
+function implicitCategories(plot, name) {
+  const heatmap = plot.elements.find((element) => element.kind === "heatmap");
+  if (!heatmap) return null;
+  return name === "x" ? heatmap.columns : name === "y" ? heatmap.rows : null;
+}
+
+/**
+ * The spec of the elements `keep` keeps in the plot `only` (every other plot without elements,
+ * so a pick can only hit `only`): no legends (which may move a panel but never change its size)
+ * and the axes pinned to what the drawn figure has (`geometry`), the ends of a linear or log
+ * axis and the categories of a category axis, so the kept data keeps its pixels within the panel.
+ */
+function filteredSpec(spec, geometry, keep, only) {
   const scales = new Map(geometry.plots.map((plot) => [plot.id, plot]));
   return {
     ...spec,
     plots: spec.plots.map((plot) => {
       const drawn = scales.get(plot.id);
-      const out = { ...plot, legend: false, elements: plot.elements.filter(keep) };
+      const elements = plot.id === only ? plot.elements.filter(keep) : [];
+      const out = { ...plot, legend: false, elements };
       delete out.legend_swatches;
       delete out.legend_order;
       delete out.declared_legends;
       for (const name of ["x", "y", "y2"]) {
         const scale = drawn?.[name];
-        if (!plot[name] || !scale || scale.kind === "category") continue;
+        if (!plot[name] || !scale) continue;
+        if (scale.kind === "category") {
+          if (plot[name].scale === "category") continue;
+          const categories = implicitCategories(plot, name);
+          if (categories) out[name] = { ...plot[name], scale: "category", categories, reverse: scale.reverse };
+          continue;
+        }
         const axis = { ...plot[name], min: scale.low, max: scale.high };
         delete axis.frame;
         out[name] = axis;
@@ -153,31 +175,28 @@ function filteredSpec(spec, geometry, keep) {
   };
 }
 
-/** Whether every plot of `filtered` has the panel size and scales it has in `drawn`. */
-function sameLayout(drawn, filtered) {
-  const plots = new Map(filtered.plots.map((plot) => [plot.id, plot]));
-  return drawn.plots.every((plot) => {
-    const other = plots.get(plot.id);
-    return (
-      other !== undefined &&
-      Math.abs(other.rect.width - plot.rect.width) < 1e-6 &&
-      Math.abs(other.rect.height - plot.rect.height) < 1e-6 &&
-      sameScale(plot.x, other.x) &&
-      sameScale(plot.y, other.y) &&
-      sameScale(plot.y2, other.y2)
-    );
-  });
+/** Whether the plot `id` has in `filtered` the panel size and the scales it has in `drawn`. */
+function sameLayout(drawn, filtered, id) {
+  const plot = drawn.plots.find((candidate) => candidate.id === id);
+  const other = filtered.plots.find((candidate) => candidate.id === id);
+  return (
+    plot !== undefined &&
+    other !== undefined &&
+    Math.abs(other.rect.width - plot.rect.width) < 1e-6 &&
+    Math.abs(other.rect.height - plot.rect.height) < 1e-6 &&
+    sameScale(plot.x, other.x) &&
+    sameScale(plot.y, other.y) &&
+    sameScale(plot.y2, other.y2)
+  );
 }
 
-/** The plot of `geometry` whose panel, grown by `radius`, holds `(x, y)`, one holding it first. */
-function plotAt(geometry, x, y, radius) {
+/** The plots of `geometry` whose panel, grown by `radius`, holds `(x, y)`, those holding it first. */
+function plotsAt(geometry, x, y, radius) {
   const inside = (rect, grow) =>
     x >= rect.x - grow && x <= rect.x + rect.width + grow && y >= rect.y - grow && y <= rect.y + rect.height + grow;
-  return (
-    geometry.plots.find((plot) => inside(plot.rect, 0)) ??
-    geometry.plots.find((plot) => inside(plot.rect, radius)) ??
-    null
-  );
+  const holding = geometry.plots.filter((plot) => inside(plot.rect, 0));
+  const near = geometry.plots.filter((plot) => !inside(plot.rect, 0) && inside(plot.rect, radius));
+  return [...holding, ...near];
 }
 
 /**
@@ -282,6 +301,10 @@ export class FigureHandle {
   #listeners = [];
   #position = null;
   #role = null;
+  #pointerInside = false;
+  #pending = null;
+  #frame = null;
+  #idle = null;
   #disposed = false;
 
   /**
@@ -336,15 +359,17 @@ export class FigureHandle {
   }
 
   /**
-   * Removes the listeners and the tooltip, frees the prepared figures and leaves the static
-   * figure: every element shown, nothing selected and the legend entries no buttons. Disposing
-   * again does nothing.
+   * Removes the listeners and the tooltip, cancels a pending read-out, frees the prepared
+   * figures and leaves the static figure: every element shown, nothing selected and the legend
+   * entries no buttons. Disposing again does nothing.
    */
   dispose() {
     if (this.#disposed) return;
     this.#disposed = true;
     for (const [target, type, listener] of this.#listeners) target.removeEventListener(type, listener);
     this.#listeners = [];
+    this.#cancelFrame();
+    this.#cancelIdle();
     this.#tooltip?.remove();
     this.#tooltip = null;
     this.#hidden.clear();
@@ -376,6 +401,7 @@ export class FigureHandle {
       figure.dispose();
       throw error;
     }
+    this.#cancelFrame();
     this.#releasePickers();
     this.#figure?.dispose();
     this.#figure = figure;
@@ -410,6 +436,7 @@ export class FigureHandle {
     }
     this.#apply();
     this.#hideTooltip();
+    this.#prefetch();
   }
 
   /** The legend entries of the drawn figure. */
@@ -445,14 +472,10 @@ export class FigureHandle {
     const { toggle, select, readout } = this.#options;
     if (toggle || select) this.#on(this.#container, "click", (event) => this.#click(event));
     if (toggle) this.#on(this.#container, "keydown", (event) => this.#key(event));
-    if (select) {
-      this.#on(this.#document, "keydown", (event) => {
-        if (event.key === "Escape" && this.#selected !== null) this.#select(null);
-      });
-    }
-    if (readout) {
+    if (select) this.#on(this.#document, "keydown", (event) => this.#escape(event));
+    if (readout || select) {
       this.#on(this.#container, "pointermove", (event) => this.#move(event));
-      this.#on(this.#container, "pointerleave", () => this.#hideTooltip());
+      this.#on(this.#container, "pointerleave", () => this.#leave());
     }
   }
 
@@ -462,7 +485,10 @@ export class FigureHandle {
     return entry && this.#svg?.contains(entry) ? entry : null;
   }
 
-  /** A click: a legend entry toggles its group, a data point selects its group. */
+  /**
+   * A click: a legend entry toggles its group, a data point (or, between the points, an element
+   * of the SVG) selects its group, and the read-out of the point is announced.
+   */
   #click(event) {
     const entry = this.#entryOf(event);
     if (entry) {
@@ -470,20 +496,48 @@ export class FigureHandle {
       return;
     }
     if (!this.#options.select || !this.#svg?.contains(event.target)) return;
+    this.#pointerInside = true;
+    this.#cancelFrame();
     const point = this.#point(event);
-    const hit = this.#pick(point, (group) => !this.#hidden.has(group), "visible");
-    if (hit?.legend == null) return;
-    this.#select(hit.legend === this.#selected ? null : hit.legend);
-    if (this.#options.readout) this.#readout(point, event);
+    const hit = this.#pick(point, "visible");
+    let group = hit?.legend ?? null;
+    if (group === null) {
+      const node = event.target.closest?.("[data-element]");
+      const drawn = node && this.#svg.contains(node) ? node.getAttribute("data-legend") : null;
+      if (drawn !== null && !this.#hidden.has(drawn)) group = drawn;
+    }
+    if (group === null) return;
+    this.#select(group === this.#selected ? null : group);
+    if (this.#options.readout && hit) this.#readout(point, event, true);
   }
 
-  /** Enter or Space on a legend entry toggles its group. */
+  /**
+   * Enter or Space on a legend entry toggles its group; Shift+Enter selects it (showing it when
+   * it is hidden) or clears the selection when it is selected.
+   */
   #key(event) {
     if (event.key !== "Enter" && event.key !== " " && event.key !== "Spacebar") return;
     const entry = this.#entryOf(event);
     if (!entry) return;
     event.preventDefault();
-    this.#toggle(entry.getAttribute("data-legend"));
+    const group = entry.getAttribute("data-legend");
+    if (event.key === "Enter" && event.shiftKey) {
+      if (!this.#options.select) return;
+      if (this.#hidden.delete(group)) this.#releasePickers();
+      this.#select(group === this.#selected ? null : group);
+      return;
+    }
+    this.#toggle(group);
+  }
+
+  /**
+   * Escape clears the selection of this figure when the key is pressed inside its container
+   * (the focus is in it) or the pointer was last in it, so other figures keep theirs.
+   */
+  #escape(event) {
+    if (event.key !== "Escape" || this.#selected === null) return;
+    if (!this.#pointerInside && !this.#container.contains(event.target)) return;
+    this.#select(null);
   }
 
   /** Hides or shows a legend group; hiding the selected group clears the selection. */
@@ -494,6 +548,7 @@ export class FigureHandle {
     this.#releasePickers();
     this.#apply();
     this.#hideTooltip();
+    this.#prefetch();
   }
 
   /** Selects a legend group, `null` clears the selection. */
@@ -501,83 +556,176 @@ export class FigureHandle {
     this.#selected = group;
     this.#releasePickers();
     this.#apply();
+    this.#prefetch();
   }
 
-  /** The pixel of the figure under a pointer event, the SVG possibly scaled by CSS. */
-  #point(event) {
+  /** The pixel of the figure under a pointer, the SVG possibly scaled by CSS. */
+  #point({ clientX, clientY }) {
     const rect = this.#svg.getBoundingClientRect?.() ?? { left: 0, top: 0, width: 0, height: 0 };
     const sx = rect.width > 0 ? this.#geometry.width / rect.width : 1;
     const sy = rect.height > 0 ? this.#geometry.height / rect.height : 1;
-    return { x: (event.clientX - rect.left) * sx, y: (event.clientY - rect.top) * sy };
+    return { x: (clientX - rect.left) * sx, y: (clientY - rect.top) * sy };
   }
 
-  /** A pointer move shows the read-out of the point under it. */
+  /** A pointer move keeps its position; the read-out runs once per animation frame. */
   #move(event) {
     if (!this.#svg?.contains(event.target)) {
+      this.#cancelFrame();
       this.#hideTooltip();
       return;
     }
-    this.#readout(this.#point(event), event);
+    this.#pointerInside = true;
+    if (!this.#options.readout) return;
+    this.#pending = { clientX: event.clientX, clientY: event.clientY };
+    if (this.#frame !== null) return;
+    const view = this.#document.defaultView;
+    if (typeof view?.requestAnimationFrame === "function") {
+      const id = view.requestAnimationFrame(() => this.#flush());
+      this.#frame = () => view.cancelAnimationFrame?.(id);
+    } else {
+      const id = setTimeout(() => this.#flush(), 16);
+      this.#frame = () => clearTimeout(id);
+    }
+  }
+
+  /** The read-out of the last pointer move, unless the pointer left meanwhile. */
+  #flush() {
+    this.#frame = null;
+    const pending = this.#pending;
+    this.#pending = null;
+    if (pending === null || this.#disposed || !this.#svg) return;
+    this.#readout(this.#point(pending), pending, false);
+  }
+
+  /** Cancels the read-out of a pending pointer move. */
+  #cancelFrame() {
+    this.#frame?.();
+    this.#frame = null;
+    this.#pending = null;
+  }
+
+  /** The pointer left the container. */
+  #leave() {
+    this.#pointerInside = false;
+    this.#cancelFrame();
+    this.#hideTooltip();
   }
 
   /** The read-out at a pixel: the selected group first, then every shown group. */
-  #readout(point, event) {
-    let hit = null;
-    if (this.#selected !== null) {
-      const selected = this.#selected;
-      hit = this.#pick(point, (group) => group === selected, "selected");
-    }
-    hit ??= this.#pick(point, (group) => !this.#hidden.has(group), "visible");
+  #readout(point, at, announce) {
+    let hit = this.#selected !== null ? this.#pick(point, "selected") : null;
+    hit ??= this.#pick(point, "visible");
     if (!hit) {
       this.#hideTooltip();
       return;
     }
-    this.#showTooltip(hit, event);
+    this.#showTooltip(hit, at, announce);
   }
 
   /**
-   * The nearest point of the groups `keep` keeps (an element in no group is kept unless only
-   * the selected group is asked for).
+   * Whether a filter keeps a legend group: `visible` every shown group and the elements in no
+   * group, `selected` the selected group alone.
    */
-  #pick({ x, y }, keep, key) {
-    const keeps = (group) => (group === null ? key === "visible" : keep(group));
-    const filtering = key === "selected" || this.#hidden.size > 0;
-    if (!filtering) return this.#figure.pick(x, y, RADIUS);
-    const picker = this.#picker(key, keeps);
-    if (picker) {
-      const drawn = plotAt(this.#geometry, x, y, RADIUS);
-      if (!drawn) return null;
-      const there = picker.plots.get(drawn.id);
-      const hit = picker.figure.pick(x - drawn.rect.x + there.rect.x, y - drawn.rect.y + there.rect.y, RADIUS);
-      return hit && hit.plot === drawn.id ? hit : null;
-    }
-    const hit = this.#figure.pick(x, y, RADIUS);
-    return hit && keeps(hit.legend ?? null) ? hit : null;
+  #keeps(key) {
+    const selected = this.#selected;
+    const hidden = this.#hidden;
+    return key === "selected" ? (group) => group !== null && group === selected : (group) => group === null || !hidden.has(group);
   }
 
-  /** The prepared figure of a filter, or `null` when its layout differs from the drawn one. */
-  #picker(key, keeps) {
-    if (this.#pickers.has(key)) return this.#pickers.get(key);
+  /** Whether the filter `key` keeps every element, so the drawn figure answers it. */
+  #unfiltered(key) {
+    return key === "visible" && this.#hidden.size === 0;
+  }
+
+  /**
+   * The nearest point the filter `key` keeps within the reach of `(x, y)`: the nearest of the
+   * panel under the pointer, else of a panel the pointer is near.
+   */
+  #pick({ x, y }, key) {
+    if (this.#unfiltered(key)) return this.#figure.pick(x, y, RADIUS);
+    const keeps = this.#keeps(key);
+    for (const drawn of plotsAt(this.#geometry, x, y, RADIUS)) {
+      const picker = this.#picker(key, drawn.id);
+      let hit;
+      if (picker) {
+        hit = picker.figure.pick(x - drawn.rect.x + picker.rect.x, y - drawn.rect.y + picker.rect.y, RADIUS);
+      } else {
+        hit = this.#figure.pick(x, y, RADIUS);
+        if (hit && (hit.plot !== drawn.id || !keeps(hit.legend ?? null))) hit = null;
+      }
+      if (hit) return hit;
+    }
+    return null;
+  }
+
+  /**
+   * The prepared figure of the filter `key` of one plot, or `null` when the plot is laid out
+   * otherwise than in the drawn figure (the drawn figure is filtered then).
+   */
+  #picker(key, id) {
+    const cache = `${key}\u0000${id}`;
+    if (this.#pickers.has(cache)) return this.#pickers.get(cache);
+    const keeps = this.#keeps(key);
     let picker = null;
     let figure = null;
     try {
-      figure = this.#plot.prepare(filteredSpec(this.#spec, this.#geometry, (element) => keeps(groupOf(element))));
+      figure = this.#plot.prepare(filteredSpec(this.#spec, this.#geometry, (element) => keeps(groupOf(element)), id));
       const geometry = figure.geometry();
-      if (sameLayout(this.#geometry, geometry)) {
-        picker = { figure, plots: new Map(geometry.plots.map((plot) => [plot.id, plot])) };
+      if (sameLayout(this.#geometry, geometry, id)) {
+        picker = { figure, rect: geometry.plots.find((plot) => plot.id === id).rect };
       }
     } catch {
-      // a filtered spec the renderer refuses: the nearest point of the whole figure is filtered
+      // a filtered spec the renderer refuses: the drawn figure is filtered
     }
     if (picker === null) figure?.dispose();
-    this.#pickers.set(key, picker);
+    this.#pickers.set(cache, picker);
     return picker;
   }
 
   /** Frees the prepared figures of the filters, which a change of the state outdates. */
   #releasePickers() {
+    this.#cancelIdle();
     for (const picker of this.#pickers.values()) picker?.figure.dispose();
     this.#pickers.clear();
+  }
+
+  /**
+   * Prepares the filtered figures the state needs in idle time, one plot per idle callback, so
+   * the first pointer move after a toggle or a selection does not prepare them.
+   */
+  #prefetch() {
+    this.#cancelIdle();
+    if (this.#disposed || !(this.#options.readout || this.#options.select)) return;
+    const keys = ["visible", "selected"].filter(
+      (key) => !this.#unfiltered(key) && (key === "visible" || this.#selected !== null),
+    );
+    const work = keys.flatMap((key) => this.#geometry.plots.map((plot) => [key, plot.id]));
+    const view = this.#document.defaultView;
+    const step = () => {
+      this.#idle = null;
+      if (this.#disposed) return;
+      const next = work.shift();
+      if (!next) return;
+      this.#picker(...next);
+      schedule();
+    };
+    const schedule = () => {
+      if (work.length === 0) return;
+      if (typeof view?.requestIdleCallback === "function") {
+        const id = view.requestIdleCallback(step);
+        this.#idle = () => view.cancelIdleCallback?.(id);
+      } else {
+        const id = setTimeout(step, 0);
+        this.#idle = () => clearTimeout(id);
+      }
+    };
+    schedule();
+  }
+
+  /** Cancels the preparation in idle time. */
+  #cancelIdle() {
+    this.#idle?.();
+    this.#idle = null;
   }
 
   /** The tooltip, created on first use, positioned in the container. */
@@ -592,18 +740,22 @@ export class FigureHandle {
     const tooltip = this.#document.createElement("div");
     tooltip.className = TOOLTIP;
     tooltip.setAttribute("role", "status");
-    tooltip.setAttribute("aria-live", "polite");
+    tooltip.setAttribute("aria-live", "off");
     tooltip.hidden = true;
     this.#container.append(tooltip);
     this.#tooltip = tooltip;
     return tooltip;
   }
 
-  /** Shows the read-out of a hit next to the pointer. */
-  #showTooltip(hit, event) {
+  /**
+   * Shows the read-out of a hit next to the pointer `at`; `announce` (a click) makes it a polite
+   * live region, a hover does not, so a moving pointer is not read aloud.
+   */
+  #showTooltip(hit, at, announce) {
     const tooltip = this.#tooltipElement();
+    tooltip.setAttribute("aria-live", announce ? "polite" : "off");
     const key = `${hit.plot}\u0000${hit.element}\u0000${hit.index}`;
-    if (key !== this.#shown) {
+    if (key !== this.#shown || announce) {
       const { plot, element } = this.#elements.get(hit.element) ?? { plot: {}, element: { kind: "" } };
       const label = this.#document.createElement("div");
       label.className = `${TOOLTIP}-label`;
@@ -622,8 +774,8 @@ export class FigureHandle {
     }
     tooltip.hidden = false;
     const box = this.#container.getBoundingClientRect?.() ?? { left: 0, top: 0 };
-    const left = event.clientX - box.left - (this.#container.clientLeft || 0);
-    const top = event.clientY - box.top - (this.#container.clientTop || 0);
+    const left = at.clientX - box.left - (this.#container.clientLeft || 0);
+    const top = at.clientY - box.top - (this.#container.clientTop || 0);
     const width = tooltip.offsetWidth || 0;
     const height = tooltip.offsetHeight || 0;
     const room = this.#container.clientWidth || Infinity;
