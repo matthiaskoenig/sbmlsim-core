@@ -405,6 +405,11 @@ impl<'a> Recorder<'a> {
             .map(|sensitivities| sensitivities.states.as_mut_slice())
     }
 
+    /// The sensitivities of the run, to carry them across a change of the request.
+    pub fn sensitivities_mut(&mut self) -> Option<&mut Sensitivities> {
+        self.sensitivities.as_mut()
+    }
+
     /// Those values, to start the sensitivities of a segment with.
     pub fn sensitivities_at(&self) -> Option<&[f64]> {
         self.sensitivities
@@ -458,7 +463,15 @@ pub(crate) fn integrate<const DAE: bool, H: crate::delay::Mode>(
     let y = y0;
     let mut k = 0;
     if changes.time(0) == Some(t0) {
-        changes.apply(0, model, y, &mut problem.p)?;
+        apply_change(
+            changes,
+            0,
+            model,
+            y,
+            &mut problem.p,
+            recorder,
+            problem.sensitivity.as_mut(),
+        )?;
         if DAE && let Some(projection) = constraints.as_deref_mut() {
             projection.project(t0, y, &problem.p)?;
         }
@@ -511,9 +524,17 @@ pub(crate) fn integrate<const DAE: bool, H: crate::delay::Mode>(
                 {
                     if !started {
                         cvode.start(t, y, c, settings, 0)?;
+                        if let Some(at) = recorder.sensitivities_at() {
+                            let at = at.to_vec();
+                            cvode.start_sensitivities(problem, &at)?;
+                        }
                     }
                     cvode.integrate(problem, c, CV_NORMAL)?;
                     recorder.last_step(cvode)?;
+                    // the sensitivities at the change, which it carries into the next segment
+                    if let Some(states) = recorder.state_sensitivities() {
+                        cvode.sensitivities(states)?;
+                    }
                     y.copy_from_slice(cvode.state());
                 }
                 // the state before the change at an output time; the rows of the state after
@@ -567,7 +588,15 @@ pub(crate) fn integrate<const DAE: bool, H: crate::delay::Mode>(
             }
         }
         // the change at `t`, whose state after it starts the next segment
-        changes.apply(k, model, y, &mut problem.p)?;
+        apply_change(
+            changes,
+            k,
+            model,
+            y,
+            &mut problem.p,
+            recorder,
+            problem.sensitivity.as_mut(),
+        )?;
         if DAE && let Some(projection) = constraints.as_deref_mut() {
             projection.project(t, y, &problem.p)?;
         }
@@ -576,6 +605,76 @@ pub(crate) fn integrate<const DAE: bool, H: crate::delay::Mode>(
             recorder.row(t, y, &problem.p)?;
         }
     }
+}
+
+/// Applies change `k` of a request to the state and the parameters, and carries the forward
+/// sensitivities of the run across it.
+///
+/// A sensitivity is a direction of the state and of the parameters: its row moves the state
+/// by `step * s` and the parameters by its `delta` (see [`Sensitivities`]). The change is
+/// applied to the state and the parameters moved along every direction as well, and the
+/// difference of the two afterwards over the step is the direction after the change: a value
+/// the change sets to a number has no derivative after it, a value it adds a number to keeps
+/// its derivative, a form `constant + sum(factor * term)` takes the derivatives of its terms,
+/// and the conversions of the change (the size of a compartment, an amount and a
+/// concentration, the assignment rules) are carried along, since they are what the change
+/// does. Every map of a change is linear in the values it reads but for the conversions
+/// between amounts and concentrations, so the difference is the derivative to the rounding.
+///
+/// The parameters the change moves along a direction are the `df/dp` of the sensitivities
+/// after it ([`crate::solver::Sensitivity::set_deltas`]): a parameter the change sets to a number no
+/// longer depends on the target.
+fn apply_change(
+    changes: &Changes,
+    k: usize,
+    model: &dyn ModelFns,
+    y: &mut [f64],
+    p: &mut [f64],
+    recorder: &mut Recorder<'_>,
+    sensitivity: Option<&mut crate::solver::Sensitivity>,
+) -> Result<(), EngineError> {
+    let Some(sensitivities) = recorder.sensitivities_mut() else {
+        return changes.apply(k, model, y, p);
+    };
+    let n = y.len();
+    let n_p = sensitivities.p.len();
+    let count = sensitivities.len();
+    let mut moved_y = vec![0.0; n];
+    let mut moved_p = p.to_vec();
+    let mut states = vec![0.0; count * n];
+    let mut deltas = vec![0.0; count * n_p];
+    let mut moved: Vec<(Vec<f64>, Vec<f64>)> = Vec::with_capacity(count);
+    for at in 0..count {
+        let step = sensitivities.steps[at];
+        for (state, value) in moved_y.iter_mut().enumerate() {
+            *value = y[state] + step * sensitivities.states[at * n + state];
+        }
+        moved_p.copy_from_slice(p);
+        for (slot, delta) in moved_p[..n_p]
+            .iter_mut()
+            .zip(&sensitivities.deltas[at * n_p..(at + 1) * n_p])
+        {
+            *slot += delta;
+        }
+        changes.apply(k, model, &mut moved_y, &mut moved_p)?;
+        moved.push((moved_y.clone(), moved_p.clone()));
+    }
+    changes.apply(k, model, y, p)?;
+    for (at, (after_y, after_p)) in moved.iter().enumerate() {
+        let step = sensitivities.steps[at];
+        for state in 0..n {
+            states[at * n + state] = (after_y[state] - y[state]) / step;
+        }
+        for slot in 0..n_p {
+            deltas[at * n_p + slot] = after_p[slot] - p[slot];
+        }
+    }
+    sensitivities.states = states;
+    sensitivities.deltas.clone_from(&deltas);
+    if let Some(sensitivity) = sensitivity {
+        sensitivity.set_deltas(deltas);
+    }
+    Ok(())
 }
 
 /// The error of a run of the integrator steps which does not advance the time.

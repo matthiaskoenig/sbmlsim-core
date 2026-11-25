@@ -404,8 +404,8 @@ parameter, and the engine has two ways of giving it:
   integrates `dy/dp` along with `y` ([forward
   sensitivities](simulating.md#forward-sensitivities)) and gives the derivative of a residual
   instead of a difference of two of them, accurate to about 1e-8. A condition whose
-  sensitivities the engine refuses (events, a delay, an algebraic rule, the changes of a
-  request, a steady state, a concentration or a parameter which is no parameter of the model)
+  sensitivities the engine refuses (events, a delay, an algebraic rule, a concentration or a
+  parameter which is no parameter of the model)
   is refused with the condition and the reason, because a jacobian of two accuracies is worse
   than either of them.
 

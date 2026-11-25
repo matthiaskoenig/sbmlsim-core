@@ -238,6 +238,10 @@ pub(crate) struct Sensitivity {
     pub column: Vec<f64>,
     /// The step of the difference quotient of every sensitivity.
     pub steps: Vec<f64>,
+    /// For every column of the analytic `df/dp`, whether it holds an entry; `None` for a
+    /// model without `model_jac_p`. What the chains are taken from again when a change of
+    /// the request moves the deltas, see [`Sensitivity::set_deltas`].
+    pub slots: Option<Vec<bool>>,
     /// The right hand side at a perturbed parameter.
     pub f: Vec<f64>,
     /// A copy of the state, which [`ModelFns::assign`] writes the targets of the assignment
@@ -258,29 +262,9 @@ impl Sensitivity {
         parameters: Option<&ParameterPattern>,
         n: usize,
     ) -> Sensitivity {
-        let n_p = if steps.is_empty() {
-            0
-        } else {
-            deltas.len() / steps.len()
-        };
-        let derives: Vec<bool> = deltas
-            .chunks(n_p.max(1))
-            .map(|delta| delta.iter().any(|value| *value != 0.0))
-            .collect();
-        // the chain of every sensitivity: `dp_c/dp_j` of the columns which hold an entry
-        let chains: Vec<Vec<(usize, f64)>> = parameters.map_or_else(Vec::new, |parameters| {
-            deltas
-                .chunks(n_p.max(1))
-                .zip(&steps)
-                .map(|(delta, step)| {
-                    (0..parameters.columns())
-                        .filter(|&slot| {
-                            !parameters.rows(slot).is_empty()
-                                && delta.get(slot).is_some_and(|value| *value != 0.0)
-                        })
-                        .map(|slot| (slot, delta[slot] / step))
-                        .collect()
-                })
+        let slots: Option<Vec<bool>> = parameters.map(|parameters| {
+            (0..parameters.columns())
+                .map(|slot| !parameters.rows(slot).is_empty())
                 .collect()
         });
         let column = vec![
@@ -290,16 +274,56 @@ impl Sensitivity {
                 .max()
                 .unwrap_or(0))
         ];
-        Sensitivity {
-            deltas,
-            derives,
-            chains,
+        let mut sensitivity = Sensitivity {
+            deltas: Vec::new(),
+            derives: Vec::new(),
+            chains: Vec::new(),
             column,
             steps,
+            slots,
             f: vec![0.0; n],
             y: vec![0.0; n],
             p: Vec::new(),
-        }
+        };
+        sensitivity.set_deltas(deltas);
+        sensitivity
+    }
+
+    /// Moves the parameters of every sensitivity by `deltas` (`k * n_p`, row major) from now
+    /// on: a change of a request which sets a parameter to a number ends its dependence on
+    /// the target, one which adds to it keeps it, and a form over the states makes a
+    /// parameter depend on the targets through them, see
+    /// [`crate::segments::integrate`]. The chains of the analytic `df/dp` and whether a
+    /// sensitivity has a `df/dp` at all follow the deltas.
+    pub fn set_deltas(&mut self, deltas: Vec<f64>) {
+        let n_p = if self.steps.is_empty() {
+            0
+        } else {
+            deltas.len() / self.steps.len()
+        };
+        self.derives = deltas
+            .chunks(n_p.max(1))
+            .map(|delta| delta.iter().any(|value| *value != 0.0))
+            .collect();
+        // the chain of every sensitivity: `dp_c/dp_j` of the columns which hold an entry
+        self.chains = match &self.slots {
+            None => Vec::new(),
+            Some(slots) => deltas
+                .chunks(n_p.max(1))
+                .zip(&self.steps)
+                .map(|(delta, step)| {
+                    slots
+                        .iter()
+                        .enumerate()
+                        .filter(|&(slot, entries)| {
+                            *entries && delta.get(slot).is_some_and(|value| *value != 0.0)
+                        })
+                        .map(|(slot, _)| (slot, delta[slot] / step))
+                        .collect()
+                })
+                .collect(),
+        };
+        self.deltas = deltas;
     }
 }
 

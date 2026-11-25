@@ -1184,11 +1184,13 @@ fn prepare(
 /// cannot carry them is refused with.
 ///
 /// The sensitivities of a run are the derivatives of its columns in the values of those
-/// targets at the start of the run. What they do not carry yet is refused here and not
-/// answered wrongly: a value which jumps during a run (a change, an event, a discontinuity of
-/// the math), a state which an algebraic rule or a delay determines, a steady state before
-/// the start, and the iterative linear solver, whose callbacks read the memory of CVODE as
-/// their user data instead of the problem.
+/// targets at the start of the run. The changes of a request are carried across, see
+/// [`segments::integrate`], and the steady state before the start and after the end, which
+/// is an integration as well, is integrated with them (`steady`). What they do not carry yet
+/// is refused here and not answered wrongly: a value which jumps during a run at a time the
+/// run does not know before (an event, a discontinuity of the math), a state which an
+/// algebraic rule or a delay determines, and the iterative linear solver, whose callbacks
+/// read the memory of CVODE as their user data instead of the problem.
 fn sensitivities_of(
     desc: &ModelDescription,
     metadata: &Metadata,
@@ -1214,12 +1216,6 @@ fn sensitivities_of(
     }
     if desc.n_delays > 0 {
         return refuse("the delays of a model");
-    }
-    if !req.changes.is_empty() {
-        return refuse("the changes of a request");
-    }
-    if req.steady_state.is_some() {
-        return refuse("the steady state of a request");
     }
     if req.settings.linear_solver == LinearSolver::Gmres {
         return refuse("the iterative linear solver");
@@ -1676,6 +1672,7 @@ fn run_model<const DAE: bool, H: delay::Mode>(
                         &desc.id,
                         &mut scratch.steady_rates,
                         None,
+                        None,
                     )?;
                     if H::ENABLED {
                         let mut state = history.shared().unwrap().borrow_mut();
@@ -1714,6 +1711,7 @@ fn run_model<const DAE: bool, H: delay::Mode>(
                         &desc.id,
                         &mut scratch.steady_rates,
                         None,
+                        None,
                     )?;
                     recorder.last_step(cvode)?;
                     recorder.row(f64::INFINITY, &y0[..problem.n_model], &problem.p)?;
@@ -1740,6 +1738,7 @@ fn run_model<const DAE: bool, H: delay::Mode>(
                         &desc.id,
                         &mut scratch.steady_rates,
                         constraints.as_deref_mut(),
+                        recorder.state_sensitivities(),
                     )?;
                     if H::ENABLED {
                         let mut state = history.shared().unwrap().borrow_mut();
@@ -1776,6 +1775,7 @@ fn run_model<const DAE: bool, H: delay::Mode>(
                         &desc.id,
                         &mut scratch.steady_rates,
                         constraints.as_deref_mut(),
+                        recorder.state_sensitivities(),
                     )?;
                     if let Some(cvode) = cvode.as_deref_mut() {
                         recorder.last_step(cvode)?;
