@@ -33,6 +33,7 @@ var sbmlsimCore = (() => {
     blobWorkers: () => blobWorkers,
     createInlineEndpoint: () => createInlineEndpoint,
     formatValue: () => formatValue,
+    hydrateFigures: () => hydrateFigures,
     loadPlot: () => loadPlot
   });
 
@@ -2786,6 +2787,30 @@ var sbmlsimCore = (() => {
   };
   function attachFigure(container, plot, spec, options = {}) {
     return new FigureHandle(container, plot, spec, options);
+  }
+
+  // hydrate.mjs
+  async function hydrateFigures(root = globalThis.document, options = {}) {
+    const figures = [...root.querySelectorAll("figure[data-figure]")];
+    const found = figures.map((figure) => ({
+      figure,
+      script: [...figure.children].find(
+        (child) => child.localName === "script" && child.hasAttribute("data-figure-spec")
+      )
+    }));
+    if (!found.some((item) => item.script)) return [];
+    const plot = options.plot ?? await loadPlot(options.wasm);
+    const handles = [];
+    for (const { figure, script } of found) {
+      if (!script) continue;
+      const key = figure.getAttribute("data-figure");
+      try {
+        handles.push(attachFigure(figure, plot, JSON.parse(script.textContent)));
+      } catch (error) {
+        console.warn(`figure ${key} stays static: ${error?.message ?? error}`);
+      }
+    }
+    return handles;
   }
 
   // inline.mjs
