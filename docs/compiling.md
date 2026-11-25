@@ -11,7 +11,7 @@ cargo run -p sbmlsim-cli -- compile crates/host/tests/decay.xml -o decay-model
 |---|---|
 | `-o`, `--output <DIR>` | the directory to write `model.wasm` and `model.json` into |
 | `--no-optimize` | without the optimizer: the same results, a larger and slower module |
-| `--no-parameter-jacobian` | omit analytic parameter derivatives and their cached constants for ordinary simulations; forward sensitivities use numerical parameter derivatives |
+| `--no-parameter-jacobian` | omit analytic parameter derivatives and their cached constants for ordinary simulations; forward sensitivities use numerical parameter derivatives (0.26.0) |
 
 <svg class="core-diagram" viewBox="0 12 840 304" xmlns="http://www.w3.org/2000/svg" role="img"
      aria-label="A model of any SBML level and version goes into the compiler as it stands, prepared with prepare_model.py only when it carries comp. The compiler takes SBML core of every level, reading the distrib package as annotation only, and writes model.wasm, which imports the memory of the engine and the functions of mathlib and exports the contract model/2, and model.json, which describes the states and selections, the units as text and the Jacobian with the reason when it is not analytic. A required package, a fast reaction, an unknown identifier, a cycle of assignment rules and a draw of distrib are refused, each named with the element which caused it.">
