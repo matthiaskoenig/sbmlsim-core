@@ -20,7 +20,7 @@ pub use interact::{
     geometry_of, pick, pick_in,
 };
 #[cfg(feature = "png")]
-pub use png::render_png;
+pub use png::{MAX_PIXELS, render_png};
 pub use render::render_svg;
 pub use spec::*;
 pub use text::text_width;
@@ -37,8 +37,35 @@ pub fn parse(json: &str) -> Result<Figure, SpecError> {
     let mut de = serde_json::Deserializer::from_str(json);
     let figure: Figure = serde_path_to_error::deserialize(&mut de).map_err(|e| {
         let path = e.path().to_string();
-        SpecError::from_serde(path, e.inner().to_string())
+        let message = match non_json_number(json, e.inner()) {
+            Some(token) => format!(
+                "NaN and Infinity are not JSON, a gap is written as `null`: found `{token}` at \
+                 line {} column {}",
+                e.inner().line(),
+                e.inner().column()
+            ),
+            None => e.inner().to_string(),
+        };
+        SpecError::from_serde(path, message)
     })?;
     spec::validate(&figure)?;
     Ok(figure)
+}
+
+/// The token `NaN`, `Infinity` or `-Infinity` at the position of a syntax error, which
+/// `json.dumps` of python and `JSON5` write but JSON has not.
+fn non_json_number(json: &str, error: &serde_json::Error) -> Option<&'static str> {
+    if error.classify() != serde_json::error::Category::Syntax || error.line() == 0 {
+        return None;
+    }
+    let line = json.split('\n').nth(error.line() - 1)?;
+    let at = line.as_bytes().get(error.column().checked_sub(1)?..)?;
+    let minus = error.column() >= 2 && line.as_bytes()[error.column() - 2] == b'-';
+    if at.starts_with(b"NaN") {
+        Some(if minus { "-NaN" } else { "NaN" })
+    } else if at.starts_with(b"Infinity") {
+        Some(if minus { "-Infinity" } else { "Infinity" })
+    } else {
+        None
+    }
 }

@@ -13,8 +13,10 @@ use std::sync::{Arc, OnceLock};
 const REGULAR: &[u8] = include_bytes!("../fonts/Inter-Regular.ttf");
 const BOLD: &[u8] = include_bytes!("../fonts/Inter-Bold.ttf");
 
-/// The largest side of an image in pixels, so a dpi cannot ask for gigabytes.
-const MAX_SIDE: f64 = 16384.0;
+/// The largest number of pixels of an image, 64 Mpx (`64 * 1024 * 1024`), whose pixmap of four
+/// bytes per pixel is 256 MiB, so neither a dpi nor a figure grown by its legends can ask for
+/// gigabytes. The size is the drawn size of the figure times `dpi / 72` on each side.
+pub const MAX_PIXELS: f64 = 64.0 * 1024.0 * 1024.0;
 
 /// The database of the bundled fonts, built once.
 fn fonts() -> Arc<usvg::fontdb::Database> {
@@ -55,9 +57,16 @@ pub(crate) fn rasterize(svg: &str, dpi: f64) -> Result<Vec<u8>, RenderError> {
     let size = tree.size();
     let width = (f64::from(size.width()) * dpi / 72.0).round();
     let height = (f64::from(size.height()) * dpi / 72.0).round();
-    if width < 1.0 || height < 1.0 || width > MAX_SIDE || height > MAX_SIDE {
+    if width < 1.0 || height < 1.0 {
         return Err(error(format!(
             "the image would be {width} by {height} pixels"
+        )));
+    }
+    if width * height > MAX_PIXELS {
+        return Err(error(format!(
+            "the image would be {width} by {height} pixels at dpi {dpi}, more than the {} \
+             pixels (64 Mpx) of an image",
+            MAX_PIXELS as u64
         )));
     }
     let mut pixmap = tiny_skia::Pixmap::new(width as u32, height as u32)
@@ -71,7 +80,10 @@ pub(crate) fn rasterize(svg: &str, dpi: f64) -> Result<Vec<u8>, RenderError> {
     pixmap.encode_png().map_err(|e| error(e.to_string()))
 }
 
-/// The PNG of a figure at `dpi`, of `width * dpi / 72` by `height * dpi / 72` pixels on white.
+/// The PNG of a figure at `dpi`, of `width * dpi / 72` by `height * dpi / 72` pixels on white,
+/// where `width` and `height` are the drawn size of the figure ([`crate::Geometry`]), which
+/// legends outside a plot make larger than the size of the spec. An image of more than
+/// [`MAX_PIXELS`] pixels is refused.
 pub fn render_png(figure: &Figure, dpi: f64) -> Result<Vec<u8>, RenderError> {
     FigurePlan::new(figure).render_png(figure, dpi)
 }

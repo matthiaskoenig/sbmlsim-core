@@ -193,3 +193,44 @@ fn legend_order_parses_and_refuses_duplicates() {
     let e = parse(&base(&plot(r#""legend_order":["a","a"],"#, el))).unwrap_err();
     assert_eq!(e.path, "plots[0].legend_order[1]", "{e}");
 }
+
+#[test]
+fn refuses_sizes_past_the_caps() {
+    let s = base("").replace(r#""width":600"#, r#""width":16385"#);
+    let e = parse(&s).unwrap_err();
+    assert_eq!(e.path, "width", "{e}");
+    assert!(e.message.contains("at most 16384"), "{e}");
+    let s = base("").replace(r#""height":400"#, r#""height":1e9"#);
+    assert_eq!(parse(&s).unwrap_err().path, "height");
+    let s = base("").replace(r#""width":600"#, r#""width":16384"#);
+    assert!(parse(&s).is_ok());
+    let s = base("").replace(r#""rows":1"#, r#""rows":65"#);
+    let e = parse(&s).unwrap_err();
+    assert_eq!(e.path, "grid.rows", "{e}");
+    assert!(e.message.contains("at most 64"), "{e}");
+    let s = base("").replace(r#""columns":1"#, r#""columns":100000"#);
+    assert_eq!(parse(&s).unwrap_err().path, "grid.columns");
+    let s = base("").replace(r#""rows":1,"columns":1"#, r#""rows":64,"columns":64"#);
+    assert!(parse(&s).is_ok());
+}
+
+#[test]
+fn nan_and_infinity_are_no_json() {
+    for token in ["NaN", "Infinity", "-Infinity"] {
+        let s = base(&plot(
+            "",
+            &format!(r#"{{"id":"a","kind":"curve","x":[1,2],"y":[1,{token}]}}"#),
+        ));
+        let e = parse(&s).unwrap_err();
+        assert_eq!(e.path, "plots[0].elements[0].y[1]", "{e}");
+        assert!(e.message.contains(token), "{e}");
+        assert!(e.message.contains("null"), "{e}");
+    }
+    // another syntax error keeps the message of serde
+    let s = base(&plot(
+        "",
+        r#"{"id":"a","kind":"curve","x":[1,2],"y":[1,@]}"#,
+    ));
+    let e = parse(&s).unwrap_err();
+    assert!(!e.message.contains("null"), "{e}");
+}

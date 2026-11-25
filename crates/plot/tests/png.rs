@@ -70,6 +70,17 @@ fn png_is_the_same_without_a_fontconfig_or_home() {
 }
 
 #[test]
+fn png_refuses_more_than_the_pixel_cap() {
+    let f = figure("curve");
+    // 600 x 400 at dpi 72 * 17 is 10200 x 6800 pixels, more than 64 Mpx
+    let e = render_png(&f, 72.0 * 17.0).unwrap_err();
+    assert!(e.message.contains("10200 by 6800 pixels"), "{e}");
+    assert!(e.message.contains("64 Mpx"), "{e}");
+}
+
+/// Renders the benchmark figure; its time is checked with `SBMLSIM_CORE_BENCH=1` only, as the
+/// benchmarks of python and JavaScript are, since a loaded machine is no failure.
+#[test]
 fn png_time() {
     let f = figure("benchmark");
     render_png(&f, 144.0).unwrap();
@@ -77,7 +88,7 @@ fn png_time() {
     let png = render_png(&f, 144.0).unwrap();
     let ms = start.elapsed().as_secs_f64() * 1000.0;
     eprintln!("png {} bytes in {ms:.1} ms", png.len());
-    if !cfg!(debug_assertions) {
+    if !cfg!(debug_assertions) && std::env::var("SBMLSIM_CORE_BENCH").as_deref() == Ok("1") {
         assert!(ms < 100.0, "{ms} ms");
     }
 }

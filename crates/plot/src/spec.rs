@@ -37,6 +37,12 @@ fn six() -> f64 {
     6.0
 }
 
+/// The largest `width` and `height` of a figure in pixels.
+pub const MAX_SIZE: f64 = 16384.0;
+
+/// The largest number of `rows` and of `columns` of the grid of a figure.
+pub const MAX_GRID: u32 = 64;
+
 /// A figure: a grid of plots with a title, fonts and legend settings.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1091,11 +1097,16 @@ pub(crate) fn validate(f: &Figure) -> Result<(), SpecError> {
             format!("expected `{FIGURE_CONTRACT}`, got `{}`", f.contract),
         );
     }
-    if !(f.width > 0.0) {
-        return err("width".into(), "must be positive");
-    }
-    if !(f.height > 0.0) {
-        return err("height".into(), "must be positive");
+    for (name, v) in [("width", f.width), ("height", f.height)] {
+        if !(v > 0.0) {
+            return err(name.into(), "must be positive");
+        }
+        if v > MAX_SIZE {
+            return err(
+                name.into(),
+                format!("must be at most {MAX_SIZE} pixels, got {v}"),
+            );
+        }
     }
     for (name, v) in [
         ("title", f.fonts.title),
@@ -1107,11 +1118,13 @@ pub(crate) fn validate(f: &Figure) -> Result<(), SpecError> {
             return err(format!("fonts.{name}"), "must be positive");
         }
     }
-    if f.grid.rows == 0 {
-        return err("grid.rows".into(), "must be at least 1");
-    }
-    if f.grid.columns == 0 {
-        return err("grid.columns".into(), "must be at least 1");
+    for (name, v) in [("grid.rows", f.grid.rows), ("grid.columns", f.grid.columns)] {
+        if v == 0 {
+            return err(name.into(), "must be at least 1");
+        }
+        if v > MAX_GRID {
+            return err(name.into(), format!("must be at most {MAX_GRID}, got {v}"));
+        }
     }
     if f.grid.wspace < 0.0 {
         return err("grid.wspace".into(), "must not be negative");
