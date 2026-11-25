@@ -64,8 +64,9 @@ const ENGINE_EXPORTS = [
 ];
 
 /**
- * The counters of the last simulation in the order of `engine_stats_ptr` (`SimulationStats`
- * of `crates/abi`).
+ * The statistics of the last simulation in the order of `engine_stats_ptr` (`SimulationStats`
+ * of `crates/abi`). The first `STATS_COUNTS` of them are counts; the ones after them are the
+ * times and steps of the state of the solver, whose words are the bits of a float.
  */
 export const STATS_NAMES = [
   "steps",
@@ -89,7 +90,20 @@ export const STATS_NAMES = [
   "sensitivity_rhs_evals",
   "sensitivity_model_rhs_evals",
   "sensitivity_jac_p_evals",
+  "stability_order_reductions",
+  "last_order",
+  "current_order",
+  "actual_initial_time_step",
+  "last_time_step",
+  "current_time_step",
+  "current_time",
 ];
+
+/**
+ * The number of the leading `STATS_NAMES` which are counts (`SimulationStats::COUNTS`); the
+ * words of the ones after them are the bits of a float.
+ */
+export const STATS_COUNTS = 24;
 
 const LITTLE_ENDIAN = new Uint8Array(new Uint16Array([1]).buffer)[0] === 1;
 
@@ -475,8 +489,9 @@ class Instance {
   }
 
   /**
-   * The counters of the integrator of the last simulation: an object of the names of
-   * `STATS_NAMES` to numbers (`engine_stats_ptr`).
+   * The statistics of the integrator of the last simulation: an object of the names of
+   * `STATS_NAMES` to numbers (`engine_stats_ptr`), the counts and, after them, the times and
+   * steps of the state of the solver.
    */
   stats() {
     if (this.trapped) {
@@ -484,7 +499,12 @@ class Instance {
     }
     const ptr = this.guard(() => this.exports.engine_stats_ptr()) >>> 0;
     const view = new DataView(this.memory.buffer, ptr, 8 * STATS_NAMES.length);
-    return Object.fromEntries(STATS_NAMES.map((name, i) => [name, Number(view.getBigUint64(8 * i, true))]));
+    return Object.fromEntries(
+      STATS_NAMES.map((name, i) => [
+        name,
+        i < STATS_COUNTS ? Number(view.getBigUint64(8 * i, true)) : view.getFloat64(8 * i, true),
+      ]),
+    );
   }
 
   /** The address of the output of the last call in the memory (aligned to 8). */
