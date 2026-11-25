@@ -16,6 +16,7 @@ use charton::error::ChartonError;
 use charton::prelude::*;
 
 use super::axis::ResolvedAxis;
+use super::cut::{Span, XEnds, cut_runs, linear};
 use super::{heatmap, stats_marks};
 use crate::spec::{Element, ElementKind, Fonts, LineType, MarkerType, Orientation, Style};
 use crate::svg::{LayerInfo, MarkerGlyph, theme};
@@ -45,24 +46,6 @@ impl Layers {
 /// A dataset of columns.
 pub(crate) fn dataset(columns: Vec<(&str, ColumnVector)>) -> Result<Dataset, ChartonError> {
     columns.to_dataset()
-}
-
-/// The runs of consecutive indices for which `ok` holds.
-pub(crate) fn runs(n: usize, ok: impl Fn(usize) -> bool) -> Vec<std::ops::Range<usize>> {
-    let mut out = Vec::new();
-    let mut i = 0;
-    while i < n {
-        if !ok(i) {
-            i += 1;
-            continue;
-        }
-        let start = i;
-        while i < n && ok(i) {
-            i += 1;
-        }
-        out.push(start..i);
-    }
-    out
 }
 
 /// The dash pattern of a line type at a width, empty for a solid line.
@@ -150,36 +133,40 @@ pub(crate) fn path_layer(
     Ok(Some(chart))
 }
 
-/// The runs of the finite points of a line through `(x, y)` in coordinates.
-fn line_runs(xu: &[f64], yu: &[f64]) -> Vec<(Vec<f64>, Vec<f64>)> {
-    runs(xu.len(), |i| xu[i].is_finite() && yu[i].is_finite())
+/// The runs of the finite points of a line through `(x, y)` in coordinates, cut to the x
+/// domain `span` (see [`cut`]).
+fn line_runs(xu: &[f64], yu: &[f64], span: Span) -> Vec<(Vec<f64>, Vec<f64>)> {
+    cut_runs(xu, &[yu], span, linear)
         .into_iter()
-        .map(|r| (xu[r.clone()].to_vec(), yu[r].to_vec()))
+        .map(|(x, mut columns)| (x, columns.swap_remove(0)))
         .collect()
 }
 
-/// The closed outlines between two edges, one polygon per run of finite values.
+/// The closed outlines between two edges, one polygon per run of finite values inside the x
+/// domain `span`.
 fn polygon_layer(
     xu: &[f64],
-    lo: &[f64],
-    hi: &[f64],
+    (lo, hi): (&[f64], &[f64]),
+    span: Span,
     fill: &str,
     opacity: f64,
 ) -> Result<Option<Chart<MarkPolygon>>, ChartonError> {
     let (mut px, mut py, mut pg) = (Vec::new(), Vec::new(), Vec::new());
-    let ok = |i: usize| xu[i].is_finite() && lo[i].is_finite() && hi[i].is_finite();
-    for (k, r) in runs(xu.len(), ok).into_iter().enumerate() {
-        if r.len() < 2 {
+    for (k, (x, edges)) in cut_runs(xu, &[lo, hi], span, linear)
+        .into_iter()
+        .enumerate()
+    {
+        if x.len() < 2 {
             continue;
         }
-        for i in r.clone() {
-            px.push(xu[i]);
-            py.push(hi[i]);
+        for (a, b) in x.iter().zip(&edges[1]) {
+            px.push(*a);
+            py.push(*b);
             pg.push(group_name(k));
         }
-        for i in r.rev() {
-            px.push(xu[i]);
-            py.push(lo[i]);
+        for (a, b) in x.iter().zip(&edges[0]).rev() {
+            px.push(*a);
+            py.push(*b);
             pg.push(group_name(k));
         }
     }
@@ -247,6 +234,13 @@ pub(crate) fn error_runs(
     out
 }
 
+/// The x domain of a plot as the interval its series are cut to: nothing of a curve, a band or
+/// an area is drawn beyond an end of the x axis.
+fn domain_span(xa: &ResolvedAxis) -> Span {
+    let (lo, hi) = xa.domain();
+    Span { lo, hi }
+}
+
 /// The data of a curve: x, y and the errors of x and of y.
 type CurveData<'a> = (&'a [f64], &'a [f64], Option<&'a [f64]>, Option<&'a [f64]>);
 
@@ -261,6 +255,7 @@ fn curve_layers(
 ) -> Result<(), ChartonError> {
     let (x, y, xerr, yerr) = data;
     let (xa, ya) = axes;
+    let span = domain_span(xa);
     let xu: Vec<f64> = x.iter().map(|v| xa.u(*v)).collect();
     let yu: Vec<f64> = y.iter().map(|v| ya.u(*v)).collect();
     let info = || LayerInfo {
@@ -268,7 +263,7 @@ fn curve_layers(
         marker: None,
     };
     if let Some(stroke) = Stroke::of_line(style, color)
-        && let Some(l) = path_layer(&line_runs(&xu, &yu), &stroke, false)?
+        && let Some(l) = path_layer(&line_runs(&xu, &yu, span), &stroke, false)?
     {
         layers.push(l, info());
     }
@@ -278,13 +273,21 @@ fn curve_layers(
         dash: Vec::new(),
         opacity: style.opacity,
     };
+    // a point beyond an end of the x axis has no error bars and no marker
+    let inside = |i: usize| span.holds(xu[i]);
+    let kept = |v: &[f64]| -> Vec<f64> {
+        v.iter()
+            .enumerate()
+            .map(|(i, a)| if inside(i) { *a } else { f64::NAN })
+            .collect()
+    };
     if let Some(e) = xerr
-        && let Some(l) = path_layer(&error_runs(x, e, &yu, xa, true), &bar, true)?
+        && let Some(l) = path_layer(&error_runs(x, &kept(e), &yu, xa, true), &bar, true)?
     {
         layers.push(l, info());
     }
     if let Some(e) = yerr
-        && let Some(l) = path_layer(&error_runs(y, e, &xu, ya, false), &bar, true)?
+        && let Some(l) = path_layer(&error_runs(y, &kept(e), &xu, ya, false), &bar, true)?
     {
         layers.push(l, info());
     }
@@ -293,7 +296,7 @@ fn curve_layers(
         let (px, py): (Vec<f64>, Vec<f64>) = xu
             .iter()
             .zip(&yu)
-            .filter(|(a, b)| a.is_finite() && b.is_finite())
+            .filter(|(a, b)| a.is_finite() && b.is_finite() && span.holds(**a))
             .map(|(a, b)| (*a, *b))
             .unzip();
         if !px.is_empty() {
@@ -384,14 +387,15 @@ pub(crate) fn build(
                 let lo: Vec<f64> = low.iter().map(|v| ya.u(*v)).collect();
                 let hi: Vec<f64> = high.iter().map(|v| ya.u(*v)).collect();
                 let (fill, opacity) = fill_of(style, color);
-                if let Some(l) = polygon_layer(&xu, &lo, &hi, &fill, opacity)? {
+                let span = domain_span(xa);
+                if let Some(l) = polygon_layer(&xu, (&lo, &hi), span, &fill, opacity)? {
                     layers.push(l, info());
                 }
                 if let Some(m) = median
                     && let Some(stroke) = Stroke::of_line(style, color)
                 {
                     let mu: Vec<f64> = m.iter().map(|v| ya.u(*v)).collect();
-                    if let Some(l) = path_layer(&line_runs(&xu, &mu), &stroke, false)? {
+                    if let Some(l) = path_layer(&line_runs(&xu, &mu, span), &stroke, false)? {
                         layers.push(l, info());
                     }
                 }
@@ -401,7 +405,8 @@ pub(crate) fn build(
                 let lo: Vec<f64> = from.iter().map(|v| ya.u(*v)).collect();
                 let hi: Vec<f64> = to.iter().map(|v| ya.u(*v)).collect();
                 let (fill, opacity) = fill_of(style, color);
-                if let Some(l) = polygon_layer(&xu, &lo, &hi, &fill, opacity)? {
+                let span = domain_span(xa);
+                if let Some(l) = polygon_layer(&xu, (&lo, &hi), span, &fill, opacity)? {
                     layers.push(l, info());
                 }
             }
@@ -542,7 +547,16 @@ pub(crate) struct Extent {
 }
 
 /// Adds the values an element puts on the x axis and on its y axis.
-pub(crate) fn extent(e: &Element, out: &mut Extent) {
+///
+/// `ends` are the ends the spec gives the x axis with whether the y axis of the element is
+/// logarithmic: a curve, a band or an area then puts only its values inside the ends on the
+/// axes, and the values where it crosses an end, since nothing beyond them is drawn.
+pub(crate) fn extent(e: &Element, out: &mut Extent, ends: Option<(XEnds, bool)>) {
+    if let Some((ends, log_y)) = ends
+        && cut_extent(e, out, ends, log_y)
+    {
+        return;
+    }
     let with_errors = |out: &mut Vec<f64>, v: &[f64], err: Option<&[f64]>| {
         out.extend_from_slice(v);
         if let Some(err) = err {
@@ -646,6 +660,55 @@ pub(crate) fn extent(e: &Element, out: &mut Extent) {
             }
         }
     }
+}
+
+/// Adds the values of a series inside the given ends of the x axis; false for an element which
+/// is no series over x.
+fn cut_extent(e: &Element, out: &mut Extent, ends: XEnds, log_y: bool) -> bool {
+    let inside = |x: &[f64], v: &[f64]| -> Vec<f64> {
+        x.iter()
+            .zip(v)
+            .filter(|(x, _)| ends.holds(**x))
+            .map(|(_, v)| *v)
+            .collect()
+    };
+    let with_errors = |out: &mut Vec<f64>, v: &[f64], err: &[f64]| {
+        for (a, b) in v.iter().zip(err) {
+            out.push(a - b.abs());
+            out.push(a + b.abs());
+        }
+    };
+    match &e.kind {
+        ElementKind::Curve { x, y, xerr, yerr } => {
+            let xs = inside(x, x);
+            out.xs.extend_from_slice(&xs);
+            if let Some(err) = xerr {
+                with_errors(&mut out.xs, &xs, &inside(x, err));
+            }
+            out.ys.extend(ends.values(x, &[y], log_y));
+            if let Some(err) = yerr {
+                with_errors(&mut out.ys, &inside(x, y), &inside(x, err));
+            }
+        }
+        ElementKind::Band {
+            x,
+            low,
+            high,
+            median,
+        } => {
+            out.xs.extend(inside(x, x));
+            out.ys.extend(ends.values(x, &[low, high], log_y));
+            if let Some(m) = median {
+                out.ys.extend(ends.values(x, &[m], log_y));
+            }
+        }
+        ElementKind::Area { x, from, to } => {
+            out.xs.extend(inside(x, x));
+            out.ys.extend(ends.values(x, &[from, to], log_y));
+        }
+        _ => return false,
+    }
+    true
 }
 
 /// Whether an element without a colour of its own takes the next colour of the cycle; a rule

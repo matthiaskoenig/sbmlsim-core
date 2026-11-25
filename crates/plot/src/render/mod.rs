@@ -10,6 +10,7 @@
 //! same panel and the axis by the crate ([`right_axis`]), the legends by the crate ([`legend`]).
 
 pub(crate) mod axis;
+pub(crate) mod cut;
 pub(crate) mod heatmap;
 pub(crate) mod legend;
 pub(crate) mod marks;
@@ -21,7 +22,7 @@ use std::fmt::Write as _;
 use charton::prelude::*;
 
 use crate::layout::{self, LegendOwner, PAD, Rect};
-use crate::spec::{Element, Figure, Plot, YAxisRef};
+use crate::spec::{AxisScale, Element, Figure, Plot, YAxisRef};
 use crate::svg::{
     self, AxisHooks, ElementTag, FONT_FAMILY, GridLines, ID_PLACEHOLDER, PanelProbe, PlotHooks,
     PlotWriter, escape, theme,
@@ -220,11 +221,15 @@ pub(crate) fn prepare(figure: &Figure, plot: &Plot, panel: (f64, f64)) -> Prepar
     // the axes, a linear one as the categories of a heatmap
     let (x_axis, y_axis) = heatmap::plot_axes(plot);
     let (x_axis, y_axis) = (x_axis.as_ref(), y_axis.as_ref());
+    // the values of the series beyond the ends the spec gives the x axis are not drawn, so
+    // they are no values of the axes either
+    let ends = cut::XEnds::of(x_axis);
+    let log = |a: Option<&crate::spec::Axis>| a.is_some_and(|a| a.scale == AxisScale::Log);
     let (mut ext, mut ext2) = (marks::Extent::default(), marks::Extent::default());
     for e in &plot.elements {
         match e.axis {
-            YAxisRef::Y => marks::extent(e, &mut ext),
-            YAxisRef::Y2 => marks::extent(e, &mut ext2),
+            YAxisRef::Y => marks::extent(e, &mut ext, ends.map(|x| (x, log(Some(y_axis))))),
+            YAxisRef::Y2 => marks::extent(e, &mut ext2, ends.map(|x| (x, log(plot.y2.as_ref())))),
         }
     }
     ext.xs.extend_from_slice(&ext2.xs);

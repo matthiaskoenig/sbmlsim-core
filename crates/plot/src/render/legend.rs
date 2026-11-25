@@ -95,14 +95,54 @@ fn entry_height(fonts: &Fonts) -> f64 {
 
 /// The width and height of a legend of entries in pixels.
 pub(crate) fn size(entries: &[Entry], fonts: &Fonts) -> (f64, f64) {
-    let widest = entries
-        .iter()
-        .map(|e| text_width(&e.label, fonts.legend))
-        .fold(0.0, f64::max);
+    size_of_labels(entries.iter().map(|e| e.label.as_str()), fonts)
+}
+
+/// The width and height of a legend of entries of these labels in pixels.
+fn size_of_labels<'a>(labels: impl IntoIterator<Item = &'a str>, fonts: &Fonts) -> (f64, f64) {
+    let (mut widest, mut rows) = (0.0f64, 0usize);
+    for label in labels {
+        widest = widest.max(text_width(label, fonts.legend));
+        rows += 1;
+    }
     (
         2.0 * PADDING + SWATCH_WIDTH + SWATCH_GAP + widest,
-        2.0 * PADDING + entries.len() as f64 * entry_height(fonts),
+        2.0 * PADDING + rows as f64 * entry_height(fonts),
     )
+}
+
+/// The room a legend takes in the layout: the largest of the legends it may show, `None` for a
+/// legend which shows nothing in any state.
+///
+/// `declared` are the declared legends (`declaredLegends` of `plot.ts`): the lists of labels
+/// the legend may show in some state of a page, more than its elements carry now. A drawn
+/// entry whose label is in none of the lists is shown in every state; every list is laid out
+/// together with these entries, and so are the entries drawn now, so the legend is as wide as
+/// the widest label of any of them and as tall as the one of the most rows. The room is then a
+/// function of what a page may show and not of what it shows now: two states of a page which
+/// draw different lists keep their plot and their figure where they are.
+pub(crate) fn room(entries: &[Entry], declared: &[&[String]], fonts: &Fonts) -> Option<(f64, f64)> {
+    let lists: Vec<&[String]> = declared.iter().copied().filter(|l| !l.is_empty()).collect();
+    if entries.is_empty() && lists.is_empty() {
+        return None;
+    }
+    let (mut width, mut height) = size(entries, fonts);
+    let held = |label: &str| lists.iter().any(|l| l.iter().any(|d| d == label));
+    let always: Vec<&str> = entries
+        .iter()
+        .map(|e| e.label.as_str())
+        .filter(|l| !held(l))
+        .collect();
+    for list in lists {
+        let labels = always
+            .iter()
+            .copied()
+            .chain(list.iter().map(String::as_str));
+        let (w, h) = size_of_labels(labels, fonts);
+        width = width.max(w);
+        height = height.max(h);
+    }
+    Some((width, height))
 }
 
 /// The rectangles of the entries of a legend whose frame is `frame`.
