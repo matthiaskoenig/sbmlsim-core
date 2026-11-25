@@ -183,3 +183,22 @@ def a_polynomial_chaos_expansion(u: numpy.typing.NDArray[numpy.float64]) -> None
     sbmlsim_core.chaos_expansion(22, 4, 0.75)  # ty: ignore[too-many-positional-arguments]
     sbmlsim_core.chaos_design_matrix(u, basis, threads=1.5)  # ty: ignore[invalid-argument-type]
     print(x, values)
+
+
+def the_figures(values: list[float]) -> None:
+    """The SVG, PNG, geometry and picks of a figure and its colour scales."""
+    contract: str = sbmlsim_core.FIGURE_CONTRACT
+    spec = "{}"
+    svg: str = sbmlsim_core.render_svg(spec)
+    png: bytes = sbmlsim_core.render_png(spec, 72.0)
+    default_png: bytes = sbmlsim_core.render_png(spec)
+    geometry: dict[str, Any] = sbmlsim_core.figure_geometry(spec)
+    hit: dict[str, Any] | None = sbmlsim_core.pick(spec, 1.0, 2.0, radius=4.0)
+    colors: list[str] = sbmlsim_core.color_scale(
+        "viridis", 0.0, 1.0, values, center=0.5, log=False
+    )
+    sbmlsim_core.render_png(spec, dpi="x")  # ty: ignore[invalid-argument-type]
+    sbmlsim_core.render_svg(1)  # ty: ignore[invalid-argument-type]
+    sbmlsim_core.pick(spec, 1.0)  # ty: ignore[missing-argument]
+    sbmlsim_core.color_scale("viridis", 0.0, 1.0)  # ty: ignore[missing-argument]
+    print(contract, svg, png, default_png, geometry, hit, colors)

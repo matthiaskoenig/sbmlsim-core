@@ -51,8 +51,8 @@ pub(crate) fn render_png<'py>(
 #[pyfunction]
 pub(crate) fn figure_geometry<'py>(py: Python<'py>, spec: &str) -> PyResult<Bound<'py, PyAny>> {
     let figure = figure_of(py, spec)?;
-    let geometry = py.detach(|| geometry(&figure));
-    pythonize::pythonize(py, &geometry).map_err(|e| PyRuntimeError::new_err(e.to_string()))
+    let layout = py.detach(|| geometry(&figure));
+    pythonize::pythonize(py, &layout).map_err(|e| PyRuntimeError::new_err(e.to_string()))
 }
 
 /// The data point nearest to the pixel `(x, y)` within `radius` pixels, or `None`.

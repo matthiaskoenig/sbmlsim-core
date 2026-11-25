@@ -22,14 +22,19 @@ MAPS = [
 
 
 def main() -> None:
-    print("// The colour tables of `colors.rs`, written by `colors_table.py`; do not edit.")
+    """Prints the colour tables as rust source."""
+    print(
+        "// The colour tables of `colors.rs`, written by `colors_table.py`; do not edit."
+    )
     print(f"// matplotlib {matplotlib.__version__}")
     for const, name in MAPS:
         cmap = colormaps[name]
         assert cmap.N == 256, name
         colors = [to_hex(cmap(i)) for i in range(256)]
         print()
-        print(f"/// matplotlib's `{name}`, 256 colours `0xrrggbb` from the low end to the high end.")
+        print(
+            f"/// matplotlib's `{name}`, 256 colours `0xrrggbb` from the low end to the high end."
+        )
         print(f"const {const}: [u32; 256] = [")
         for row in range(0, 256, 8):
             cells = ", ".join(f"0x{c[1:]}" for c in colors[row : row + 8])
