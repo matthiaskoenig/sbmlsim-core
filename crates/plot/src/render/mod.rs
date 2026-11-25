@@ -8,7 +8,9 @@
 //! [`compose`], which a later step replaces.
 
 pub(crate) mod axis;
+pub(crate) mod heatmap;
 pub(crate) mod marks;
+pub(crate) mod stats_marks;
 
 use std::fmt::Write as _;
 
@@ -200,30 +202,41 @@ fn axis_layout(
 /// Draws one plot into a cell of the figure; the ids it writes start with `prefix`.
 pub(crate) fn render_plot(figure: &Figure, plot: &Plot, cell: Cell, prefix: String) -> PlotSvg {
     let fonts = &figure.fonts;
-    let (mut xs, mut ys) = (Vec::new(), Vec::new());
+    // the axes, a linear one as the categories of a heatmap
+    let (x_axis, y_axis) = heatmap::plot_axes(plot);
+    let (x_axis, y_axis) = (x_axis.as_ref(), y_axis.as_ref());
+    let mut ext = marks::Extent::default();
     for e in plot
         .elements
         .iter()
         .filter(|e| e.axis == crate::spec::YAxisRef::Y)
     {
-        marks::extent(e, &mut xs, &mut ys);
+        marks::extent(e, &mut ext);
     }
-    // the panel is the cell less the axes, about 80 by 70 pixels, and a plot title
+    // the panel is the cell less the axes, about 80 by 70 pixels, a plot title and a colour bar
     let title_room = if plot.title.is_some() { 24.0 } else { 0.0 };
-    let xa = axis::resolve(&plot.x, &xs, cell.width - 90.0, X_TICK_ROOM);
-    let ya = axis::resolve(&plot.y, &ys, cell.height - 70.0 - title_room, Y_TICK_ROOM);
-    let x_labels = tick_labels(&xa, plot.x.ticks_visible);
-    let y_labels = tick_labels(&ya, plot.y.ticks_visible);
-    let xl = axis_layout(&plot.x, &x_labels, fonts.tick, fonts.label, true);
-    let yl = axis_layout(&plot.y, &y_labels, fonts.tick, fonts.label, false);
-    // the last tick label of an unrotated x axis reaches half its width past the panel
+    let panel_height = cell.height - 70.0 - title_room;
+    let bar = plot
+        .colorbar
+        .as_ref()
+        .map(|b| (b, heatmap::colorbar_layout(b, fonts, panel_height)));
+    let bar_room = bar.as_ref().map_or(0.0, |(_, l)| l.room);
+    let panel_width = cell.width - 90.0 - bar_room;
+    let xa = axis::resolve(x_axis, &ext.xs, &ext.x_sticky, panel_width, X_TICK_ROOM);
+    let ya = axis::resolve(y_axis, &ext.ys, &ext.y_sticky, panel_height, Y_TICK_ROOM);
+    let x_labels = tick_labels(&xa, x_axis.ticks_visible);
+    let y_labels = tick_labels(&ya, y_axis.ticks_visible);
+    let xl = axis_layout(x_axis, &x_labels, fonts.tick, fonts.label, true);
+    let yl = axis_layout(y_axis, &y_labels, fonts.tick, fonts.label, false);
+    // the last tick label of an unrotated x axis reaches half its width past the panel, below
+    // the colour bar, which is right of the panel
     let overhang = match x_labels.last() {
-        Some((_, l)) if plot.x.tick_rotation == 0.0 => text_width(l, fonts.tick) / 2.0,
+        Some((_, l)) if x_axis.tick_rotation == 0.0 => text_width(l, fonts.tick) / 2.0,
         _ => 0.0,
     };
     let margins = Margins {
         top: PAD,
-        right: PAD + overhang,
+        right: PAD + overhang.max(bar_room),
         bottom: (PAD + xl.extra).max(0.0),
         left: (PAD + yl.extra).max(0.0),
     };
@@ -245,12 +258,12 @@ pub(crate) fn render_plot(figure: &Figure, plot: &Plot, cell: Cell, prefix: Stri
         title_size: fonts.label,
         title_gap: TITLE_GAP,
         grid: GridLines {
-            x: if plot.x.grid {
+            x: if x_axis.grid {
                 grid_shares(&xa)
             } else {
                 Vec::new()
             },
-            y: if plot.y.grid {
+            y: if y_axis.grid {
                 grid_shares(&ya)
             } else {
                 Vec::new()
@@ -265,13 +278,14 @@ pub(crate) fn render_plot(figure: &Figure, plot: &Plot, cell: Cell, prefix: Stri
         (&xa, &ya),
         (x_labels, y_labels),
         margins,
+        (panel_width, panel_height),
     );
     let (chart, layers, failed) = match built {
         Ok((chart, layers)) => (Some(chart), layers, None),
         Err(e) => (None, Vec::new(), Some(e)),
     };
     let hooks = PlotHooks { layers, ..hooks };
-    let mut writer = PlotWriter::new(prefix, &hooks);
+    let mut writer = PlotWriter::new(prefix.clone(), &hooks);
     let failed = match chart {
         Some(mut chart) => chart.render(&mut writer).err(),
         None => failed,
@@ -284,6 +298,18 @@ pub(crate) fn render_plot(figure: &Figure, plot: &Plot, cell: Cell, prefix: Stri
         height: r.height,
     });
     let mut body = writer.body;
+    let mut defs = writer.defs;
+    if let (Some((b, layout)), Some(p)) = (&bar, panel) {
+        heatmap::draw_colorbar(
+            &mut body,
+            &mut defs,
+            &prefix,
+            b,
+            layout,
+            fonts,
+            (p.x, p.y, p.width, p.height),
+        );
+    }
     if let Some(e) = failed {
         error_text(&mut body, cell, &e.to_string());
     }
@@ -306,11 +332,7 @@ pub(crate) fn render_plot(figure: &Figure, plot: &Plot, cell: Cell, prefix: Stri
         }
         body.push_str("></g>");
     }
-    PlotSvg {
-        body,
-        defs: writer.defs,
-        panel,
-    }
+    PlotSvg { body, defs, panel }
 }
 
 /// The margins of a plot inside its cell in pixels, outside the bands Charton reserves.
@@ -355,7 +377,8 @@ fn kind_name(e: &Element) -> &'static str {
 /// The Charton chart of a plot and what its layers draw.
 ///
 /// Charton gets the tick labels unrotated and no axis titles (see `axis_layout`); the writer
-/// rotates the labels and draws the titles.
+/// rotates the labels and draws the titles. `panel` is the expected size of the panel.
+#[allow(clippy::too_many_arguments)]
 fn chart_of(
     figure: &Figure,
     plot: &Plot,
@@ -364,9 +387,10 @@ fn chart_of(
     (xa, ya): (&ResolvedAxis, &ResolvedAxis),
     (x_labels, y_labels): (TickLabels, TickLabels),
     m: Margins,
+    panel: (f64, f64),
 ) -> Result<(LayeredChart, Vec<svg::LayerInfo>), charton::error::ChartonError> {
     let fonts = &figure.fonts;
-    let layers = marks::build(&plot.elements, colors, fonts, xa, ya)?;
+    let layers = marks::build(&plot.elements, colors, fonts, (xa, ya), panel)?;
     let zero = Expansion {
         mult: (0.0, 0.0),
         add: (0.0, 0.0),

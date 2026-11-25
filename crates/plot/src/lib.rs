@@ -2,12 +2,14 @@
 //! the python package, the web app and the renderer share, with its parsing and validation, and
 //! its renderer to SVG ([`render_svg`]).
 
+mod colors;
 mod error;
 mod render;
 mod spec;
 mod svg;
 mod text;
 
+pub use colors::{COLOR_SCALES, NO_VALUE_COLOR, color_scale};
 pub use error::SpecError;
 pub use render::render_svg;
 pub use spec::*;

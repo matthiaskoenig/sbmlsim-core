@@ -127,7 +127,7 @@ fn attr_opacity(out: &mut String, name: &str, v: f64) {
 }
 
 /// A decimal without trailing zeros.
-fn trim(s: &str) -> &str {
+pub(crate) fn trim(s: &str) -> &str {
     if s.contains('.') {
         s.trim_end_matches('0').trim_end_matches('.')
     } else {
@@ -561,7 +561,9 @@ impl RenderBackend for PlotWriter<'_> {
     }
 
     fn draw_path(&mut self, c: PathConfig) {
-        if self.suppressed() {
+        // a path of neither fill nor stroke, e.g. the fill pass of a polygon without a fill
+        let stroked = !c.stroke.is_none() && c.stroke_width > 0.0;
+        if self.suppressed() || (c.fill.is_none() && !stroked) {
             return;
         }
         let closed = c.is_closed();

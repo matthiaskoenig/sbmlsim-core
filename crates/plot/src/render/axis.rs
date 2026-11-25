@@ -137,7 +137,15 @@ pub(crate) fn axis_title(axis: &Axis) -> String {
 /// Resolves an axis over the values drawn against it.
 ///
 /// `length` is the pixels the axis is expected to be long, `room` the pixels one tick is given.
-pub(crate) fn resolve(axis: &Axis, values: &[f64], length: f64, room: f64) -> ResolvedAxis {
+/// `sticky` are the values an end the axis derives sticks to instead of its margin when no
+/// value lies beyond them (the base of bars, matplotlib's sticky edges).
+pub(crate) fn resolve(
+    axis: &Axis,
+    values: &[f64],
+    sticky: &[f64],
+    length: f64,
+    room: f64,
+) -> ResolvedAxis {
     let count = tick_count(length, room);
     match axis.scale {
         AxisScale::Category => {
@@ -176,7 +184,10 @@ pub(crate) fn resolve(axis: &Axis, values: &[f64], length: f64, room: f64) -> Re
                     linear_limits(v)
                 }
             };
-            let (low, high) = limits_of(values, log, axis.min, axis.max, derive);
+            let (mut low, mut high) = limits_of(values, log, axis.min, axis.max, derive);
+            if axis.frame.is_none() {
+                (low, high) = stick(values, sticky, log, (axis.min, axis.max), (low, high));
+            }
             let ticks = if log {
                 log_ticks(low, high, count)
             } else {
@@ -196,6 +207,35 @@ pub(crate) fn resolve(axis: &Axis, values: &[f64], length: f64, room: f64) -> Re
             }
         }
     }
+}
+
+/// The limits of an axis with the ends it derives moved onto its sticky values.
+///
+/// An end which is not given and whose margin passes a sticky value with no value beyond it
+/// is set onto that value, as long as the limits stay a span; a sticky value a log axis cannot
+/// show is not taken.
+fn stick(
+    values: &[f64],
+    sticky: &[f64],
+    log: bool,
+    (min, max): (Option<f64>, Option<f64>),
+    (mut low, mut high): (f64, f64),
+) -> (f64, f64) {
+    let shown = |v: &f64| v.is_finite() && (!log || *v > 0.0);
+    let (mut smallest, mut largest) = (f64::INFINITY, f64::NEG_INFINITY);
+    for v in values.iter().filter(|v| shown(v)) {
+        smallest = smallest.min(*v);
+        largest = largest.max(*v);
+    }
+    for s in sticky.iter().filter(|v| shown(v)) {
+        if min.is_none() && low < *s && *s <= smallest && *s < high {
+            low = *s;
+        }
+        if max.is_none() && high > *s && *s >= largest && *s > low {
+            high = *s;
+        }
+    }
+    (low, high)
 }
 
 /// The ends of a category axis: the given ones, else the span of the categories.
@@ -506,6 +546,27 @@ mod tests {
         let ends = limits_of(&[1.0, 30.0], false, Some(0.0), None, linear_limits);
         assert_eq!(ends.0, 0.0);
         assert!(ends.1 > 30.0);
+    }
+
+    #[test]
+    fn sticky_ends() {
+        // bars from 0: the lower end sticks to 0 instead of its margin below it
+        let (lo, hi) = stick(&[0.0, 3.0], &[0.0], false, (None, None), (-0.15, 3.15));
+        assert_eq!((lo, hi), (0.0, 3.15));
+        // a value below the base keeps the margin, a given end is kept
+        let ends = stick(&[-1.0, 3.0], &[0.0], false, (None, None), (-1.2, 3.2));
+        assert_eq!(ends, (-1.2, 3.2));
+        let ends = stick(&[0.0, 3.0], &[0.0], false, (Some(-1.0), None), (-1.0, 3.15));
+        assert_eq!(ends, (-1.0, 3.15));
+        // bars all of height 0 keep a span; a log axis takes no sticky 0
+        assert_eq!(
+            stick(&[0.0], &[0.0], false, (None, None), (-1.0, 1.0)),
+            (0.0, 1.0)
+        );
+        assert_eq!(
+            stick(&[1.0], &[0.0], true, (None, None), (0.1, 10.0)),
+            (0.1, 10.0)
+        );
     }
 
     #[test]

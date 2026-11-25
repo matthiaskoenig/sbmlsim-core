@@ -115,7 +115,7 @@ fn every_element_is_a_group() {
             "element {id} draws nothing"
         );
     }
-    // the fixture of every kind: one group per element, also of the kinds drawn later, and the
+    // the fixture of every kind: one group per element of every kind, and the
     // grid, whose elements of a right y axis are written once
     for name in ["every_kind", "grid"] {
         let every = parse(&spec_text(name)).unwrap();

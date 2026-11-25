@@ -1,5 +1,6 @@
 //! The marks of the elements of a plot as layers of Charton: curves, bands, areas, rules and
-//! text.
+//! text here, the statistical kinds and polygons in [`super::stats_marks`] and heatmaps in
+//! [`super::heatmap`].
 //!
 //! The crate prepares what Charton draws: every value becomes the coordinate of its axis
 //! (`ResolvedAxis::u`), a value the axis cannot show splits a line, a band or an area into
@@ -15,6 +16,7 @@ use charton::error::ChartonError;
 use charton::prelude::*;
 
 use super::axis::ResolvedAxis;
+use super::{heatmap, stats_marks};
 use crate::spec::{Element, ElementKind, Fonts, LineType, MarkerType, Orientation, Style};
 use crate::svg::{LayerInfo, MarkerGlyph, theme};
 
@@ -33,7 +35,7 @@ pub(crate) struct Layers {
 
 impl Layers {
     /// Adds a layer of an element.
-    fn push(&mut self, layer: impl Into<LayeredChart>, info: LayerInfo) {
+    pub(crate) fn push(&mut self, layer: impl Into<LayeredChart>, info: LayerInfo) {
         let chart = std::mem::take(&mut self.chart);
         self.chart = chart.and(layer);
         self.info.push(info);
@@ -41,12 +43,12 @@ impl Layers {
 }
 
 /// A dataset of columns.
-fn dataset(columns: Vec<(&str, ColumnVector)>) -> Result<Dataset, ChartonError> {
+pub(crate) fn dataset(columns: Vec<(&str, ColumnVector)>) -> Result<Dataset, ChartonError> {
     columns.to_dataset()
 }
 
 /// The runs of consecutive indices for which `ok` holds.
-fn runs(n: usize, ok: impl Fn(usize) -> bool) -> Vec<std::ops::Range<usize>> {
+pub(crate) fn runs(n: usize, ok: impl Fn(usize) -> bool) -> Vec<std::ops::Range<usize>> {
     let mut out = Vec::new();
     let mut i = 0;
     while i < n {
@@ -64,7 +66,7 @@ fn runs(n: usize, ok: impl Fn(usize) -> bool) -> Vec<std::ops::Range<usize>> {
 }
 
 /// The dash pattern of a line type at a width, empty for a solid line.
-fn dash(kind: LineType, width: f64) -> Vec<f64> {
+pub(crate) fn dash(kind: LineType, width: f64) -> Vec<f64> {
     let w = width.max(1.0);
     match kind {
         LineType::Dashed => vec![3.7 * w, 1.6 * w],
@@ -76,16 +78,20 @@ fn dash(kind: LineType, width: f64) -> Vec<f64> {
 
 /// The paint of a line: colour, width, dash and opacity.
 #[derive(Clone)]
-struct Stroke {
-    color: String,
-    width: f64,
-    dash: Vec<f64>,
-    opacity: f64,
+pub(crate) struct Stroke {
+    /// Colour `#rrggbb`.
+    pub color: String,
+    /// Width in pixels.
+    pub width: f64,
+    /// Dash pattern, empty for a solid line.
+    pub dash: Vec<f64>,
+    /// Opacity.
+    pub opacity: f64,
 }
 
 impl Stroke {
     /// The stroke of the line of a style, `None` for a style without a line.
-    fn of_line(style: &Style, color: &str) -> Option<Stroke> {
+    pub(crate) fn of_line(style: &Style, color: &str) -> Option<Stroke> {
         (style.line.kind != LineType::None && style.line.width > 0.0).then(|| Stroke {
             color: color.to_string(),
             width: style.line.width,
@@ -96,12 +102,12 @@ impl Stroke {
 }
 
 /// The name of a path group or subpath: Charton groups by a discrete column.
-fn group_name(k: usize) -> String {
+pub(crate) fn group_name(k: usize) -> String {
     k.to_string()
 }
 
 /// The open paths through points, one path group per run, as a layer.
-fn path_layer(
+pub(crate) fn path_layer(
     runs_of: &[(Vec<f64>, Vec<f64>)],
     stroke: &Stroke,
     subpaths: bool,
@@ -199,7 +205,7 @@ fn polygon_layer(
 }
 
 /// The fill colour and opacity of a band or an area.
-fn fill_of(style: &Style, color: &str) -> (String, f64) {
+pub(crate) fn fill_of(style: &Style, color: &str) -> (String, f64) {
     match &style.fill {
         Some(f) => (
             f.color.clone().unwrap_or_else(|| color.to_string()),
@@ -213,7 +219,7 @@ fn fill_of(style: &Style, color: &str) -> (String, f64) {
 ///
 /// `along` is the axis of the error, `across` the coordinates of the other axis; an end the axis
 /// cannot show (below 0 on a logarithmic axis) is the lower end of the axis.
-fn error_runs(
+pub(crate) fn error_runs(
     values: &[f64],
     errors: &[f64],
     across: &[f64],
@@ -320,14 +326,15 @@ fn curve_layers(
 /// Builds the layers of the elements of a plot.
 ///
 /// `colors` is the colour of every element (its own or the default), `fonts` the font sizes of
-/// the figure. Only elements of the left y axis are drawn; the kinds of Task 4 and the right
-/// axis of Task 5 get their group and no layer yet.
+/// the figure and `panel` the expected width and height of the panel in pixels, which the text
+/// of the cells of a heatmap is fitted into. Only elements of the left y axis are drawn; the
+/// right axis of Task 5 gets its groups and no layer yet.
 pub(crate) fn build(
     elements: &[Element],
     colors: &[String],
     fonts: &Fonts,
-    xa: &ResolvedAxis,
-    ya: &ResolvedAxis,
+    (xa, ya): (&ResolvedAxis, &ResolvedAxis),
+    panel: (f64, f64),
 ) -> Result<Layers, ChartonError> {
     let (x0, x1) = xa.domain();
     let (y0, y1) = ya.domain();
@@ -444,20 +451,97 @@ pub(crate) fn build(
                     .encode((alt::x("x"), alt::y("y"), alt::text("t")))?;
                 layers.push(chart, info());
             }
-            // the kinds of Task 4: a group without marks
-            ElementKind::Bar { .. }
-            | ElementKind::Box { .. }
-            | ElementKind::Violin { .. }
-            | ElementKind::Histogram { .. }
-            | ElementKind::Heatmap { .. }
-            | ElementKind::Polygon { .. } => {}
+            ElementKind::Bar {
+                x,
+                height,
+                err,
+                horizontal,
+                width,
+            } => stats_marks::bar_layers(
+                &mut layers,
+                index,
+                stats_marks::Bars {
+                    x,
+                    height,
+                    err: err.as_deref(),
+                    horizontal: *horizontal,
+                    width: *width,
+                },
+                style,
+                color,
+                (xa, ya),
+            )?,
+            ElementKind::Box { positions, stats } => stats_marks::box_layers(
+                &mut layers,
+                index,
+                (positions, stats),
+                style,
+                color,
+                (xa, ya),
+            )?,
+            ElementKind::Violin {
+                positions,
+                densities,
+            } => stats_marks::violin_layers(
+                &mut layers,
+                index,
+                (positions, densities),
+                style,
+                color,
+                (xa, ya),
+            )?,
+            ElementKind::Histogram { edges, counts } => stats_marks::histogram_layers(
+                &mut layers,
+                index,
+                (edges, counts),
+                style,
+                color,
+                (xa, ya),
+            )?,
+            ElementKind::Polygon { paths } => {
+                stats_marks::polygon_layers(&mut layers, index, paths, style, color, (xa, ya))?;
+            }
+            ElementKind::Heatmap {
+                rows,
+                columns,
+                values,
+                text,
+                scale,
+            } => heatmap::heatmap_layers(
+                &mut layers,
+                index,
+                heatmap::Cells {
+                    rows: rows.len(),
+                    columns: columns.len(),
+                    values,
+                    text: text.as_deref(),
+                    scale,
+                },
+                style,
+                fonts,
+                (xa, ya),
+                panel,
+            )?,
         }
     }
     Ok(layers)
 }
 
-/// The values an element puts on the x axis and on its y axis.
-pub(crate) fn extent(e: &Element, xs: &mut Vec<f64>, ys: &mut Vec<f64>) {
+/// The values the elements of a plot put on its axes.
+#[derive(Debug, Default)]
+pub(crate) struct Extent {
+    /// Values on the x axis.
+    pub xs: Vec<f64>,
+    /// Values on the y axis.
+    pub ys: Vec<f64>,
+    /// Values the x axis sticks to: the base of horizontal bars.
+    pub x_sticky: Vec<f64>,
+    /// Values the y axis sticks to: the base of vertical bars and of a histogram.
+    pub y_sticky: Vec<f64>,
+}
+
+/// Adds the values an element puts on the x axis and on its y axis.
+pub(crate) fn extent(e: &Element, out: &mut Extent) {
     let with_errors = |out: &mut Vec<f64>, v: &[f64], err: Option<&[f64]>| {
         out.extend_from_slice(v);
         if let Some(err) = err {
@@ -467,6 +551,7 @@ pub(crate) fn extent(e: &Element, xs: &mut Vec<f64>, ys: &mut Vec<f64>) {
             }
         }
     };
+    let (xs, ys) = (&mut out.xs, &mut out.ys);
     match &e.kind {
         ElementKind::Curve { x, y, xerr, yerr } => {
             with_errors(xs, x, xerr.as_deref());
@@ -498,7 +583,67 @@ pub(crate) fn extent(e: &Element, xs: &mut Vec<f64>, ys: &mut Vec<f64>) {
             Orientation::Horizontal => ys.push(*value),
             Orientation::Vertical => xs.push(*value),
         },
-        _ => {}
+        ElementKind::Bar {
+            x,
+            height,
+            err,
+            horizontal,
+            width,
+        } => {
+            let w = width.unwrap_or(stats_marks::BAR_WIDTH * stats_marks::spacing(x));
+            let (positions, values, sticky) = if *horizontal {
+                (&mut out.ys, &mut out.xs, &mut out.x_sticky)
+            } else {
+                (&mut out.xs, &mut out.ys, &mut out.y_sticky)
+            };
+            for p in x {
+                positions.push(p - w / 2.0);
+                positions.push(p + w / 2.0);
+            }
+            with_errors(values, height, err.as_deref());
+            values.push(0.0);
+            sticky.push(0.0);
+        }
+        ElementKind::Box { positions, stats } => {
+            let half = stats_marks::BOX_WIDTH * stats_marks::spacing(positions) / 2.0;
+            for p in positions {
+                xs.push(p - half);
+                xs.push(p + half);
+            }
+            for b in stats {
+                ys.extend([b.low_whisker, b.q1, b.median, b.q3, b.high_whisker]);
+                ys.extend_from_slice(&b.outliers);
+            }
+        }
+        ElementKind::Violin {
+            positions,
+            densities,
+        } => {
+            let half = stats_marks::VIOLIN_WIDTH * stats_marks::spacing(positions) / 2.0;
+            for p in positions {
+                xs.push(p - half);
+                xs.push(p + half);
+            }
+            for d in densities {
+                ys.extend_from_slice(&d.values);
+            }
+        }
+        ElementKind::Histogram { edges, counts } => {
+            xs.extend_from_slice(edges);
+            ys.extend_from_slice(counts);
+            ys.push(0.0);
+            out.y_sticky.push(0.0);
+        }
+        ElementKind::Heatmap { rows, columns, .. } => {
+            xs.extend([-0.5, columns.len() as f64 - 0.5]);
+            ys.extend([-0.5, rows.len() as f64 - 0.5]);
+        }
+        ElementKind::Polygon { paths } => {
+            for [x, y] in paths.iter().flatten() {
+                xs.push(*x);
+                ys.push(*y);
+            }
+        }
     }
 }
 
