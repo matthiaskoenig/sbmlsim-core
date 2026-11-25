@@ -426,6 +426,29 @@ fn box_from_stats() {
 }
 
 #[test]
+fn box_below_a_log_axis_is_clipped_at_its_start() {
+    // q1 of 0 has no place on a log axis: the body runs from the start of the axis to q3
+    let json = figure(
+        r#"{"scale": "category", "categories": ["a"]}"#,
+        r#"{"scale": "log", "min": 0.1, "max": 100}"#,
+        "",
+        r#"{"id": "b", "kind": "box", "positions": [0],
+            "stats": [{"low_whisker": -1, "q1": 0, "median": 2, "q3": 10, "high_whisker": 50}]}"#,
+    );
+    let svg = render(&json);
+    let doc = Document::parse(&svg).unwrap();
+    let group = element_group(&doc, "b");
+    let p = panel(&doc);
+    let y = |v: f64| p.y + p.height - (v.log10() + 1.0) / 3.0 * p.height;
+    let boxes = filled(group);
+    assert_eq!(boxes.len(), 1, "the body is drawn");
+    let ring = &subpaths(boxes[0].attribute("d").unwrap())[0];
+    let (top, bottom) = y_span(ring);
+    assert_near(top, y(10.0), "q3");
+    assert_near(bottom, p.y + p.height, "the start of the axis");
+}
+
+#[test]
 fn histogram_bins() {
     let json = figure(
         r#"{"label": "value"}"#,

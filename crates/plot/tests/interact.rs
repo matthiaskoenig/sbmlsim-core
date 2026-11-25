@@ -281,6 +281,100 @@ fn pick_y2_bar() {
 }
 
 #[test]
+fn pick_violin() {
+    let v = r#"{"id": "v", "label": "dist", "kind": "violin", "positions": [1, 2],
+        "densities": [{"values": [0, 1, 2], "density": [0.1, 0.5, 0.1]},
+                      {"values": [3, 5, 7], "density": [0.2, 0.4, 0.2]}]}"#;
+    let f = figure(LIN, LIN, "", v);
+    let g = geometry(&f);
+    // inside the span of the values of the second violin, at its position
+    let (px, py) = pixel(&g, 2.0, 5.0, false);
+    let p = pick(&f, px, py, 0.0).expect("inside the violin");
+    assert_eq!((p.element.as_str(), p.index), ("v", 1));
+    assert_eq!(p.values["x"], 2.0);
+    assert_eq!(p.label.as_deref(), Some("dist"));
+    // above the values of the first violin
+    let (px, py) = pixel(&g, 1.0, 6.5, false);
+    assert!(pick(&f, px, py, 0.0).is_none());
+}
+
+#[test]
+fn pick_area() {
+    let a = r#"{"id": "a", "kind": "area", "x": [0, 1, 2], "from": [0, 1, 0],
+        "to": [2, 5, 3]}"#;
+    let f = figure(LIN, LIN, "", a);
+    let g = geometry(&f);
+    let (px, py) = pixel(&g, 1.0, 3.0, false);
+    let p = pick(&f, px, py, 1.0).expect("between from and to at x=1");
+    assert_eq!(p.index, 1);
+    assert_eq!(
+        (p.values["x"], p.values["from"], p.values["to"]),
+        (1.0, 1.0, 5.0)
+    );
+    // far from every x of the area
+    let (px, py) = pixel(&g, 0.5, 1.0, false);
+    assert!(pick(&f, px, py, 1.0).is_none());
+}
+
+#[test]
+fn polygon_is_not_picked() {
+    let poly = r#"{"id": "g", "label": "shape", "kind": "polygon",
+        "paths": [[[0, 0], [4, 0], [4, 8], [0, 8]]]}"#;
+    let f = figure(LIN, LIN, "", poly);
+    let g = geometry(&f);
+    let (px, py) = pixel(&g, 2.0, 4.0, false);
+    assert!(pick(&f, px, py, 50.0).is_none());
+    let (px, py) = pixel(&g, 0.0, 0.0, false);
+    assert!(pick(&f, px, py, 50.0).is_none());
+}
+
+#[test]
+fn pick_box_below_a_log_axis() {
+    // q1 of 0 is clipped at the start of the log axis, the body is still picked
+    let bx = r#"{"id": "b", "kind": "box", "positions": [1],
+        "stats": [{"low_whisker": 0, "q1": 0, "median": 2, "q3": 10, "high_whisker": 50}]}"#;
+    let f = figure(LIN, r#"{"scale": "log", "min": 0.1, "max": 100}"#, "", bx);
+    let g = geometry(&f);
+    let (px, py) = pixel(&g, 1.0, 0.2, false);
+    let p = pick(&f, px, py, 0.0).expect("inside the clipped body");
+    assert_eq!((p.index, p.values["q1"]), (0, 0.0));
+}
+
+#[test]
+fn geometry_reports_the_drawn_size() {
+    let el = r#"{"id": "c", "label": "a long label of the curve", "kind": "curve",
+        "x": [0, 1], "y": [0, 1]}"#;
+    let f = parse(&format!(
+        r#"{{"contract": "figure/1", "width": 600, "height": 400,
+            "grid": {{"rows": 1, "columns": 1}}, "legend": {{"position": "outside"}},
+            "plots": [{{"id": "p", "row": 0, "column": 0, "x": {{}}, "y": {{}},
+                        "elements": [{el}]}}]}}"#
+    ))
+    .unwrap();
+    let g = geometry(&f);
+    assert!(
+        g.width > 600.0,
+        "the legend outside grows the figure: {}",
+        g.width
+    );
+    assert_eq!(g.height, 400.0);
+    let svg = sbmlsim_plot::render_svg(&f);
+    let doc = roxmltree::Document::parse(&svg).unwrap();
+    let root = doc.root_element();
+    let attr = |name: &str| root.attribute(name).unwrap().parse::<f64>().unwrap();
+    assert_eq!(attr("width"), g.width);
+    assert_eq!(attr("height"), g.height);
+    // a figure without legends outside keeps the size of its spec
+    let g = geometry(&figure(LIN, LIN, "", CURVE));
+    assert_eq!((g.width, g.height), (600.0, 400.0));
+    let json = serde_json::to_value(&g).unwrap();
+    assert_eq!(
+        (json["width"].as_f64(), json["height"].as_f64()),
+        (Some(600.0), Some(400.0))
+    );
+}
+
+#[test]
 fn a_plan_of_another_figure_picks_nothing() {
     let f = figure(LIN, LIN, "", CURVE);
     let other = parse(&support::spec_text("grid")).unwrap();

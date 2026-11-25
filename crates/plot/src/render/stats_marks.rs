@@ -151,6 +151,18 @@ pub(crate) fn base_of(axis: &ResolvedAxis) -> f64 {
     }
 }
 
+/// The coordinates of the ends of the body of a box, from `q1` to `q3`: on a logarithmic axis
+/// a `q1` the axis cannot show (zero or negative) is clipped at the start of the axis, as the
+/// base of a bar is, so the body still shows from there to `q3`.
+pub(crate) fn box_body(axis: &ResolvedAxis, q1: f64, q3: f64) -> (f64, f64) {
+    let (bottom, top) = (axis.u(q1), axis.u(q3));
+    if bottom.is_nan() && top.is_finite() && q1.is_finite() {
+        (base_of(axis), top)
+    } else {
+        (bottom, top)
+    }
+}
+
 /// The data of bars.
 pub(crate) struct Bars<'a> {
     /// Positions.
@@ -231,8 +243,8 @@ pub(crate) fn box_layers(
     for (p, b) in positions.iter().zip(stats) {
         let (left, center, right) = (xa.u(p - w / 2.0), xa.u(*p), xa.u(p + w / 2.0));
         let (cap_left, cap_right) = (xa.u(p - w / 4.0), xa.u(p + w / 4.0));
-        let [lw, q1, med, q3, hw] =
-            [b.low_whisker, b.q1, b.median, b.q3, b.high_whisker].map(|v| ya.u(v));
+        let [lw, med, hw] = [b.low_whisker, b.median, b.high_whisker].map(|v| ya.u(v));
+        let (q1, q3) = box_body(ya, b.q1, b.q3);
         rings.push(vec![(left, q1), (right, q1), (right, q3), (left, q3)]);
         whiskers.push((vec![center, center], vec![lw, q1]));
         whiskers.push((vec![center, center], vec![q3, hw]));

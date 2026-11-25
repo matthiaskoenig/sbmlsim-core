@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::layout::{self, LegendOwner, Plan, Rect};
 use crate::render::axis::ResolvedAxis;
-use crate::render::stats_marks::{BAR_WIDTH, BOX_WIDTH, VIOLIN_WIDTH, base_of, spacing};
+use crate::render::stats_marks::{BAR_WIDTH, BOX_WIDTH, VIOLIN_WIDTH, base_of, box_body, spacing};
 use crate::spec::{AxisScale, ElementKind, Figure, Orientation, YAxisRef};
 
 /// A figure laid out once: the plan the geometry and the pick read.
@@ -106,9 +106,18 @@ pub struct LegendEntryGeometry {
     pub rect: PixelRect,
 }
 
-/// Where the panels and the legend entries of a figure are, in its pixels.
+/// Where the panels and the legend entries of a figure are, in its pixels, and how large it is
+/// drawn.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Geometry {
+    /// The width of the figure as drawn, the `width` of its SVG (to its two decimals): the
+    /// `width` of the spec, grown by the legends right of the plots and of the rows, which an
+    /// inside legend too large for its panel becomes as well. The PNG is `width * dpi / 72`
+    /// pixels wide.
+    pub width: f64,
+    /// The height of the figure as drawn, the `height` of its SVG (to its two decimals): the
+    /// `height` of the spec, grown by a legend outside which is taller than its row.
+    pub height: f64,
     /// The plots, in the order of the spec.
     pub plots: Vec<PlotGeometry>,
     /// The entries of the legends drawn, from the top of each legend.
@@ -171,6 +180,8 @@ pub fn geometry_of(plan: &FigurePlan) -> Geometry {
         })
         .collect();
     Geometry {
+        width: layout::round2(l.width),
+        height: layout::round2(l.height),
         plots,
         legend_entries,
     }
@@ -485,7 +496,12 @@ fn measure(kind: &ElementKind, m: &Map, best: &mut Best) {
         ElementKind::Box { positions, stats } => {
             let w = BOX_WIDTH * spacing(positions);
             for (i, (p, b)) in positions.iter().zip(stats).enumerate() {
-                let Some(r) = area(p - w / 2.0, b.q1, p + w / 2.0, b.q3) else {
+                let (q1, q3) = box_body(m.ya, b.q1, b.q3);
+                let (a, c) = (
+                    (m.px(m.xa.u(p - w / 2.0)), m.py(q1)),
+                    (m.px(m.xa.u(p + w / 2.0)), m.py(q3)),
+                );
+                let Some(r) = overlaps(m, a, c).then(|| to_rect(at, a, c)) else {
                     continue;
                 };
                 // the whisker line belongs to the box
