@@ -18,6 +18,10 @@ import { BUNDLE_CONTRACT, CORE_VERSION, ENGINE, createPanelEndpoint } from "./pa
 
 export { BUNDLE_CONTRACT, CORE_VERSION, ENGINE };
 
+// the renderer of the figures, `sbmlsimCore.loadPlot(bytes)` with the bytes of `plot.wasm`
+// (`sbmlsim_core.plot_wasm()`), which a page which embeds everything gets from python
+export { Plot, PlotError, loadPlot } from "./plot.mjs";
+
 /** The source of the worker of the pool as one classic script, embedded by the build. */
 // eslint-disable-next-line no-undef
 export const WORKER_SOURCE = __SBMLSIM_CORE_WORKER__;

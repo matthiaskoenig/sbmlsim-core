@@ -25,9 +25,12 @@ var sbmlsimCore = (() => {
     BUNDLE_CONTRACT: () => BUNDLE_CONTRACT,
     CORE_VERSION: () => CORE_VERSION,
     ENGINE: () => ENGINE,
+    Plot: () => Plot,
+    PlotError: () => PlotError,
     WORKER_SOURCE: () => WORKER_SOURCE,
     blobWorkers: () => blobWorkers,
-    createInlineEndpoint: () => createInlineEndpoint
+    createInlineEndpoint: () => createInlineEndpoint,
+    loadPlot: () => loadPlot
   });
 
   // loader.mjs
@@ -1449,12 +1452,12 @@ var sbmlsimCore = (() => {
     let loading = null;
     let ownPool = null;
     let closed = false;
-    const bytesOf = async (url) => {
+    const bytesOf2 = async (url) => {
       const response = await load(url);
       if (!response.ok) throw new Error(`${url} answers ${response.status}`);
       return new Uint8Array(await response.arrayBuffer());
     };
-    const runtimeModule = async (source) => source instanceof WebAssembly.Module || ArrayBuffer.isView(source) || source instanceof ArrayBuffer ? source : bytesOf(new URL(String(source), globalThis.location?.href));
+    const runtimeModule = async (source) => source instanceof WebAssembly.Module || ArrayBuffer.isView(source) || source instanceof ArrayBuffer ? source : bytesOf2(new URL(String(source), globalThis.location?.href));
     const loaded = () => {
       if (!loading) {
         loading = (async () => {
@@ -1488,8 +1491,8 @@ var sbmlsimCore = (() => {
           if (!entry) throw new Error(`the bundle has no model ${key}`);
           const dir = String(entry.compiled).replace(/\/+$/, "");
           const [wasm, text] = await Promise.all([
-            bytesOf(new URL(`${dir}/model.wasm`, bundleUrl)),
-            bytesOf(new URL(`${dir}/model.json`, bundleUrl)).then((bytes) => new TextDecoder().decode(bytes))
+            bytesOf2(new URL(`${dir}/model.wasm`, bundleUrl)),
+            bytesOf2(new URL(`${dir}/model.json`, bundleUrl)).then((bytes) => new TextDecoder().decode(bytes))
           ]);
           const description = JSON.parse(text);
           const settings = { ...entry.settings };
@@ -1762,6 +1765,142 @@ var sbmlsimCore = (() => {
       ownPool?.close();
     };
     return endpoint;
+  }
+
+  // plot.mjs
+  var WASI2 = "wasi_snapshot_preview1";
+  var PLOT_EXPORTS = ["allocate", "deallocate", "render", "geometry", "pick", "memory"];
+  var PlotError = class extends Error {
+    constructor(message) {
+      super(message);
+      this.name = "PlotError";
+    }
+  };
+  async function bytesOf(source) {
+    if (source instanceof ArrayBuffer || ArrayBuffer.isView(source)) return source;
+    const isUrl = source instanceof URL || typeof source === "string" && /^[a-z][a-z0-9+.-]+:\/\//i.test(source);
+    if (isUrl && !String(source).startsWith("file:")) {
+      const response = await fetch(source);
+      if (!response.ok) throw new Error(`plot.wasm: ${response.status} for ${source}`);
+      return response.arrayBuffer();
+    }
+    if (typeof source === "string" || source instanceof URL) {
+      const fs = "node:fs/promises";
+      const { readFile } = await import(fs);
+      return readFile(source);
+    }
+    throw new TypeError("loadPlot takes a URL, a path, an ArrayBuffer or a Uint8Array");
+  }
+  function instantiate(module) {
+    let memory = null;
+    const imports = {};
+    for (const { module: from, name, kind } of WebAssembly.Module.imports(module)) {
+      if (from !== WASI2 || kind !== "function") {
+        throw new Error(`plot.wasm imports ${from}.${name} (${kind}), which is no function of WASI`);
+      }
+      imports[name] = () => {
+        throw new Error(`plot.wasm called WASI ${name}`);
+      };
+    }
+    imports.random_get = (pointer, length) => {
+      const bytes = new Uint8Array(memory.buffer, pointer, length);
+      for (let at = 0; at < length; at += 65536) {
+        globalThis.crypto.getRandomValues(bytes.subarray(at, Math.min(at + 65536, length)));
+      }
+      return 0;
+    };
+    const instance = new WebAssembly.Instance(module, { [WASI2]: imports });
+    memory = instance.exports.memory;
+    instance.exports._initialize?.();
+    return instance.exports;
+  }
+  var encoder = new TextEncoder();
+  var decoder = new TextDecoder("utf-8", { fatal: true });
+  var Plot = class {
+    #exports;
+    #broken = false;
+    /** @param {object} exports the exports of an instance of `plot.wasm` */
+    constructor(exports) {
+      this.#exports = exports;
+    }
+    /** Calls `invoke(pointer, length, out)` on the text of a spec and gives the text it answers. */
+    #call(spec, invoke) {
+      if (this.#broken) {
+        throw new Error("plot.wasm trapped in an earlier call and its instance is unusable; load a new Plot");
+      }
+      const text = typeof spec === "string" ? spec : JSON.stringify(spec);
+      if (typeof text !== "string") throw new TypeError("the spec is not JSON");
+      const exports = this.#exports;
+      const input = encoder.encode(text);
+      let pointer = 0;
+      let out = 0;
+      try {
+        pointer = exports.allocate(input.length);
+        new Uint8Array(exports.memory.buffer, pointer, input.length).set(input);
+        out = exports.allocate(8);
+        const status = invoke(pointer, input.length, out);
+        const words = new DataView(exports.memory.buffer, out, 8);
+        const resultPointer = words.getUint32(0, true);
+        const resultLength = words.getUint32(4, true);
+        const result = decoder.decode(new Uint8Array(exports.memory.buffer, resultPointer, resultLength));
+        exports.deallocate(resultPointer, resultLength);
+        exports.deallocate(out, 8);
+        exports.deallocate(pointer, input.length);
+        if (status !== 1) throw new PlotError(result);
+        return result;
+      } catch (error) {
+        if (error instanceof PlotError) throw error;
+        if (error instanceof WebAssembly.RuntimeError) {
+          this.#broken = true;
+          throw new Error(`plot.wasm trapped (${error.message}); the instance is unusable, load a new Plot`, {
+            cause: error
+          });
+        }
+        throw error;
+      }
+    }
+    /**
+     * The SVG of a figure, the bytes of the renderer of the python package.
+     *
+     * @param {object|string} spec a `figure/1` spec, an object or its JSON text
+     * @returns {string} the SVG
+     * @throws {PlotError} with `path: what is wrong` for a spec which is refused
+     */
+    render(spec) {
+      return this.#call(spec, (p, n, out) => this.#exports.render(p, n, out));
+    }
+    /**
+     * The geometry of a figure in its pixels: its panels, their scales and the entries of its
+     * legends.
+     *
+     * @param {object|string} spec a `figure/1` spec
+     * @returns {object} the geometry
+     * @throws {PlotError} for a spec which is refused
+     */
+    geometry(spec) {
+      return JSON.parse(this.#call(spec, (p, n, out) => this.#exports.geometry(p, n, out)));
+    }
+    /**
+     * The data point nearest to the pixel `(x, y)` of the figure within `radius` pixels.
+     *
+     * @param {object|string} spec a `figure/1` spec
+     * @param {number} x the pixel from the left
+     * @param {number} y the pixel from the top
+     * @param {number} [radius=8] the reach in pixels
+     * @returns {object|null} the point in data units, or `null` when there is none
+     * @throws {PlotError} for a spec which is refused
+     */
+    pick(spec, x, y, radius = 8) {
+      return JSON.parse(this.#call(spec, (p, n, out) => this.#exports.pick(p, n, x, y, radius, out)));
+    }
+  };
+  async function loadPlot(source) {
+    const bytes = await bytesOf(source);
+    const module = bytes instanceof WebAssembly.Module ? bytes : await WebAssembly.compile(bytes);
+    const exports = new Set(WebAssembly.Module.exports(module).map((entry) => entry.name));
+    const missing = PLOT_EXPORTS.filter((name) => !exports.has(name));
+    if (missing.length > 0) throw new Error(`plot.wasm does not export ${missing.join(", ")}`);
+    return new Plot(instantiate(module));
   }
 
   // inline.mjs

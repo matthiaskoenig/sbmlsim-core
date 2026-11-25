@@ -95,6 +95,21 @@ const instance = await runtime.instantiate(wasm, description);
 
 `compile` is synchronous and takes a few milliseconds for a model of the size of the repressilator; a model which the compiler refuses raises a `CompileError` with its message. `optimize: false` leaves the optimizer of the compiler out (the results are the same) and `jacobian` is `"auto"`, `"difference-quotient"` or `"analytic"`, as the command line takes them. One compiler compiles any number of models, one after the other.
 
+## Draw a figure
+
+`plot.wasm` is the renderer of the figures of sbmlsim (a `figure/1` spec) built for `wasm32-wasip1`: it gives the SVG the python package draws, byte for byte, the geometry of the figure in pixels and the data point under a pointer. Every call is synchronous (about 5 ms for the benchmark figure in Node), so a redraw on a knob drag runs on the main thread:
+
+```js
+import { loadPlot } from "sbmlsim-core/plot";
+
+const plot = await loadPlot(new URL("./plot.wasm", import.meta.url)); // a URL, a path (Node), an ArrayBuffer or a Uint8Array
+const svg = plot.render(spec); // a `figure/1` object or its JSON text
+const { plots, legend_entries } = plot.geometry(spec);
+const hit = plot.pick(spec, x, y, 8); // { plot, element, index, values } in data units, or null
+```
+
+A spec the renderer refuses raises a `PlotError` whose message is `path: what is wrong`. A panic of the module (a trap) leaves its memory in an unknown state, so that `Plot` raises an `Error` saying so on that call and every later one; `loadPlot` again gives a new instance. A page which inlines everything uses `sbmlsimCore.loadPlot` of the inline build with the bytes of `sbmlsim_core.plot_wasm()`.
+
 ## A static app of interactive panels
 
 `python -m sbmlsim.serve --model id=module:attribute --export DIR` of sbmlsim writes the panels and the app of a model as a bundle; `createPanelEndpoint` answers the routes of the service from it, with the simulations on a pool of workers, and the components of [sbmlsim-web](https://matthiaskoenig.github.io/sbmlsim-web/) draw them:
