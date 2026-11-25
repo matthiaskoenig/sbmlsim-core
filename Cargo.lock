@@ -2576,6 +2576,7 @@ dependencies = [
  "sbmlsim-compiler",
  "sbmlsim-fit",
  "sbmlsim-host",
+ "sbmlsim-plot",
  "serde_path_to_error",
 ]
 

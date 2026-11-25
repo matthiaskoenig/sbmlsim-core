@@ -74,6 +74,7 @@ mod chaos;
 mod compile;
 mod errors;
 mod fit;
+mod plot;
 mod runtime;
 mod simulate;
 
@@ -99,6 +100,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("MODEL_CONTRACT", MODEL_CONTRACT)?;
     m.add("SIMULATION_CONTRACT", SIMULATION_CONTRACT)?;
     m.add("FIT_CONTRACT", sbmlsim_fit::FIT_CONTRACT)?;
+    m.add("FIGURE_CONTRACT", sbmlsim_plot::FIGURE_CONTRACT)?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     // the allocator this build routes its allocations through, which is not the same on
     // every platform: see `mod allocator`
@@ -130,6 +132,11 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(chaos::chaos_expansion, m)?)?;
     m.add_function(wrap_pyfunction!(chaos::chaos_design_matrix, m)?)?;
     m.add_function(wrap_pyfunction!(chaos::chaos_predict, m)?)?;
+    m.add_function(wrap_pyfunction!(plot::render_svg, m)?)?;
+    m.add_function(wrap_pyfunction!(plot::render_png, m)?)?;
+    m.add_function(wrap_pyfunction!(plot::figure_geometry, m)?)?;
+    m.add_function(wrap_pyfunction!(plot::pick, m)?)?;
+    m.add_function(wrap_pyfunction!(plot::color_scale, m)?)?;
     Ok(())
 }
 

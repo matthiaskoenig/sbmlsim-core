@@ -1,6 +1,7 @@
 """sbmlsim-core: compile SBML models to WebAssembly and simulate them."""
 
 from sbmlsim_core._core import (
+    FIGURE_CONTRACT,
     FIT_CONTRACT,
     MODEL_CONTRACT,
     SIMULATION_CONTRACT,
@@ -27,14 +28,20 @@ from sbmlsim_core._core import (
     chaos_design_matrix,
     chaos_expansion,
     chaos_predict,
+    color_scale,
     compile_sbml,
+    figure_geometry,
     fit_models,
     fit_problem_of_models,
+    pick,
+    render_png,
+    render_svg,
     runtime_wasm,
 )
 from sbmlsim_core.batch import simulate_stream
 
 __all__ = [
+    "FIGURE_CONTRACT",
     "FIT_CONTRACT",
     "MODEL_CONTRACT",
     "SIMULATION_CONTRACT",
@@ -61,9 +68,14 @@ __all__ = [
     "chaos_design_matrix",
     "chaos_expansion",
     "chaos_predict",
+    "color_scale",
     "compile_sbml",
+    "figure_geometry",
     "fit_models",
     "fit_problem_of_models",
+    "pick",
+    "render_png",
+    "render_svg",
     "runtime_wasm",
     "simulate_stream",
 ]
