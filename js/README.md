@@ -97,7 +97,7 @@ const instance = await runtime.instantiate(wasm, description);
 
 ## Draw a figure
 
-`plot.wasm` is the renderer of the figures of sbmlsim (a `figure/1` spec) built for `wasm32-wasip1`: it gives the SVG the python package draws, byte for byte, the geometry of the figure in pixels and the data point under a pointer. Every call is synchronous (about 5 ms for the benchmark figure in Node), so a redraw on a knob drag runs on the main thread:
+`plot.wasm` is the renderer of the figures of sbmlsim (a `figure/1` spec) built for `wasm32-wasip1`: it gives the SVG the python package draws, byte for byte, the geometry of the figure in pixels and the data point under a pointer. Every call is synchronous (5 to 10 ms for the benchmark figure in Node), so a redraw on a knob drag runs on the main thread:
 
 ```js
 import { loadPlot } from "sbmlsim-core/plot";
@@ -108,7 +108,17 @@ const { plots, legend_entries } = plot.geometry(spec);
 const hit = plot.pick(spec, x, y, 8); // { plot, element, index, values } in data units, or null
 ```
 
-A spec the renderer refuses raises a `PlotError` whose message is `path: what is wrong`. A panic of the module (a trap) leaves its memory in an unknown state, so that `Plot` raises an `Error` saying so on that call and every later one; `loadPlot` again gives a new instance. A page which inlines everything uses `sbmlsimCore.loadPlot` of the inline build with the bytes of `sbmlsim_core.plot_wasm()`.
+`pick` parses the spec and plans the layout on every call. A figure a pointer moves over is prepared once, which answers without either (about 0.1 ms per pick in Node for the benchmark figure):
+
+```js
+const figure = plot.prepare(spec); // parsed and laid out once
+canvas.onpointermove = (event) => show(figure.pick(event.offsetX, event.offsetY));
+figure.svg(); // the same bytes as plot.render(spec)
+figure.geometry();
+figure.dispose(); // frees it in the module; a disposed figure throws when it is used
+```
+
+A spec the renderer refuses raises a `PlotError` whose message is `path: what is wrong`, and the `Plot` stays usable. Any other failure out of the module (a panic, which aborts it, a trap, a stack overflow, an exhausted memory) leaves its memory in an unknown state, so that `Plot` is broken: the call throws an `Error` which carries the message of the panic, every later call throws too, and `loadPlot` gives a new instance. A string is a path in Node and a URL in a browser. A page which inlines everything uses `sbmlsimCore.loadPlot` of the inline build with the bytes of `sbmlsim_core.plot_wasm()`.
 
 ## A static app of interactive panels
 

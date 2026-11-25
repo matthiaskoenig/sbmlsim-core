@@ -42,6 +42,18 @@
 //! 5. `deallocate(pointer, len)` gives a buffer back, the results included: every buffer of
 //!    the interface is a slice of bytes of exactly its length, so one function frees them all.
 //!
+//! A figure which is drawn once and asked many times (a pointer moving over it) is *prepared*:
+//! the spec is parsed and the layout planned once, and the handle answers without either:
+//!
+//! 6. `prepare(pointer, len, out)` parses the spec and plans its layout; it gives a handle (a
+//!    number above 0) for a spec it reads and 0 for one it refuses, whose message is written to
+//!    `out` like the other refusals (and freed like them),
+//! 7. `render_prepared(handle, out)`, `geometry_prepared(handle, out)` and
+//!    `pick_prepared(handle, x, y, radius, out)` are `render`, `geometry` and `pick` on the
+//!    prepared figure (the same bytes), and give 0 with a message for a handle which is not
+//!    prepared,
+//! 8. `release(handle)` frees the figure; a handle which is not prepared is ignored.
+//!
 //! `render`, `geometry` and `pick` give 1 for a spec they read and 0 for one they refuse,
 //! whose message (`path: what is wrong`, as the python package raises it) is the result.
 //!
@@ -57,8 +69,9 @@
 //! ```
 
 use std::alloc::{Layout, alloc, dealloc, handle_alloc_error};
+use std::cell::RefCell;
 
-use sbmlsim_plot::{Figure, SpecError, parse};
+use sbmlsim_plot::{Figure, FigurePlan, SpecError, parse};
 
 /// The message of a spec which is not read: the path of the field and what is wrong.
 fn message_of(error: SpecError) -> String {
@@ -245,4 +258,158 @@ pub unsafe extern "C" fn pick(
             out,
         )
     }
+}
+
+/// A figure which is prepared: its spec read and its layout planned.
+struct Prepared {
+    figure: Figure,
+    plan: FigurePlan,
+}
+
+thread_local! {
+    /// The prepared figures by handle minus one; a released slot is `None` and reused.
+    static PREPARED: RefCell<Vec<Option<Prepared>>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Prepares a figure given as the JSON text of a `figure/1` spec and gives its handle, above 0.
+///
+/// # Errors
+///
+/// Gives the message of a spec which is not read.
+pub fn prepare_figure(spec: &str) -> Result<u32, String> {
+    let figure = figure_of(spec)?;
+    let plan = FigurePlan::new(&figure);
+    let prepared = Prepared { figure, plan };
+    Ok(PREPARED.with(|slots| {
+        let mut slots = slots.borrow_mut();
+        let index = match slots.iter().position(Option::is_none) {
+            Some(index) => {
+                slots[index] = Some(prepared);
+                index
+            }
+            None => {
+                slots.push(Some(prepared));
+                slots.len() - 1
+            }
+        };
+        u32::try_from(index + 1).expect("fewer than 2^32 prepared figures")
+    }))
+}
+
+/// Applies `function` to the prepared figure of a handle.
+fn with_prepared<T>(handle: u32, function: impl FnOnce(&Prepared) -> T) -> Result<T, String> {
+    PREPARED.with(|slots| {
+        let slots = slots.borrow();
+        handle
+            .checked_sub(1)
+            .and_then(|index| slots.get(index as usize))
+            .and_then(Option::as_ref)
+            .map(function)
+            .ok_or_else(|| format!("figure {handle} is not prepared"))
+    })
+}
+
+/// The SVG of a prepared figure, the bytes of [`render_figure`] of its spec.
+///
+/// # Errors
+///
+/// Gives a message for a handle which is not prepared.
+pub fn render_prepared_figure(handle: u32) -> Result<String, String> {
+    with_prepared(handle, |p| p.plan.render_svg(&p.figure))
+}
+
+/// The JSON of the geometry of a prepared figure.
+///
+/// # Errors
+///
+/// Gives a message for a handle which is not prepared.
+pub fn geometry_prepared_figure(handle: u32) -> Result<String, String> {
+    with_prepared(handle, |p| json_of(&sbmlsim_plot::geometry_of(&p.plan)))?
+}
+
+/// The JSON of the pick of a prepared figure, as [`pick_point`].
+///
+/// # Errors
+///
+/// Gives a message for a handle which is not prepared.
+pub fn pick_prepared_figure(handle: u32, x: f64, y: f64, radius: f64) -> Result<String, String> {
+    with_prepared(handle, |p| {
+        json_of(&sbmlsim_plot::pick_in(&p.figure, &p.plan, x, y, radius))
+    })?
+}
+
+/// Prepares the figure of the buffer and gives its handle, or 0 with a message at `out`.
+///
+/// # Safety
+///
+/// The buffers satisfy the requirements of [`render`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn prepare(pointer: *const u8, len: usize, out: *mut usize) -> u32 {
+    // SAFETY: the caller gives the buffers documented on `render`
+    match unsafe { spec_of(pointer, len) }.and_then(prepare_figure) {
+        Ok(handle) => handle,
+        Err(message) => {
+            // SAFETY: `out` is the caller's two words
+            unsafe { answer(Err(message), out) };
+            0
+        }
+    }
+}
+
+/// [`render`] of a prepared figure.
+///
+/// # Safety
+///
+/// `out` is a buffer of two words of [`allocate`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn render_prepared(handle: u32, out: *mut usize) -> u32 {
+    // SAFETY: the caller gives the buffer documented above
+    unsafe { answer(render_prepared_figure(handle), out) }
+}
+
+/// [`geometry`] of a prepared figure.
+///
+/// # Safety
+///
+/// `out` is a buffer of two words of [`allocate`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geometry_prepared(handle: u32, out: *mut usize) -> u32 {
+    // SAFETY: the caller gives the buffer documented above
+    unsafe { answer(geometry_prepared_figure(handle), out) }
+}
+
+/// [`pick`] of a prepared figure.
+///
+/// # Safety
+///
+/// `out` is a buffer of two words of [`allocate`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pick_prepared(
+    handle: u32,
+    x: f64,
+    y: f64,
+    radius: f64,
+    out: *mut usize,
+) -> u32 {
+    // SAFETY: the caller gives the buffer documented above
+    unsafe { answer(pick_prepared_figure(handle, x, y, radius), out) }
+}
+
+/// Frees a prepared figure; a handle which is not prepared is ignored.
+#[unsafe(no_mangle)]
+pub extern "C" fn release(handle: u32) {
+    PREPARED.with(|slots| {
+        if let Some(slot) = handle
+            .checked_sub(1)
+            .and_then(|index| slots.borrow_mut().get_mut(index as usize).map(Option::take))
+        {
+            drop(slot);
+        }
+    });
+}
+
+/// The number of prepared figures which are not released, for the tests of the interface.
+#[doc(hidden)]
+pub fn prepared_count() -> usize {
+    PREPARED.with(|slots| slots.borrow().iter().flatten().count())
 }

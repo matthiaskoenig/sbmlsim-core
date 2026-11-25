@@ -1769,30 +1769,65 @@ var sbmlsimCore = (() => {
 
   // plot.mjs
   var WASI2 = "wasi_snapshot_preview1";
-  var PLOT_EXPORTS = ["allocate", "deallocate", "render", "geometry", "pick", "memory"];
+  var PLOT_EXPORTS = [
+    "allocate",
+    "deallocate",
+    "render",
+    "geometry",
+    "pick",
+    "prepare",
+    "render_prepared",
+    "geometry_prepared",
+    "pick_prepared",
+    "release",
+    "memory"
+  ];
+  var MAX_DIAGNOSTICS = 4096;
   var PlotError = class extends Error {
     constructor(message) {
       super(message);
       this.name = "PlotError";
     }
   };
+  function isNode() {
+    return typeof process !== "undefined" && Boolean(process.versions?.node);
+  }
   async function bytesOf(source) {
     if (source instanceof ArrayBuffer || ArrayBuffer.isView(source)) return source;
-    const isUrl = source instanceof URL || typeof source === "string" && /^[a-z][a-z0-9+.-]+:\/\//i.test(source);
-    if (isUrl && !String(source).startsWith("file:")) {
-      const response = await fetch(source);
-      if (!response.ok) throw new Error(`plot.wasm: ${response.status} for ${source}`);
-      return response.arrayBuffer();
+    if (!(source instanceof URL) && typeof source !== "string") {
+      throw new TypeError("loadPlot takes a URL, a path, an ArrayBuffer or a Uint8Array");
     }
-    if (typeof source === "string" || source instanceof URL) {
-      const fs = "node:fs/promises";
-      const { readFile } = await import(fs);
-      return readFile(source);
+    const text = String(source);
+    const nodeFs = "node:fs/promises";
+    const nodeUrl = "node:url";
+    if (/^file:/i.test(text)) {
+      if (!isNode()) throw new Error(`plot.wasm: ${text} is a file URL, which only Node reads`);
+      const { fileURLToPath } = await import(nodeUrl);
+      return (await import(nodeFs)).readFile(fileURLToPath(text));
     }
-    throw new TypeError("loadPlot takes a URL, a path, an ArrayBuffer or a Uint8Array");
+    if (typeof source === "string" && isNode() && !/^[a-z][a-z0-9+.-]*:\/\//i.test(text)) {
+      return (await import(nodeFs)).readFile(source);
+    }
+    if (typeof source === "string" && !isNode() && !/^[a-z][a-z0-9+.-]*:/i.test(text)) {
+      const base = globalThis.location?.href;
+      source = base ? new URL(text, base) : text;
+    }
+    let response;
+    try {
+      response = await fetch(source);
+    } catch (error) {
+      throw new Error(`plot.wasm: ${text} is read as a URL (a browser has no paths): ${error.message}`, {
+        cause: error
+      });
+    }
+    if (!response.ok) throw new Error(`plot.wasm: ${response.status} for ${text}`);
+    return response.arrayBuffer();
   }
+  var encoder = new TextEncoder();
+  var decoder = new TextDecoder("utf-8", { fatal: true });
   function instantiate(module) {
     let memory = null;
+    let written = "";
     const imports = {};
     for (const { module: from, name, kind } of WebAssembly.Module.imports(module)) {
       if (from !== WASI2 || kind !== "function") {
@@ -1809,55 +1844,148 @@ var sbmlsimCore = (() => {
       }
       return 0;
     };
+    imports.fd_write = (fd, iovs, count, nwritten) => {
+      const view = new DataView(memory.buffer);
+      let total = 0;
+      for (let i = 0; i < count; i += 1) {
+        const pointer = view.getUint32(iovs + 8 * i, true);
+        const length = view.getUint32(iovs + 8 * i + 4, true);
+        if (written.length < MAX_DIAGNOSTICS) {
+          written += new TextDecoder().decode(new Uint8Array(memory.buffer, pointer, length));
+        }
+        total += length;
+      }
+      view.setUint32(nwritten, total, true);
+      return 0;
+    };
     const instance = new WebAssembly.Instance(module, { [WASI2]: imports });
     memory = instance.exports.memory;
     instance.exports._initialize?.();
-    return instance.exports;
+    return { exports: instance.exports, diagnostics: () => written.trim().slice(0, MAX_DIAGNOSTICS) };
   }
-  var encoder = new TextEncoder();
-  var decoder = new TextDecoder("utf-8", { fatal: true });
+  function textOf(spec) {
+    const text = typeof spec === "string" ? spec : JSON.stringify(spec);
+    if (typeof text !== "string") throw new TypeError("the spec is not JSON");
+    return text;
+  }
   var Plot = class {
     #exports;
-    #broken = false;
-    /** @param {object} exports the exports of an instance of `plot.wasm` */
-    constructor(exports) {
+    #diagnostics;
+    #failure = null;
+    /**
+     * @param {object} exports the exports of an instance of `plot.wasm`
+     * @param {() => string} [diagnostics] what the instance wrote, for the message of a failure
+     */
+    constructor(exports, diagnostics = () => "") {
       this.#exports = exports;
+      this.#diagnostics = diagnostics;
+    }
+    /** The exports of the instance, for the prepared figures of this plot. */
+    get _exports() {
+      return this.#exports;
+    }
+    /** Whether an earlier call failed and this instance is unusable. */
+    get broken() {
+      return this.#failure !== null;
+    }
+    /** Throws when an earlier call failed. */
+    #check() {
+      if (this.#failure) {
+        throw new Error(`plot.wasm failed in an earlier call (${this.#failure}); the instance is unusable, load a new Plot`);
+      }
+    }
+    /** Marks the instance broken by an exception which is no refusal of a spec, before any free. */
+    #note(error) {
+      if (!(error instanceof PlotError)) this.#failure ??= error?.message ?? String(error);
+    }
+    /** Frees buffers, a failing free marks the instance broken. */
+    #free(buffers) {
+      if (this.#failure) return;
+      try {
+        for (const [pointer, length] of buffers) this.#exports.deallocate(pointer, length);
+      } catch (error) {
+        this.#failure = error.message;
+      }
+    }
+    /**
+     * Runs `body` on the instance: any exception but a `PlotError` marks it broken.
+     *
+     * @template T
+     * @param {() => T} body the calls into the instance
+     * @returns {T} its result
+     */
+    #guard(body) {
+      this.#check();
+      try {
+        return body();
+      } catch (error) {
+        if (error instanceof PlotError) throw error;
+        this.#note(error);
+        const wrote = this.#diagnostics();
+        throw new Error(
+          `plot.wasm failed (${this.#failure})${wrote ? `: ${wrote}` : ""}; the instance is unusable, load a new Plot`,
+          { cause: error }
+        );
+      }
+    }
+    /** The text at the two words of `out`, freed; a `PlotError` of it when `status` is not 1. */
+    #take(out, status) {
+      const exports = this.#exports;
+      const words = new DataView(exports.memory.buffer, out, 8);
+      const pointer = words.getUint32(0, true);
+      const length = words.getUint32(4, true);
+      let text;
+      try {
+        text = decoder.decode(new Uint8Array(exports.memory.buffer, pointer, length));
+      } finally {
+        this.#free([[pointer, length]]);
+      }
+      if (status !== 1) throw new PlotError(text);
+      return text;
     }
     /** Calls `invoke(pointer, length, out)` on the text of a spec and gives the text it answers. */
     #call(spec, invoke) {
-      if (this.#broken) {
-        throw new Error("plot.wasm trapped in an earlier call and its instance is unusable; load a new Plot");
-      }
-      const text = typeof spec === "string" ? spec : JSON.stringify(spec);
-      if (typeof text !== "string") throw new TypeError("the spec is not JSON");
-      const exports = this.#exports;
-      const input = encoder.encode(text);
-      let pointer = 0;
-      let out = 0;
-      try {
-        pointer = exports.allocate(input.length);
-        new Uint8Array(exports.memory.buffer, pointer, input.length).set(input);
-        out = exports.allocate(8);
-        const status = invoke(pointer, input.length, out);
-        const words = new DataView(exports.memory.buffer, out, 8);
-        const resultPointer = words.getUint32(0, true);
-        const resultLength = words.getUint32(4, true);
-        const result = decoder.decode(new Uint8Array(exports.memory.buffer, resultPointer, resultLength));
-        exports.deallocate(resultPointer, resultLength);
-        exports.deallocate(out, 8);
-        exports.deallocate(pointer, input.length);
-        if (status !== 1) throw new PlotError(result);
-        return result;
-      } catch (error) {
-        if (error instanceof PlotError) throw error;
-        if (error instanceof WebAssembly.RuntimeError) {
-          this.#broken = true;
-          throw new Error(`plot.wasm trapped (${error.message}); the instance is unusable, load a new Plot`, {
-            cause: error
-          });
+      const input = encoder.encode(textOf(spec));
+      return this.#guard(() => {
+        const exports = this.#exports;
+        let pointer = 0;
+        let out = 0;
+        try {
+          pointer = exports.allocate(input.length);
+          new Uint8Array(exports.memory.buffer, pointer, input.length).set(input);
+          out = exports.allocate(8);
+          return this.#take(out, invoke(pointer, input.length, out));
+        } catch (error) {
+          this.#note(error);
+          throw error;
+        } finally {
+          this.#free([
+            [out, 8],
+            [pointer, input.length]
+          ]);
         }
-        throw error;
-      }
+      });
+    }
+    /** Calls `invoke(out)` of a prepared figure and gives the text it answers. */
+    _callPrepared(invoke) {
+      return this.#guard(() => {
+        const exports = this.#exports;
+        let out = 0;
+        try {
+          out = exports.allocate(8);
+          return this.#take(out, invoke(out));
+        } catch (error) {
+          this.#note(error);
+          throw error;
+        } finally {
+          this.#free([[out, 8]]);
+        }
+      });
+    }
+    /** Releases a handle; nothing for an instance which failed, whose memory is gone with it. */
+    _release(handle) {
+      if (this.#failure) return;
+      this.#guard(() => this.#exports.release(handle));
     }
     /**
      * The SVG of a figure, the bytes of the renderer of the python package.
@@ -1870,8 +1998,7 @@ var sbmlsimCore = (() => {
       return this.#call(spec, (p, n, out) => this.#exports.render(p, n, out));
     }
     /**
-     * The geometry of a figure in its pixels: its panels, their scales and the entries of its
-     * legends.
+     * The geometry of a figure in its pixels: its `plots`, their scales and the `legend_entries`.
      *
      * @param {object|string} spec a `figure/1` spec
      * @returns {object} the geometry
@@ -1881,7 +2008,8 @@ var sbmlsimCore = (() => {
       return JSON.parse(this.#call(spec, (p, n, out) => this.#exports.geometry(p, n, out)));
     }
     /**
-     * The data point nearest to the pixel `(x, y)` of the figure within `radius` pixels.
+     * The data point nearest to the pixel `(x, y)` of the figure within `radius` pixels. It parses
+     * the spec and plans the layout on every call; a figure which is asked often is `prepare`d.
      *
      * @param {object|string} spec a `figure/1` spec
      * @param {number} x the pixel from the left
@@ -1893,6 +2021,94 @@ var sbmlsimCore = (() => {
     pick(spec, x, y, radius = 8) {
       return JSON.parse(this.#call(spec, (p, n, out) => this.#exports.pick(p, n, x, y, radius, out)));
     }
+    /**
+     * Parses a spec and plans its layout once, for the many answers of a pointer moving over it.
+     *
+     * @param {object|string} spec a `figure/1` spec
+     * @returns {PreparedFigure} the figure, which holds memory of the module until it is disposed
+     * @throws {PlotError} for a spec which is refused
+     */
+    prepare(spec) {
+      const input = encoder.encode(textOf(spec));
+      const handle = this.#guard(() => {
+        const exports = this.#exports;
+        let pointer = 0;
+        let out = 0;
+        try {
+          pointer = exports.allocate(input.length);
+          new Uint8Array(exports.memory.buffer, pointer, input.length).set(input);
+          out = exports.allocate(8);
+          const handle2 = exports.prepare(pointer, input.length, out);
+          if (handle2 === 0) this.#take(out, 0);
+          return handle2;
+        } catch (error) {
+          this.#note(error);
+          throw error;
+        } finally {
+          this.#free([
+            [out, 8],
+            [pointer, input.length]
+          ]);
+        }
+      });
+      return new PreparedFigure(this, handle);
+    }
+  };
+  var PreparedFigure = class {
+    #plot;
+    #handle;
+    #exports;
+    /**
+     * @param {Plot} plot the plot which prepared it
+     * @param {number} handle the handle of the module
+     */
+    constructor(plot, handle) {
+      this.#plot = plot;
+      this.#handle = handle;
+      this.#exports = plot._exports;
+    }
+    /** The handle, or a throw for a disposed figure. */
+    #live() {
+      if (this.#handle === 0) throw new Error("the prepared figure is disposed");
+      return this.#handle;
+    }
+    /**
+     * The SVG of the figure.
+     *
+     * @returns {string} the SVG, the bytes of `Plot.render` of its spec
+     */
+    svg() {
+      const handle = this.#live();
+      return this.#plot._callPrepared((out) => this.#exports.render_prepared(handle, out));
+    }
+    /**
+     * The geometry of the figure in its pixels.
+     *
+     * @returns {object} as `Plot.geometry`
+     */
+    geometry() {
+      const handle = this.#live();
+      return JSON.parse(this.#plot._callPrepared((out) => this.#exports.geometry_prepared(handle, out)));
+    }
+    /**
+     * The data point nearest to the pixel `(x, y)` within `radius` pixels.
+     *
+     * @param {number} x the pixel from the left
+     * @param {number} y the pixel from the top
+     * @param {number} [radius=8] the reach in pixels
+     * @returns {object|null} as `Plot.pick`
+     */
+    pick(x, y, radius = 8) {
+      const handle = this.#live();
+      return JSON.parse(this.#plot._callPrepared((out) => this.#exports.pick_prepared(handle, x, y, radius, out)));
+    }
+    /** Frees the figure in the module; a disposed figure throws when it is used, and disposing it again does nothing. */
+    dispose() {
+      if (this.#handle === 0) return;
+      const handle = this.#handle;
+      this.#handle = 0;
+      this.#plot._release(handle);
+    }
   };
   async function loadPlot(source) {
     const bytes = await bytesOf(source);
@@ -1900,7 +2116,8 @@ var sbmlsimCore = (() => {
     const exports = new Set(WebAssembly.Module.exports(module).map((entry) => entry.name));
     const missing = PLOT_EXPORTS.filter((name) => !exports.has(name));
     if (missing.length > 0) throw new Error(`plot.wasm does not export ${missing.join(", ")}`);
-    return new Plot(instantiate(module));
+    const { exports: instance, diagnostics } = instantiate(module);
+    return new Plot(instance, diagnostics);
   }
 
   // inline.mjs

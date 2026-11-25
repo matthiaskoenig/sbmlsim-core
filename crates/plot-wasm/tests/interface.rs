@@ -10,7 +10,10 @@ use std::path::PathBuf;
 use std::slice;
 
 use sbmlsim_plot::{Geometry, Pick, parse};
-use sbmlsim_plot_wasm::{allocate, deallocate, geometry, pick, render};
+use sbmlsim_plot_wasm::{
+    allocate, deallocate, geometry, geometry_prepared, pick, pick_prepared, prepare,
+    prepared_count, release, render, render_prepared,
+};
 
 /// The fixtures of the renderer, `crates/plot/tests/specs/*.json`, by name, sorted.
 fn fixtures() -> Vec<(String, String)> {
@@ -188,4 +191,110 @@ fn out_words_at_any_alignment() {
         deallocate(buffer, words + 1);
         deallocate(input, bytes.len());
     }
+}
+
+/// Reads the words of a result and frees them.
+fn read_result(words: *mut usize) -> String {
+    // SAFETY: `words` were written by the interface, whose result is freed here
+    unsafe {
+        let (pointer, len) = (words.read_unaligned(), words.add(1).read_unaligned());
+        let text = String::from_utf8(bytes_of(pointer, len)).expect("UTF-8");
+        deallocate(pointer as *mut u8, len);
+        text
+    }
+}
+
+/// Calls a function of the prepared interface which takes `out`.
+fn prepared_call(function: impl FnOnce(*mut usize) -> u32) -> (u32, String) {
+    let size = 2 * size_of::<usize>();
+    // SAFETY: the buffer is the interface's and is freed below
+    unsafe {
+        let words = allocate(size).cast::<usize>();
+        let status = function(words);
+        let text = read_result(words);
+        deallocate(words.cast::<u8>(), size);
+        (status, text)
+    }
+}
+
+/// Prepares a spec through the interface: the handle, or 0 and the message.
+fn prepare_through(spec: &str) -> (u32, String) {
+    let bytes = spec.as_bytes();
+    let size = 2 * size_of::<usize>();
+    // SAFETY: the buffers are the interface's and are freed below
+    unsafe {
+        let input = allocate(bytes.len());
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), input, bytes.len());
+        let words = allocate(size).cast::<usize>();
+        let handle = prepare(input, bytes.len(), words);
+        let message = if handle == 0 {
+            read_result(words)
+        } else {
+            String::new()
+        };
+        deallocate(words.cast::<u8>(), size);
+        deallocate(input, bytes.len());
+        (handle, message)
+    }
+}
+
+#[test]
+fn prepared_matches_unprepared() {
+    for (name, spec) in fixtures() {
+        let figure = parse(&spec).unwrap();
+        let (handle, message) = prepare_through(&spec);
+        assert!(handle > 0, "{name}: {message}");
+        // SAFETY: `prepared_call` gives a buffer of two words
+        let (status, svg) = prepared_call(|out| unsafe { render_prepared(handle, out) });
+        assert_eq!(status, 1, "{name}");
+        assert_eq!(
+            svg,
+            sbmlsim_plot::render_svg(&figure),
+            "{name}: prepared bytes"
+        );
+        // SAFETY: as above
+        let (status, json) = prepared_call(|out| unsafe { geometry_prepared(handle, out) });
+        assert_eq!(status, 1, "{name}");
+        let (_, expected) = call(&spec, |p, n, out| unsafe { geometry(p, n, out) });
+        assert_eq!(json, expected, "{name}: prepared geometry");
+        let panel = sbmlsim_plot::geometry(&figure).plots[0].rect;
+        let (x, y) = (panel.x + panel.width / 2.0, panel.y + panel.height / 2.0);
+        // SAFETY: as above
+        let (status, json) = prepared_call(|out| unsafe { pick_prepared(handle, x, y, 20.0, out) });
+        assert_eq!(status, 1, "{name}");
+        let (_, expected) = call(&spec, |p, n, out| unsafe { pick(p, n, x, y, 20.0, out) });
+        assert_eq!(json, expected, "{name}: prepared pick");
+        release(handle);
+    }
+}
+
+#[test]
+fn prepare_refuses_and_release_frees() {
+    let (_, curve) = fixtures().into_iter().find(|(n, _)| n == "curve").unwrap();
+    let (handle, message) = prepare_through(&curve.replace("figure/1", "figure/2"));
+    assert_eq!(handle, 0);
+    assert!(message.starts_with("contract: "), "{message}");
+    let before = prepared_count();
+    let (first, _) = prepare_through(&curve);
+    let (second, _) = prepare_through(&curve);
+    assert_ne!(first, second);
+    assert_eq!(prepared_count(), before + 2);
+    release(first);
+    assert_eq!(prepared_count(), before + 1);
+    // a released handle and one never given are refused, not trapped
+    // SAFETY: `prepared_call` gives a buffer of two words
+    let (status, message) = prepared_call(|out| unsafe { render_prepared(first, out) });
+    assert_eq!(status, 0);
+    assert!(message.contains("not prepared"), "{message}");
+    // SAFETY: as above
+    let (status, _) = prepared_call(|out| unsafe { pick_prepared(0, 0.0, 0.0, 1.0, out) });
+    assert_eq!(status, 0);
+    release(first);
+    release(9999);
+    // the slot of a released figure is reused
+    let (third, _) = prepare_through(&curve);
+    assert_eq!(third, first);
+    release(second);
+    release(third);
+    assert_eq!(prepared_count(), before);
 }

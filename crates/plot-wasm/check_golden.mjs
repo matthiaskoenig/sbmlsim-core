@@ -74,6 +74,34 @@ function render(exports, spec) {
   return { status, text };
 }
 
+/** Renders through a prepared figure: `prepare`, `render_prepared`, `release`. */
+function renderPrepared(exports, spec) {
+  const input = new TextEncoder().encode(spec);
+  const pointer = exports.allocate(input.length);
+  new Uint8Array(exports.memory.buffer, pointer, input.length).set(input);
+  const out = exports.allocate(8);
+  const handle = exports.prepare(pointer, input.length, out);
+  exports.deallocate(pointer, input.length);
+  const read = (status) => {
+    const words = new DataView(exports.memory.buffer, out, 8);
+    const [resultPointer, resultLength] = [words.getUint32(0, true), words.getUint32(4, true)];
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(
+      new Uint8Array(exports.memory.buffer, resultPointer, resultLength),
+    );
+    exports.deallocate(resultPointer, resultLength);
+    return { status, text };
+  };
+  let result;
+  if (handle === 0) {
+    result = read(0);
+  } else {
+    result = read(exports.render_prepared(handle, out));
+    exports.release(handle);
+  }
+  exports.deallocate(out, 8);
+  return result;
+}
+
 const sources = [
   ["zero seeds", instantiate((bytes) => bytes.fill(0))],
   ["random seeds", instantiate((bytes) => crypto.getRandomValues(bytes))],
@@ -91,22 +119,27 @@ for (const name of names) {
   const spec = readFileSync(path.join(specs, `${name}.json`), "utf8");
   const expected = readFileSync(path.join(golden, `${name}.svg`), "utf8");
   for (const [seeds, exports] of sources) {
-    const { status, text } = render(exports, spec);
+    for (const [how, run] of [
+      ["", render],
+      [" prepared", renderPrepared],
+    ]) {
+    const { status, text } = run(exports, spec);
     if (status !== 1) {
-      console.error(`${name} (${seeds}): refused: ${text}`);
+      console.error(`${name} (${seeds}${how}): refused: ${text}`);
       failures += 1;
     } else if (text !== expected) {
       let at = 0;
       while (at < text.length && text[at] === expected[at]) at += 1;
-      console.error(`${name} (${seeds}): differs from golden/${name}.svg at character ${at}`);
+      console.error(`${name} (${seeds}${how}): differs from golden/${name}.svg at character ${at}`);
       failures += 1;
     } else {
-      console.log(`${name} (${seeds}): the golden bytes (${Buffer.byteLength(text)} bytes)`);
+      console.log(`${name} (${seeds}${how}): the golden bytes (${Buffer.byteLength(text)} bytes)`);
+    }
     }
   }
 }
 if (failures > 0) {
-  console.error(`${failures} of ${names.length * sources.length} renderings differ`);
+  console.error(`${failures} of ${names.length * sources.length * 2} renderings differ`);
   process.exit(1);
 }
 console.log(`plot.wasm renders all ${names.length} fixtures to their golden bytes`);
