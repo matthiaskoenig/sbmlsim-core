@@ -65,3 +65,18 @@ impl fmt::Display for SpecError {
 }
 
 impl std::error::Error for SpecError {}
+
+/// What keeps a figure from being rendered as a raster image.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenderError {
+    /// What went wrong.
+    pub message: String,
+}
+
+impl fmt::Display for RenderError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for RenderError {}

@@ -6,17 +6,21 @@ mod colors;
 mod error;
 mod interact;
 mod layout;
+#[cfg(feature = "png")]
+mod png;
 mod render;
 mod spec;
 mod svg;
 mod text;
 
 pub use colors::{COLOR_SCALES, NO_VALUE_COLOR, color_scale};
-pub use error::SpecError;
+pub use error::{RenderError, SpecError};
 pub use interact::{
     FigurePlan, Geometry, LegendEntryGeometry, Pick, PixelRect, PlotGeometry, Scale, geometry,
     geometry_of, pick, pick_in,
 };
+#[cfg(feature = "png")]
+pub use png::render_png;
 pub use render::render_svg;
 pub use spec::*;
 pub use text::text_width;
