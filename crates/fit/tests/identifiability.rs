@@ -281,6 +281,7 @@ fn the_profiles_of_the_parameters_of_a_fit_run_on_the_threads_of_its_batch() {
         &at,
         &[],
         &walk(),
+        &[],
         &Stop::new(),
     )
     .unwrap();
@@ -504,5 +505,129 @@ fn a_walk_which_reaches_a_bound_holds_the_parameter_at_that_bound() {
     assert!(
         profile.points.iter().all(|point| point.value >= LOWER),
         "a point of the profile holds the parameter below its bound"
+    );
+}
+
+#[test]
+fn the_first_step_of_every_profile_may_be_its_own() {
+    // a caller which knows the scale of a parameter, e.g. from the standard error of the
+    // Fisher information, starts its walk there instead of at one step for every parameter
+    let (problem, at) = fitted(Scale::Log10);
+    let walk = Walk {
+        points: 1,
+        min_step: 1e-6,
+        rise: 1.0,
+        ..walk()
+    };
+    let steps = [0.002, 0.005];
+
+    let walked = profiles(
+        &problem,
+        &Settings::default(),
+        &at,
+        &[0, 1],
+        &walk,
+        &steps,
+        &Stop::new(),
+    )
+    .unwrap();
+
+    assert_eq!(walked.len(), 2);
+    for (profile, step) in walked.iter().zip(steps.iter()) {
+        // one point on each side, at the first step of that parameter: the steps are small
+        // enough that none of them rises faster than the walk allows and is walked again
+        let from = profile.at.log10();
+        let mut distances: Vec<f64> = profile.points.iter().map(|point| point.x - from).collect();
+        distances.sort_by(f64::total_cmp);
+        assert_eq!(distances.len(), 2, "{}", profile.id);
+        for (distance, expected) in distances.iter().zip([-*step, *step]) {
+            assert!(
+                (distance - expected).abs() < 1e-9,
+                "the profile of {} walked {} where its first step is {}",
+                profile.id,
+                distance,
+                expected
+            );
+        }
+    }
+}
+
+#[test]
+fn a_walk_takes_one_first_step_per_parameter_or_none() {
+    let (problem, at) = fitted(Scale::Log10);
+
+    let message = profiles(
+        &problem,
+        &Settings::default(),
+        &at,
+        &[0, 1],
+        &walk(),
+        &[0.02],
+        &Stop::new(),
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(
+        message.contains("2 parameters with 1 first steps"),
+        "{message}"
+    );
+}
+
+#[test]
+fn a_step_which_rises_too_fast_is_corrected_by_the_curvature() {
+    // the rise of a step which is walked again is the curvature of the profile there, so the
+    // step whose rise is half of what the walk allows is known from it: a walk which starts
+    // a whole decade out reaches the scale of the profile in one correction, where a fixed
+    // factor pays a fit of the other parameters for every factor of two it comes down
+    let (problem, at) = fitted(Scale::Log10);
+    let one = |step: f64| Walk {
+        points: 1,
+        step,
+        min_step: 1e-3,
+        ..Walk::default()
+    };
+
+    let began = problem.simulations();
+    let scaled = profile(
+        &problem,
+        &Settings::default(),
+        &at,
+        0,
+        &one(0.02),
+        &Stop::new(),
+    )
+    .unwrap();
+    let of_the_scale = problem.simulations() - began;
+    let began = problem.simulations();
+    let far = profile(
+        &problem,
+        &Settings::default(),
+        &at,
+        0,
+        &one(1.0),
+        &Stop::new(),
+    )
+    .unwrap();
+    let of_the_decade = problem.simulations() - began;
+
+    // both walks land where the profile allows, the far one after its corrections
+    for walked in [&scaled, &far] {
+        for point in &walked.points {
+            assert!(
+                point.cost - walked.cost <= 0.2 * DELTA_95,
+                "a point rose by {} of the {} the walk allows",
+                point.cost - walked.cost,
+                0.2 * DELTA_95
+            );
+        }
+    }
+    // the corrections of the two sides are what the far walk pays on top of the scaled one:
+    // 183 simulations against the 95 of the scaled walk, where halving the step from a
+    // decade to the scale of this profile pays 399 against 98
+    assert!(
+        2 * of_the_decade < 5 * of_the_scale,
+        "the walk of a decade cost {of_the_decade} simulations and the scaled one \
+         {of_the_scale}"
     );
 }
