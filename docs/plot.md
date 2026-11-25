@@ -1,8 +1,8 @@
 # Figures
 
-`sbmlsim-plot` is the renderer of the figures of sbmlsim. One description of a figure, the JSON spec `figure/1`, is drawn to a static SVG or PNG file by the python package and to the same SVG inside a page by `plot.wasm`, so a figure of a report and the figure of an interactive panel are one drawing. The renderer computes the same bits on every target (the transcendental functions are the ones of `libm`), which is why the SVG of the wasm module is byte for byte the SVG of the native renderer; the tests compare them, and `js/check_golden.mjs` runs the module in Node against the golden files of the crate.
+`sbmlsim-plot` is the renderer of the figures of sbmlsim. One description of a figure, the JSON spec `figure/1`, is drawn to a static SVG or PNG file by the python package and to the same SVG inside a page by `plot.wasm`, so a figure of a report and the figure of an interactive panel are one drawing. The renderer computes the same bits on every target (the transcendental functions are the ones of `libm`), which is why the SVG of the wasm module is byte for byte the SVG of the native renderer; the tests compare them, and `crates/plot-wasm/check_golden.mjs` runs the module in Node against the golden files of the crate.
 
-The same crate answers two questions a page needs beside the drawing: the geometry of the figure (where the panels, their scales and the legend entries are, in pixels) and the data point under a pointer (`pick`). A figure a pointer moves over is prepared once, so a pick costs about 0.1 ms.
+The same crate answers two questions a page needs beside the drawing: the geometry of the figure (the size it is drawn at and where the panels, their scales and the legend entries are, in pixels) and the data point under a pointer (`pick`). A figure a pointer moves over is prepared once, so a pick costs about 0.1 ms.
 
 A minimal spec:
 
@@ -31,21 +31,23 @@ A minimal spec:
 
 ## The contract figure/1
 
-The contract id is `figure/1` (`FIGURE_CONTRACT` in python, `sbmlsim_plot::FIGURE_CONTRACT` in Rust). Every object refuses unknown fields, every name is snake case, and a field with a default may be absent. In every numeric data array JSON `null` is a gap, a value which is not there: it breaks a line and leaves out a marker or a bar, and a value the renderer cannot draw is written back as `null`. A color is the text `#rrggbb`.
+The contract id is `figure/1` (`FIGURE_CONTRACT` in python, `sbmlsim_plot::FIGURE_CONTRACT` in Rust). Every object refuses unknown fields, every name is snake case, and a field with a default may be absent. In every numeric data array JSON `null` is a gap, a value which is not there: it breaks a line and leaves out a marker or a bar, and a value the renderer cannot draw is written back as `null`. `NaN` and `Infinity` are no JSON: the `json.dumps` of python writes them for a `float("nan")` unless it is given `allow_nan=False`, and the renderer refuses them with the path of the value and a message saying that a gap is written as `null` (in python `None`). A color is the text `#rrggbb`.
 
 ### Figure
 
 | field | type | default | meaning |
 |---|---|---|---|
 | `contract` | text | required | must be `figure/1` |
-| `width`, `height` | number | required | size of the figure in pixels, positive |
+| `width`, `height` | number | required | size of the figure in pixels, positive and at most 16384; legends outside the plots make the figure drawn larger, see below |
 | `title` | text | none | title above all plots |
 | `fonts` | Fonts | see below | font sizes |
 | `grid` | Grid | required | the grid the plots are placed in |
 | `legend` | LegendSettings | see below | legend settings of the figure |
 | `plots` | list of Plot | required | the plots |
 
-`Fonts` has `title` (16), `label` (13), `tick` (11) and `legend` (11), in points, each positive. `Grid` has `rows` and `columns` (at least 1) and `wspace` and `hspace` (0.3), the space between plots as a fraction of a plot, not negative. `LegendSettings` has `scope` (`plot`, a legend per plot, or `row`, one legend per row of the grid) and `position` (`inside` or `outside`, right of the plot).
+`Fonts` has `title` (16), `label` (13), `tick` (11) and `legend` (11), in points, each positive. `Grid` has `rows` and `columns` (at least 1 and at most 64) and `wspace` and `hspace` (0.3), the space between plots as a fraction of a plot, not negative. `LegendSettings` has `scope` (`plot`, a legend per plot, or `row`, one legend per row of the grid) and `position` (`inside` or `outside`, right of the plot).
+
+The `width` and `height` of the spec are the size of the figure before its legends grow it: a legend right of a plot or of a row (`outside`, or an `inside` legend which does not fit into its panel and is placed right of it) widens the figure by its room, and a legend taller than its row heightens it, while the panels keep their size. The SVG has the grown size as its `width`, `height` and `viewBox`, the PNG is the grown size times `dpi / 72`, and the geometry reports it as `width` and `height`, so a page sizes its container from the geometry and not from the spec.
 
 ### Plot
 
@@ -102,7 +104,7 @@ An element is one flat object with the common fields and the fields of its `kind
 | `box` | `positions`, `stats` | box plots, `stats` one per position: `low_whisker <= q1 <= median <= q3 <= high_whisker` and `outliers` (default empty) |
 | `violin` | `positions`, `densities` | violins, one `Density` (`values` and `density` of one length) per position |
 | `histogram` | `edges`, `counts` | `edges` has one more value than `counts` and is not empty |
-| `heatmap` | `rows`, `columns`, `values`, optional `text`, `scale` | `values` has a row per name of `rows` of the length of `columns`; `text` is the text of the cells in the same shape; `scale` is a ColorScale |
+| `heatmap` | `rows`, `columns`, `values`, `scale`, optional `text` | `values` has a row per name of `rows` of the length of `columns`; `scale` is the ColorScale of the cells; `text` is the text of the cells in the same shape |
 | `text` | `x`, `y`, `text`, `anchor` (`start`, `middle`, `end`; `start`) | a text at a position |
 | `rule` | `orientation` (`horizontal`, `vertical`), `value` | a line across the plot at `value` of the other axis |
 | `polygon` | `paths` | filled polygons, each ring of `[x, y]` pairs with at least 3 points |
@@ -121,13 +123,28 @@ A spec the renderer refuses is reported as `path: what is wrong`, the path in th
 
 ## Semantic classes of the SVG
 
-The SVG carries plain light-theme values as presentation attributes and nothing of it is a `var()`, which renderers outside of a browser (cairosvg, Inkscape) do not read. A page restyles it with a stylesheet on the classes and attributes:
+The SVG carries plain light-theme values as presentation attributes and nothing of it is a `var()`, which renderers outside of a browser (cairosvg, Inkscape) do not read. A page restyles it with a stylesheet on the classes and attributes below, which are its styling contract: the list is exhaustive, `figure/1` writes no other class or `data-` attribute, and one of them is not renamed or removed within the contract.
 
-- `sbmlsim-figure` is the root, `sbmlsim-figure-title` the title, `sbmlsim-plot` the group of a plot,
-- every element is one group `<g class="sbmlsim-element sbmlsim-<kind>" data-element="<id>">`, with `data-legend="<group>"` when it is in a legend group,
-- a legend is `sbmlsim-legend` with `sbmlsim-legend-frame` and per entry `<g class="sbmlsim-legend-entry" data-legend="<group>">` of a `sbmlsim-legend-swatch` and a `sbmlsim-legend-label`: a page toggles the elements of a group (the groups with the same `data-legend`) by clicking its entry,
-- the color bar is `sbmlsim-colorbar` with `sbmlsim-colorbar-ticks`, `sbmlsim-colorbar-tick-labels` and `sbmlsim-colorbar-label`,
-- the axes use the classes of the layer which draws them, `charton-axis`, `charton-axis-line`, `charton-axis-title`, `charton-tick`, `charton-tick-label`, `charton-grid` and `charton-background`.
+| class or attribute | on | what it is |
+|---|---|---|
+| `sbmlsim-figure` | root `<svg>` | the figure |
+| `sbmlsim-figure-title` | `<g>` | the title of the figure |
+| `sbmlsim-plot`, `data-plot="<id>"` | nested `<svg>` | a plot, its canvas |
+| `charton-background` | `<g>` | the background of a panel |
+| `charton-title` | `<g>` | the title of a plot |
+| `charton-plot` | `<g>` | the panel the data is drawn in, clipped to it |
+| `charton-grid` | `<g>` | the grid lines of a panel |
+| `charton-axis` with `charton-axis-x`, `charton-axis-y` or `charton-axis-y2`, `data-axis="x"`, `"y"` or `"y2"` | `<g>` | an axis |
+| `charton-axis-line`, `charton-tick`, `charton-tick-label`, `charton-axis-title` | `<g>` | the line, the ticks, the tick labels and the title of an axis |
+| `sbmlsim-element sbmlsim-<kind>`, `data-element="<id>"`, `data-legend="<group>"` | `<g>` | an element of the kind `<kind>` (`curve`, `band`, `area`, `bar`, `box`, `violin`, `histogram`, `heatmap`, `text`, `rule`, `polygon`); `data-legend` when it is in a legend group |
+| `charton-mark` with `charton-mark-path`, `charton-mark-polygon`, `charton-mark-point` or `charton-mark-text` | `<g>` | the marks of an element: lines, filled shapes, markers and texts |
+| `sbmlsim-legend`, `data-plot="<id>"` or `data-row="<n>"` | `<g>` | a legend, of a plot or of a row of the grid |
+| `sbmlsim-legend-frame` | `<rect>` | the frame of a legend |
+| `sbmlsim-legend-entry`, `data-legend="<group>"` | `<g>` | an entry of a legend, of a `sbmlsim-legend-swatch` and a `sbmlsim-legend-label` |
+| `sbmlsim-colorbar` | `<g>` | the color bar of a plot, with `sbmlsim-colorbar-ticks`, `sbmlsim-colorbar-tick-labels` and `sbmlsim-colorbar-label` |
+| `sbmlsim-error` | `<text>` | the message of a plot the renderer could not draw, in place of its marks |
+
+A page toggles the elements of a legend group (the groups with the same `data-legend`) by clicking the entry of that `data-legend`.
 
 Coordinates have at most two decimals, and a primitive with a coordinate which is no finite number is not written.
 
@@ -137,15 +154,15 @@ Coordinates have at most two decimals, and a primitive with a coordinate which i
 import json
 import sbmlsim_core
 
-spec = json.dumps(figure)  # a figure/1 dict
+spec = json.dumps(figure, allow_nan=False)  # a figure/1 dict, a gap is None
 svg = sbmlsim_core.render_svg(spec)  # str
-png = sbmlsim_core.render_png(spec, dpi=144.0)  # bytes, 72 dpi is the size of the spec
-geometry = sbmlsim_core.figure_geometry(spec)  # plots and legend_entries
+png = sbmlsim_core.render_png(spec, dpi=144.0)  # bytes, 72 dpi is the drawn size
+geometry = sbmlsim_core.figure_geometry(spec)  # width, height, plots, legend_entries
 hit = sbmlsim_core.pick(spec, 120.0, 80.0, 8.0)  # dict or None
 colors = sbmlsim_core.color_scale("viridis", 0.0, 1.0, [0.0, 0.5, 1.0])
 ```
 
-`render_svg`, `render_png`, `figure_geometry` and `pick` take the JSON text of the spec and raise a `ValueError` with the path and message of an invalid spec; `render_png` raises a `RuntimeError` for a figure which cannot be rasterized. `geometry["plots"]` has per plot its `id`, its panel `rect` (`x`, `y`, `width`, `height` in pixels) and the `x`, `y` and `y2` scales (`kind`, `low`, `high`, `reverse`); `legend_entries` has per entry its `legend` group, its `owner` (a plot id or `row:<n>`) and its `rect`. A hit has the `plot`, the `element`, the `legend` group, the `index` of the point in the data of the element (the cell of a heatmap in row order), the `values` at the point in data units (`x`, `y`, `xerr`, `yerr` of a curve, `low`, `high` and `median` of a band, the five numbers of a box, `value` of a heatmap cell and so on) and the `label`. `sbmlsim_core.plot_wasm()` gives the bytes of `plot.wasm`, so a page which inlines everything needs no file.
+`render_svg`, `render_png`, `figure_geometry` and `pick` take the JSON text of the spec and raise a `ValueError` with the path and message of an invalid spec; `render_png` raises a `RuntimeError` for a figure which cannot be rasterized, e.g. an image of more than 64 Mpx. `geometry["width"]` and `geometry["height"]` are the size the figure is drawn at (the size of the SVG, see above), `geometry["plots"]` has per plot its `id`, its panel `rect` (`x`, `y`, `width`, `height` in pixels) and the `x`, `y` and `y2` scales (`kind`, `low`, `high`, `reverse`); `legend_entries` has per entry its `legend` group, its `owner` (a plot id or `row:<n>`) and its `rect`. A hit has the `plot`, the `element`, the `legend` group, the `index` of the point in the data of the element (the cell of a heatmap in row order), the `values` at the point in data units (`x`, `y`, `xerr`, `yerr` of a curve, `low`, `high` and `median` of a band, the five numbers of a box, `value` of a heatmap cell and so on) and the `label`. `sbmlsim_core.plot_wasm()` gives the bytes of `plot.wasm`, so a page which inlines everything needs no file.
 
 ## JavaScript
 
@@ -154,14 +171,14 @@ colors = sbmlsim_core.color_scale("viridis", 0.0, 1.0, [0.0, 0.5, 1.0])
 ```js
 import { loadPlot } from "sbmlsim-core/plot";
 
-const plot = await loadPlot(new URL("./plot.wasm", import.meta.url));
+const plot = await loadPlot(new URL("./plot.wasm", import.meta.url)); // or its bytes or a WebAssembly.Module
 const svg = plot.render(spec);
 const figure = plot.prepare(spec);          // parsed and laid out once
 canvas.onpointermove = (e) => show(figure.pick(e.offsetX, e.offsetY));
 figure.dispose();
 ```
 
-A prepared figure answers `svg()`, `geometry()` and `pick(x, y, radius)` without parsing or planning again. A refused spec raises a `PlotError` with `path: what is wrong` and the `Plot` stays usable; a panic or a trap breaks the instance, every later call throws, and `loadPlot` gives a new one.
+`loadPlot` takes a URL, a path (Node), the bytes of `plot.wasm` or the `WebAssembly.Module` compiled already, which a page that loads several renderers compiles once. A prepared figure answers `svg()`, `geometry()` and `pick(x, y, radius)` without parsing or planning again. A refused spec raises a `PlotError` with `path: what is wrong` and the `Plot` stays usable; a panic or a trap breaks the instance, every later call throws, and `loadPlot` gives a new one.
 
 ## The module and its ABI
 
@@ -169,7 +186,7 @@ A prepared figure answers `svg()`, `geometry()` and `pick(x, y, radius)` without
 
 ## PNG
 
-PNG is drawn natively only, behind the feature `png` of the crate (the python package enables it, the wasm module does not): the SVG is rasterized with resvg at `dpi / 72` times the size of the spec, with the font Inter (OFL-1.1) embedded in the binary, so a PNG does not depend on the fonts of the machine. The notices of the fonts and of the crates are in `THIRD_PARTY.md`.
+PNG is drawn natively only, behind the feature `png` of the crate (the python package enables it, the wasm module does not): the SVG is rasterized with resvg at `dpi / 72` times the drawn size of the figure (the size of the spec grown by its legends, the `width` and `height` of the geometry), with the font Inter (OFL-1.1) embedded in the binary, so a PNG does not depend on the fonts of the machine. An image is at most 64 Mpx (`64 * 1024 * 1024` pixels, 256 MiB of pixels in memory): a larger one, of a large figure at a high dpi, is refused with a `RuntimeError` naming its size. The notices of the fonts and of the crates are in `THIRD_PARTY.md`.
 
 ## Performance
 
