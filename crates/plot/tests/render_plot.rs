@@ -772,3 +772,18 @@ fn multi_line_text_element() {
     assert!((lines[1].2 - lines[0].2 - 13.2).abs() < 0.02);
     assert!(((lines[0].2 + lines[1].2) / 2.0 - y).abs() < 0.02);
 }
+
+#[test]
+fn a_tick_label_with_a_newline_is_one_line() {
+    let json = figure(
+        r#"{"scale": "category", "categories": ["a\nb", "c"]}"#,
+        "{}",
+        r#"{"id": "e", "kind": "curve", "x": [0, 1], "y": [1, 2]}"#,
+    );
+    let svg = render(&json);
+    assert!(!svg.contains("<tspan"), "{svg}");
+    assert!(
+        svg.contains(">a\nb</text>"),
+        "tick label written as one line"
+    );
+}

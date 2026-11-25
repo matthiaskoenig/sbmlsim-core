@@ -443,7 +443,13 @@ pub(crate) fn plan(figure: &Figure) -> Plan {
                 declared_of_row[p.row as usize].extend(declared(p));
             }
             for (r, lists) in lists_of_row.into_iter().enumerate() {
-                let list = legend::merge(lists);
+                let orders: Vec<&[String]> = figure
+                    .plots
+                    .iter()
+                    .filter(|p| p.row as usize == r)
+                    .filter_map(|p| p.legend_order.as_deref())
+                    .collect();
+                let list = legend::merge_ordered(lists, &orders);
                 let Some(size) = legend::room(&list, &declared_of_row[r], fonts) else {
                     continue;
                 };

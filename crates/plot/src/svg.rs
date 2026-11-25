@@ -764,13 +764,19 @@ impl RenderBackend for PlotWriter<'_> {
             b.push_str(")\"");
         }
         b.push('>');
-        text_lines(
-            b,
-            &c.text,
-            (f64::from(c.x), f64::from(c.y)),
-            f64::from(c.font_size),
-            stack,
-        );
+        if tick_label {
+            // a tick label is one line (as the layout measures it and 0.27.0 wrote it), a
+            // newline in it written as it is
+            escape(b, &c.text);
+        } else {
+            text_lines(
+                b,
+                &c.text,
+                (f64::from(c.x), f64::from(c.y)),
+                f64::from(c.font_size),
+                stack,
+            );
+        }
         b.push_str("</text>");
         Ok(())
     }

@@ -1385,3 +1385,34 @@ fn categorical_bar_labels_without_ticks() {
     let texts: Vec<_> = labels.children().filter_map(|n| n.text()).collect();
     assert_eq!(texts, ["lo", "mid", "hi"]);
 }
+
+#[test]
+fn row_legend_follows_the_legend_order_of_its_plots() {
+    let one = curve("a_one", r#""label": "one","#, "[0, 1]", "[1, 0]");
+    let two = curve("b_two", r#""label": "two","#, "[0, 1]", "[0, 1]");
+    let three = curve("c_three", r#""label": "three","#, "[0, 1]", "[0.5, 0.5]");
+    let json = figure(
+        900.0,
+        300.0,
+        r#""legend": {"scope": "row", "position": "outside"},"#,
+        1,
+        3,
+        &[
+            plot("a", 0, 0, "", &[one]),
+            plot("b", 0, 1, r#""legend_order": ["b_two"],"#, &[two]),
+            plot(
+                "c",
+                0,
+                2,
+                r#""legend_order": ["c_three", "b_two"],"#,
+                &[three],
+            ),
+        ],
+    );
+    let svg = render(&json);
+    let doc = Document::parse(&svg).unwrap();
+    let found = legends(&doc);
+    assert_eq!(found.len(), 1);
+    let groups: Vec<&str> = found[0].entries.iter().map(|e| e.0.as_str()).collect();
+    assert_eq!(groups, ["b_two", "c_three", "a_one"]);
+}

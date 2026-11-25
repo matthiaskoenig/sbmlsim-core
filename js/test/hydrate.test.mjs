@@ -109,3 +109,15 @@ test("the_generated_page_script_hydrates_a_report", async (t) => {
   assert.ok(svg.querySelector("[data-element]"));
   assert.ok(!svg.textContent.includes("static"));
 });
+
+test("a_static_svg_inside_a_wrapper_is_replaced", async () => {
+  const grid = readFileSync(path.join(SPECS, "grid.json"), "utf8");
+  const html =
+    `<figure data-figure="n"><div class="wrap"><svg class="sbmlsim-figure"><text>static n</text></svg></div>` +
+    `<script type="application/json" data-figure-spec="n">${grid.replaceAll("</", "<\\/")}</script></figure>`;
+  const document = report(html);
+  const handles = await hydrateFigures(document, { wasm: wasm() });
+  assert.equal(handles.length, 1);
+  assert.ok(!document.querySelector("figure").textContent.includes("static n"), "the static SVG is gone");
+  assert.ok(document.querySelector(".wrap svg [data-element]"), "the wrapped one was replaced");
+});

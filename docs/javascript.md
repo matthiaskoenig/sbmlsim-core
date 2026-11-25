@@ -9,7 +9,7 @@
 | `pool.mjs` (with `worker.mjs`) | `./pool` | a pool of workers which run the loader off the main thread |
 | `panels.mjs` | `./panels` | the routes of the panel service of sbmlsim, answered inside a page from a bundle |
 | `plot.mjs` | `./plot` | draws the figures of sbmlsim with `plot.wasm`, see [Figures](plot.md) |
-| `figure.mjs` | `./figure` | makes a drawn figure interactive in a page: legend toggles, selection and the read-out of a point |
+| `figure.mjs` (since 0.28.0) | `./figure` | makes a drawn figure interactive in a page: legend toggles, selection and the read-out of a point |
 | `simulate.mjs` | the command `sbmlsim-core-simulate` | the CSV of `sbmlsim-core simulate` in Node |
 
 The package is published to npm as [`sbmlsim-core`](https://www.npmjs.com/package/sbmlsim-core), with the `compiler.wasm`, `engine.wasm`, `mathlib.wasm` and `plot.wasm` (the renderer of the figures of sbmlsim, `crates/plot-wasm`) of its release in `runtime/`:
@@ -52,7 +52,7 @@ A legend entry is a toggle button (a click, Enter or Space; `aria-pressed` says 
 
 ### Interactive figures
 
-`hydrateFigures` (`hydrate.mjs`, since 0.28.0) is the page script of a static report: every `<figure data-figure="KEY">` holds the inline SVG of a figure and, as a direct child, `<script type="application/json" data-figure-spec="KEY">` with its `figure/1` spec (`</` written as `<\/`, which JSON reads back). It attaches `attachFigure` to each of them:
+`hydrateFigures` (`hydrate.mjs`, since 0.28.0) is the page script of a static report: every `<figure data-figure="KEY">` holds the inline SVG of a figure and, as a direct child, `<script type="application/json" data-figure-spec="KEY">` with its `figure/1` spec (`</` written as `<\/`, which JSON reads back). The static SVG may be a direct child of the figure or deeper inside it (the direct child is preferred, else the first `<svg>` inside); that one is replaced. It attaches `attachFigure` to each of them:
 
 ```html
 <figure data-figure="dose">

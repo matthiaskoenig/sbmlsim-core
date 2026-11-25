@@ -128,6 +128,31 @@ pub(crate) fn merge(lists: impl IntoIterator<Item = Vec<Entry>>) -> Vec<Entry> {
     out
 }
 
+/// [`merge`] sorted by the `legend_order` of the plots of the row: the groups any of them lists
+/// first, in the order of the first plot which lists them, the others after them in the order
+/// of their first appearance.
+pub(crate) fn merge_ordered(
+    lists: impl IntoIterator<Item = Vec<Entry>>,
+    orders: &[&[String]],
+) -> Vec<Entry> {
+    let mut out = merge(lists);
+    let mut combined: Vec<&str> = Vec::new();
+    for g in orders.iter().flat_map(|o| o.iter()) {
+        if !combined.contains(&g.as_str()) {
+            combined.push(g);
+        }
+    }
+    if !combined.is_empty() {
+        out.sort_by_key(|e| {
+            combined
+                .iter()
+                .position(|g| *g == e.legend)
+                .unwrap_or(combined.len())
+        });
+    }
+    out
+}
+
 /// The height of the entry of a label in pixels: [`ENTRY_HEIGHT`] font sizes and the lines of
 /// the label after its first.
 fn entry_height(label: &str, fonts: &Fonts) -> f64 {

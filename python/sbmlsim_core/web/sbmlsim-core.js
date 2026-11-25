@@ -2183,7 +2183,7 @@ var sbmlsimCore = (() => {
     for (const child of container.children) {
       if (child.localName?.toLowerCase() === "svg" || child.tagName?.toLowerCase() === "svg") return child;
     }
-    return null;
+    return container.querySelector?.("svg") ?? null;
   }
   function parseSvg(document, text) {
     const holder = document.createElement("div");
@@ -2298,7 +2298,11 @@ var sbmlsimCore = (() => {
         lines.push(["count", format(values.count)]);
         break;
       case "heatmap":
-        lines.push([plot.colorbar?.label ? oneLine(plot.colorbar.label) : "value", format(values.value)]);
+        {
+          const bar = plot.colorbar ?? plot.colorbars?.[0];
+          const label = bar?.label ? oneLine(bar.label) : "value";
+          lines.push([label, format(values.value)]);
+        }
         break;
       case "rule": {
         const axis = element.orientation === "vertical" ? xAxis : yAxis;
@@ -2443,7 +2447,7 @@ var sbmlsimCore = (() => {
         this.#selected = null;
       }
       const old = this.#svg ?? svgChild(this.#container);
-      if (old && old.parentNode === this.#container) this.#container.replaceChild(svg, old);
+      if (old?.parentNode && this.#container.contains(old)) old.parentNode.replaceChild(svg, old);
       else this.#container.prepend(svg);
       this.#svg = svg;
       if (this.#options.toggle) {
