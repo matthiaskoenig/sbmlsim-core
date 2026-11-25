@@ -136,6 +136,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(plot::render_svg, m)?)?;
     m.add_function(wrap_pyfunction!(plot::render_png, m)?)?;
     m.add_function(wrap_pyfunction!(plot::figure_geometry, m)?)?;
+    m.add_function(wrap_pyfunction!(plot::text_width, m)?)?;
     m.add_function(wrap_pyfunction!(plot::pick, m)?)?;
     m.add_function(wrap_pyfunction!(plot::color_scale, m)?)?;
     Ok(())

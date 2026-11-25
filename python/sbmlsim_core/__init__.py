@@ -38,6 +38,7 @@ from sbmlsim_core._core import (
     render_png,
     render_svg,
     runtime_wasm,
+    text_width,
 )
 from sbmlsim_core.batch import simulate_stream
 
@@ -80,4 +81,5 @@ __all__ = [
     "render_svg",
     "runtime_wasm",
     "simulate_stream",
+    "text_width",
 ]

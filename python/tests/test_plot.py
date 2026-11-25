@@ -213,3 +213,26 @@ def test_benchmark_time() -> None:
         sbmlsim_core.render_svg(spec)
         times.append(time.perf_counter() - start)
     assert statistics.median(times) < 0.005
+
+
+def test_text_width_is_the_measure_of_the_renderer() -> None:
+    assert sbmlsim_core.text_width("Smith2001", 13.0, True) == pytest.approx(
+        68.08, abs=0.01
+    )
+    assert sbmlsim_core.text_width("", 13.0) == 0.0
+    assert sbmlsim_core.text_width("abc", 20.0) == pytest.approx(
+        2 * sbmlsim_core.text_width("abc", 10.0)
+    )
+
+
+def test_text_width_bold_and_lines() -> None:
+    assert sbmlsim_core.text_width(
+        "Smith2001", 13.0, bold=True
+    ) > sbmlsim_core.text_width("Smith2001", 13.0)
+    wide, narrow = "Smith2001", "Lee"
+    assert sbmlsim_core.text_width(
+        f"{narrow}\n{wide}", 13.0
+    ) == sbmlsim_core.text_width(wide, 13.0)
+    assert sbmlsim_core.text_width(
+        f"{wide}\n{narrow}", 13.0, True
+    ) == sbmlsim_core.text_width(wide, 13.0, True)
