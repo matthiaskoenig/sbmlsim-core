@@ -20,7 +20,8 @@
 //! `random_get`, which it calls once per instance for the seeds of `ahash` (any bytes do,
 //! zeros included: the seeds order the hash maps of Charton and decide no byte of a result),
 //! and `fd_write`, `environ_get`, `environ_sizes_get` and `proc_exit`, which the standard
-//! library calls at most on a panic (to write its message before the module traps), so a host
+//! library calls at most on a panic or a failed allocation (to write its message before the
+//! module traps), so a host
 //! gives stubs which throw, as `js/loader.mjs` does for `engine.wasm`. A host calls the export
 //! `_initialize` once before the first call.
 //!
@@ -28,10 +29,11 @@
 //! no binding generator and no tool beyond cargo. Every string crosses the boundary as the
 //! bytes of its UTF-8 in the memory of the module:
 //!
-//! 1. `allocate(len)` gives a buffer of `len` bytes, which the caller writes the spec into,
+//! 1. `allocate(len)` gives a buffer of `len` bytes, which the caller writes the spec into (the
+//!    null pointer only for a length of zero; a buffer which cannot be allocated traps),
 //! 2. `render(pointer, len, out)` renders the spec and writes the pointer and the length of
 //!    the SVG to the two words at `out` (a buffer of two `usize`, 8 bytes of `allocate` for the
-//!    32 bit words of `wasm32`),
+//!    32 bit words of `wasm32`, little endian and at any alignment),
 //! 3. `geometry(pointer, len, out)` writes the JSON of the [`sbmlsim_plot::Geometry`] of the
 //!    figure, its panels, their scales and the entries of its legends in its pixels,
 //! 4. `pick(pointer, len, x, y, radius, out)` writes the JSON of the [`sbmlsim_plot::Pick`] of
@@ -54,7 +56,7 @@
 //! assert!(!refused.is_empty());
 //! ```
 
-use std::alloc::{Layout, alloc, dealloc};
+use std::alloc::{Layout, alloc, dealloc, handle_alloc_error};
 
 use sbmlsim_plot::{Figure, SpecError, parse};
 
@@ -114,7 +116,10 @@ fn layout(len: usize) -> Layout {
 /// A buffer of `len` bytes for the caller to write into.
 ///
 /// The buffer is uninitialized and belongs to the caller until it gives it back with
-/// [`deallocate`]. A length of zero gives the null pointer.
+/// [`deallocate`]. A length of zero gives the null pointer, and only it: a buffer which cannot
+/// be allocated (the memory cannot grow) ends the call with [`handle_alloc_error`], a trap of
+/// the module as for every other allocation of the renderer, so a host never writes a spec to
+/// the null pointer.
 ///
 /// # Safety
 ///
@@ -124,8 +129,13 @@ pub unsafe extern "C" fn allocate(len: usize) -> *mut u8 {
     if len == 0 {
         return std::ptr::null_mut();
     }
+    let layout = layout(len);
     // SAFETY: the layout is not of size zero, which the branch above returns for
-    unsafe { alloc(layout(len)) }
+    let pointer = unsafe { alloc(layout) };
+    if pointer.is_null() {
+        handle_alloc_error(layout);
+    }
+    pointer
 }
 
 /// Gives a buffer of [`allocate`] or of a result back.
@@ -163,9 +173,12 @@ unsafe fn spec_of<'a>(pointer: *const u8, len: usize) -> Result<&'a str, String>
 /// Writes a result or a message into the two words at `out`, which the caller then owns, and
 /// gives 1 for a result and 0 for a message.
 ///
+/// The words are written unaligned: `out` is a buffer of [`allocate`], whose layout has the
+/// alignment of bytes.
+///
 /// # Safety
 ///
-/// `out` points at two words which the caller allocated.
+/// `out` points at two words (`2 * size_of::<usize>()` bytes) which the caller allocated.
 unsafe fn answer(result: Result<String, String>, out: *mut usize) -> u32 {
     let (status, text) = match result {
         Ok(text) => (1, text),
@@ -175,10 +188,10 @@ unsafe fn answer(result: Result<String, String>, out: *mut usize) -> u32 {
     let len = bytes.len();
     let pointer = bytes.as_mut_ptr();
     std::mem::forget(bytes);
-    // SAFETY: the caller gives two words of its own memory
+    // SAFETY: the caller gives two words of its own memory, at any alignment
     unsafe {
-        *out = pointer as usize;
-        *out.add(1) = len;
+        out.write_unaligned(pointer as usize);
+        out.add(1).write_unaligned(len);
     }
     status
 }

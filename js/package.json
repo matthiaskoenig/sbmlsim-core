@@ -23,7 +23,7 @@
     "directory": "js"
   },
   "author": "Matthias König",
-  "license": "MIT AND BSD-3-Clause AND LGPL-2.1-or-later",
+  "license": "MIT AND BSD-3-Clause AND LGPL-2.1-or-later AND Apache-2.0",
   "type": "module",
   "exports": {
     ".": "./loader.mjs",

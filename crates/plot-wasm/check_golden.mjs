@@ -58,11 +58,13 @@ function instantiate(fill) {
 function render(exports, spec) {
   const input = new TextEncoder().encode(spec);
   const pointer = exports.allocate(input.length);
+  if (pointer === 0 && input.length > 0) throw new Error("plot.wasm gave no buffer");
   new Uint8Array(exports.memory.buffer, pointer, input.length).set(input);
   const out = exports.allocate(8);
   const status = exports.render(pointer, input.length, out);
-  const words = new Uint32Array(exports.memory.buffer, out, 2);
-  const [resultPointer, resultLength] = [words[0], words[1]];
+  // the two words of `out`, little endian, at whatever alignment `allocate` gave
+  const words = new DataView(exports.memory.buffer, out, 8);
+  const [resultPointer, resultLength] = [words.getUint32(0, true), words.getUint32(4, true)];
   const text = new TextDecoder("utf-8", { fatal: true }).decode(
     new Uint8Array(exports.memory.buffer, resultPointer, resultLength),
   );

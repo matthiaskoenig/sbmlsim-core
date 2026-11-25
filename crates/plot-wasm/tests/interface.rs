@@ -63,8 +63,10 @@ fn call_bytes(
         }
         let words = allocate(2 * size_of::<usize>()).cast::<usize>();
         let status = function(input, bytes.len(), words);
-        let result = bytes_of(*words, *words.add(1));
-        deallocate(*words as *mut u8, *words.add(1));
+        // the words of `out` are written unaligned, as a buffer of `allocate` has no alignment
+        let (pointer, len) = (words.read_unaligned(), words.add(1).read_unaligned());
+        let result = bytes_of(pointer, len);
+        deallocate(pointer as *mut u8, len);
         deallocate(words.cast::<u8>(), 2 * size_of::<usize>());
         deallocate(input, bytes.len());
         (
@@ -161,4 +163,29 @@ fn pick_json_roundtrip() {
         pick(p, n, -1000.0, -1000.0, 1.0, out)
     });
     assert_eq!((status, json.as_str()), (1, "null"));
+}
+
+#[test]
+fn out_words_at_any_alignment() {
+    let (_, spec) = fixtures()
+        .into_iter()
+        .find(|(name, _)| name == "curve")
+        .expect("the fixture curve");
+    let bytes = spec.as_bytes();
+    let words = 2 * size_of::<usize>();
+    // SAFETY: the buffers are the ones of the interface and are freed below
+    unsafe {
+        let input = allocate(bytes.len());
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), input, bytes.len());
+        // `out` one byte into a buffer, so its words are not aligned
+        let buffer = allocate(words + 1);
+        let out = buffer.add(1).cast::<usize>();
+        assert_eq!(render(input, bytes.len(), out), 1);
+        let (pointer, len) = (out.read_unaligned(), out.add(1).read_unaligned());
+        let svg = String::from_utf8(bytes_of(pointer, len)).expect("the SVG is UTF-8");
+        assert_eq!(svg, sbmlsim_plot::render_svg(&parse(&spec).unwrap()));
+        deallocate(pointer as *mut u8, len);
+        deallocate(buffer, words + 1);
+        deallocate(input, bytes.len());
+    }
 }
