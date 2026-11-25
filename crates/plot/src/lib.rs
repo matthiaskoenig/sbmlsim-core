@@ -1,10 +1,15 @@
-//! The figure spec `figure/1`: the JSON description of a figure which the python package, the
-//! web app and the renderer share, with its parsing and validation.
+//! The figures of sbmlsim: the figure spec `figure/1`, the JSON description of a figure which
+//! the python package, the web app and the renderer share, with its parsing and validation, and
+//! its renderer to SVG ([`render_svg`]).
 
 mod error;
+mod render;
 mod spec;
+mod svg;
+mod text;
 
 pub use error::SpecError;
+pub use render::render_svg;
 pub use spec::*;
 
 /// The contract id of the figure spec, the value of its `contract` field.
