@@ -4,6 +4,7 @@
 
 mod colors;
 mod error;
+mod interact;
 mod layout;
 mod render;
 mod spec;
@@ -12,6 +13,10 @@ mod text;
 
 pub use colors::{COLOR_SCALES, NO_VALUE_COLOR, color_scale};
 pub use error::SpecError;
+pub use interact::{
+    FigurePlan, Geometry, LegendEntryGeometry, Pick, PixelRect, PlotGeometry, Scale, geometry,
+    geometry_of, pick, pick_in,
+};
 pub use render::render_svg;
 pub use spec::*;
 pub use text::text_width;

@@ -142,7 +142,7 @@ pub(crate) fn outline_of(style: &Style, color: &str) -> Stroke {
 }
 
 /// The coordinate where a bar starts: 0, or the lower end of an axis which cannot show 0.
-fn base_of(axis: &ResolvedAxis) -> f64 {
+pub(crate) fn base_of(axis: &ResolvedAxis) -> f64 {
     let zero = axis.u(0.0);
     if zero.is_finite() {
         zero
