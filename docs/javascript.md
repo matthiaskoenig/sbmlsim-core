@@ -9,6 +9,7 @@
 | `pool.mjs` (with `worker.mjs`) | `./pool` | a pool of workers which run the loader off the main thread |
 | `panels.mjs` | `./panels` | the routes of the panel service of sbmlsim, answered inside a page from a bundle |
 | `plot.mjs` | `./plot` | draws the figures of sbmlsim with `plot.wasm`, see [Figures](plot.md) |
+| `figure.mjs` | `./figure` | makes a drawn figure interactive in a page: legend toggles, selection and the read-out of a point |
 | `simulate.mjs` | the command `sbmlsim-core-simulate` | the CSV of `sbmlsim-core simulate` in Node |
 
 The package is published to npm as [`sbmlsim-core`](https://www.npmjs.com/package/sbmlsim-core), with the `compiler.wasm`, `engine.wasm`, `mathlib.wasm` and `plot.wasm` (the renderer of the figures of sbmlsim, `crates/plot-wasm`) of its release in `runtime/`:
@@ -34,6 +35,20 @@ figure.dispose();
 ```
 
 A refused spec raises a `PlotError`. The contract, the classes of the SVG and the measured times are on the page [Figures](plot.md).
+
+`figure.mjs` draws a spec into a container (replacing an SVG already there, e.g. the static figure of a report) and makes it interactive with the DOM alone, also from `file://`:
+
+```js
+import { attachFigure } from "sbmlsim-core/figure";
+
+const figure = attachFigure(container, plot, spec, { readout: true, select: true, toggle: true });
+figure.hidden();   // the hidden legend groups
+figure.selected(); // the selected legend group or null
+figure.update(next); // draws another spec, keeping the hidden and selected groups by their id
+figure.dispose();  // the static figure again, without listeners
+```
+
+A legend entry is a toggle button (a click, Enter or Space; `aria-pressed` says whether its group is shown) which hides every element of its group, a click on a data point selects its group and dims the others, a click on it again or Escape clears the selection, and a tooltip (`role="status"`) reads out the point under the pointer with the units of the axes, never a point of a hidden group and the selected group first; `format(value, unit)` replaces the default text of a value, 4 significant digits and the unit. The state is the classes `sbmlsim-hidden`, `sbmlsim-selected` and `sbmlsim-dimmed` on the `[data-element]` groups of the SVG, styled by a stylesheet the module injects once per document (`#sbmlsim-figure-style`). The inline build has it as `sbmlsimCore.attachFigure`.
 
 ## A first simulation
 
