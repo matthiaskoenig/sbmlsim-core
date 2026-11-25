@@ -358,6 +358,12 @@ def figure_geometry(spec: str) -> dict[str, Any]:
 def pick(spec: str, x: float, y: float, radius: float = 8.0) -> dict[str, Any] | None:
     """The data point nearest to the pixel `(x, y)` within `radius` pixels, or `None`."""
 
+def text_width(text: str, size: float, bold: bool = False) -> float:
+    """The width in pixels of `text` at the font size `size` px in Inter, the figure layout measure.
+
+    Since 0.28.0. The width of a text of several lines is the width of its widest line.
+    """
+
 def color_scale(
     name: str,
     low: float,

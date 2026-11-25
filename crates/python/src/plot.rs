@@ -4,7 +4,8 @@
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use sbmlsim_plot::{
-    COLOR_SCALES, ColorScale, ColorScaleName, Figure, SpecError, geometry, parse, pick as pick_of,
+    COLOR_SCALES, ColorScale, ColorScaleName, Figure, FontWeight, SpecError, geometry, parse,
+    pick as pick_of, text_width_weighted,
 };
 
 /// The error of a spec which does not parse: the path of the field and what is wrong.
@@ -121,4 +122,18 @@ pub(crate) fn color_scale(
         end,
     };
     Ok(py.detach(|| sbmlsim_plot::color_scale(&scale, &values)))
+}
+
+/// The width in pixels of a text at a font size in pixels, in Inter Regular or Bold: the measure
+/// the layout of the figures uses (since 0.28.0). The width of a text of several lines is the
+/// width of its widest line.
+#[pyfunction]
+#[pyo3(signature = (text, size, bold=false))]
+pub(crate) fn text_width(text: &str, size: f64, bold: bool) -> f64 {
+    let weight = if bold {
+        FontWeight::Bold
+    } else {
+        FontWeight::Normal
+    };
+    text_width_weighted(text, size, weight)
 }
