@@ -4,6 +4,7 @@
 
 mod colors;
 mod error;
+mod layout;
 mod render;
 mod spec;
 mod svg;

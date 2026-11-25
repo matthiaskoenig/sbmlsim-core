@@ -115,7 +115,7 @@ pub(crate) fn rings_layer(
 }
 
 /// The solid fill of a bar or a bin: its fill, else its colour, at the opacity of the style.
-fn solid_fill(style: &Style, color: &str) -> (String, f64) {
+pub(crate) fn solid_fill(style: &Style, color: &str) -> (String, f64) {
     match &style.fill {
         Some(f) => (
             f.color.clone().unwrap_or_else(|| color.to_string()),
@@ -127,7 +127,7 @@ fn solid_fill(style: &Style, color: &str) -> (String, f64) {
 
 /// The lines of a box or a violin: the line of the style, a solid line of [`ERROR_WIDTH`] for
 /// a style without one, since a box is its lines.
-fn outline_of(style: &Style, color: &str) -> Stroke {
+pub(crate) fn outline_of(style: &Style, color: &str) -> Stroke {
     let width = if style.line.width > 0.0 {
         style.line.width
     } else {

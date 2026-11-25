@@ -327,14 +327,15 @@ fn curve_layers(
 ///
 /// `colors` is the colour of every element (its own or the default), `fonts` the font sizes of
 /// the figure and `panel` the expected width and height of the panel in pixels, which the text
-/// of the cells of a heatmap is fitted into. Only elements of the left y axis are drawn; the
-/// right axis of Task 5 gets its groups and no layer yet.
+/// of the cells of a heatmap is fitted into. Only the elements of the y axis `which` are drawn,
+/// against `ya`: the primary chart of a plot draws the left axis, its overlay the right one.
 pub(crate) fn build(
     elements: &[Element],
     colors: &[String],
     fonts: &Fonts,
     (xa, ya): (&ResolvedAxis, &ResolvedAxis),
     panel: (f64, f64),
+    which: crate::spec::YAxisRef,
 ) -> Result<Layers, ChartonError> {
     let (x0, x1) = xa.domain();
     let (y0, y1) = ya.domain();
@@ -353,7 +354,7 @@ pub(crate) fn build(
         }],
     };
     for (index, e) in elements.iter().enumerate() {
-        if e.axis != crate::spec::YAxisRef::Y {
+        if e.axis != which {
             continue;
         }
         let color = colors[index].as_str();

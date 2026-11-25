@@ -92,49 +92,6 @@ pub fn text_width(text: &str, size: f64) -> f64 {
     units as f64 * size / UNITS_PER_EM
 }
 
-/// Charton's estimate of the width of a text (`estimate_text_width` of `core/utils.rs` of
-/// Charton 0.9.1, which is not public): what Charton reserves for a tick label, which the crate
-/// corrects to [`text_width`].
-pub(crate) fn charton_estimate(text: &str, size: f64) -> f64 {
-    let (mut wide, mut narrow, mut upper, mut other) = (0u32, 0u32, 0u32, 0u32);
-    for c in text.chars() {
-        if is_wide(c) {
-            wide += 1;
-        } else if matches!(
-            c,
-            '.' | ',' | ':' | ';' | '!' | 'i' | 'j' | 'l' | '-' | '|' | '1' | 't' | 'f' | 'r'
-        ) {
-            narrow += 1;
-        } else if c.is_ascii_uppercase() {
-            upper += 1;
-        } else {
-            other += 1;
-        }
-    }
-    (f64::from(wide) + f64::from(narrow) * 0.3 + f64::from(upper) * 0.65 + f64::from(other) * 0.55)
-        * size
-}
-
-/// Whether Charton counts a character one em wide (`is_wide` of Charton 0.9.1).
-const fn is_wide(c: char) -> bool {
-    matches!(c as u32,
-        0x1100..=0x115F
-        | 0x2E80..=0x303E
-        | 0x3041..=0x33FF
-        | 0x3400..=0x4DBF
-        | 0x4E00..=0x9FFF
-        | 0xA000..=0xA4CF
-        | 0xAC00..=0xD7A3
-        | 0xF900..=0xFAFF
-        | 0xFE10..=0xFE19
-        | 0xFE30..=0xFE4F
-        | 0xFF01..=0xFF60
-        | 0xFFE0..=0xFFE6
-        | 0x1F300..=0x1F9FF
-        | 0x20000..=0x3FFFD
-    )
-}
-
 /// The extent across its axis of a tick label of a width, rotated by `angle` degrees: the side
 /// of its rotated line box (the line is one em, the font size) which the axis band reserves, as
 /// Charton computes it, with the sine and cosine of `libm`.
@@ -171,9 +128,7 @@ mod tests {
     }
 
     #[test]
-    fn estimate_of_charton() {
-        // the class counts of Charton: 1 narrow, 0 0.55 each, at 13 px
-        assert!((charton_estimate("10", 13.0) - 0.85 * 13.0).abs() < 1e-12);
+    fn extents_of_rotated_labels() {
         assert_eq!(label_extent(20.0, 11.0, 0.0, true), 11.0);
         assert_eq!(label_extent(20.0, 11.0, 0.0, false), 20.0);
         assert!((label_extent(20.0, 11.0, 90.0, true) - 20.0).abs() < 1e-9);

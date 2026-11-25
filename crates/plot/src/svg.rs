@@ -87,7 +87,7 @@ pub(crate) fn num(out: &mut String, v: f64) {
 }
 
 /// Writes ` name="<number>"`.
-fn attr_num(out: &mut String, name: &str, v: f64) {
+pub(crate) fn attr_num(out: &mut String, name: &str, v: f64) {
     out.push(' ');
     out.push_str(name);
     out.push_str("=\"");
@@ -120,7 +120,7 @@ fn attr_color(out: &mut String, name: &str, c: &SingleColor) {
 }
 
 /// Writes ` name="<opacity>"` with three decimals, when it is below 1.
-fn attr_opacity(out: &mut String, name: &str, v: f64) {
+pub(crate) fn attr_opacity(out: &mut String, name: &str, v: f64) {
     if v < 1.0 {
         let _ = write!(out, " {name}=\"{}\"", trim(&format!("{:.3}", v.max(0.0))));
     }
@@ -136,7 +136,7 @@ pub(crate) fn trim(s: &str) -> &str {
 }
 
 /// Writes ` stroke-dasharray` for a dash pattern which is not empty.
-fn attr_dash(out: &mut String, dash: &[f32]) {
+pub(crate) fn attr_dash(out: &mut String, dash: &[f32]) {
     if dash.iter().all(|d| *d <= 0.0) {
         return;
     }
@@ -148,6 +148,11 @@ fn attr_dash(out: &mut String, dash: &[f32]) {
         num(out, f64::from(d.max(0.0)));
     }
     out.push('"');
+}
+
+/// Writes ` name="<colour>"` of a CSS colour text such as `#rrggbb`, as Charton reads it.
+pub(crate) fn attr_css(out: &mut String, name: &str, css: &str) {
+    attr_color(out, name, &SingleColor::new(css));
 }
 
 /// The marker an element draws at every point Charton places.
@@ -430,85 +435,84 @@ impl<'a> PlotWriter<'a> {
         }
         self.body.push_str("</g>");
     }
+}
 
-    /// Writes a marker glyph centred at a point.
-    fn glyph(&mut self, m: &MarkerGlyph, x: f64, y: f64) {
-        let r = m.size / 2.0;
-        let b = &mut self.body;
-        // a filled glyph: its fill and, with an edge, its stroke
-        let paint = |b: &mut String| {
-            let _ = write!(b, " fill=\"{}\"", m.fill);
-            if m.edge_width > 0.0 {
-                let _ = write!(b, " stroke=\"{}\"", m.edge);
-                attr_num(b, "stroke-width", m.edge_width);
+/// Writes a marker glyph centred at a point.
+pub(crate) fn glyph(b: &mut String, m: &MarkerGlyph, x: f64, y: f64) {
+    let r = m.size / 2.0;
+    // a filled glyph: its fill and, with an edge, its stroke
+    let paint = |b: &mut String| {
+        let _ = write!(b, " fill=\"{}\"", m.fill);
+        if m.edge_width > 0.0 {
+            let _ = write!(b, " stroke=\"{}\"", m.edge);
+            attr_num(b, "stroke-width", m.edge_width);
+        }
+        attr_opacity(b, "opacity", m.opacity);
+        b.push_str("/>");
+    };
+    match m.kind {
+        MarkerType::None => {}
+        MarkerType::Circle => {
+            b.push_str("<circle");
+            attr_num(b, "cx", x);
+            attr_num(b, "cy", y);
+            attr_num(b, "r", r);
+            paint(b);
+        }
+        MarkerType::Square => {
+            // a square of the area of the circle
+            let s = r * 0.886;
+            b.push_str("<rect");
+            attr_num(b, "x", x - s);
+            attr_num(b, "y", y - s);
+            attr_num(b, "width", 2.0 * s);
+            attr_num(b, "height", 2.0 * s);
+            paint(b);
+        }
+        MarkerType::Triangle | MarkerType::Diamond => {
+            let points: &[(f64, f64)] = if m.kind == MarkerType::Triangle {
+                &[(0.0, -1.15), (1.0, 0.58), (-1.0, 0.58)]
+            } else {
+                &[(0.0, -1.0), (0.75, 0.0), (0.0, 1.0), (-0.75, 0.0)]
+            };
+            b.push_str("<path d=\"");
+            for (i, (dx, dy)) in points.iter().enumerate() {
+                b.push(if i == 0 { 'M' } else { 'L' });
+                num(b, x + dx * r);
+                b.push(' ');
+                num(b, y + dy * r);
             }
+            b.push_str("Z\"");
+            paint(b);
+        }
+        MarkerType::Cross | MarkerType::X | MarkerType::Plus => {
+            let d = if m.kind == MarkerType::Plus {
+                r
+            } else {
+                r * std::f64::consts::FRAC_1_SQRT_2
+            };
+            let segments: [(f64, f64, f64, f64); 2] = if m.kind == MarkerType::Plus {
+                [(-d, 0.0, d, 0.0), (0.0, -d, 0.0, d)]
+            } else {
+                [(-d, -d, d, d), (-d, d, d, -d)]
+            };
+            b.push_str("<path d=\"");
+            for (x1, y1, x2, y2) in segments {
+                b.push('M');
+                num(b, x + x1);
+                b.push(' ');
+                num(b, y + y1);
+                b.push('L');
+                num(b, x + x2);
+                b.push(' ');
+                num(b, y + y2);
+            }
+            b.push('"');
+            b.push_str(" fill=\"none\"");
+            let _ = write!(b, " stroke=\"{}\"", m.edge);
+            attr_num(b, "stroke-width", m.edge_width.max(1.0) * 1.5);
             attr_opacity(b, "opacity", m.opacity);
             b.push_str("/>");
-        };
-        match m.kind {
-            MarkerType::None => {}
-            MarkerType::Circle => {
-                b.push_str("<circle");
-                attr_num(b, "cx", x);
-                attr_num(b, "cy", y);
-                attr_num(b, "r", r);
-                paint(b);
-            }
-            MarkerType::Square => {
-                // a square of the area of the circle
-                let s = r * 0.886;
-                b.push_str("<rect");
-                attr_num(b, "x", x - s);
-                attr_num(b, "y", y - s);
-                attr_num(b, "width", 2.0 * s);
-                attr_num(b, "height", 2.0 * s);
-                paint(b);
-            }
-            MarkerType::Triangle | MarkerType::Diamond => {
-                let points: &[(f64, f64)] = if m.kind == MarkerType::Triangle {
-                    &[(0.0, -1.15), (1.0, 0.58), (-1.0, 0.58)]
-                } else {
-                    &[(0.0, -1.0), (0.75, 0.0), (0.0, 1.0), (-0.75, 0.0)]
-                };
-                b.push_str("<path d=\"");
-                for (i, (dx, dy)) in points.iter().enumerate() {
-                    b.push(if i == 0 { 'M' } else { 'L' });
-                    num(b, x + dx * r);
-                    b.push(' ');
-                    num(b, y + dy * r);
-                }
-                b.push_str("Z\"");
-                paint(b);
-            }
-            MarkerType::Cross | MarkerType::X | MarkerType::Plus => {
-                let d = if m.kind == MarkerType::Plus {
-                    r
-                } else {
-                    r * std::f64::consts::FRAC_1_SQRT_2
-                };
-                let segments: [(f64, f64, f64, f64); 2] = if m.kind == MarkerType::Plus {
-                    [(-d, 0.0, d, 0.0), (0.0, -d, 0.0, d)]
-                } else {
-                    [(-d, -d, d, d), (-d, d, d, -d)]
-                };
-                b.push_str("<path d=\"");
-                for (x1, y1, x2, y2) in segments {
-                    b.push('M');
-                    num(b, x + x1);
-                    b.push(' ');
-                    num(b, y + y1);
-                    b.push('L');
-                    num(b, x + x2);
-                    b.push(' ');
-                    num(b, y + y2);
-                }
-                b.push('"');
-                b.push_str(" fill=\"none\"");
-                let _ = write!(b, " stroke=\"{}\"", m.edge);
-                attr_num(b, "stroke-width", m.edge_width.max(1.0) * 1.5);
-                attr_opacity(b, "opacity", m.opacity);
-                b.push_str("/>");
-            }
         }
     }
 }
@@ -524,7 +528,7 @@ impl RenderBackend for PlotWriter<'_> {
             return;
         }
         if let Some(m) = self.marker.clone() {
-            self.glyph(&m, f64::from(c.x), f64::from(c.y));
+            glyph(&mut self.body, &m, f64::from(c.x), f64::from(c.y));
             return;
         }
         let b = &mut self.body;
@@ -824,6 +828,33 @@ impl RenderBackend for PlotWriter<'_> {
     }
 
     fn begin_element(&mut self, _element: ChartonElement<'_>) {}
+}
+
+/// A backend which draws nothing and records the panel of a chart: the clip of its first plot
+/// group. The figure lays out a plot from where Charton puts its panel with margins of 0 (the
+/// bands of its axes and title), so it places every panel where its layout wants it.
+#[derive(Debug, Default)]
+pub(crate) struct PanelProbe {
+    /// The panel, `None` until Charton opened a plot group.
+    pub panel: Option<Rect>,
+}
+
+impl RenderBackend for PanelProbe {
+    fn draw_circle(&mut self, _: CircleConfig) {}
+    fn draw_rect(&mut self, _: RectConfig) {}
+    fn draw_path(&mut self, _: PathConfig) {}
+    fn draw_text(&mut self, _: TextConfig) -> Result<(), ChartonError> {
+        Ok(())
+    }
+    fn draw_line(&mut self, _: LineConfig) {}
+    fn draw_gradient_rect(&mut self, _: GradientRectConfig) {}
+    fn begin_group(&mut self, g: &Group<'_>) {
+        if g.role == Role::Plot && self.panel.is_none() {
+            self.panel = g.clip;
+        }
+    }
+    fn end_group(&mut self) {}
+    fn begin_element(&mut self, _: ChartonElement<'_>) {}
 }
 
 #[cfg(test)]
