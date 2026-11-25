@@ -348,9 +348,15 @@ well it does run on the batch of the fit itself:
   step which raises the cost by more than `rise` of `delta` is reduced by `factor` and walked
   again, down to `min_step`, and one which raises it by less than that fraction of `rise` is
   enlarged, up to `max_step`, so the points lie where the profile bends and not where it is
-  flat, and a side has about `1 / rise` points below the threshold. A side which does not
-  reach it walks `points` points or the bound of the parameter, whichever comes first, which
-  is what a parameter the data says nothing about does. The fit of a point starts from the
+  flat, and a side has about `1 / rise` points below the threshold. A profile is locally
+  quadratic in the step, so a step which is walked again is not reduced by `factor` but by
+  the curvature its own rise gives: the step whose rise is half of what the walk allows is
+  `step * sqrt(rise * delta / (2 * paid))` of the rise it paid, which reaches the scale of
+  the profile in one correction where a fixed factor pays a fit of the other parameters for
+  every factor of two it comes down; `factor` is what a step which rises slowly is enlarged
+  by. A side which does not reach the threshold walks `points` points or the bound of the
+  parameter, whichever comes first, which is what a parameter the data says nothing about
+  does. The fit of a point starts from the
   optimum of the point before it, so a profile of a real model costs about one fit per point
   and not more, the fits of the steps which were walked again included.
   The two sides of a profile and the profiles of the parameters do not depend on each other
@@ -379,6 +385,7 @@ of the identifiability fits the other parameters at the points of the profiles.
 |---|---|---|
 | `parameters` | every parameter | the ids to profile, in the order of the profiles |
 | `walk` | `{"points": 50, "step": 0.1, "min_step": 0.01, "max_step": 1.0, "factor": 2.0, "rise": 0.2, "delta": 1.9207...}` | what a profile walks, above |
+| `steps` | the `step` of the walk | the first step of every parameter of `parameters`, in its order and in the space it is searched: a caller which knows the scale of a parameter, e.g. from the standard error of the Fisher information of the optimum, starts its walk there instead of at one step for every parameter |
 | `optimizer` | the one of the fit | the optimizer of the points of a profile, which fit the other parameters |
 | `profiles` | true | whether the profiles are walked at all, which is a fit per point of every one of them |
 | `fisher` | true | whether the Fisher information is computed, which is one Jacobian |

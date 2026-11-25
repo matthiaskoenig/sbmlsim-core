@@ -39,9 +39,10 @@ pub const DELTA_95: f64 = 1.920_729_410_347_062;
 ///
 /// A walk steps away from the optimum until the cost reaches the threshold of the parameter,
 /// which is where the profile bounds it, and the step is the one of the rise of the cost: a
-/// step which raises the cost by more than [`Walk::rise`] of [`Walk::delta`] is reduced and
-/// walked again, and one which raises it by little is enlarged, so the points of a profile
-/// lie where it bends and not where it is flat. A side which does not reach the threshold
+/// step which raises the cost by more than [`Walk::rise`] of [`Walk::delta`] is reduced by
+/// the curvature its own rise gives and walked again, and one which raises it by little is
+/// enlarged by [`Walk::factor`], so the points of a profile lie where it bends and not where
+/// it is flat. A side which does not reach the threshold
 /// walks [`Walk::points`] points or the bound of the parameter, whichever comes first, which
 /// is what a parameter the data does not determine does.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
@@ -57,7 +58,9 @@ pub struct Walk {
     pub min_step: f64,
     /// The largest step a walk enlarges to.
     pub max_step: f64,
-    /// What a step is reduced or enlarged by, larger than one.
+    /// What a step which rises slowly is enlarged by, larger than one. A step which rises
+    /// too fast is not reduced by it but by the curvature of the profile, see the loop of
+    /// [`profile`].
     pub factor: f64,
     /// The most a single step may raise the cost, as a fraction of [`Walk::delta`]: a step
     /// which raises it by more is reduced and walked again, so a side of a profile has about
@@ -273,7 +276,15 @@ pub fn profile(
                 let fit = held.optimize_with(settings, &from, stop)?;
                 let rise = fit.cost - at_cost;
                 if rise > allowed && step > walk.min_step && !stop.stopped() {
-                    step = (step / walk.factor).max(walk.min_step);
+                    // the rise of a step which is walked again is the curvature of the
+                    // profile there, which is locally quadratic in the step: the step
+                    // whose rise is half of what the walk allows is
+                    // `step * sqrt(allowed / (2 * rise))`, which reaches the scale of
+                    // the profile in one correction where a fixed factor needs several
+                    // and throws a fit away at each of them. `rise > allowed` keeps the
+                    // factor below `1 / sqrt(2)`, so the step always shrinks, and a rise
+                    // which is not finite takes it to `min_step` at once
+                    step = (step * (allowed / (2.0 * rise)).sqrt()).max(walk.min_step);
                     continue;
                 }
                 break (next, fit);
@@ -342,28 +353,55 @@ pub fn profile(
 /// The profiles of the parameters of a fit, in the order of `which`, or of every parameter
 /// when it is empty.
 ///
+/// `steps` is the first step of each of them, in the order of `which`, which replaces
+/// [`Walk::step`] for that parameter: a caller which knows the scale of a parameter, e.g.
+/// from the standard error of the Fisher information of the optimum, starts the walk there
+/// instead of at one step for every parameter. It is empty for the step of the walk.
+///
 /// # Errors
 ///
-/// As [`profile`].
+/// If `steps` is neither empty nor one step per parameter, else as [`profile`].
 pub fn profiles(
     problem: &Problem,
     settings: &Settings,
     at: &[f64],
     which: &[usize],
     walk: &Walk,
+    steps: &[f64],
     stop: &Stop,
 ) -> Result<Vec<Profile>, FitError> {
     use rayon::prelude::*;
 
     let every: Vec<usize> = (0..problem.parameters().len()).collect();
     let which = if which.is_empty() { &every } else { which };
+    if !steps.is_empty() && steps.len() != which.len() {
+        return Err(FitError::Optimizer(format!(
+            "walks {} parameters with {} first steps",
+            which.len(),
+            steps.len()
+        )));
+    }
+    // the first step of every parameter: the one of the walk, or the one the caller gives it,
+    // which is what it knows of the profile before it is walked
+    let walks: Vec<Walk> = which
+        .iter()
+        .enumerate()
+        .map(|(at, _)| match steps.get(at) {
+            None => *walk,
+            Some(step) => Walk {
+                step: *step,
+                ..*walk
+            },
+        })
+        .collect();
     // the profile of a parameter is none of the others, so they run next to each other on the
     // pool of the batch: the points of a profile are a chain of fits of few conditions each,
     // which leaves the threads of the pool to the profiles beside it
     let walked: Vec<Result<Profile, FitError>> = problem.install(|| {
         which
             .par_iter()
-            .map(|parameter| profile(problem, settings, at, *parameter, walk, stop))
+            .zip(walks.par_iter())
+            .map(|(parameter, walk)| profile(problem, settings, at, *parameter, walk, stop))
             .collect()
     });
     let mut walked: Vec<Profile> = walked.into_iter().collect::<Result<_, _>>()?;

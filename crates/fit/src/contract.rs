@@ -200,6 +200,13 @@ pub struct Identifiability {
     pub parameters: Vec<String>,
     /// What a profile walks, see [`Walk`].
     pub walk: Walk,
+    /// The first step of the walk of every parameter of `parameters`, in its order and in the
+    /// space that parameter is searched, which replaces [`Walk::step`] for it: a caller which
+    /// knows the scale of a parameter, e.g. from the standard error of the Fisher information
+    /// of the optimum, starts its walk there instead of at one step for every parameter.
+    /// Empty for the step of the walk for every one of them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub steps: Vec<f64>,
     /// Whether the profiles are walked, which is a fit per point of every one of them.
     pub profiles: bool,
     /// Whether the Fisher information of the optimum is computed, which is one jacobian.
@@ -217,6 +224,7 @@ impl Default for Identifiability {
         Identifiability {
             parameters: Vec::new(),
             walk: Walk::default(),
+            steps: Vec::new(),
             profiles: true,
             fisher: true,
             optimizer: None,
@@ -640,7 +648,15 @@ pub fn fit_reporting_models(
             // analysis runs where it has one of its own
             let optimizer = analysis.optimizer.as_ref().unwrap_or(&request.optimizer);
             let walked = if analysis.profiles {
-                profiles(&problem, optimizer, &best.x, &which, &analysis.walk, stop)?
+                profiles(
+                    &problem,
+                    optimizer,
+                    &best.x,
+                    &which,
+                    &analysis.walk,
+                    &analysis.steps,
+                    stop,
+                )?
             } else {
                 Vec::new()
             };
