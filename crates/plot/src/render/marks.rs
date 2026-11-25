@@ -134,7 +134,7 @@ pub(crate) fn path_layer(
 }
 
 /// The runs of the finite points of a line through `(x, y)` in coordinates, cut to the x
-/// domain `span` (see [`cut`]).
+/// domain `span` (see [`super::cut`]).
 fn line_runs(xu: &[f64], yu: &[f64], span: Span) -> Vec<(Vec<f64>, Vec<f64>)> {
     cut_runs(xu, &[yu], span, linear)
         .into_iter()

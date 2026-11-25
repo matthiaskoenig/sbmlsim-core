@@ -32,7 +32,7 @@ pub(crate) const BAR_WIDTH: f64 = 0.8;
 /// The width of the edge between the bars of a histogram in pixels.
 pub(crate) const HISTOGRAM_EDGE: f64 = 0.8;
 /// The diameter of the marker of an outlier of a box in pixels.
-const OUTLIER_SIZE: f64 = 6.0;
+pub(crate) const OUTLIER_SIZE: f64 = 6.0;
 
 /// The smallest distance between two distinct finite positions, 1 for fewer than two.
 pub(crate) fn spacing(positions: &[f64]) -> f64 {

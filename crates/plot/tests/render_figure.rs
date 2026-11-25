@@ -14,6 +14,13 @@ use support::{assert_golden, spec_text};
 
 /// Renders a figure of JSON text.
 fn render(json: &str) -> String {
+    if let Ok(d) = std::env::var("TMP_DUMP") {
+        let name = std::thread::current()
+            .name()
+            .unwrap_or("x")
+            .replace("::", "_");
+        std::fs::write(format!("{d}/{name}.json"), json).unwrap();
+    }
     render_svg(&parse(json).unwrap_or_else(|e| panic!("{e}")))
 }
 
@@ -373,6 +380,141 @@ fn legend_inside_avoids_data() {
     // the upper left corner is free
     assert!(frame.right() < p.x + p.width / 2.0, "{frame:?} in {p:?}");
     assert!(frame.bottom() < p.y + p.height / 2.0, "{frame:?} in {p:?}");
+}
+
+/// The numbers as a JSON list.
+fn list(values: impl IntoIterator<Item = f64>) -> String {
+    let v: Vec<String> = values.into_iter().map(|a| format!("{a}")).collect();
+    format!("[{}]", v.join(", "))
+}
+
+/// Whether a polyline of the figure meets a rectangle, sampled every half pixel.
+fn polyline_meets(points: &[(f64, f64)], r: &Rect) -> bool {
+    points.windows(2).any(|w| {
+        let ((ax, ay), (bx, by)) = (w[0], w[1]);
+        let n = (((bx - ax).hypot(by - ay)) * 2.0).ceil().max(1.0) as usize;
+        (0..=n).any(|k| {
+            let t = k as f64 / n as f64;
+            let (x, y) = (ax + t * (bx - ax), ay + t * (by - ay));
+            x > r.x && x < r.right() && y > r.y && y < r.bottom()
+        })
+    })
+}
+
+#[test]
+fn legend_avoids_a_band_interior() {
+    // a band fills the right half of the panel from its bottom to its top, its edges on the
+    // edges of the panel; a line crosses the upper left corner; the lower left one is free
+    let x = list((0..=20).map(|i| 5.0 + f64::from(i) * 0.25));
+    let band = format!(
+        r#"{{"id": "band", "kind": "band", "label": "range", "x": {x}, "low": {}, "high": {}}}"#,
+        list((0..=20).map(|_| 0.0)),
+        list((0..=20).map(|_| 10.0)),
+    );
+    let line = curve("line", r#""label": "mean","#, "[0, 1.5, 3]", "[10, 8, 6]");
+    let p = format!(
+        r#"{{"id": "p", "row": 0, "column": 0,
+            "x": {{"label": "time", "min": 0, "max": 10}},
+            "y": {{"label": "c", "min": 0, "max": 10}},
+            "elements": [{band}, {line}]}}"#
+    );
+    let svg = render(&figure(
+        500.0,
+        400.0,
+        r#""legend": {"position": "inside"},"#,
+        1,
+        1,
+        &[p],
+    ));
+    let doc = Document::parse(&svg).unwrap();
+    let p = panel(&doc, "p");
+    let frame = legends(&doc)[0].frame;
+    assert!(p.holds(&frame), "{frame:?} not in {p:?}");
+    // the lower left corner
+    assert!(frame.right() < p.x + p.width / 2.0, "{frame:?} in {p:?}");
+    assert!(frame.y > p.y + p.height / 2.0, "{frame:?} in {p:?}");
+}
+
+#[test]
+fn legend_avoids_dense_curves() {
+    // the shape of the HCTZ panels: curves rise from the lower left and fill the upper right,
+    // data points of the highest one with error bars reach up into the upper left corner; the
+    // lower right corner, below the plateaus, is free
+    let t: Vec<f64> = (0..=96).map(|i| f64::from(i) * 0.25).collect();
+    let mut elements = Vec::new();
+    for (k, a) in [8.0f64, 9.0, 10.0].into_iter().enumerate() {
+        let y = t.iter().map(|v| a * (1.0 - (-0.15 * v).exp()));
+        elements.push(curve(
+            &format!("dose{k}"),
+            &format!(r#""label": "dose {a} mg","#),
+            &list(t.iter().copied()),
+            &list(y),
+        ));
+    }
+    let td: [f64; 6] = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+    let yd = td.map(|v| 10.0 * (1.0 - (-0.15 * v).exp()));
+    elements.push(format!(
+        r#"{{"id": "data", "kind": "curve", "label": "study", "style": {{"line": {{"type": "none"}},
+            "marker": {{"type": "circle", "size": 6}}}}, "x": {}, "y": {}, "yerr": {}}}"#,
+        list(td),
+        list(yd),
+        list(td.map(|_| 5.0)),
+    ));
+    let p = format!(
+        r#"{{"id": "p", "row": 0, "column": 0,
+            "x": {{"label": "time", "unit": "hr", "min": 0, "max": 24}},
+            "y": {{"label": "urine", "unit": "mg", "min": 0, "max": 11}},
+            "elements": [{}]}}"#,
+        elements.join(", ")
+    );
+    let svg = render(&figure(
+        500.0,
+        400.0,
+        r#""legend": {"position": "inside"},"#,
+        1,
+        1,
+        &[p],
+    ));
+    let doc = Document::parse(&svg).unwrap();
+    let p = panel(&doc, "p");
+    let frame = legends(&doc)[0].frame;
+    assert!(p.holds(&frame), "{frame:?} not in {p:?}");
+    // the lower right corner, where no curve passes
+    assert!(frame.x > p.x + p.width / 2.0, "{frame:?} in {p:?}");
+    assert!(frame.y > p.y + p.height / 2.0, "{frame:?} in {p:?}");
+    for k in 0..3 {
+        let line = path_points(&doc, &format!("dose{k}"));
+        assert!(!polyline_meets(&line, &frame), "dose{k} under {frame:?}");
+    }
+}
+
+#[test]
+fn crowded_panel_moves_legend_outside() {
+    // lines every tenth of the height cross every corner
+    let mut elements: Vec<String> = (0..=10)
+        .map(|k| {
+            let v = f64::from(k);
+            curve(&format!("l{k}"), "", "[0, 10]", &format!("[{v}, {v}]"))
+        })
+        .collect();
+    elements.push(curve("named", r#""label": "dose","#, "[0, 10]", "[0, 10]"));
+    let svg = render(&figure(
+        500.0,
+        400.0,
+        r#""legend": {"position": "inside"},"#,
+        1,
+        1,
+        &[plot("p", 0, 0, "", &elements)],
+    ));
+    let doc = Document::parse(&svg).unwrap();
+    let p = panel(&doc, "p");
+    let frame = legends(&doc)[0].frame;
+    let (w, _) = figure_size(&doc);
+    assert!(frame.x > p.right(), "{frame:?} not right of {p:?}");
+    assert!(
+        w > 500.0 && frame.right() <= w,
+        "{frame:?} in a figure of width {w}"
+    );
 }
 
 #[test]
@@ -743,4 +885,9 @@ fn rotated_right_axis_labels_clear_the_ticks() {
 #[test]
 fn golden_grid() {
     assert_golden("grid", &render(&spec_text("grid")));
+}
+
+#[test]
+fn golden_legends() {
+    assert_golden("legends", &render(&spec_text("legends")));
 }

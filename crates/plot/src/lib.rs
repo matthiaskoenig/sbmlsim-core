@@ -4,6 +4,7 @@
 
 mod colors;
 mod error;
+mod ink;
 mod interact;
 mod layout;
 #[cfg(feature = "png")]
