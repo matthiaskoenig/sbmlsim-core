@@ -203,10 +203,23 @@ pub(crate) fn resolve(
                 reverse: axis.reverse,
                 low,
                 high,
-                ticks: ticks.into_iter().zip(labels).collect(),
+                ticks: distinct_ticks(ticks, labels),
             }
         }
     }
+}
+
+/// The ticks with their labels, a tick whose label is the one of the tick before dropped: at a
+/// resolution near the precision of a double neighbouring ticks round onto one value or one
+/// label, which would be written twice.
+fn distinct_ticks(ticks: Vec<f64>, labels: Vec<String>) -> Vec<(f64, String)> {
+    let mut out: Vec<(f64, String)> = Vec::with_capacity(ticks.len());
+    for (t, l) in ticks.into_iter().zip(labels) {
+        if out.last().is_none_or(|(_, last)| *last != l) {
+            out.push((t, l));
+        }
+    }
+    out
 }
 
 /// The limits of an axis with the ends it derives moved onto its sticky values.
@@ -575,6 +588,14 @@ mod tests {
             linear_ticks(0.0, 1.0, 5),
             [0.0, 0.2, 0.4, 0.6000000000000001, 0.8, 1.0]
         );
+        // a step below the resolution of a double: the ticks round onto the same values, each
+        // label is written once
+        let t = linear_ticks(1e16, 1e16 + 8.0, 8);
+        let labels = tick_labels(&t);
+        assert!(labels.windows(2).any(|w| w[0] == w[1]), "{labels:?}");
+        let kept = distinct_ticks(t, labels);
+        assert!(kept.windows(2).all(|w| w[0].1 != w[1].1), "{kept:?}");
+        assert!(kept.len() >= 2, "{kept:?}");
         let t = log_ticks(5e-5, 200.0, 8);
         assert_eq!(t.first().copied(), Some(1e-4));
         assert!(t.len() <= 8);
