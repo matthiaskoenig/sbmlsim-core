@@ -61,6 +61,7 @@ The `width` and `height` of the spec are the size of the figure before its legen
 | `y2` | Axis | none | the right y axis, which elements select with `axis: "y2"` |
 | `legend` | boolean | true | whether the plot has a legend |
 | `colorbar` | ColorBar | none | a color bar |
+| `colorbars` | list of ColorBar | none | several color bars, stacked right of the panel in their order, each with its own label; refused together with `colorbar` (since 0.28.0) |
 | `declared_legends` | list of list of text | none | the legends the plot may show in some state of a page, each a list of entry labels: the legend takes the room of the largest of them, so the plot and the figure keep their size when entries come and go, and a label without an element is not drawn; absent, the legend takes the room of the entries drawn |
 | `legend_order` | list of text | none | the order of the legend entries as legend groups: the listed groups first in this order, the others after them in the order their elements first appear; a listed group without elements is ignored, a group listed twice is refused; it lets a writer draw elements under others and still list them last |
 | `elements` | list of Element | required | what the plot draws, in the order of drawing |
@@ -115,11 +116,15 @@ An element is one flat object with the common fields and the fields of its `kind
 
 ### Color scales
 
-A `ColorScale` has `name` (`viridis`, `magma`, `rdbu`, `coolwarm`, `greys`), `low` and `high` (`high` above `low`), `center` (the value at the middle of a diverging map, between `low` and `high`) and `log` (false; `low` must be positive). A `ColorBar` has a `scale` and an optional `label`. The python function `color_scale(name, low, high, values, center=None, log=False)` gives the `#rrggbb` of values on a scale, so a page and a file color a legend swatch alike.
+A `ColorScale` has `name` (`viridis`, `magma`, `rdbu`, `coolwarm`, `greys`), `low` and `high` (`high` above `low`), `center` (the value at the middle of a diverging map, between `low` and `high`), `log` (false; `low` must be positive) and `start` and `end` (0 and 1, since 0.28.0; `0 <= start < end <= 1`): the values from `low` to `high` take the part `start..end` of the color map, and a value beyond an end the color of that end. The lines of a scan which leave out the lightest colors of viridis take `end: 0.85`, and a bar of that scale shows exactly the colors of the lines over exactly the range of the data, with no value no line has.
+
+A `ColorBar` has a `scale`, an optional `label` and, since 0.28.0, `ticks` (the values of the ticks, between `low` and `high`; computed from the scale without them), `tick_labels` (one label per tick, which needs `ticks`; the numbers of the ticks without them) and `categorical` (false): a categorical bar draws one band of one color per integer from `low` to `high` (both integers, a linear scale, at most 256 bands), the band of `k` in the color of the value `k`, with its ticks, the integers among the ticks of the scale unless `ticks` gives them, at the middle of their bands; it labels the lines of a scan over named values. The first bar of a plot writes its gradient under the id `<plot>-colorbar` as before, a further bar under `<plot>-colorbar-<index>`, and a categorical bar draws its bands as rectangles and needs none.
+
+The python function `color_scale(name, low, high, values, center=None, log=False, start=0.0, end=1.0)` gives the `#rrggbb` of values on a scale, so a page and a file color a legend swatch alike; it raises `ValueError` for a part which is not `0 <= start < end <= 1` (`start` and `end` since 0.28.0).
 
 ### Errors
 
-A spec the renderer refuses is reported as `path: what is wrong`, the path in the notation of the spec, e.g. `plots[0].elements[1].y: 3 values, x has 4`, `plots[0].x.categories: a category axis needs categories`, `plots[0].elements[0].scale.name: unknown color scale ...` or `contract: expected figure/1, got ...`. Besides the shapes above the checks are: the plot ids and the element ids are unique within the figure (the element ids of all plots together), a plot lies in the grid, an element on `y2` needs the axis, colors are `#rrggbb`, opacities lie between 0 and 1 and widths and sizes are not negative.
+A spec the renderer refuses is reported as `path: what is wrong`, the path in the notation of the spec, e.g. `plots[0].elements[1].y: 3 values, x has 4`, `plots[0].x.categories: a category axis needs categories`, `plots[0].elements[0].scale.name: unknown color scale ...` or `contract: expected figure/1, got ...`. Besides the shapes above the checks are: the plot ids and the element ids are unique within the figure (the element ids of all plots together), a plot lies in the grid, an element on `y2` needs the axis, colors are `#rrggbb`, opacities lie between 0 and 1, widths and sizes are not negative, a plot has `colorbar` or `colorbars` and not both and a color bar has ticks between the ends of its scale and as many tick labels as ticks.
 
 ## Semantic classes of the SVG
 

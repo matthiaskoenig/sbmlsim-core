@@ -201,7 +201,7 @@ pub(crate) struct Prepared {
     xl: AxisLayout,
     yl: AxisLayout,
     right: Option<RightAxis>,
-    bar: Option<ColorBarLayout>,
+    bars: Vec<ColorBarLayout>,
     grid: GridLines,
     /// The colour of every element.
     pub colors: Vec<String>,
@@ -234,10 +234,11 @@ pub(crate) fn prepare(figure: &Figure, plot: &Plot, panel: (f64, f64)) -> Prepar
     }
     ext.xs.extend_from_slice(&ext2.xs);
     ext.x_sticky.extend_from_slice(&ext2.x_sticky);
-    let bar = plot
-        .colorbar
-        .as_ref()
-        .map(|b| heatmap::colorbar_layout(b, fonts, panel_height));
+    let bars: Vec<ColorBarLayout> = plot
+        .color_bars()
+        .iter()
+        .map(|b| heatmap::colorbar_layout(b, fonts, panel_height))
+        .collect();
     let xa = axis::resolve(x_axis, &ext.xs, &ext.x_sticky, panel_width, X_TICK_ROOM);
     let ya = axis::resolve(y_axis, &ext.ys, &ext.y_sticky, panel_height, Y_TICK_ROOM);
     let y2a = plot
@@ -297,7 +298,8 @@ pub(crate) fn prepare(figure: &Figure, plot: &Plot, panel: (f64, f64)) -> Prepar
         }
         Err(_) => Sides::default(),
     };
-    let right_room = right.as_ref().map_or(0.0, |r| r.depth) + bar.as_ref().map_or(0.0, |b| b.room);
+    let right_room =
+        right.as_ref().map_or(0.0, |r| r.depth) + bars.iter().map(|b| b.room).sum::<f64>();
     let depth = Sides {
         top: bands.top,
         right: bands.right.max(overhang).max(right_room),
@@ -314,7 +316,7 @@ pub(crate) fn prepare(figure: &Figure, plot: &Plot, panel: (f64, f64)) -> Prepar
         xl,
         yl,
         right,
-        bar,
+        bars,
         grid,
         bands,
         depth,
@@ -430,16 +432,19 @@ pub(crate) fn render_plot(
         right_axis::draw(&mut body, y2, y2a, right, fonts, drawn);
         bar_from += right.depth;
     }
-    if let (Some(b), Some(layout)) = (&plot.colorbar, &prep.bar) {
+    // the colour bars stacked right of the panel and the right axis, in their order
+    for (k, (b, layout)) in plot.color_bars().iter().zip(&prep.bars).enumerate() {
         heatmap::draw_colorbar(
             &mut body,
             &mut defs,
             &prefix,
+            k,
             b,
             layout,
             fonts,
             (drawn.x, drawn.y, bar_from, drawn.height),
         );
+        bar_from += layout.room;
     }
     if let Some(e) = failed {
         error_text(&mut body, canvas, &e.to_string());

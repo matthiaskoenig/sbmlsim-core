@@ -32,6 +32,8 @@ fn scale(name: ColorScaleName, low: f64, high: f64) -> ColorScale {
         high,
         center: None,
         log: false,
+        start: 0.0,
+        end: 1.0,
     }
 }
 
@@ -666,6 +668,266 @@ fn colorbar_ticks() {
         texts(bar).iter().any(|t| t == "dose"),
         "the label of the bar"
     );
+}
+
+/// The colour bars of a figure, in the order of the document.
+fn colorbars<'a>(doc: &'a Document<'a>) -> Vec<Node<'a, 'a>> {
+    doc.descendants()
+        .filter(|n| n.has_tag_name("g") && n.attribute("class") == Some("sbmlsim-colorbar"))
+        .collect()
+}
+
+/// The rectangle of a colour bar filled with its gradient and the stop colours of that
+/// gradient from the bottom up.
+fn gradient_of<'a>(doc: &'a Document<'a>, bar: Node<'a, 'a>) -> (Node<'a, 'a>, Vec<String>) {
+    let rect = bar
+        .descendants()
+        .find(|n| {
+            n.has_tag_name("rect") && n.attribute("fill").is_some_and(|f| f.starts_with("url(#"))
+        })
+        .expect("the gradient of the bar");
+    let id = rect
+        .attribute("fill")
+        .unwrap()
+        .trim_start_matches("url(#")
+        .trim_end_matches(')');
+    let gradient = doc
+        .descendants()
+        .find(|n| n.has_tag_name("linearGradient") && n.attribute("id") == Some(id))
+        .expect("the gradient");
+    let stops = gradient
+        .children()
+        .filter(|n| n.has_tag_name("stop"))
+        .map(|n| n.attribute("stop-color").unwrap().to_string())
+        .collect();
+    (rect, stops)
+}
+
+/// The tick labels of a colour bar with their y.
+fn bar_labels(bar: Node) -> Vec<(String, f64)> {
+    bar.descendants()
+        .filter(|n| {
+            n.has_tag_name("g") && n.attribute("class") == Some("sbmlsim-colorbar-tick-labels")
+        })
+        .flat_map(|g| g.descendants().filter(|n| n.has_tag_name("text")))
+        .map(|n| {
+            (
+                n.text().unwrap_or_default().to_string(),
+                n.attribute("y").unwrap().parse::<f64>().unwrap(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn colorbar_range_fraction() {
+    // the lines of a scan take viridis over 0..0.85: the bar shows exactly those colours over
+    // exactly the data range, its ends labelled with the data ends
+    let json = figure(
+        "{}",
+        "{}",
+        r#""colorbar": {"scale": {"name": "viridis", "low": 2, "high": 8, "start": 0, "end": 0.85},
+                        "ticks": [2, 8]},"#,
+        r#"{"id": "c", "kind": "curve", "x": [0, 1], "y": [0, 1]}"#,
+    );
+    let svg = render(&json);
+    let doc = Document::parse(&svg).unwrap();
+    let bars = colorbars(&doc);
+    assert_eq!(bars.len(), 1);
+    let (_, stops) = gradient_of(&doc, bars[0]);
+    let s = ColorScale {
+        start: 0.0,
+        end: 0.85,
+        ..scale(ColorScaleName::Viridis, 2.0, 8.0)
+    };
+    let full = scale(ColorScaleName::Viridis, 0.0, 1.0);
+    // the colours of the lines at the data ends
+    let ends = color_scale(&s, &[2.0, 8.0]);
+    assert_eq!(ends[0], color_scale(&full, &[0.0])[0]);
+    assert_eq!(ends[1], color_scale(&full, &[0.85])[0]);
+    assert_ne!(ends[1], "#fde725", "the top is not the end of the map");
+    assert_eq!(stops.first(), Some(&ends[0]));
+    assert_eq!(stops.last(), Some(&ends[1]));
+    // a value beyond the data takes the colour of its end of the range, not of the map
+    assert_eq!(color_scale(&s, &[100.0])[0], ends[1]);
+    let p = panel(&doc);
+    let labels = bar_labels(bars[0]);
+    assert_eq!(
+        labels.iter().map(|l| l.0.as_str()).collect::<Vec<_>>(),
+        ["2", "8"]
+    );
+    assert_near(labels[0].1, p.y + p.height, "the low end at the bottom");
+    assert_near(labels[1].1, p.y, "the high end at the top");
+}
+
+#[test]
+fn colorbar_tick_labels() {
+    let json = figure(
+        "{}",
+        "{}",
+        r#""colorbar": {"scale": {"name": "magma", "low": 0, "high": 10},
+                        "ticks": [0, 2.5, 10], "tick_labels": ["none", "low", "<high>"]},"#,
+        r#"{"id": "c", "kind": "curve", "x": [0, 1], "y": [0, 1]}"#,
+    );
+    let svg = render(&json);
+    let doc = Document::parse(&svg).unwrap();
+    let p = panel(&doc);
+    let bar = colorbars(&doc)[0];
+    let labels = bar_labels(bar);
+    assert_eq!(
+        labels.iter().map(|l| l.0.as_str()).collect::<Vec<_>>(),
+        ["none", "low", "<high>"]
+    );
+    for ((_, y), v) in labels.iter().zip([0.0, 2.5, 10.0]) {
+        assert_near(*y, y_pixel(p, 0.0, 10.0, v), "a tick label at its value");
+    }
+    let ticks = bar.descendants().filter(|n| n.has_tag_name("line")).count();
+    assert_eq!(ticks, 3, "a tick per label");
+}
+
+#[test]
+fn categorical_colorbar() {
+    let json = figure(
+        "{}",
+        "{}",
+        r#""colorbar": {"scale": {"name": "viridis", "low": 0, "high": 3, "end": 0.85},
+                        "categorical": true, "ticks": [0, 1, 2, 3],
+                        "tick_labels": ["a", "b", "c", "d"], "label": "dose"},"#,
+        r#"{"id": "c", "kind": "curve", "x": [0, 1], "y": [0, 1]}"#,
+    );
+    let svg = render(&json);
+    let doc = Document::parse(&svg).unwrap();
+    let p = panel(&doc);
+    let bar = colorbars(&doc)[0];
+    assert!(
+        !bar.descendants()
+            .any(|n| n.attribute("fill").is_some_and(|f| f.starts_with("url(#"))),
+        "no gradient"
+    );
+    // one band per integer from the bottom up, in the colours of the lines
+    let s = ColorScale {
+        end: 0.85,
+        ..scale(ColorScaleName::Viridis, 0.0, 3.0)
+    };
+    let colors = color_scale(&s, &[0.0, 1.0, 2.0, 3.0]);
+    let mut bands: Vec<(f64, f64, String)> = bar
+        .descendants()
+        .filter(|n| n.has_tag_name("rect"))
+        .filter_map(|n| {
+            let fill = n.attribute("fill")?;
+            fill.starts_with('#').then(|| {
+                let a = |name: &str| n.attribute(name).unwrap().parse::<f64>().unwrap();
+                (a("y"), a("height"), fill.to_string())
+            })
+        })
+        .collect();
+    bands.sort_by(|a, b| b.0.total_cmp(&a.0));
+    assert_eq!(bands.len(), 4);
+    let h = p.height / 4.0;
+    for (k, (y, height, fill)) in bands.iter().enumerate() {
+        assert_eq!(fill, &colors[k], "band {k}");
+        assert_near(*height, h, "the height of a band");
+        assert_near(
+            *y,
+            p.y + p.height - (k as f64 + 1.0) * h,
+            "the place of a band",
+        );
+    }
+    // the tick labels at the middle of their bands
+    let labels = bar_labels(bar);
+    assert_eq!(
+        labels.iter().map(|l| l.0.as_str()).collect::<Vec<_>>(),
+        ["a", "b", "c", "d"]
+    );
+    for (k, (_, y)) in labels.iter().enumerate() {
+        assert_near(
+            *y,
+            p.y + p.height - (k as f64 + 0.5) * h,
+            "a label at its band",
+        );
+    }
+    assert!(texts(bar).iter().any(|t| t == "dose"));
+    // without ticks the integers are labelled
+    let json = figure(
+        "{}",
+        "{}",
+        r#""colorbar": {"scale": {"name": "viridis", "low": 1, "high": 3}, "categorical": true},"#,
+        r#"{"id": "c", "kind": "curve", "x": [0, 1], "y": [0, 1]}"#,
+    );
+    let svg = render(&json);
+    let doc = Document::parse(&svg).unwrap();
+    let labels = bar_labels(colorbars(&doc)[0]);
+    assert_eq!(
+        labels.iter().map(|l| l.0.as_str()).collect::<Vec<_>>(),
+        ["1", "2", "3"]
+    );
+}
+
+#[test]
+fn two_colorbars_stack() {
+    let json = figure(
+        "{}",
+        "{}",
+        r#""colorbars": [
+            {"scale": {"name": "viridis", "low": 0, "high": 10}, "label": "dose"},
+            {"scale": {"name": "magma", "low": 1, "high": 100, "log": true}, "label": "weight"}
+        ],"#,
+        r#"{"id": "c", "kind": "curve", "x": [0, 1], "y": [0, 1]}"#,
+    );
+    let svg = render(&json);
+    let doc = Document::parse(&svg).unwrap();
+    let p = panel(&doc);
+    let bars = colorbars(&doc);
+    assert_eq!(bars.len(), 2);
+    let (first, first_stops) = gradient_of(&doc, bars[0]);
+    let (second, second_stops) = gradient_of(&doc, bars[1]);
+    assert_ne!(
+        first.attribute("fill"),
+        second.attribute("fill"),
+        "own gradients"
+    );
+    assert_eq!(first_stops.first().map(String::as_str), Some("#440154"));
+    assert_eq!(second_stops.first().map(String::as_str), Some("#000004"));
+    let a = |n: Node, name: &str| n.attribute(name).unwrap().parse::<f64>().unwrap();
+    assert!(
+        a(first, "x") > p.x + p.width,
+        "the first bar right of the panel"
+    );
+    // the second bar right of everything of the first, its label included
+    let right_of_first = bars[0]
+        .descendants()
+        .filter(|n| n.has_tag_name("text"))
+        .map(|n| a(n, "x"))
+        .fold(a(first, "x") + a(first, "width"), f64::max);
+    assert!(
+        a(second, "x") > right_of_first,
+        "the second bar after the first"
+    );
+    assert!(
+        a(second, "x") + a(second, "width") <= 500.0,
+        "inside the figure"
+    );
+    for bar in [first, second] {
+        assert_near(a(bar, "y"), p.y, "top of a bar");
+        assert_near(a(bar, "height"), p.height, "height of a bar");
+    }
+    assert!(texts(bars[0]).iter().any(|t| t == "dose"));
+    assert!(texts(bars[1]).iter().any(|t| t == "weight"));
+    // one bar in `colorbars` draws as `colorbar` does
+    let one = |field: &str| {
+        render(&figure(
+            "{}",
+            "{}",
+            &format!(
+                r#""{field}": {}{}{},"#,
+                if field == "colorbars" { "[" } else { "" },
+                r#"{"scale": {"name": "viridis", "low": 0, "high": 10}, "label": "dose"}"#,
+                if field == "colorbars" { "]" } else { "" }
+            ),
+            r#"{"id": "c", "kind": "curve", "x": [0, 1], "y": [0, 1]}"#,
+        ))
+    };
+    assert_eq!(one("colorbars"), one("colorbar"));
 }
 
 #[test]

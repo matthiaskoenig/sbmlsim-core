@@ -24,6 +24,15 @@ fn yes() -> bool {
 fn one() -> u32 {
     1
 }
+fn is_zero(v: &f64) -> bool {
+    *v == 0.0
+}
+fn is_one(v: &f64) -> bool {
+    *v == 1.0
+}
+fn is_false(v: &bool) -> bool {
+    !*v
+}
 fn one_f() -> f64 {
     1.0
 }
@@ -187,6 +196,10 @@ pub struct Plot {
     /// A color bar.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub colorbar: Option<ColorBar>,
+    /// Several color bars, stacked right of the panel in their order (since 0.28.0); refused
+    /// together with `colorbar`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub colorbars: Option<Vec<ColorBar>>,
     /// The legends the plot may show in some state of a page, each a list of entry labels
     /// (`declaredLegends` of sbmlsim-web): the legend takes the room of the largest of them, so
     /// the plot and the figure keep their size when entries come and go; a label without an
@@ -715,6 +728,13 @@ pub struct ColorScale {
     /// Logarithmic scale.
     #[serde(default)]
     pub log: bool,
+    /// The share of the color map `low` takes, 0 by default (since 0.28.0).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub start: f64,
+    /// The share of the color map `high` takes, 1 by default (since 0.28.0): the values
+    /// `low..high` take the part `start..end` of the map.
+    #[serde(default = "one_f", skip_serializing_if = "is_one")]
+    pub end: f64,
 }
 
 /// A color bar.
@@ -726,6 +746,28 @@ pub struct ColorBar {
     /// Label.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    /// The values of the ticks, computed from the scale without them (since 0.28.0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ticks: Option<Vec<f64>>,
+    /// The labels of the ticks, one per tick; the numbers of the ticks without them (since
+    /// 0.28.0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tick_labels: Option<Vec<String>>,
+    /// One band of one color per integer from `low` to `high`, its tick at the middle of the
+    /// band (since 0.28.0).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub categorical: bool,
+}
+
+impl Plot {
+    /// The color bars of the plot, of `colorbar` or of `colorbars`, in their order.
+    pub fn color_bars(&self) -> &[ColorBar] {
+        match (&self.colorbar, &self.colorbars) {
+            (Some(b), _) => std::slice::from_ref(b),
+            (None, Some(bars)) => bars,
+            (None, None) => &[],
+        }
+    }
 }
 
 /// Line type.
@@ -901,7 +943,64 @@ fn check_scale(path: &str, s: &ColorScale) -> Result<(), SpecError> {
     {
         return err(format!("{path}.center"), "must be between low and high");
     }
+    if !(s.start >= 0.0 && s.start < 1.0) {
+        return err(format!("{path}.start"), "must be at least 0 and below 1");
+    }
+    if !(s.end > s.start && s.end <= 1.0) {
+        return err(format!("{path}.end"), "must be above start and at most 1");
+    }
     Ok(())
+}
+
+/// The most bands of a categorical colour bar.
+const MAX_BANDS: usize = 256;
+
+fn check_colorbar(path: &str, b: &ColorBar) -> Result<(), SpecError> {
+    let s = &b.scale;
+    check_scale(&format!("{path}.scale"), s)?;
+    let integer = |v: f64| v.is_finite() && v.fract() == 0.0;
+    if b.categorical {
+        if s.log {
+            return err(
+                format!("{path}.categorical"),
+                "a categorical bar needs a linear scale",
+            );
+        }
+        if !integer(s.low) {
+            return err(
+                format!("{path}.scale.low"),
+                "must be an integer on a categorical bar",
+            );
+        }
+        if !integer(s.high) {
+            return err(
+                format!("{path}.scale.high"),
+                "must be an integer on a categorical bar",
+            );
+        }
+        if s.high - s.low >= MAX_BANDS as f64 {
+            return err(
+                format!("{path}.scale.high"),
+                format!("a categorical bar has at most {MAX_BANDS} bands"),
+            );
+        }
+    }
+    if let Some(ticks) = &b.ticks {
+        for (k, t) in ticks.iter().enumerate() {
+            let p = format!("{path}.ticks[{k}]");
+            if !(t.is_finite() && (s.low..=s.high).contains(t)) {
+                return err(p, format!("{t} is not between low and high"));
+            }
+            if b.categorical && !integer(*t) {
+                return err(p, format!("{t} is no integer of a categorical bar"));
+            }
+        }
+    }
+    match (&b.ticks, &b.tick_labels) {
+        (None, Some(_)) => err(format!("{path}.tick_labels"), "tick labels need ticks"),
+        (Some(t), Some(l)) => same_len(path, "tick_labels", l.len(), "ticks", t.len()),
+        _ => Ok(()),
+    }
 }
 
 fn check_axis(path: &str, a: &Axis) -> Result<(), SpecError> {
@@ -1179,7 +1278,18 @@ pub(crate) fn validate(f: &Figure) -> Result<(), SpecError> {
             check_axis(&format!("{pp}.y2"), a)?;
         }
         if let Some(c) = &p.colorbar {
-            check_scale(&format!("{pp}.colorbar.scale"), &c.scale)?;
+            check_colorbar(&format!("{pp}.colorbar"), c)?;
+        }
+        if let Some(bars) = &p.colorbars {
+            if p.colorbar.is_some() {
+                return err(
+                    format!("{pp}.colorbars"),
+                    "refused together with colorbar, which is one of them",
+                );
+            }
+            for (k, c) in bars.iter().enumerate() {
+                check_colorbar(&format!("{pp}.colorbars[{k}]"), c)?;
+            }
         }
         if let Some(order) = &p.legend_order {
             let mut seen = HashSet::new();

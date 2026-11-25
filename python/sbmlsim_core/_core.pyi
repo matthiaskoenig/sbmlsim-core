@@ -365,8 +365,14 @@ def color_scale(
     values: Sequence[float],
     center: float | None = None,
     log: bool = False,
+    start: float = 0.0,
+    end: float = 1.0,
 ) -> list[str]:
     """The colours (`#rrggbb`) of `values` on a named colour scale.
 
-    Raises `ValueError` for an unknown name.
+    The values `low..high` take the part `start..end` of the colour map (since 0.28.0), e.g.
+    `end=0.85` for the lines of a scan which leave out the lightest colours.
+
+    Raises `ValueError` for an unknown name and for a part which is not
+    `0 <= start < end <= 1`.
     """

@@ -12,9 +12,10 @@
 //! light cell and light on a dark one, in one size for every cell, which the Inter measure fits
 //! into the cells.
 //!
-//! The colour bar of a plot is drawn by the crate right of the panel inside the cell of the
-//! plot: a gradient of the scale from its low end at the bottom of the panel to its high end at
-//! its top, with ticks and labels of the values of the scale and the label of the bar.
+//! The colour bars of a plot are drawn by the crate right of the panel inside the cell of the
+//! plot, side by side in their order: a gradient of the scale from its low end at the bottom of
+//! the panel to its high end at its top, or a band per integer of a categorical bar, with ticks
+//! and labels of the values of the scale (or the given ones) and the label of the bar.
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -26,7 +27,7 @@ use charton::prelude::*;
 use super::axis::{self, ResolvedAxis};
 use super::marks::{Layers, dataset};
 use super::stats_marks::rings_layer;
-use crate::colors::{color_at, color_scale, dark_text_on, share};
+use crate::colors::{color_of, color_scale, dark_text_on};
 use crate::spec::{
     Axis, AxisScale, ColorBar, ColorScale, ElementKind, Fonts, Plot, Style, YAxisRef,
 };
@@ -212,14 +213,21 @@ pub(crate) struct ColorBarLayout {
     ticks: Vec<(f64, String)>,
     /// The width of the widest tick label in pixels.
     labels_width: f64,
-    /// The pixels the bar takes right of the panel.
+    /// The pixels the bar takes right of the panel or of the bar before it.
     pub room: f64,
+}
+
+/// The bands of a categorical bar: one per integer from `low` to `high`.
+fn bands(s: &ColorScale) -> f64 {
+    s.high - s.low + 1.0
 }
 
 /// Lays out the colour bar of a plot whose panel is expected to be `length` pixels high.
 ///
-/// The ticks are the ones of an axis from the low to the high end of the scale, linear or
-/// logarithmic, and the room is measured with the Inter widths of their labels.
+/// The ticks are the given ones, else the ones of an axis from the low to the high end of the
+/// scale, linear or logarithmic (the integers among them on a categorical bar); their labels
+/// are the given ones, else their numbers. The room is measured with the Inter widths of the
+/// labels.
 pub(crate) fn colorbar_layout(bar: &ColorBar, fonts: &Fonts, length: f64) -> ColorBarLayout {
     let s = &bar.scale;
     let scale_axis = Axis {
@@ -241,12 +249,43 @@ pub(crate) fn colorbar_layout(bar: &ColorBar, fonts: &Fonts, length: f64) -> Col
         ticks_visible: true,
         tick_rotation: 0.0,
     };
-    let resolved = axis::resolve(&scale_axis, &[], &[], length, COLORBAR_TICK_ROOM);
-    let ticks: Vec<(f64, String)> = resolved
-        .tick_coordinates()
-        .into_iter()
-        .map(|(u, l)| (resolved.share(u), l))
-        .collect();
+    let resolved = || axis::resolve(&scale_axis, &[], &[], length, COLORBAR_TICK_ROOM);
+    // the shares of the ticks from the bottom of the bar with their labels
+    let n = bands(s);
+    let ticks: Vec<(f64, String)> = match &bar.ticks {
+        Some(values) => {
+            let labels = match &bar.tick_labels {
+                Some(l) => l.clone(),
+                None => axis::tick_labels(values),
+            };
+            values
+                .iter()
+                .zip(labels)
+                .map(|(v, l)| {
+                    let t = if bar.categorical {
+                        (v - s.low + 0.5) / n
+                    } else {
+                        share_of_bar(s, *v)
+                    };
+                    (t, l)
+                })
+                .collect()
+        }
+        // the integers among the ticks of the axis, each at the middle of its band
+        None if bar.categorical => resolved()
+            .ticks
+            .into_iter()
+            .filter(|(v, _)| v.fract() == 0.0 && *v >= s.low && *v <= s.high)
+            .map(|(v, l)| ((v - s.low + 0.5) / n, l))
+            .collect(),
+        None => {
+            let r = resolved();
+            r.tick_coordinates()
+                .into_iter()
+                .map(|(u, l)| (r.share(u), l))
+                .collect()
+        }
+    };
     let labels_width = ticks
         .iter()
         .map(|(_, l)| text_width(l, fonts.tick))
@@ -296,20 +335,9 @@ fn attr(out: &mut String, name: &str, v: f64) {
     out.push('"');
 }
 
-/// Draws the colour bar of a plot right of its panel `(x, y, width, height)`: the gradient into
-/// `defs` under the id `<prefix>-colorbar`, the bar, its ticks, tick labels and label into
-/// `body`.
-pub(crate) fn draw_colorbar(
-    body: &mut String,
-    defs: &mut String,
-    prefix: &str,
-    bar: &ColorBar,
-    layout: &ColorBarLayout,
-    fonts: &Fonts,
-    (px, py, pw, ph): (f64, f64, f64, f64),
-) {
-    let s = &bar.scale;
-    let id = format!("{prefix}-colorbar");
+/// Writes the gradient of a colour bar under `id`: the colours of the scale from its low end at
+/// the bottom to its high end at the top.
+fn gradient(defs: &mut String, id: &str, s: &ColorScale) {
     // the gradient from the bottom up, its stops on a grid of the bar and at the centre
     let mut stops: Vec<f64> = (0..=GRADIENT_STEPS)
         .map(|k| k as f64 / GRADIENT_STEPS as f64)
@@ -335,7 +363,7 @@ pub(crate) fn draw_colorbar(
         } else {
             value_at(s, t)
         };
-        let color = color_at(s.name, share(s, v));
+        let color = color_of(s, v);
         let _ = write!(
             defs,
             "<stop offset=\"{}\" stop-color=\"{color}\"/>",
@@ -343,15 +371,53 @@ pub(crate) fn draw_colorbar(
         );
     }
     defs.push_str("</linearGradient>");
+}
 
+/// Draws the colour bar `index` of a plot right of `(x, y, width, height)`, its panel and the
+/// bars before it: the gradient into `defs` under the id `<prefix>-colorbar` (the first bar)
+/// or `<prefix>-colorbar-<index>`, the bar, its ticks, tick labels and label into `body`. A
+/// categorical bar is a band of one colour per integer and needs no gradient.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn draw_colorbar(
+    body: &mut String,
+    defs: &mut String,
+    prefix: &str,
+    index: usize,
+    bar: &ColorBar,
+    layout: &ColorBarLayout,
+    fonts: &Fonts,
+    (px, py, pw, ph): (f64, f64, f64, f64),
+) {
+    let s = &bar.scale;
     let x = px + pw + COLORBAR_GAP;
     body.push_str("<g class=\"sbmlsim-colorbar\">");
-    body.push_str("<rect");
-    attr(body, "x", x);
-    attr(body, "y", py);
-    attr(body, "width", COLORBAR_WIDTH);
-    attr(body, "height", ph);
-    let _ = write!(body, " fill=\"url(#{id})\"/>");
+    if bar.categorical {
+        // the bands from the bottom up, each from the edge of the one below it
+        let n = bands(s) as usize;
+        let edge = |k: usize| py + ph * (1.0 - k as f64 / n as f64);
+        for k in 0..n {
+            let (top, bottom) = (edge(k + 1), edge(k));
+            body.push_str("<rect");
+            attr(body, "x", x);
+            attr(body, "y", top);
+            attr(body, "width", COLORBAR_WIDTH);
+            attr(body, "height", bottom - top);
+            let _ = write!(body, " fill=\"{}\"/>", color_of(s, s.low + k as f64));
+        }
+    } else {
+        let id = if index == 0 {
+            format!("{prefix}-colorbar")
+        } else {
+            format!("{prefix}-colorbar-{index}")
+        };
+        gradient(defs, &id, s);
+        body.push_str("<rect");
+        attr(body, "x", x);
+        attr(body, "y", py);
+        attr(body, "width", COLORBAR_WIDTH);
+        attr(body, "height", ph);
+        let _ = write!(body, " fill=\"url(#{id})\"/>");
+    }
     body.push_str("<rect");
     attr(body, "x", x);
     attr(body, "y", py);
