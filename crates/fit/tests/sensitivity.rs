@@ -175,16 +175,25 @@ fn the_jacobian_a_fit_takes_by_itself_is_the_one_of_the_differences() {
 }
 
 #[test]
-fn a_fit_which_asks_for_the_sensitivities_of_such_a_condition_is_refused() {
-    let mut definition = with_a_change(Scale::Log10);
-    definition.jacobian = JacobianChoice::Sensitivities;
+fn the_jacobian_of_a_condition_with_a_change_is_the_one_of_the_residuals() {
+    // the sensitivities are carried across the change of the request, a state set to a
+    // number at t = 5
+    for scale in [Scale::Lin, Scale::Log10] {
+        let mut definition = with_a_change(scale);
+        definition.jacobian = JacobianChoice::Sensitivities;
+        let problem = Problem::new(definition, model(), 2).unwrap();
+        let x = problem.start();
 
-    let refusal = Problem::new(definition, model(), 2)
-        .unwrap_err()
-        .to_string();
+        let sensitivities = problem.jacobian(&x).unwrap();
 
-    assert!(refusal.contains("the condition 0"), "{refusal}");
-    assert!(refusal.contains("sensitivities"), "{refusal}");
+        assert_eq!(problem.jacobian_of(), JacobianChoice::Sensitivities);
+        let apart = apart(&sensitivities, &central(&problem, &x));
+        assert!(
+            apart < 1e-6,
+            "the jacobian of the sensitivities with a change on the {scale:?} scale is {apart} \
+             off the one of the residuals"
+        );
+    }
 }
 
 #[test]

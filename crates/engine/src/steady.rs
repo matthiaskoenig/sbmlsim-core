@@ -55,6 +55,7 @@ pub(crate) fn steady_state<'a, const DAE: bool, H: crate::delay::Mode>(
     model_id: &str,
     rates: &mut Vec<f64>,
     constraints: Option<&mut crate::solver::Constraints<'a>>,
+    sensitivities: Option<&mut [f64]>,
 ) -> Result<(), EngineError> {
     let m = problem.n_model;
     let from = STEADY_STATE_FROM;
@@ -77,6 +78,7 @@ pub(crate) fn steady_state<'a, const DAE: bool, H: crate::delay::Mode>(
         model_id,
         rates,
         constraints,
+        sensitivities,
     )?;
     if let Some(events) = events {
         events.rebase(t, start);
@@ -95,6 +97,12 @@ struct Criterion {
 /// Integrates the model from `from` with the state `y` over horizons which grow by a factor of
 /// ten until the criterion holds at the end of one of them, and answers the time it reached.
 ///
+/// With `sensitivities` (the forward sensitivities of the states, `k * n` row major, which a
+/// model without events can have) they are integrated along: the steady state is the state at
+/// the end of the integration, so its sensitivities are the ones of that state, which carry a
+/// direction the dynamics forget (a decay to the steady state) as well as one they keep (a
+/// conserved moiety, whose steady state depends on the initial values).
+///
 /// This is the loop the pre-equilibration and the steady state after the end share; what
 /// differs is what the caller does before it (the events of the initialization, or the pending
 /// executions moved to `from`) and after it (the pending executions moved to the start of the
@@ -111,6 +119,7 @@ fn equilibrate<'a, const DAE: bool, H: crate::delay::Mode>(
     model_id: &str,
     rates: &mut Vec<f64>,
     mut constraints: Option<&mut crate::solver::Constraints<'a>>,
+    mut sensitivities: Option<&mut [f64]>,
 ) -> Result<f64, EngineError> {
     let m = problem.n_model;
     let model = problem.model;
@@ -127,7 +136,14 @@ fn equilibrate<'a, const DAE: bool, H: crate::delay::Mode>(
             }
             (Some(cvode), None) if !too_close(t, stop) => {
                 cvode.start(t, y, stop, settings, 0)?;
+                if let Some(at) = sensitivities.as_deref() {
+                    let at = at.to_vec();
+                    cvode.start_sensitivities(problem, &at)?;
+                }
                 cvode.integrate(problem, stop, CV_NORMAL)?;
+                if let Some(states) = sensitivities.as_deref_mut() {
+                    cvode.sensitivities(states)?;
+                }
                 y.copy_from_slice(cvode.state());
             }
             _ => {}
@@ -190,6 +206,7 @@ pub(crate) fn steady_state_after<'a, const DAE: bool, H: crate::delay::Mode>(
     model_id: &str,
     rates: &mut Vec<f64>,
     constraints: Option<&mut crate::solver::Constraints<'a>>,
+    sensitivities: Option<&mut [f64]>,
 ) -> Result<(), EngineError> {
     let from = steady.from;
     if let Some(events) = events.as_deref_mut() {
@@ -210,6 +227,7 @@ pub(crate) fn steady_state_after<'a, const DAE: bool, H: crate::delay::Mode>(
         model_id,
         rates,
         constraints,
+        sensitivities,
     )?;
     Ok(())
 }

@@ -179,20 +179,171 @@ fn a_sensitivity_of_a_concentration_is_refused() {
     assert!(message.contains("[y]"), "{message}");
 }
 
+/// The time of the change of the tests of the changes, an output time of the request.
+const AT: f64 = 5.0;
+
+/// The decay model with a change at `AT`, with the sensitivities of `k` and of `y0`.
+fn changed(change: sbmlsim_abi::Change, stiff: bool) -> SimulationResult {
+    let mut request = request(&["k", "y"], stiff);
+    request.changes = vec![change];
+    decay(&request).unwrap()
+}
+
+/// A change at `AT` of the decay model.
+fn change(
+    values: &[(&str, f64)],
+    increments: &[(&str, f64)],
+    forms: Vec<sbmlsim_abi::Form>,
+) -> sbmlsim_abi::Change {
+    sbmlsim_abi::Change {
+        time: AT,
+        values: values
+            .iter()
+            .map(|(id, v)| ((*id).to_string(), *v))
+            .collect(),
+        increments: increments
+            .iter()
+            .map(|(id, v)| ((*id).to_string(), *v))
+            .collect(),
+        forms,
+    }
+}
+
+/// Checks `dy/dk` and `dy/dy0` of every row against the closed form `expected(t, after)`,
+/// `after` for a row after the change: the time of the change has two rows, the state before
+/// the change and the one after it.
+fn check(result: &SimulationResult, expected: impl Fn(f64, bool) -> (f64, f64)) {
+    for row in 0..result.n_rows {
+        let t = time(result, row);
+        let after = t > AT || (t == AT && row > 0 && time(result, row - 1) == AT);
+        let (of_k, of_y0) = expected(t, after);
+        let (k, y0) = (
+            sensitivity(result, row, "y", 0),
+            sensitivity(result, row, "y", 1),
+        );
+        assert!(
+            (k - of_k).abs() < 1e-6 * of_k.abs().max(1e-3),
+            "t = {t}: dy/dk is {k} and not {of_k}"
+        );
+        assert!(
+            (y0 - of_y0).abs() < 1e-6 * of_y0.abs().max(1e-3),
+            "t = {t}: dy/dy0 is {y0} and not {of_y0}"
+        );
+    }
+}
+
+/// `dy/dk` and `dy/dy0` before the change, of `y = exp(-k t)`.
+fn before(t: f64) -> (f64, f64) {
+    let decay = (-K * t).exp();
+    (-t * decay, decay)
+}
+
 #[test]
-fn a_sensitivity_of_a_run_with_a_change_is_refused() {
-    let mut request = request(&["k"], true);
+fn the_sensitivities_carry_a_dose_which_adds_to_a_state() {
+    // a dose of 2 at `AT`: `y = (exp(-k AT) + 2) exp(-k (t - AT))` after it
+    for stiff in [true, false] {
+        let result = changed(change(&[], &[("y", 2.0)], Vec::new()), stiff);
+        check(&result, |t, after| {
+            if !after {
+                return before(t);
+            }
+            let (at, after) = ((-K * AT).exp(), (-K * (t - AT)).exp());
+            (-AT * at * after - (t - AT) * (at + 2.0) * after, at * after)
+        });
+    }
+}
+
+#[test]
+fn a_state_a_change_sets_to_a_number_has_no_sensitivity_after_it() {
+    // `y = 2 exp(-k (t - AT))` after the change, whatever `y0` was
+    let result = changed(change(&[("y", 2.0)], &[], Vec::new()), true);
+    check(&result, |t, after| {
+        if !after {
+            return before(t);
+        }
+        let after = (-K * (t - AT)).exp();
+        (-(t - AT) * 2.0 * after, 0.0)
+    });
+}
+
+#[test]
+fn a_parameter_a_change_sets_is_no_longer_the_target_after_it() {
+    // `k` is 0.6 after the change, so `y = exp(-k AT) exp(-0.6 (t - AT))` depends on the
+    // start value of `k` through the state at the change alone
+    let result = changed(change(&[("k", 0.6)], &[], Vec::new()), true);
+    check(&result, |t, after| {
+        if !after {
+            return before(t);
+        }
+        let (at, after) = ((-K * AT).exp(), (-0.6 * (t - AT)).exp());
+        (-AT * at * after, at * after)
+    });
+}
+
+#[test]
+fn the_sensitivities_carry_a_form_over_the_state() {
+    // `y = 0.5 y + 1` at the change: `y = (0.5 exp(-k AT) + 1) exp(-k (t - AT))` after it
+    let form = sbmlsim_abi::Form {
+        target: "y".to_string(),
+        constant: 1.0,
+        terms: vec![("y".to_string(), 0.5)],
+    };
+    let result = changed(change(&[], &[], vec![form]), true);
+    check(&result, |t, after| {
+        if !after {
+            return before(t);
+        }
+        let (at, after) = ((-K * AT).exp(), (-K * (t - AT)).exp());
+        (
+            -0.5 * AT * at * after - (t - AT) * (0.5 * at + 1.0) * after,
+            0.5 * at * after,
+        )
+    });
+}
+
+#[test]
+fn the_sensitivities_carry_a_change_at_the_start() {
+    // a dose of 2 at the start: `y = 3 exp(-k t)`, whose derivative in `y0` stays the one of
+    // the dose added to it
+    let mut request = request(&["k", "y"], true);
     request.changes = vec![sbmlsim_abi::Change {
-        time: 5.0,
-        values: vec![("y".to_string(), 2.0)],
-        increments: vec![],
+        time: 0.0,
+        values: vec![],
+        increments: vec![("y".to_string(), 2.0)],
         forms: Vec::new(),
     }];
+    let result = decay(&request).unwrap();
+    check(&result, |t, _| {
+        let decay = (-K * t).exp();
+        (-t * 3.0 * decay, decay)
+    });
+}
 
-    let refusal = decay(&request).unwrap_err();
-
-    let message = refusal.to_string();
-    assert!(message.contains("change"), "{message}");
+#[test]
+fn the_sensitivities_are_integrated_through_the_steady_state_before_the_start() {
+    // a criterion which the first horizon (one time unit from 0) satisfies: the run starts at
+    // `y = exp(-k)`, so `y = exp(-k (1 + t))` and its derivatives carry the time of the
+    // steady state as well; a dose after it is carried as the change it is
+    let mut request = request(&["k", "y"], true);
+    request.steady_state = Some(sbmlsim_abi::SteadyState {
+        absolute_tolerance: 1.0,
+        relative_tolerance: 0.0,
+        ..sbmlsim_abi::SteadyState::default()
+    });
+    request.changes = vec![change(&[], &[("y", 2.0)], Vec::new())];
+    let result = decay(&request).unwrap();
+    check(&result, |t, after| {
+        let s = 1.0 + t;
+        if !after {
+            let decay = (-K * s).exp();
+            return (-s * decay, decay);
+        }
+        let (at, rest) = ((-K * (1.0 + AT)).exp(), (-K * (t - AT)).exp());
+        (
+            -(1.0 + AT) * at * rest - (t - AT) * (at + 2.0) * rest,
+            at * rest,
+        )
+    });
 }
 
 #[test]
