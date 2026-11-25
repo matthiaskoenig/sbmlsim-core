@@ -14,13 +14,6 @@ use support::{assert_golden, spec_text};
 
 /// Renders a figure of JSON text.
 fn render(json: &str) -> String {
-    if let Ok(d) = std::env::var("TMP_DUMP") {
-        let name = std::thread::current()
-            .name()
-            .unwrap_or("x")
-            .replace("::", "_");
-        std::fs::write(format!("{d}/{name}.json"), json).unwrap();
-    }
     render_svg(&parse(json).unwrap_or_else(|e| panic!("{e}")))
 }
 

@@ -5,10 +5,10 @@
 //! panel, each holding the ink drawn into it in square pixels (at most its area): a line is
 //! sampled every pixel of its length and gives each sample its length times the width of the
 //! line, a marker its square, a bar, a box, a histogram bin and a heatmap their rectangles, and
-//! a band, an area, a violin and a polygon their interiors, filled at the middle of every row
-//! of cells. The cost is linear in the length of the lines and the area of the fills, a few
-//! tenths of a millisecond for a dense figure, and the sums run in the order of the elements
-//! and their points, so the same figure gives the same ink natively and in wasm.
+//! a band, an area, a violin and a polygon their interiors (nonzero per ring, as drawn), filled
+//! on rows of a pixel. The cost is linear in the length of the lines and the area of the fills,
+//! a few tenths of a millisecond for a dense figure, and the sums run in the order of the
+//! elements and their points, so the same figure gives the same ink natively and in wasm.
 
 use crate::render::Prepared;
 use crate::render::axis::ResolvedAxis;
@@ -126,7 +126,8 @@ impl Ink {
     /// Adds the ink of a line of `width` pixels from `a` to `b`: its part inside the panel is
     /// sampled every [`SAMPLE`] pixels.
     fn segment(&mut self, a: (f64, f64), b: (f64, f64), width: f64) {
-        if width <= 0.0 || self.cells.is_empty() {
+        let drawable = a.0.is_finite() && a.1.is_finite() && b.0.is_finite() && b.1.is_finite();
+        if !drawable || width <= 0.0 || self.cells.is_empty() {
             return;
         }
         let Some((a, b)) = clip(a, b, (self.width, self.height)) else {
@@ -160,40 +161,53 @@ impl Ink {
         }
     }
 
-    /// Adds the ink of the interior of closed rings, even-odd, filled at the middle of every
-    /// row of cells; a ring with a point which cannot be drawn is left out.
+    /// Adds the ink of the interior of closed rings, each ring filled on its own by the
+    /// nonzero winding rule and the rings together as their union, as the renderer draws them
+    /// (every ring is a `<path>` of one closed subpath without a `fill-rule`). The interior is
+    /// sampled on rows of [`SAMPLE`] pixels, at the middle of each, so a band of two pixels
+    /// inks two rows of the cells it lies in; a ring with a point which cannot be drawn is left
+    /// out.
     fn fill(&mut self, rings: &[Vec<(f64, f64)>]) {
-        let mut crossings: Vec<Vec<f64>> = vec![Vec::new(); self.rows];
+        let rows = (self.height / SAMPLE).ceil() as usize;
+        // the crossings of a ring with the middles of the rows: row, x and direction
+        let mut crossings: Vec<(usize, f64, i32)> = Vec::new();
         for ring in rings {
             if ring.len() < 3 || ring.iter().any(|(x, y)| !(x.is_finite() && y.is_finite())) {
                 continue;
             }
+            crossings.clear();
             for (k, a) in ring.iter().enumerate() {
                 let b = ring[(k + 1) % ring.len()];
                 if a.1 == b.1 {
                     continue;
                 }
                 let (lo, hi) = (a.1.min(b.1), a.1.max(b.1));
+                let dir = if b.1 > a.1 { 1 } else { -1 };
                 // the rows whose middle lies in [lo, hi)
-                let first = ((lo / CELL - 0.5).ceil().max(0.0)) as usize;
-                let mut r = first;
-                while r < self.rows {
-                    let yc = (r as f64 + 0.5) * CELL;
+                let mut r = (lo / SAMPLE - 0.5).ceil().max(0.0) as usize;
+                while r < rows {
+                    let yc = (r as f64 + 0.5) * SAMPLE;
                     if yc >= hi {
                         break;
                     }
-                    if yc >= lo {
-                        crossings[r].push(a.0 + (yc - a.1) * (b.0 - a.0) / (b.1 - a.1));
-                    }
+                    crossings.push((r, a.0 + (yc - a.1) * (b.0 - a.0) / (b.1 - a.1), dir));
                     r += 1;
                 }
             }
-        }
-        for (r, xs) in crossings.iter_mut().enumerate() {
-            xs.sort_by(f64::total_cmp);
-            let (top, bottom) = (r as f64 * CELL, (r + 1) as f64 * CELL);
-            for [a, b] in xs.as_chunks::<2>().0 {
-                self.rect((*a, top), (*b, bottom));
+            crossings.sort_by(|p, q| p.0.cmp(&q.0).then(p.1.total_cmp(&q.1)).then(p.2.cmp(&q.2)));
+            let (mut row, mut winding, mut start) = (usize::MAX, 0, 0.0);
+            for &(r, x, dir) in &crossings {
+                if r != row {
+                    (row, winding) = (r, 0);
+                }
+                let before = winding;
+                winding += dir;
+                if before == 0 && winding != 0 {
+                    start = x;
+                } else if before != 0 && winding == 0 {
+                    let top = r as f64 * SAMPLE;
+                    self.rect((start, top), (x, (top + SAMPLE).min(self.height)));
+                }
             }
         }
     }
@@ -329,7 +343,17 @@ impl Ink {
                     }
                 }
             }
-            ElementKind::Heatmap { .. } => self.rect((0.0, 0.0), (w, h)),
+            ElementKind::Heatmap { rows, columns, .. } => {
+                // the cells as the renderer draws them, a value without a colour included
+                for i in 0..rows.len() {
+                    for j in 0..columns.len() {
+                        let (r, c) = (i as f64, j as f64);
+                        let (x0, x1) = (xa.u(c - 0.5), xa.u(c + 0.5));
+                        let (y0, y1) = (ya.u(r - 0.5), ya.u(r + 0.5));
+                        self.rect(pu(x0, y0), pu(x1, y1));
+                    }
+                }
+            }
             ElementKind::Text { x, y, .. } => self.marker(at(*x, *y), POINT),
             ElementKind::Rule { orientation, value } => match orientation {
                 Orientation::Horizontal => {
@@ -450,5 +474,71 @@ mod tests {
         assert_eq!(ink.coverage((0.0, 0.0, 20.0, 20.0)), 0.0);
         let half = ink.coverage((0.0, 40.0, 40.0, 20.0));
         assert!((half - 0.5).abs() < 1e-12, "{half}");
+    }
+
+    #[test]
+    fn a_segment_with_a_point_which_cannot_be_drawn_inks_nothing() {
+        let mut ink = Ink::new(100.0, 100.0);
+        ink.segment((f64::NAN, 50.0), (50.0, 50.0), 2.0);
+        ink.segment((10.0, 10.0), (10.0, f64::INFINITY), 2.0);
+        assert!(ink.cells.iter().all(|c| *c == 0.0));
+    }
+
+    #[test]
+    fn a_band_thinner_than_a_cell_inks_its_cells() {
+        // two pixels high and off the middle of its row of cells (48 to 52)
+        let mut ink = Ink::new(100.0, 100.0);
+        ink.fill(&[vec![(0.0, 50.2), (100.0, 50.2), (100.0, 52.2), (0.0, 52.2)]]);
+        let share = ink.coverage((10.0, 40.0, 40.0, 20.0));
+        assert!((share - 0.1).abs() < 1e-12, "{share}");
+    }
+
+    #[test]
+    fn a_ring_fills_by_the_nonzero_rule() {
+        // a ring around the square from 20 to 40 twice: winding 2 inside, filled as drawn
+        let twice = vec![
+            (20.0, 20.0),
+            (40.0, 20.0),
+            (40.0, 40.0),
+            (20.0, 40.0),
+            (20.0, 20.0),
+            (40.0, 20.0),
+            (40.0, 40.0),
+            (20.0, 40.0),
+        ];
+        let mut ink = Ink::new(100.0, 100.0);
+        ink.fill(&[twice]);
+        assert_eq!(ink.coverage((24.0, 24.0, 12.0, 12.0)), 1.0);
+        // two overlapping rings are their union
+        let square = |x: f64| vec![(x, 60.0), (x + 20.0, 60.0), (x + 20.0, 80.0), (x, 80.0)];
+        let mut ink = Ink::new(100.0, 100.0);
+        ink.fill(&[square(20.0), square(30.0)]);
+        assert_eq!(ink.coverage((32.0, 64.0, 4.0, 12.0)), 1.0);
+    }
+
+    #[test]
+    fn a_heatmap_inks_the_cells_it_covers() {
+        let axis = |low: f64, high: f64| ResolvedAxis {
+            transform: crate::render::axis::Transform::Category,
+            reverse: false,
+            low,
+            high,
+            ticks: Vec::new(),
+        };
+        // two by two cells from -0.5 to 1.5 on axes from -0.5 to 3.5: the lower left quarter
+        let (xa, ya) = (axis(-0.5, 3.5), axis(-0.5, 3.5));
+        let kind = ElementKind::Heatmap {
+            rows: vec!["a".into(), "b".into()],
+            columns: vec!["c".into(), "d".into()],
+            values: vec![vec![1.0, 2.0], vec![3.0, f64::NAN]],
+            text: None,
+            scale: serde_json::from_str(r#"{"name": "viridis", "low": 0, "high": 4}"#).unwrap(),
+        };
+        let mut ink = Ink::new(100.0, 100.0);
+        ink.element(&kind, &Style::default(), (&xa, &ya));
+        // away from the cells of the grid its edge splits
+        assert_eq!(ink.coverage((0.0, 52.0, 48.0, 48.0)), 1.0);
+        assert_eq!(ink.coverage((52.0, 0.0, 48.0, 100.0)), 0.0);
+        assert_eq!(ink.coverage((0.0, 0.0, 48.0, 48.0)), 0.0);
     }
 }
