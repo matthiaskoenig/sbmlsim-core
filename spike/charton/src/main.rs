@@ -1125,6 +1125,222 @@ fn rect(r: &Rect) -> (f64, f64, f64, f64) {
     (r.x, r.y, r.width, r.height)
 }
 
+// ---------------------------------------------------------------- benchmark
+/// The ten colours of the series cycle.
+const TAB10: [&str; 10] = [
+    "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f",
+    "#bcbd22", "#17becf",
+];
+
+/// The tick label of the decade `10^k`.
+fn decade_label(k: i32) -> String {
+    if (-3..=3).contains(&k) {
+        format!("{}", 10f64.powi(k))
+    } else {
+        format!("1e{k}")
+    }
+}
+
+/// A width of a text in pixels: a rough stand-in for the Inter table of
+/// decision (d), enough to size the legend column of the spike.
+fn text_width(text: &str, size: f64) -> f64 {
+    text.chars().count() as f64 * 0.6 * size
+}
+
+/// The benchmark figure of the design (8 curves of 500 points, 20 points with
+/// x and y error bars, log y), built as decisions (a) to (e) say the crate
+/// builds it: log y is log10 of the data on a linear axis with the decade
+/// ticks of the crate, the x error bars a path group per point, the y error
+/// bars Charton's error bar on the log10 bounds, Charton's legend off and the
+/// crate's legend (with `data-legend`) in a right margin the crate reserves,
+/// the panel placed with the two-pass margins, every mark group tagged with
+/// `data-element`, and the theme tokens in a scoped `<style>` of
+/// `var(--sbmlsim-<token>, default)`.
+fn bench() -> R<String> {
+    let n = 500;
+    let t: Vec<f64> = (0..n).map(|i| 0.01 + i as f64 * 24.0 / n as f64).collect();
+    let mut layers: Vec<LayeredChart> = Vec::new();
+    let mut ids: Vec<String> = Vec::new();
+    let mut labels: Vec<(String, &str, bool)> = Vec::new();
+    let (mut lmin, mut lmax) = (f64::INFINITY, f64::NEG_INFINITY);
+    for k in 0..8 {
+        let ly: Vec<f64> = t
+            .iter()
+            .map(|x| ((1.0 + k as f64) * (-x / 5.0).exp() * x + 1e-3).log10())
+            .collect();
+        for v in &ly {
+            lmin = lmin.min(*v);
+            lmax = lmax.max(*v);
+        }
+        let color = TAB10[k];
+        layers.push(
+            Chart::build(&ds(vec![
+                ("time", t.clone().into_column()),
+                ("y", ly.into_column()),
+            ])?)?
+            .mark_line()?
+            .configure_line(move |l| l.with_color(color).with_stroke_width(1.5))
+            .encode((alt::x("time"), alt::y("y")))?
+            .into(),
+        );
+        ids.push(format!("c{k}"));
+        labels.push((format!("dose {} mg", 10 * (k + 1)), color, false));
+    }
+    let td: Vec<f64> = (0..20).map(|i| 0.5 + i as f64).collect();
+    let yd: Vec<f64> = td
+        .iter()
+        .map(|x| 3.0 * (-x / 5.0).exp() * x + 1e-3)
+        .collect();
+    let lyd: Vec<f64> = yd.iter().map(|y| y.log10()).collect();
+    let llo: Vec<f64> = yd.iter().map(|y| (y * 0.8).log10()).collect();
+    let lhi: Vec<f64> = yd.iter().map(|y| (y * 1.2).log10()).collect();
+    let (mut px, mut py, mut pg) = (Vec::new(), Vec::new(), Vec::new());
+    for (i, (x, y)) in td.iter().zip(&lyd).enumerate() {
+        px.extend([x - 0.5, x + 0.5]);
+        py.extend([*y, *y]);
+        pg.extend([format!("p{i}"), format!("p{i}")]);
+    }
+    let data = "#000000";
+    layers.push(
+        Chart::build(&ds(vec![
+            ("x", px.into_column()),
+            ("y", py.into_column()),
+            ("g", pg.into_column()),
+        ])?)?
+        .mark_path()?
+        .configure_path(move |p| p.with_stroke(data).with_stroke_width(1.0))
+        .encode((alt::x("x"), alt::y("y"), alt::path_group("g")))?
+        .into(),
+    );
+    ids.push("data-xerr".into());
+    layers.push(
+        Chart::build(&ds(vec![
+            ("time", td.clone().into_column()),
+            ("lo", llo.into_column()),
+            ("hi", lhi.into_column()),
+        ])?)?
+        .mark_errorbar()?
+        .configure_errorbar(move |e| e.with_color(data).with_cap_length(3.0))
+        .encode((alt::x("time"), alt::y("lo"), alt::y2("hi")))?
+        .into(),
+    );
+    ids.push("data-yerr".into());
+    layers.push(
+        Chart::build(&ds(vec![
+            ("time", td.into_column()),
+            ("y", lyd.into_column()),
+        ])?)?
+        .mark_point()?
+        .configure_point(move |p| p.with_color(data).with_size(3.5))
+        .encode((alt::x("time"), alt::y("y")))?
+        .into(),
+    );
+    ids.push("data".into());
+    labels.push(("data (mean +- SD)".into(), data, true));
+
+    let (k0, k1) = (lmin.floor() as i32, lmax.ceil() as i32);
+    let ticks: Vec<(f64, String)> = (k0..=k1).map(|k| (k as f64, decade_label(k))).collect();
+    let mut it = layers.into_iter();
+    let mut chart = it.next().ok_or("no layer")?;
+    for l in it {
+        chart = chart.and(l);
+    }
+    let zero = Expansion {
+        mult: (0.0, 0.0),
+        add: (0.0, 0.0),
+    };
+    let chart = chart
+        .with_size(W, H)
+        .with_x_label("time [hr]")
+        .with_y_label("concentration [mg/l]")
+        .with_x_domain(0.0, 24.0)
+        .with_x_expand(zero)
+        .with_y_domain(k0 as f64, k1 as f64)
+        .with_y_expand(zero)
+        .with_y_ticks(ticks)
+        .configure_theme(|t| t.with_show_legend(false));
+
+    // the legend column, then the panel: pass 1 measures the axis depth
+    let (w, h) = (W as f64, H as f64);
+    let (fs, row, swatch, gap, pad) = (12.0, 18.0, 24.0, 6.0, 8.0);
+    let legend_w = swatch
+        + gap
+        + labels
+            .iter()
+            .map(|(l, _, _)| text_width(l, fs))
+            .fold(0.0, f64::max);
+    let p0 = geometry(&chart.clone().with_margins(0.0, 0.0, 0.0, 0.0))?
+        .panel
+        .ok_or("no panel")?;
+    // the depth of the right side (none: the y axis is on the left)
+    let dr = w - p0.x - p0.width;
+    let right = legend_w + 2.0 * pad;
+    // the title band of the figure is the crate's: Charton centres a title
+    // over the canvas inside its margins, which the legend column narrows
+    let title_band = 26.0;
+    let chart = chart.with_margins((pad + title_band) / h, (right - dr) / w, pad / h, pad / w);
+    let panel = geometry(&chart)?.panel.ok_or("no panel")?;
+
+    let svg = chart.to_svg_with(&SvgOptions::default().with_id_prefix("bench"))?;
+    let ids: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
+    let mut svg =
+        tag_elements(&svg, &ids).replacen(r#"class="charton""#, r#"id="bench" class="charton""#, 1);
+    let style = concat!(
+        "<style>",
+        "#bench .charton-tick-label text{fill:var(--sbmlsim-fg-soft, rgb(91,100,114))}",
+        "#bench .charton-axis-title text,#bench .plot-figure-title text,#bench .plot-legend text{fill:var(--sbmlsim-fg, rgb(27,31,36))}",
+        "#bench .charton-mark-line path{stroke-width:var(--sbmlsim-curve-width, 1.8px)}",
+        "</style>"
+    );
+    let at = svg.find("<defs>").ok_or("no defs")?;
+    svg.insert_str(at, style);
+    // the legend of the crate, one group per entry carrying its element
+    let mut lg = String::new();
+    let (x, y0) = (panel.x + panel.width + pad, panel.y + 4.0);
+    lg.push_str(r#"<g class="plot-legend">"#);
+    for (k, (label, color, marker)) in labels.iter().enumerate() {
+        let y = y0 + row * k as f64 + row / 2.0;
+        let element = ids.get(k).copied().unwrap_or("data");
+        let element = if *marker { "data" } else { element };
+        write!(
+            lg,
+            r#"<g class="plot-legend-entry" data-legend="{element}">"#
+        )?;
+        if *marker {
+            write!(
+                lg,
+                r#"<line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{color}"/><circle cx="{:.2}" cy="{y:.2}" r="3.5" fill="{color}"/>"#,
+                x + swatch / 2.0,
+                y - 6.0,
+                x + swatch / 2.0,
+                y + 6.0,
+                x + swatch / 2.0
+            )?;
+        } else {
+            write!(
+                lg,
+                r#"<line x1="{x:.2}" y1="{y:.2}" x2="{:.2}" y2="{y:.2}" stroke="{color}" stroke-width="1.8"/>"#,
+                x + swatch
+            )?;
+        }
+        write!(
+            lg,
+            r#"<text x="{:.2}" y="{y:.2}" font-size="{fs}" dominant-baseline="central" font-family="Inter, sans-serif" fill="rgb(27,31,36)">{label}</text></g>"#,
+            x + swatch + gap
+        )?;
+    }
+    lg.push_str("</g>");
+    write!(
+        lg,
+        r#"<g class="plot-figure-title"><text x="{:.2}" y="{:.2}" font-size="16" font-weight="bold" text-anchor="middle" dominant-baseline="central" font-family="Inter, sans-serif" fill="rgb(27,31,36)">benchmark: 8 x 500, 20 points with x/y errors, log y</text></g>"#,
+        w / 2.0,
+        pad + title_band / 2.0
+    )?;
+    let end = svg.rfind("</svg>").ok_or("no end")?;
+    svg.insert_str(end, &lg);
+    Ok(svg)
+}
+
 // ---------------------------------------------------------------- main
 type Build = fn() -> R<String>;
 
@@ -1157,6 +1373,7 @@ fn main() -> R<()> {
         chart_fig!(categorical),
         ("right_axis", right_axis as Build),
         ("grid", grid as Build),
+        ("bench", bench as Build),
     ];
     let reps = std::env::var("REPS")
         .ok()
