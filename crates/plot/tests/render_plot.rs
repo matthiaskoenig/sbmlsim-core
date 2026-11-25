@@ -502,51 +502,10 @@ fn golden_rotated() {
 
 #[test]
 fn golden_kinds() {
-    let json = r##"{"contract": "figure/1", "width": 640, "height": 420,
-        "title": "Kinds of one plot",
-        "grid": {"rows": 1, "columns": 1},
-        "plots": [{"id": "p", "row": 0, "column": 0, "title": "band, area, rules, text",
-            "x": {"label": "time", "unit": "hr", "grid": true},
-            "y": {"label": "concentration", "unit": "mg/l", "grid": true},
-            "elements": [
-              {"id": "area", "kind": "area", "label": "therapeutic", "x": [0, 4, 8, 12],
-               "from": [1, 1, 1, 1], "to": [2, 2, null, 2]},
-              {"id": "band", "kind": "band", "label": "5-95 %", "x": [0, 2, 4, 6, 8, 10, 12],
-               "low": [0, 1.2, 1.8, 1.6, 1.2, 0.9, 0.6],
-               "high": [0, 2.4, 3.4, 3.0, 2.3, 1.7, 1.2],
-               "median": [0, 1.7, 2.5, 2.2, 1.7, 1.3, 0.9]},
-              {"id": "data", "kind": "curve", "label": "data", "x": [1, 3, 5, 7, 9, 11],
-               "y": [1.1, 2.4, 2.3, 1.9, 1.4, 1.0], "xerr": [0.3, 0.3, 0.3, 0.3, 0.3, 0.3],
-               "yerr": [0.2, 0.3, 0.3, 0.2, 0.2, 0.1],
-               "style": {"color": "#000000", "line": {"type": "none"},
-                         "marker": {"type": "diamond", "size": 7, "fill": "#ffffff"}}},
-              {"id": "fit", "kind": "curve", "label": "fit", "x": [0, 2, 4, 6, 8, 10, 12],
-               "y": [0, 1.8, 2.6, 2.3, 1.8, 1.3, 1.0],
-               "style": {"line": {"type": "dashed", "width": 1.5},
-                         "marker": {"type": "x", "size": 6}}},
-              {"id": "limit", "kind": "rule", "orientation": "horizontal", "value": 3,
-               "style": {"color": "#d62728", "line": {"type": "dotted", "width": 1}}},
-              {"id": "dose", "kind": "rule", "orientation": "vertical", "value": 6,
-               "style": {"line": {"type": "dashdot", "width": 1}}},
-              {"id": "note", "kind": "text", "x": 6.3, "y": 3.2, "text": "Cmax <limit>"}
-            ]}]}"##;
-    assert_golden("kinds", &render(json));
+    assert_golden("kinds", &render(&spec_text("kinds")));
 }
 
 #[test]
 fn golden_axes() {
-    let json = r##"{"contract": "figure/1", "width": 520, "height": 360,
-        "grid": {"rows": 1, "columns": 1},
-        "plots": [{"id": "p", "row": 0, "column": 0,
-            "x": {"label": "study", "scale": "category", "tick_rotation": 45,
-                  "categories": ["Smith2001", "Jones2004", "Lee2010", "Meyer2015"]},
-            "y": {"label": "clearance", "unit": "ml/min", "scale": "log", "reverse": true},
-            "elements": [
-              {"id": "points", "kind": "curve", "x": [0, 1, 2, 3], "y": [0.02, 0.3, 4, 55],
-               "style": {"line": {"type": "none"},
-                         "marker": {"type": "triangle", "size": 8}}},
-              {"id": "plus", "kind": "curve", "x": [0, 1, 2, 3], "y": [0.05, 0.6, 9, 20],
-               "style": {"line": {"type": "none"}, "marker": {"type": "plus", "size": 8}}}
-            ]}]}"##;
-    assert_golden("axes", &render(json));
+    assert_golden("axes", &render(&spec_text("axes")));
 }

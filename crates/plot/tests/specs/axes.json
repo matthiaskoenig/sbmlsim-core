@@ -1,0 +1,85 @@
+{
+ "contract": "figure/1",
+ "width": 520,
+ "height": 360,
+ "grid": {
+  "rows": 1,
+  "columns": 1
+ },
+ "plots": [
+  {
+   "id": "p",
+   "row": 0,
+   "column": 0,
+   "x": {
+    "label": "study",
+    "scale": "category",
+    "tick_rotation": 45,
+    "categories": [
+     "Smith2001",
+     "Jones2004",
+     "Lee2010",
+     "Meyer2015"
+    ]
+   },
+   "y": {
+    "label": "clearance",
+    "unit": "ml/min",
+    "scale": "log",
+    "reverse": true
+   },
+   "elements": [
+    {
+     "id": "points",
+     "kind": "curve",
+     "x": [
+      0,
+      1,
+      2,
+      3
+     ],
+     "y": [
+      0.02,
+      0.3,
+      4,
+      55
+     ],
+     "style": {
+      "line": {
+       "type": "none"
+      },
+      "marker": {
+       "type": "triangle",
+       "size": 8
+      }
+     }
+    },
+    {
+     "id": "plus",
+     "kind": "curve",
+     "x": [
+      0,
+      1,
+      2,
+      3
+     ],
+     "y": [
+      0.05,
+      0.6,
+      9,
+      20
+     ],
+     "style": {
+      "line": {
+       "type": "none"
+      },
+      "marker": {
+       "type": "plus",
+       "size": 8
+      }
+     }
+    }
+   ]
+  }
+ ]
+}
