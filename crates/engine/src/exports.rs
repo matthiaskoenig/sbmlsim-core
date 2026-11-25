@@ -354,18 +354,23 @@ fn engine_error_output(error: &EngineError) -> OutputBuffer {
     error_output(kind, message)
 }
 
-/// Why the forward sensitivities of a request are not answered through this module: the
-/// output of a simulation is the header of a table and its values
-/// ([`crate::ENGINE_OUTPUT_FORMAT`] 2), which carries no table of sensitivities, so a request
-/// which asks for them is refused here instead of being answered without them. The native
-/// host, which calls the engine as a library, answers them.
-fn no_sensitivities(request: &SimulationRequest) -> Option<String> {
-    (!request.sensitivities.is_empty()).then(|| {
-        format!(
+/// Why the forward sensitivities or the local error estimates of a request are not answered
+/// through this module: the output of a simulation is the header of a table and its values
+/// ([`crate::ENGINE_OUTPUT_FORMAT`] 2), which carries no table of either, so a request which
+/// asks for them is refused here instead of being answered without them. The native host,
+/// which calls the engine as a library, answers them.
+fn not_carried(request: &SimulationRequest) -> Option<String> {
+    if !request.sensitivities.is_empty() {
+        return Some(format!(
             "the forward sensitivities of a simulation ({}) are not carried by the output of \
              engine.wasm; the native engine of sbmlsim-core answers them",
             request.sensitivities.join(", ")
-        )
+        ));
+    }
+    request.local_errors.then(|| {
+        "the local error estimates of a simulation are not carried by the output of \
+         engine.wasm; the native engine of sbmlsim-core answers them"
+            .to_string()
     })
 }
 
@@ -389,6 +394,7 @@ fn table_output(recorded: Recorded) -> OutputBuffer {
         mut values,
         prefix,
         sensitivities: _,
+        local_errors: _,
     } = recorded;
     let header = table_header(&columns, n_rows as u64);
     let room = 8 * prefix - 4;
@@ -526,7 +532,7 @@ pub unsafe extern "C" fn engine_simulate(req_ptr: i32, req_len: i32) -> i32 {
             return 1;
         }
     };
-    if let Some(message) = no_sensitivities(&request) {
+    if let Some(message) = not_carried(&request) {
         set_output(error_output("unsupported", &message));
         return 1;
     }
@@ -583,6 +589,7 @@ pub extern "C" fn engine_initial_values() -> i32 {
                 values,
                 prefix,
                 sensitivities: None,
+                local_errors: None,
             }));
             0
         }
@@ -637,7 +644,7 @@ pub unsafe extern "C" fn engine_prepare(ptr: i32, len: i32) -> i32 {
             return 1;
         }
     };
-    if let Some(message) = no_sensitivities(&input.request) {
+    if let Some(message) = not_carried(&input.request) {
         set_output(error_output("unsupported", &message));
         return 1;
     }

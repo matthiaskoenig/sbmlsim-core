@@ -17,6 +17,7 @@ fn runtime() -> &'static Runtime {
 fn request(end: f64, steps: u32, selections: &[&str]) -> SimulationRequest {
     SimulationRequest {
         sensitivities: vec![],
+        local_errors: false,
         contract: SIMULATION_CONTRACT.to_string(),
         start: 0.0,
         end,

@@ -87,6 +87,10 @@ class SimulationOutput:
     def sensitivities(self) -> OutputSensitivities | None:
         """The forward sensitivities, `None` for a request which did not ask for them."""
 
+    @property
+    def local_errors(self) -> OutputLocalErrors | None:
+        """The local error estimates, `None` for a request which did not ask for them."""
+
 class OutputSensitivities:
     """The forward sensitivities of the columns of a table."""
 
@@ -97,6 +101,21 @@ class OutputSensitivities:
     @property
     def values(self) -> numpy.typing.NDArray[numpy.float64]:
         """The derivatives, of the shape `(n_rows, len(columns), len(parameters))`, in C order."""
+
+class OutputLocalErrors:
+    """The local error estimates of the integrator at the rows of a table."""
+
+    @property
+    def states(self) -> list[str]:
+        """The ids of the states, in the order of the state vector of the model."""
+
+    @property
+    def errors(self) -> numpy.typing.NDArray[numpy.float64]:
+        """The estimates of the last step before every row, of the shape `(n_rows, len(states))`."""
+
+    @property
+    def weights(self) -> numpy.typing.NDArray[numpy.float64]:
+        """The weights of the error test of that step, of the same shape."""
 
 class PreparedSimulation:
     """A validated request bound to one loaded model, reusable across its instances."""

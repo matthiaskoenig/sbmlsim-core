@@ -125,6 +125,7 @@ The CSV has the names of the columns in its first line, then one line per row; a
 | `steady_state_after` | `null`, or a steady state reached after the end, whose row the output carries last at the time `inf`: `{"from", "absolute_tolerance", "relative_tolerance", "max_time"}` (defaults `0.0`, `1e-8`, `1e-6`, `1e8`), see below (0.18.0) |
 | `before_events` | `false`, or `true` for an output at the end which is the state **before** the events of the end time execute, see below (0.18.0) |
 | `sensitivities` | the ids of the values the forward sensitivities of the run are taken in (0.12.0, the native engine only), empty for a run without them; see below |
+| `local_errors` | `false`, or `true` for the local error estimates of the integrator at every row (the native engine only), see below |
 | `selections` | the ids of the columns after `time`; a leading `"time"` is that column (not repeated), a later `"time"` another copy of the time of the row; empty is `time` followed by every selection of the model |
 | `settings` | the settings of the integrator, below; the defaults of the engine are the ones of roadrunner |
 | `seed` | the seed of the random generator which orders simultaneous events; 1 when it is absent |
@@ -224,6 +225,31 @@ its `steady_state` and the iterative linear solver. `engine.wasm` refuses them a
 output format carries the values of a table and nothing else): they are answered by the
 native engine, which the Rust host, the python bindings and the command line of sbmlsim-core
 call as a library.
+
+## Local error estimates
+
+`"local_errors": true` asks for what the integrator estimated of its own error, for a
+verification of the numerical error of a simulation next to the counters of its statistics.
+Every row then carries two vectors over the states of the model, of the last step the
+integrator took before the row: the estimate of the local error of that step
+(`CVodeGetEstLocalErrors`, `IDAGetEstLocalErrors` of a DAE model) and the weights of its error
+test (`CVodeGetErrWeights`, `IDAGetErrWeights`), `1 / (rtol |y_i| + atol_i)` of the state the
+step started from. CVODE accepted the step because the weighted root mean square norm of the
+two, `sqrt(mean((e_i w_i)^2))`, is at most 1, so that norm is the share of its tolerance the
+step used, and the estimate of a state over its weight is the scale of its error.
+
+A row at an output time is interpolated in the step which reached it or passed it, so two rows
+in one step carry the same estimates; a row at a change or an event carries the step before
+it. A row which no step precedes, the start and every row of a run which takes no step, is
+`NaN`. The result carries `local_errors: {states, errors, weights}`, with `states` the ids of
+the states in the order of the state vector and `errors` and `weights` of
+`n_rows * states.length` numbers each, row major. The
+[python binding](python.md#compile-and-simulate) hands them over as `out.local_errors`, with
+`errors` and `weights` float64 arrays of the shape `(rows, states)`.
+
+They cost a copy of two vectors of the states per row and nothing without the flag. The
+native engine answers them; `engine.wasm`, whose output has no room for them, refuses a
+request which asks for them, as it refuses the forward sensitivities.
 
 ## The result
 

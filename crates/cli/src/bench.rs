@@ -356,6 +356,7 @@ fn request(
         .collect();
     SimulationRequest {
         sensitivities: vec![],
+        local_errors: false,
         contract: SIMULATION_CONTRACT.to_string(),
         start: 0.0,
         end: model.end,

@@ -953,6 +953,9 @@ pub(crate) struct Integrator<const DAE: bool, H: crate::delay::Mode = crate::del
     /// The user data of the right hand side of the sensitivities, which CVODES keeps as it is
     /// and which this memory owns, see [`SensData`].
     sens_data: Box<SensData>,
+    /// The vectors the local error estimates and the error weights of the last step are read
+    /// into ([`Integrator::local_errors`]), null until a run asks for them.
+    local: [N_Vector; 2],
 }
 
 /// The largest order of the BDF of CVODE and of IDA, `BDF_Q_MAX` and `MAXORD_DEFAULT`.
@@ -1028,7 +1031,14 @@ impl<const DAE: bool, H: crate::delay::Mode> Drop for Integrator<DAE, H> {
                 SUNMatDestroy(self.matrix);
             }
             self.krylov = None;
-            for v in [self.abstol, self.y, self.yp, self.id] {
+            for v in [
+                self.abstol,
+                self.y,
+                self.yp,
+                self.id,
+                self.local[0],
+                self.local[1],
+            ] {
                 if !v.is_null() {
                     N_VDestroy(v);
                 }
@@ -1111,6 +1121,7 @@ impl<const DAE: bool, H: crate::delay::Mode> Integrator<DAE, H> {
             sens_data: Box::new(SensData {
                 problem: ptr::null_mut(),
             }),
+            local: [ptr::null_mut(); 2],
         };
         let n = config.n as sunindextype;
         // SAFETY: the objects are created in the context and owned by `cvode`, which frees them
@@ -1611,6 +1622,41 @@ impl<const DAE: bool, H: crate::delay::Mode> Integrator<DAE, H> {
             for at in 0..n_sens {
                 out[at * n..(at + 1) * n].copy_from_slice(values(*self.sens.add(at), n));
             }
+        }
+        Ok(())
+    }
+
+    /// The local error estimates of the last step of the integrator and the weights of its
+    /// error test (`CVodeGetEstLocalErrors` and `CVodeGetErrWeights`, or those of IDA), of the
+    /// first `errors.len()` states, the states of the model.
+    pub fn local_errors(
+        &mut self,
+        errors: &mut [f64],
+        weights: &mut [f64],
+    ) -> Result<(), EngineError> {
+        let n = self.config.n;
+        assert!(
+            errors.len() <= n && weights.len() == errors.len(),
+            "the states of the row"
+        );
+        // SAFETY: the vectors are serial vectors of `n` values of the context of this memory,
+        // made here once and freed with it; the getters write them and nothing else.
+        unsafe {
+            for v in &mut self.local {
+                if v.is_null() {
+                    *v = N_VNew_Serial(n as sunindextype, self.ctx);
+                    if v.is_null() {
+                        return Err(not_created("the vectors of the local errors"));
+                    }
+                }
+            }
+            let [ele, ewt] = self.local;
+            let flag = backend!(self, CVodeGetEstLocalErrors, IDAGetEstLocalErrors, ele);
+            self.flag(flag, f64::NAN)?;
+            let flag = backend!(self, CVodeGetErrWeights, IDAGetErrWeights, ewt);
+            self.flag(flag, f64::NAN)?;
+            errors.copy_from_slice(&values(ele, n)[..errors.len()]);
+            weights.copy_from_slice(&values(ewt, n)[..weights.len()]);
         }
         Ok(())
     }

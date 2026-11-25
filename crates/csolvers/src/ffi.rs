@@ -385,6 +385,8 @@ unsafe extern "C" {
     pub fn CVodeGetCurrentStep(cvode_mem: *mut c_void, hcur: *mut sunrealtype) -> c_int;
     /// Copies the error weights `1 / (rtol |y_i| + atol_i)` into `eweight`.
     pub fn CVodeGetErrWeights(cvode_mem: *mut c_void, eweight: N_Vector) -> c_int;
+    /// Copies the estimated local errors of the last step into `ele`.
+    pub fn CVodeGetEstLocalErrors(cvode_mem: *mut c_void, ele: N_Vector) -> c_int;
     pub fn CVodeGetIntegratorStats(
         cvode_mem: *mut c_void,
         nsteps: *mut c_long,
@@ -490,6 +492,8 @@ unsafe extern "C" {
     pub fn IDAGetRootInfo(ida_mem: *mut c_void, rootsfound: *mut c_int) -> c_int;
     pub fn IDAGetNumSteps(ida_mem: *mut c_void, nsteps: *mut c_long) -> c_int;
     pub fn IDAGetErrWeights(ida_mem: *mut c_void, eweight: N_Vector) -> c_int;
+    /// Copies the estimated local errors of the last step into `ele`.
+    pub fn IDAGetEstLocalErrors(ida_mem: *mut c_void, ele: N_Vector) -> c_int;
     pub fn IDAGetCurrentStep(ida_mem: *mut c_void, hcur: *mut sunrealtype) -> c_int;
     pub fn IDAGetIntegratorStats(
         ida_mem: *mut c_void,

@@ -146,6 +146,65 @@ struct At<'a> {
     values: &'a [f64],
 }
 
+/// The local error estimates of the integrator at the rows of a result while it is recorded.
+pub(crate) struct LocalErrors {
+    /// The ids of the states.
+    states: Vec<String>,
+    /// The estimates of the last step of the integrator, `NaN` before the first one, which
+    /// the caller fills after every return of the integrator ([`Recorder::last_step`]).
+    errors: Vec<f64>,
+    /// The weights of the error test of that step.
+    weights: Vec<f64>,
+    /// The estimates of the rows, row major.
+    error_rows: Vec<f64>,
+    /// The weights of the rows, row major.
+    weight_rows: Vec<f64>,
+}
+
+impl LocalErrors {
+    /// The local errors of the states of these ids, before the first step.
+    pub fn new(states: Vec<String>) -> LocalErrors {
+        let n = states.len();
+        LocalErrors {
+            states,
+            errors: vec![f64::NAN; n],
+            weights: vec![f64::NAN; n],
+            error_rows: Vec::new(),
+            weight_rows: Vec::new(),
+        }
+    }
+
+    /// The values of a row: an estimate and a weight per state.
+    fn len(&self) -> usize {
+        2 * self.states.len()
+    }
+
+    /// Records the estimates of one row.
+    fn row(&mut self) -> Result<(), EngineError> {
+        let n = self.states.len();
+        let rows = self.error_rows.len() + self.weight_rows.len();
+        for (table, values) in [
+            (&mut self.error_rows, &self.errors),
+            (&mut self.weight_rows, &self.weights),
+        ] {
+            table
+                .try_reserve(n)
+                .map_err(|_| out_of_memory(rows + 2 * n))?;
+            table.extend_from_slice(values);
+        }
+        Ok(())
+    }
+
+    /// The estimates of the rows as a part of a result.
+    pub fn into_rows(self) -> sbmlsim_abi::LocalErrors {
+        sbmlsim_abi::LocalErrors {
+            states: self.states,
+            errors: self.error_rows,
+            weights: self.weight_rows,
+        }
+    }
+}
+
 pub(crate) struct Recorder<'a> {
     model: &'a dyn ModelFns,
     columns: Cow<'a, [Column]>,
@@ -164,6 +223,8 @@ pub(crate) struct Recorder<'a> {
     cap: usize,
     /// The forward sensitivities of the columns, for a run which asked for them.
     pub sensitivities: Option<Sensitivities>,
+    /// The local error estimates of the integrator at the rows, for a run which asked for them.
+    pub local_errors: Option<LocalErrors>,
 }
 
 /// The [`EngineError::Request`] of a result which does not fit into the memory of the engine.
@@ -214,6 +275,7 @@ impl<'a> Recorder<'a> {
             n_rows: 0,
             cap,
             sensitivities: None,
+            local_errors: None,
         })
     }
 
@@ -243,6 +305,7 @@ impl<'a> Recorder<'a> {
             n_rows: 0,
             cap,
             sensitivities: None,
+            local_errors: None,
         })
     }
 
@@ -277,8 +340,10 @@ impl<'a> Recorder<'a> {
     /// result.
     pub fn row(&mut self, t: f64, y: &[f64], p: &[f64]) -> Result<(), EngineError> {
         let k = self.columns.len();
-        // a row of a run of sensitivities carries one value per parameter of every column
-        let per_row = k * (1 + self.sensitivities.as_ref().map_or(0, Sensitivities::len));
+        // a row of a run of sensitivities carries one value per parameter of every column, and
+        // one of local errors two values per state
+        let per_row = k * (1 + self.sensitivities.as_ref().map_or(0, Sensitivities::len))
+            + self.local_errors.as_ref().map_or(0, LocalErrors::len);
         if self.values.len() - self.prefix + per_row > self.cap {
             return Err(EngineError::Integration {
                 flag: OUTPUT_LIMIT_FLAG,
@@ -312,8 +377,24 @@ impl<'a> Recorder<'a> {
                 values: &self.selections,
             })?;
         }
+        if let Some(local_errors) = &mut self.local_errors {
+            local_errors.row()?;
+        }
         self.n_rows += 1;
         Ok(())
+    }
+
+    /// Reads the local error estimates of the last step of the integrator for the rows after
+    /// it, for a run which asked for them; the caller calls it after every return of the
+    /// integrator.
+    pub fn last_step<const DAE: bool, H: crate::delay::Mode>(
+        &mut self,
+        cvode: &mut Integrator<DAE, H>,
+    ) -> Result<(), EngineError> {
+        match &mut self.local_errors {
+            Some(local) => cvode.local_errors(&mut local.errors, &mut local.weights),
+            None => Ok(()),
+        }
     }
 
     /// The sensitivities of the states at the row which is recorded next, which the caller
@@ -415,6 +496,7 @@ pub(crate) fn integrate<const DAE: bool, H: crate::delay::Mode>(
                         started = true;
                     }
                     cvode.integrate(problem, tout, CV_NORMAL)?;
+                    recorder.last_step(cvode)?;
                     if let Some(states) = recorder.state_sensitivities() {
                         cvode.sensitivities(states)?;
                     }
@@ -431,6 +513,7 @@ pub(crate) fn integrate<const DAE: bool, H: crate::delay::Mode>(
                         cvode.start(t, y, c, settings, 0)?;
                     }
                     cvode.integrate(problem, c, CV_NORMAL)?;
+                    recorder.last_step(cvode)?;
                     y.copy_from_slice(cvode.state());
                 }
                 // the state before the change at an output time; the rows of the state after
@@ -455,6 +538,7 @@ pub(crate) fn integrate<const DAE: bool, H: crate::delay::Mode>(
                             let mut previous = t;
                             loop {
                                 let (tret, flag) = cvode.integrate(problem, stop, CV_ONE_STEP)?;
+                                recorder.last_step(cvode)?;
                                 // a step which does not advance the time (CVODE's `t + h = t`)
                                 // never ends
                                 if flag != CV_TSTOP_RETURN && tret <= previous {
@@ -871,6 +955,7 @@ pub(crate) fn integrate_events<const DAE: bool, H: crate::delay::Mode>(
             guard.limit(cvode, t)?;
             cvode.integrate(problem, tout, CV_NORMAL)?
         };
+        recorder.last_step(cvode)?;
         let root = flag == CV_ROOT_RETURN;
         // a zero of a root function of a discontinuity at which CVODE starts again (the guard
         // of the restarts: libroadrunner's count of roots close together, no second restart at

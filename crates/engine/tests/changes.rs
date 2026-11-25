@@ -14,6 +14,7 @@ use sbmlsim_engine::{Engine, EngineError, STEADY_STATE_FLAG, simulate};
 fn request(start: f64, end: f64, output: Output) -> SimulationRequest {
     SimulationRequest {
         sensitivities: vec![],
+        local_errors: false,
         contract: SIMULATION_CONTRACT.to_string(),
         start,
         end,

@@ -137,6 +137,7 @@ fn requests(model: &LoadedModel, args: &Args) -> anyhow::Result<Vec<SimulationRe
             before_events: false,
             seed: 0,
             sensitivities: vec![],
+            local_errors: false,
         })
         .collect())
 }

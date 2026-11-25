@@ -40,6 +40,7 @@ fn request(sensitivities: &[&str], stiff: bool) -> SimulationRequest {
         },
         seed: 0,
         sensitivities: sensitivities.iter().map(|s| (*s).to_string()).collect(),
+        local_errors: false,
     }
 }
 

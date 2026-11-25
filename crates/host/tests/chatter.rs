@@ -56,6 +56,7 @@ fn repeated_dose() -> CompiledModel {
 fn request(end: f64, output: Output, rtol: f64, atol: f64) -> SimulationRequest {
     SimulationRequest {
         sensitivities: vec![],
+        local_errors: false,
         contract: SIMULATION_CONTRACT.to_string(),
         start: 0.0,
         end,

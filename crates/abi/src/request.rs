@@ -77,6 +77,14 @@ pub struct SimulationRequest {
     /// changes or of a steady state.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sensitivities: Vec<String>,
+    /// Whether the result carries the local error estimates of the integrator at every row
+    /// ([`crate::LocalErrors`]); `false` by default.
+    ///
+    /// They cost a copy of two vectors of the states per row and nothing without the flag. The
+    /// native engine answers them; `engine.wasm`, whose output has no room for them, refuses a
+    /// request which asks for them.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub local_errors: bool,
 }
 
 /// The seed of a request without one.
@@ -370,6 +378,36 @@ pub struct SimulationResult {
     /// The forward sensitivities of the columns, when the request asked for them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sensitivities: Option<Sensitivities>,
+    /// The local error estimates of the integrator at the rows, when the request asked for
+    /// them ([`SimulationRequest::local_errors`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_errors: Option<LocalErrors>,
+}
+
+/// The local error estimates of the integrator at the rows of a result, for a verification of
+/// the numerical error of a simulation.
+///
+/// Every row carries what the integrator estimated of the last step it took before the row:
+/// the local error of that step (`CVodeGetEstLocalErrors`, `IDAGetEstLocalErrors` of a DAE
+/// model) and the weights of its error test (`CVodeGetErrWeights`, `IDAGetErrWeights`),
+/// `1 / (rtol |y_i| + atol_i)` of the state the step started from. CVODE accepts a step when
+/// the weighted root mean square norm of the two, `sqrt(mean((e_i w_i)^2))`, is at most 1, so
+/// that norm is the share of its tolerance the step used.
+///
+/// A row is the state at an output time, at a step, at a change or at an event, and the last
+/// step before it is the one which reached it or passed it; a row which no step of the run
+/// precedes (the start, and every row of a run which takes no step) is `NaN`. The value of
+/// the state `s` of the row `r` is `errors[r * states.len() + s]`, and of its weight
+/// `weights[r * states.len() + s]`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LocalErrors {
+    /// The ids of the states, in the order of the state vector of the model.
+    pub states: Vec<String>,
+    /// `n_rows * states.len()` local error estimates, row major.
+    pub errors: Vec<f64>,
+    /// `n_rows * states.len()` weights of the error test, row major.
+    pub weights: Vec<f64>,
 }
 
 /// The forward sensitivities of the columns of a result.

@@ -263,6 +263,7 @@ fn edge_values_keep_their_bits() {
             settings: sbmlsim_abi::IntegratorSettings::default(),
             seed: 0,
             sensitivities: vec![],
+            local_errors: false,
         };
         req.selections = std::iter::once("time".to_string())
             .chain(written.description.selections.iter().map(|s| s.id.clone()))
@@ -498,6 +499,7 @@ fn literal_folding_gives_the_bits_of_the_code() {
         ] {
             let req = sbmlsim_abi::SimulationRequest {
                 sensitivities: vec![],
+                local_errors: false,
                 contract: sbmlsim_abi::SIMULATION_CONTRACT.to_string(),
                 start: 0.0,
                 end: 3.0,

@@ -513,6 +513,7 @@ pub fn repeat_check(
 pub fn case_request(settings: &CaseSettings) -> SimulationRequest {
     SimulationRequest {
         sensitivities: vec![],
+        local_errors: false,
         contract: SIMULATION_CONTRACT.to_string(),
         start: settings.start,
         end: settings.start + settings.duration,

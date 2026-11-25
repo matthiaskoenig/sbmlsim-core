@@ -112,6 +112,40 @@ pub(crate) struct SimulationOutput {
     columns: Vec<String>,
     values: Py<PyArray2<f64>>,
     sensitivities: Option<Py<OutputSensitivities>>,
+    local_errors: Option<Py<OutputLocalErrors>>,
+}
+
+/// The local error estimates of the integrator at the rows of a table.
+#[pyclass(frozen, module = "sbmlsim_core")]
+pub(crate) struct OutputLocalErrors {
+    states: Vec<String>,
+    errors: Py<PyArray2<f64>>,
+    weights: Py<PyArray2<f64>>,
+}
+
+#[pymethods]
+impl OutputLocalErrors {
+    /// The ids of the states, in the order of the state vector of the model; a new list by
+    /// every access.
+    #[getter]
+    fn states(&self) -> Vec<String> {
+        self.states.clone()
+    }
+
+    /// The local error estimate of the last step of the integrator before every row, an
+    /// array of float64 of the shape `(n_rows, len(states))`; `NaN` in a row which no step
+    /// precedes.
+    #[getter]
+    fn errors<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
+        self.errors.bind(py).clone()
+    }
+
+    /// The weights of the error test of that step, `1 / (rtol |y| + atol)`, of the same shape:
+    /// the step was accepted with `sqrt(mean((errors * weights) ** 2)) <= 1` of its row.
+    #[getter]
+    fn weights<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
+        self.weights.bind(py).clone()
+    }
 }
 
 /// The forward sensitivities of the columns of a table.
@@ -162,6 +196,15 @@ impl SimulationOutput {
         self.sensitivities
             .as_ref()
             .map(|sensitivities| sensitivities.clone_ref(py))
+    }
+
+    /// The local error estimates of the integrator at the rows, `None` for a request which did
+    /// not ask for them (`local_errors` of the request, which only the native engine carries).
+    #[getter]
+    fn local_errors(&self, py: Python<'_>) -> Option<Py<OutputLocalErrors>> {
+        self.local_errors
+            .as_ref()
+            .map(|local_errors| local_errors.clone_ref(py))
     }
 }
 
@@ -217,10 +260,33 @@ fn output(py: Python<'_>, result: SimulationResult) -> Result<SimulationOutput, 
             .map_err(|error| format!("the sensitivities of the engine: {error}"))
         })
         .transpose()?;
+    let local_errors = result
+        .local_errors
+        .map(|local| {
+            let shape = (result.n_rows, local.states.len());
+            let table = |values: Vec<f64>| {
+                numpy::ndarray::Array2::from_shape_vec(shape, values)
+                    .map(|values| PyArray2::from_owned_array(py, values).unbind())
+                    .map_err(|error| {
+                        format!("the local errors of the engine have no shape: {error}")
+                    })
+            };
+            Py::new(
+                py,
+                OutputLocalErrors {
+                    errors: table(local.errors)?,
+                    weights: table(local.weights)?,
+                    states: local.states,
+                },
+            )
+            .map_err(|error| format!("the local errors of the engine: {error}"))
+        })
+        .transpose()?;
     Ok(SimulationOutput {
         columns: result.columns,
         values: PyArray2::from_owned_array(py, values).unbind(),
         sensitivities,
+        local_errors,
     })
 }
 

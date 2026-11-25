@@ -55,6 +55,7 @@ fn instance() -> Instance {
 fn request() -> SimulationRequest {
     SimulationRequest {
         sensitivities: vec![],
+        local_errors: false,
         contract: SIMULATION_CONTRACT.to_string(),
         start: 0.0,
         end: 10.0,
