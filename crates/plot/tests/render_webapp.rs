@@ -452,3 +452,121 @@ fn golden_webapp() {
     let svg = render_svg(&parse(&spec_text("webapp")).unwrap());
     assert_golden("webapp", &svg);
 }
+
+/// The swatch colours (`stroke` of its paths) of the legend entry of a group.
+fn swatch_strokes(doc: &Document, group: &str) -> Vec<String> {
+    doc.descendants()
+        .find(|n| {
+            has_class(*n, "sbmlsim-legend-entry") && n.attribute("data-legend") == Some(group)
+        })
+        .unwrap_or_else(|| panic!("no entry {group}"))
+        .descendants()
+        .filter(|n| n.has_tag_name("path"))
+        .filter_map(|n| n.attribute("stroke").map(String::from))
+        .collect()
+}
+
+#[test]
+fn mixed_colour_group_has_a_neutral_swatch() {
+    // a frozen run covers every series of a panel, so its entry is neither of their colours
+    let (x, y) = axes();
+    let mut spec = panel_spec(&[], x, y, json!({}));
+    let elements = spec["plots"][0]["elements"].as_array_mut().unwrap();
+    elements.push(json!({
+        "id": "frozen-1-m1", "kind": "curve", "legend": "frozen-1",
+        "x": [0, 1, 2], "y": [0, 1, 1],
+        "style": {"color": "#1e9c89", "line": {"type": "dashed"}}
+    }));
+    elements.push(json!({
+        "id": "m1", "kind": "curve", "label": "M1", "x": [0, 1, 2], "y": [0, 2, 2],
+        "style": {"color": "#1e9c89"}
+    }));
+    let svg = render(&spec);
+    let doc = Document::parse(&svg).unwrap();
+    let frozen = swatch_strokes(&doc, "frozen-1");
+    assert_eq!(frozen, ["#5b6472"], "the neutral colour");
+    // the dash of the run is kept
+    let dashed = doc
+        .descendants()
+        .find(|n| {
+            has_class(*n, "sbmlsim-legend-entry") && n.attribute("data-legend") == Some("frozen-1")
+        })
+        .unwrap()
+        .descendants()
+        .any(|n| n.attribute("stroke-dasharray").is_some());
+    assert!(dashed, "the dash of the run");
+    // a group of one colour keeps it
+    assert_eq!(swatch_strokes(&doc, "live"), ["#440154"]);
+}
+
+#[test]
+fn legend_order_overrides_drawing_order() {
+    let (x, y) = axes();
+    let spec = panel_spec(
+        &[("Study A", &[1.0], &[3.0])],
+        x,
+        y,
+        json!({"legend_order": ["live", "study-0", "frozen-1", "missing"]}),
+    );
+    let svg = render(&spec);
+    let doc = Document::parse(&svg).unwrap();
+    assert_eq!(
+        legends(&doc)[0].1,
+        ["glimepiride", "Study A", "frozen at 4 mg"].map(String::from)
+    );
+    // an unlisted group follows the listed ones in the order it first appears
+    let (x, y) = axes();
+    let spec = panel_spec(
+        &[("Study A", &[1.0], &[3.0])],
+        x,
+        y,
+        json!({"legend_order": ["study-0"]}),
+    );
+    let doc_svg = render(&spec);
+    let doc = Document::parse(&doc_svg).unwrap();
+    assert_eq!(
+        legends(&doc)[0].1,
+        ["Study A", "frozen at 4 mg", "glimepiride"].map(String::from)
+    );
+}
+
+#[test]
+fn legend_frame_holds_the_reserved_room() {
+    let declared = json!({"declared_legends": [["Study A"], ["Study B", "Study C", "Study D"]]});
+    let (x, y) = axes();
+    let svg = render(&panel_spec(&[("Study A", &[1.0], &[3.0])], x, y, declared));
+    let doc = Document::parse(&svg).unwrap();
+    let (frame, labels) = &legends(&doc)[0];
+    assert_eq!(labels.len(), 3);
+    // the room of the longest list: two curves and three studies, five entries
+    let entry = doc
+        .descendants()
+        .filter(|n| has_class(*n, "sbmlsim-legend-label"))
+        .map(|n| number(n, "y"))
+        .collect::<Vec<_>>();
+    let step = entry[1] - entry[0];
+    assert!(
+        (frame.height - (12.0 + 5.0 * step)).abs() < 0.011,
+        "{} for five rows of {step}",
+        frame.height
+    );
+}
+
+#[test]
+fn x_end_keeps_bars_and_text_beyond_it_off_the_y_axis() {
+    let spec = json!({
+        "contract": "figure/1", "width": 480, "height": 300,
+        "grid": {"rows": 1, "columns": 1},
+        "plots": [{"id": "p", "row": 0, "column": 0,
+            "x": {"max": 3.5}, "y": {},
+            "elements": [
+                {"id": "bars", "kind": "bar", "x": [1, 2, 3, 5], "height": [1, 2, 3, 90]},
+                {"id": "note", "kind": "text", "x": 8, "y": 200, "text": "far"},
+                {"id": "shape", "kind": "polygon", "paths": [[[1, 0], [2, 1], [9, 300]]]}
+            ]}]
+    });
+    let svg = render(&spec);
+    let doc = Document::parse(&svg).unwrap();
+    let top: f64 = tick_labels(&doc, "y").last().unwrap().parse().unwrap();
+    assert!(top < 5.0, "the y axis reaches {top}");
+}

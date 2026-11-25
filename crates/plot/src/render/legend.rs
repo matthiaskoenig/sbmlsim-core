@@ -8,6 +8,13 @@
 //! the plots of the row which agree in group, label and swatch. Every entry is a group
 //! `<g class="sbmlsim-legend-entry" data-legend="<group>">`, which a page toggles the elements
 //! of the group (`data-legend` on their groups) by.
+//!
+//! `Plot::legend_order` puts the groups it lists first, in its order, so a writer draws frozen
+//! runs under the live curves and still lists them last (as `plot.ts` does). A group whose
+//! elements differ in colour, a frozen run of every series of a panel, belongs to none of them:
+//! its swatch is drawn in the neutral colour `FG_SOFT`, with its dash. The frame of a legend is
+//! the room it takes in the layout ([`room`]), which holds the largest legend it may show, so
+//! nothing moves when entries come and go; the entries drawn now fill it from the top.
 
 use std::fmt::Write as _;
 
@@ -62,15 +69,29 @@ pub(crate) fn plot_entries(plot: &Plot, colors: &[String], fonts: &Fonts) -> Vec
             None => groups.push((g, i, e.label.is_some().then_some(i))),
         }
     }
+    // the listed groups first, in the order of the list, the others after them
+    if let Some(order) = &plot.legend_order {
+        let rank = |g: &str| order.iter().position(|o| o == g).unwrap_or(order.len());
+        groups.sort_by_key(|(g, _, _)| rank(g));
+    }
     groups
         .into_iter()
         .map(|(g, first, labelled)| {
             let i = labelled.unwrap_or(first);
             let e = &plot.elements[i];
+            // a group of elements of different colours (a frozen run of every series) is no
+            // one of them: its swatch is drawn in the neutral colour, with its dash
+            let mut members = plot
+                .elements
+                .iter()
+                .enumerate()
+                .filter(|(_, m)| m.legend_group() == Some(g));
+            let mixed = members.any(|(k, _)| colors[k] != colors[i]);
+            let color = if mixed { theme::FG_SOFT } else { &colors[i] };
             Entry {
                 legend: g.to_string(),
                 label: e.label.clone().unwrap_or_else(|| g.to_string()),
-                swatch: swatch(e, &colors[i], fonts),
+                swatch: swatch(e, color, fonts),
             }
         })
         .collect()
@@ -116,7 +137,8 @@ fn size_of_labels<'a>(labels: impl IntoIterator<Item = &'a str>, fonts: &Fonts) 
 ///
 /// `declared` are the declared legends (`declaredLegends` of `plot.ts`): the lists of labels
 /// the legend may show in some state of a page, more than its elements carry now. A drawn
-/// entry whose label is in none of the lists is shown in every state; every list is laid out
+/// entry whose label is in none of the declared lists counts as shown in every state (a live
+/// curve, a frozen run), so it is part of every list the room is taken over; every list is laid out
 /// together with these entries, and so are the entries drawn now, so the legend is as wide as
 /// the widest label of any of them and as tall as the one of the most rows. The room is then a
 /// function of what a page may show and not of what it shows now: two states of a page which

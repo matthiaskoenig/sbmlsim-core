@@ -38,6 +38,13 @@
      "Jones 2010, 80 mg (fasted)"
     ]
    ],
+   "legend_order": [
+    "plasma",
+    "metabolite",
+    "study-a",
+    "frozen-1",
+    "frozen-2"
+   ],
    "elements": [
     {
      "id": "frozen-1-plasma",

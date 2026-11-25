@@ -550,7 +550,8 @@ pub(crate) struct Extent {
 ///
 /// `ends` are the ends the spec gives the x axis with whether the y axis of the element is
 /// logarithmic: a curve, a band or an area then puts only its values inside the ends on the
-/// axes, and the values where it crosses an end, since nothing beyond them is drawn.
+/// axes, and the values where it crosses an end, since nothing beyond them is drawn; a text, a
+/// vertical bar and a vertex of a polygon only inside them.
 pub(crate) fn extent(e: &Element, out: &mut Extent, ends: Option<(XEnds, bool)>) {
     if let Some((ends, log_y)) = ends
         && cut_extent(e, out, ends, log_y)
@@ -662,8 +663,8 @@ pub(crate) fn extent(e: &Element, out: &mut Extent, ends: Option<(XEnds, bool)>)
     }
 }
 
-/// Adds the values of a series inside the given ends of the x axis; false for an element which
-/// is no series over x.
+/// Adds the values of an element inside the given ends of the x axis; false for an element
+/// whose extent is taken as without the ends.
 fn cut_extent(e: &Element, out: &mut Extent, ends: XEnds, log_y: bool) -> bool {
     let inside = |x: &[f64], v: &[f64]| -> Vec<f64> {
         x.iter()
@@ -706,6 +707,47 @@ fn cut_extent(e: &Element, out: &mut Extent, ends: XEnds, log_y: bool) -> bool {
             out.xs.extend(inside(x, x));
             out.ys.extend(ends.values(x, &[from, to], log_y));
         }
+        // a text, a vertical bar and a vertex of a polygon beyond an end are cut by the panel,
+        // so they put nothing on the axes; the edges of a polygon which cross an end are cut
+        // there by the panel and not interpolated
+        ElementKind::Text { x, y, .. } => {
+            if ends.holds(*x) {
+                out.xs.push(*x);
+                out.ys.push(*y);
+            }
+        }
+        ElementKind::Bar {
+            x,
+            height,
+            err,
+            horizontal: false,
+            width,
+        } => {
+            let w = width.unwrap_or(stats_marks::BAR_WIDTH * stats_marks::spacing(x));
+            for (k, p) in x.iter().enumerate() {
+                if !ends.holds(*p) {
+                    continue;
+                }
+                out.xs.extend([p - w / 2.0, p + w / 2.0]);
+                out.ys.push(height[k]);
+                if let Some(e) = err.as_ref().and_then(|e| e.get(k)) {
+                    out.ys.extend([height[k] - e.abs(), height[k] + e.abs()]);
+                }
+            }
+            out.ys.push(0.0);
+            out.y_sticky.push(0.0);
+        }
+        ElementKind::Polygon { paths } => {
+            for [x, y] in paths.iter().flatten() {
+                if ends.holds(*x) {
+                    out.xs.push(*x);
+                    out.ys.push(*y);
+                }
+            }
+        }
+        // a rule spans its axis (a horizontal one has no x, a vertical one no y); a horizontal
+        // bar, a box, a violin, a histogram and a heatmap take their extent as without the
+        // ends, the panel cuts what is beyond them
         _ => return false,
     }
     true

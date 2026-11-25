@@ -14,8 +14,7 @@
 //!
 //! A legend takes the room of the largest legend it may show (its declared legends, see
 //! `legend::room`), so a page which draws other entries in another state keeps its plot and
-//! figure; the frame of the entries drawn now sits at the top of that room (at its bottom in a
-//! lower corner of a panel), as wide as the room.
+//! figure; its frame is that room, the entries drawn now from its top.
 //!
 //! The legends follow the legend settings of the figure. Inside, a legend is placed in the
 //! corner of the panel of its plot (of a row: of its rightmost plot) which covers the fewest
@@ -568,29 +567,18 @@ pub(crate) fn plan(figure: &Figure) -> Plan {
     let mut legends = Vec::with_capacity(pending.len());
     let mut entries = Vec::with_capacity(pending.len());
     for ((owner, place, list, size), out) in pending.into_iter().zip(outside) {
-        // the room of the legend, in which the frame of the entries drawn now sits at the top,
-        // at the bottom in a lower corner of a panel
-        let (room, lower) = match (place, out) {
-            (_, Some((rect, _, _))) => (rect, false),
+        // the frame is the room of the legend, which holds the largest legend it may show, so
+        // nothing moves when entries come and go; a legend which draws nothing now is no frame
+        let rect = match (place, out) {
+            (_, Some((rect, _, _))) => rect,
             (Place::Inside(i), None) | (Place::RightOfPlot(i), None) => {
-                let rect = corner(&figure.plots[i], &prepared[i], panels[i], size);
-                (rect, rect.y > panels[i].y + LEGEND_INSET)
+                corner(&figure.plots[i], &prepared[i], panels[i], size)
             }
             (Place::RightOfGrid(_), None) => continue,
         };
         if list.is_empty() {
             continue;
         }
-        let height = legend::size(&list, fonts).1;
-        let rect = Rect {
-            y: if lower {
-                room.bottom() - height
-            } else {
-                room.y
-            },
-            height,
-            ..room
-        };
         legends.push((owner, rect, list));
     }
 

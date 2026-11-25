@@ -8,6 +8,12 @@
 //! panel where its straight segment does. A point of the series beyond an end is dropped, and so
 //! are its marker and its error bars, which `holds` tells apart; the points an end adds carry no
 //! marker. A point inside the interval keeps its bits.
+//!
+//! The y axes count only the values of a series within the ends the spec gives the x axis and
+//! the value where it crosses an end ([`XEnds::values`]), the values the panel shows. This is
+//! intended: it is what a panel of the web app frames its value axis by, while `plot.ts` puts
+//! the values of a curve beyond `xEnd` on its axis as well, which a panel covers with its frame
+//! (`yLimits`).
 
 use super::axis::{log10, pow10};
 use crate::spec::{Axis, AxisScale};

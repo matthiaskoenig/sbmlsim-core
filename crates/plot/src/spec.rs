@@ -181,9 +181,18 @@ pub struct Plot {
     /// A color bar.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub colorbar: Option<ColorBar>,
-    /// Legends declared as lists of legend groups; absent: derived from the elements.
+    /// The legends the plot may show in some state of a page, each a list of entry labels
+    /// (`declaredLegends` of sbmlsim-web): the legend takes the room of the largest of them, so
+    /// the plot and the figure keep their size when entries come and go; a label without an
+    /// element is not drawn. Absent: the room of the entries drawn.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub declared_legends: Option<Vec<Vec<String>>>,
+    /// The order of the legend entries, as legend groups: the listed groups first in this
+    /// order, the others after them in the order their elements first appear (the default
+    /// order without it). A listed group without elements is ignored. It lets a writer draw
+    /// elements under others (frozen runs under the live curves) and still list them last.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub legend_order: Option<Vec<String>>,
     /// The elements drawn in the plot.
     pub elements: Vec<Element>,
 }
@@ -1158,6 +1167,17 @@ pub(crate) fn validate(f: &Figure) -> Result<(), SpecError> {
         }
         if let Some(c) = &p.colorbar {
             check_scale(&format!("{pp}.colorbar.scale"), &c.scale)?;
+        }
+        if let Some(order) = &p.legend_order {
+            let mut seen = HashSet::new();
+            for (k, g) in order.iter().enumerate() {
+                if !seen.insert(g.as_str()) {
+                    return err(
+                        format!("{pp}.legend_order[{k}]"),
+                        format!("duplicate legend group `{g}`"),
+                    );
+                }
+            }
         }
         for (j, e) in p.elements.iter().enumerate() {
             let ep = format!("{pp}.elements[{j}]");

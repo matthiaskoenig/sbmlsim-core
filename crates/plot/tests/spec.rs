@@ -181,3 +181,15 @@ fn refuses_unknown_kind_and_bad_type() {
     .unwrap_err();
     assert!(e.path.starts_with("plots[0].elements[0]"), "{e}");
 }
+
+#[test]
+fn legend_order_parses_and_refuses_duplicates() {
+    let el = r#"{"id":"a","kind":"curve","label":"a","x":[1],"y":[2]}"#;
+    let f = parse(&base(&plot(r#""legend_order":["a","b"],"#, el))).unwrap();
+    assert_eq!(
+        f.plots[0].legend_order.as_deref(),
+        Some(&["a".to_string(), "b".to_string()][..])
+    );
+    let e = parse(&base(&plot(r#""legend_order":["a","a"],"#, el))).unwrap_err();
+    assert_eq!(e.path, "plots[0].legend_order[1]", "{e}");
+}

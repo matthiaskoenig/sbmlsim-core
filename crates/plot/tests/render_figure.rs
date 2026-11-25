@@ -478,16 +478,24 @@ fn row_legend_merges() {
 #[test]
 fn legend_group_one_entry() {
     let elements = [
-        curve("first", r#""legend": "run 1","#, "[0, 1]", "[0, 1]"),
+        // the elements of a group in one colour (a group of several colours has a neutral
+        // swatch, `render_webapp::mixed_colour_group_has_a_neutral_swatch`)
+        curve(
+            "first",
+            r##""legend": "run 1", "style": {"color": "#2a6f97"},"##,
+            "[0, 1]",
+            "[0, 1]",
+        ),
         curve(
             "second",
-            r#""label": "run 1", "legend": "run 1","#,
+            r##""label": "run 1", "legend": "run 1",
+                "style": {"color": "#2a6f97", "line": {"type": "dashed", "width": 3}},"##,
             "[0, 1]",
             "[1, 2]",
         ),
         curve(
             "third",
-            r#""label": "other", "legend": "run 1","#,
+            r##""label": "other", "legend": "run 1", "style": {"color": "#2a6f97"},"##,
             "[0, 1]",
             "[2, 3]",
         ),
@@ -520,7 +528,9 @@ fn legend_group_one_entry() {
         .find(|n| n.attribute("data-element") == Some("second"))
         .and_then(|g| g.descendants().find(|n| n.has_tag_name("path")))
         .unwrap();
-    assert_eq!(swatch.attribute("stroke"), second.attribute("stroke"));
+    for name in ["stroke", "stroke-width", "stroke-dasharray"] {
+        assert_eq!(swatch.attribute(name), second.attribute(name), "{name}");
+    }
 }
 
 #[test]
