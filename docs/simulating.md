@@ -125,7 +125,7 @@ The CSV has the names of the columns in its first line, then one line per row; a
 | `steady_state_after` | `null`, or a steady state reached after the end, whose row the output carries last at the time `inf`: `{"from", "absolute_tolerance", "relative_tolerance", "max_time"}` (defaults `0.0`, `1e-8`, `1e-6`, `1e8`), see below (0.18.0) |
 | `before_events` | `false`, or `true` for an output at the end which is the state **before** the events of the end time execute, see below (0.18.0) |
 | `sensitivities` | the ids of the values the forward sensitivities of the run are taken in (0.12.0, the native engine only), empty for a run without them; see below |
-| `local_errors` | `false`, or `true` for the local error estimates of the integrator at every row (the native engine only), see below |
+| `local_errors` | `false`, or `true` for the local error estimates of the integrator at every row (the native engine only), see below (0.26.0) |
 | `selections` | the ids of the columns after `time`; a leading `"time"` is that column (not repeated), a later `"time"` another copy of the time of the row; empty is `time` followed by every selection of the model |
 | `settings` | the settings of the integrator, below; the defaults of the engine are the ones of roadrunner |
 | `seed` | the seed of the random generator which orders simultaneous events; 1 when it is absent |
@@ -276,7 +276,7 @@ cached per engine and reused across compatible simulations.
 | field | what it holds |
 |---|---|
 | `contract` | `"model/2"` |
-| `compiler` | the compiler and its version, e.g. `"sbmlsim-compiler 0.25.0"` |
+| `compiler` | the compiler and its version, e.g. `"sbmlsim-compiler 0.26.0"` |
 | `id` | the id of the model |
 | `states` | the states, in the order of the state vector (the order of a `per_state` tolerance) |
 | `parameters` | the parameters (with the compartments, the species which are not states and the species references), in the order of the parameter vector |
@@ -295,7 +295,7 @@ An entity of `states` and `parameters` is `{"id", "kind", "initial", "settable"}
 ```json
 {
   "contract": "model/2",
-  "compiler": "sbmlsim-compiler 0.25.0",
+  "compiler": "sbmlsim-compiler 0.26.0",
   "id": "toy",
   "states": [
     { "id": "A", "kind": { "species": { "compartment": "c", "has_only_substance_units": false, "stores_concentration": false } }, "initial": 20.0, "settable": true }

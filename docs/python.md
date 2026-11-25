@@ -70,7 +70,7 @@ results = model.simulate_many(requests, threads=None)
 
 For ordinary simulations, `compile_sbml(sbml_text, parameter_jacobian=False)` omits analytic
 parameter derivatives and the constants used only by them. This reduces compilation and
-initialization work without changing simulation results. The default remains `True`.
+initialization work without changing simulation results. The default is `True` (0.26.0).
 Forward sensitivities remain available with `False`, using numerical parameter derivatives.
 
 The compiler reads SBML core of any level and version, flat and without a required package but `distrib` (the uncertainties of its fitted parameters, which are ignored), as the command line does ([Compiling a model](compiling.md)). The request is the one of [Simulating](simulating.md). Its nested enums are serde's externally tagged ones: an output is `{"uniform": {"steps": 100}}`, `{"times": [0.0, 1.0]}` or, a unit variant and so a bare string, `"integrator_steps"` (the steps of the integrator, whose number of rows differs by point, which is why `simulate_many` gives one table per point), and the absolute tolerance of the settings is `{"scalar": 1e-12}` or `{"per_state": [1e-12, 1e-10]}` with one value per state in the order of the state vector (a vector of another length is a `PointError` of that point in a batch):
@@ -105,7 +105,7 @@ Wasmtime keys entries by the Wasm bytes, its compiler version, CPU features and 
 
 ## Polynomial chaos
 
-sbmlsim fits a polynomial chaos expansion to the outputs of a scan (`sbmlsim.sensitivity.chaos`) in the coordinates of the unit cube of its design: the products of the shifted Legendre polynomials normalized to one. The parts of it which are regular and cheap per entry run here; the least squares of the fit stay with sbmlsim, whose QR is the one of LAPACK.
+sbmlsim fits a polynomial chaos expansion to the outputs of a scan (`sbmlsim.sensitivity.chaos`) in the coordinates of the unit cube of its design: the products of the shifted Legendre polynomials normalized to one. The parts of it which are regular and cheap per entry run here; the least squares of the fit stay with sbmlsim, whose QR is the one of LAPACK (0.26.0).
 
 ```python
 import numpy

@@ -6,10 +6,10 @@ The crates are built from this repository and version together with it, so depen
 
 ```toml
 [dependencies]
-sbmlsim-abi = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.25.0" }
-sbmlsim-compiler = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.25.0" }
-sbmlsim-host = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.25.0" }
-sbmlsim-batch = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.25.0" }
+sbmlsim-abi = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.26.0" }
+sbmlsim-compiler = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.26.0" }
+sbmlsim-host = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.26.0" }
+sbmlsim-batch = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.26.0" }
 anyhow = "1"
 
 # the reader alone, from crates.io
@@ -65,8 +65,7 @@ fn main() -> anyhow::Result<()> {
 Set `CompileOptions { parameter_jacobian: false, ..CompileOptions::default() }` for ordinary
 simulations that do not need analytic parameter derivatives. This omits their compilation and
 cached constants; forward sensitivities retain numerical parameter derivatives. The default is
-`true`.
-
+`true` (0.26.0).
 
 This is `crates/host/examples/first_simulation.rs`, which `cargo clippy --all-targets` builds, so the example above cannot drift from the API. Run it with `cargo run --example first_simulation`.
 
