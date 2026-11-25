@@ -101,7 +101,7 @@ pub fn emit_with(
     model: &Model,
     choice: JacobianChoice,
 ) -> Result<(Vec<u8>, ModelDescription), CompileError> {
-    emit_limited(model, choice, Limits::default(), false)
+    emit_limited(model, choice, Limits::default(), false, true)
 }
 
 /// [`emit_with`] with the optimizer ([`sbmlsim_ir::optimize`]): the functions are the programs
@@ -119,7 +119,7 @@ pub fn emit_optimized(
     model: &Model,
     choice: JacobianChoice,
 ) -> Result<(Vec<u8>, ModelDescription), CompileError> {
-    emit_limited(model, choice, Limits::default(), true)
+    emit_limited(model, choice, Limits::default(), true, true)
 }
 
 /// [`emit_optimized`] (`optimized`) or [`emit_with`] with other limits of the functions than
@@ -131,7 +131,22 @@ pub fn emit_with_limits(
     optimized: bool,
     limits: Limits,
 ) -> Result<(Vec<u8>, ModelDescription), CompileError> {
-    emit_limited(model, choice, limits, optimized)
+    emit_limited(model, choice, limits, optimized, true)
+}
+
+/// Emits a module with explicit optimization, parameter-Jacobian, and function-size options.
+///
+/// Setting `parameter_jacobian` to false omits the optional `model_jac_p` export and the
+/// constants used only by that export. Forward sensitivities retain their numerical
+/// parameter-derivative fallback. The other entry points include the export when available.
+pub fn emit_with_options(
+    model: &Model,
+    choice: JacobianChoice,
+    optimized: bool,
+    parameter_jacobian: bool,
+    limits: Limits,
+) -> Result<(Vec<u8>, ModelDescription), CompileError> {
+    emit_limited(model, choice, limits, optimized, parameter_jacobian)
 }
 
 /// [`emit_with`] or [`emit_optimized`] with the limits of the functions given (lower ones in
@@ -141,6 +156,7 @@ fn emit_limited(
     choice: JacobianChoice,
     limits: Limits,
     optimized: bool,
+    parameter_jacobian: bool,
 ) -> Result<(Vec<u8>, ModelDescription), CompileError> {
     // Discover delay operands in generated event and discontinuity roots as well as SBML math.
     let discontinuities = model.try_discontinuity_roots()?;
@@ -166,7 +182,7 @@ fn emit_limited(
     // column by column: the forward sensitivities of the engine take a difference quotient of
     // the right hand side without it, so a model which has none (an operator without a
     // derivative, a budget, a history) carries the export not at all
-    let parameters = if history.sites.is_empty() {
+    let parameters = if parameter_jacobian && history.sites.is_empty() {
         derive::parameter_jacobian(model).ok()
     } else {
         None
@@ -1288,7 +1304,8 @@ mod tests {
         };
         // with the common subexpressions model_rhs has 4 parameters and 1 local (exp(x), given
         // back after the rate of x and then exp(y)), model_jac 2 locals
-        let (wasm, d) = emit_limited(&m, JacobianChoice::Auto, Limits::default(), true).unwrap();
+        let (wasm, d) =
+            emit_limited(&m, JacobianChoice::Auto, Limits::default(), true, true).unwrap();
         assert_eq!(exps(&wasm), 2);
         assert!(matches!(d.jacobian, JacobianKind::Analytic(_)));
         // above 5 locals (model_jac): without them, every exp of the code as written
@@ -1296,17 +1313,17 @@ mod tests {
             bytes: MAX_FUNCTION_BYTES,
             locals: 5,
         };
-        let (wasm, d) = emit_limited(&m, JacobianChoice::Auto, limits, true).unwrap();
+        let (wasm, d) = emit_limited(&m, JacobianChoice::Auto, limits, true, true).unwrap();
         assert_eq!(exps(&wasm), 4);
         assert!(matches!(d.jacobian, JacobianKind::Analytic(_)));
-        let (written, _) = emit_limited(&m, JacobianChoice::Auto, limits, false).unwrap();
+        let (written, _) = emit_limited(&m, JacobianChoice::Auto, limits, false, true).unwrap();
         assert_eq!(exps(&written), 4);
         // a module of 4 locals (the parameters) at most is an error with and without them
         let tight = Limits {
             bytes: MAX_FUNCTION_BYTES,
             locals: 3,
         };
-        assert!(emit_limited(&m, JacobianChoice::Auto, tight, true).is_err());
+        assert!(emit_limited(&m, JacobianChoice::Auto, tight, true, true).is_err());
     }
 
     /// The kind of the Jacobian and the description do not depend on the optimizer, at, below
@@ -1332,8 +1349,8 @@ mod tests {
                 JacobianChoice::Analytic,
                 JacobianChoice::DifferenceQuotient,
             ] {
-                let written = emit_limited(&m, choice, limits, false);
-                let optimized = emit_limited(&m, choice, limits, true);
+                let written = emit_limited(&m, choice, limits, false, true);
+                let optimized = emit_limited(&m, choice, limits, true, true);
                 match (written, optimized) {
                     (Ok((_, a)), Ok((_, b))) => {
                         assert_eq!(a, b, "{limits:?} {choice:?}");
@@ -1372,12 +1389,13 @@ mod tests {
         let reason = "model_jac would be a function above the limits of WebAssembly engines (one \
                       statement: 132 bytes, 7 locals; at most 1000000 bytes and 6 locals)";
         for optimized in [false, true] {
-            let (_, d) = emit_limited(&m, JacobianChoice::Auto, limits, optimized).unwrap();
+            let (_, d) = emit_limited(&m, JacobianChoice::Auto, limits, optimized, true).unwrap();
             let JacobianKind::ColoredDifference { reason: r, .. } = &d.jacobian else {
                 panic!("{:?}", d.jacobian)
             };
             assert_eq!(r, reason);
-            let error = emit_limited(&m, JacobianChoice::Analytic, limits, optimized).unwrap_err();
+            let error =
+                emit_limited(&m, JacobianChoice::Analytic, limits, optimized, true).unwrap_err();
             assert!(
                 matches!(&error, CompileError::Unsupported { element, .. } if element == abi::JAC),
                 "{error:?}"
@@ -1406,7 +1424,7 @@ mod tests {
                     .is_ok()
             {
                 only_written += 1;
-                if let Ok((_, d)) = emit_limited(&m, JacobianChoice::Auto, limits, true) {
+                if let Ok((_, d)) = emit_limited(&m, JacobianChoice::Auto, limits, true, true) {
                     assert!(
                         matches!(d.jacobian, JacobianKind::ColoredDifference { .. }),
                         "{bytes}"
@@ -1430,7 +1448,7 @@ mod tests {
             bytes: MAX_FUNCTION_BYTES,
             locals: 6,
         };
-        let (_, d) = emit_limited(&m, JacobianChoice::Auto, limits, false).unwrap();
+        let (_, d) = emit_limited(&m, JacobianChoice::Auto, limits, false, true).unwrap();
         let JacobianKind::ColoredDifference {
             pattern, reason, ..
         } = &d.jacobian
@@ -1444,20 +1462,21 @@ mod tests {
              statement: 132 bytes, 7 locals; at most 1000000 bytes and 6 locals)"
         );
         // the analytic Jacobian asked for is refused with the error of the limits
-        let error = emit_limited(&m, JacobianChoice::Analytic, limits, false).unwrap_err();
+        let error = emit_limited(&m, JacobianChoice::Analytic, limits, false, true).unwrap_err();
         assert!(
             matches!(&error, CompileError::Unsupported { element, .. } if element == abi::JAC),
             "{error:?}"
         );
         // within the limits it is analytic
-        let (_, d) = emit_limited(&m, JacobianChoice::Auto, Limits::default(), false).unwrap();
+        let (_, d) =
+            emit_limited(&m, JacobianChoice::Auto, Limits::default(), false, true).unwrap();
         assert!(matches!(d.jacobian, JacobianKind::Analytic(_)));
         // a function other than model_jac above the limits stays an error
         let tight = Limits {
             bytes: MAX_FUNCTION_BYTES,
             locals: 4,
         };
-        let error = emit_limited(&m, JacobianChoice::Auto, tight, false).unwrap_err();
+        let error = emit_limited(&m, JacobianChoice::Auto, tight, false, true).unwrap_err();
         assert!(
             matches!(&error, CompileError::Unsupported { element, .. } if element != abi::JAC),
             "{error:?}"

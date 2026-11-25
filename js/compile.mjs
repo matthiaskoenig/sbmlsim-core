@@ -78,19 +78,26 @@ class Compiler {
    * Compiles an SBML Level 3 Version 2 document.
    *
    * @param {string} sbml the text of the document
-   * @param {{optimize?: boolean, jacobian?: "auto"|"difference-quotient"|"analytic"}} options
+   * @param {{optimize?: boolean, jacobian?: "auto"|"difference-quotient"|"analytic", parameterJacobian?: boolean}} options
    *   `optimize` runs the optimizer of the compiler (the default, the results are the same
-   *   without it) and `jacobian` is the source of the Jacobian of the model
+   *   without it), `jacobian` is the source of the state Jacobian, and
+   *   `parameterJacobian: false` omits analytic parameter derivatives and their constants
    * @returns {{wasm: Uint8Array, description: object}} `model.wasm` and `model.json`
    * @throws {CompileError} for a document the compiler refuses
    */
-  compile(sbml, { optimize = true, jacobian = "auto" } = {}) {
+  compile(sbml, { optimize = true, jacobian = "auto", parameterJacobian = true } = {}) {
     if (typeof sbml !== "string") {
       throw new TypeError("the document of a compilation is text");
     }
     const choice = JACOBIAN[jacobian];
     if (choice === undefined) {
       throw new TypeError(`the Jacobian ${jacobian} is none of ${Object.keys(JACOBIAN)}`);
+    }
+    if (typeof parameterJacobian !== "boolean") {
+      throw new TypeError("parameterJacobian must be a boolean");
+    }
+    if (!parameterJacobian && typeof this.exports.compile_with_options !== "function") {
+      throw new Error("compiler.wasm does not support parameterJacobian: false");
     }
     const { allocate, compile, deallocate } = this.exports;
     const document_ = new TextEncoder().encode(sbml);
@@ -100,7 +107,16 @@ class Compiler {
       if (document_.length > 0) {
         this.bytes().set(document_, input);
       }
-      const status = compile(input, document_.length, optimize ? 1 : 0, choice, words);
+      const status = parameterJacobian
+        ? compile(input, document_.length, optimize ? 1 : 0, choice, words)
+        : this.exports.compile_with_options(
+            input,
+            document_.length,
+            optimize ? 1 : 0,
+            choice,
+            0,
+            words,
+          );
       const header = new Uint32Array(this.exports.memory.buffer, words, 4);
       const [textPointer, textLength, wasmPointer, wasmLength] = header;
       try {

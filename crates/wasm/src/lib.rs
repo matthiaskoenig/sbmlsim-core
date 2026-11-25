@@ -18,7 +18,9 @@
 //!    of `model.json`, and the pointer and the length of `model.wasm`. It gives 1 for a model
 //!    it compiled and 0 for one it refuses, whose message is the first buffer, with the second
 //!    one empty,
-//! 3. `deallocate(pointer, len)` gives a buffer back, the results included: every buffer of
+//! 3. `compile_with_options(pointer, len, optimize, jacobian, parameter_jacobian, out)` has
+//!    the same result, with 0 to omit analytic parameter derivatives and 1 to include them,
+//! 4. `deallocate(pointer, len)` gives a buffer back, the results included: every buffer of
 //!    the interface is a slice of bytes of exactly its length, so one function frees them all.
 //!
 //! `optimize` is whether the optimizer of the compiler runs (1 or 0, the results are the same
@@ -69,9 +71,23 @@ fn jacobian_of(choice: u32) -> JacobianChoice {
 /// Gives the message of the reader, of the builder or of the code generation for a document
 /// which is not compiled.
 pub fn compile_model(sbml: &str, optimize: bool, jacobian: u32) -> Result<Compiled, String> {
+    compile_model_with_options(sbml, optimize, jacobian, true)
+}
+
+/// [`compile_model`] with control over the optional analytic parameter Jacobian.
+///
+/// With `parameter_jacobian=false`, forward sensitivities use numerical parameter
+/// derivatives and ordinary simulations avoid the corresponding compilation and constants.
+pub fn compile_model_with_options(
+    sbml: &str,
+    optimize: bool,
+    jacobian: u32,
+    parameter_jacobian: bool,
+) -> Result<Compiled, String> {
     let options = CompileOptions {
         optimize,
         jacobian: jacobian_of(jacobian),
+        parameter_jacobian,
     };
     let compiled = sbmlsim_compiler::compile(sbml, &options).map_err(|err| err.to_string())?;
     let description = serde_json::to_string(&compiled.description)
@@ -159,6 +175,25 @@ pub unsafe extern "C" fn compile(
     jacobian: u32,
     out: *mut usize,
 ) -> u32 {
+    // SAFETY: the caller provides the buffers documented above; the extra option enables
+    // the historical default, preserving the original interface.
+    unsafe { compile_with_options(pointer, len, optimize, jacobian, 1, out) }
+}
+
+/// [`compile`] with `parameter_jacobian=0` to omit analytic parameter derivatives.
+///
+/// # Safety
+///
+/// The input and output buffers satisfy the same requirements as [`compile`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn compile_with_options(
+    pointer: *const u8,
+    len: usize,
+    optimize: u32,
+    jacobian: u32,
+    parameter_jacobian: u32,
+    out: *mut usize,
+) -> u32 {
     let bytes = if pointer.is_null() || len == 0 {
         // a document of no bytes, which the compiler refuses as an empty one
         &[][..]
@@ -167,7 +202,9 @@ pub unsafe extern "C" fn compile(
         unsafe { std::slice::from_raw_parts(pointer, len) }
     };
     let result = match std::str::from_utf8(bytes) {
-        Ok(text) => compile_model(text, optimize != 0, jacobian),
+        Ok(text) => {
+            compile_model_with_options(text, optimize != 0, jacobian, parameter_jacobian != 0)
+        }
         Err(_) => Err("the document is not UTF-8".to_owned()),
     };
     match result {

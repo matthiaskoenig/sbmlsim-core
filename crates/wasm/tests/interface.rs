@@ -6,7 +6,7 @@
 
 use std::slice;
 
-use sbmlsim_wasm::{allocate, compile, deallocate};
+use sbmlsim_wasm::{allocate, compile, compile_with_options, deallocate};
 
 /// A model with one species a reaction changes, which compiles.
 const MODEL: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -57,13 +57,24 @@ unsafe fn bytes_of(pointer: usize, len: usize) -> Vec<u8> {
 ///
 /// Panics when the interface gives a result which is not UTF-8.
 fn through_the_interface(sbml: &str) -> (u32, String, Vec<u8>) {
+    through_the_interface_with_options(sbml, true)
+}
+
+fn through_the_interface_with_options(
+    sbml: &str,
+    parameter_jacobian: bool,
+) -> (u32, String, Vec<u8>) {
     let bytes = sbml.as_bytes();
     // SAFETY: the buffers are the ones of the interface and are freed below
     unsafe {
         let input = allocate(bytes.len());
         std::ptr::copy_nonoverlapping(bytes.as_ptr(), input, bytes.len());
         let words = allocate(4 * size_of::<usize>()).cast::<usize>();
-        let status = compile(input, bytes.len(), 1, 0, words);
+        let status = if parameter_jacobian {
+            compile(input, bytes.len(), 1, 0, words)
+        } else {
+            compile_with_options(input, bytes.len(), 1, 0, 0, words)
+        };
         let description = bytes_of(*words, *words.add(1));
         let wasm = bytes_of(*words.add(2), *words.add(3));
         deallocate(*words as *mut u8, *words.add(1));
@@ -105,4 +116,13 @@ fn an_empty_document_is_refused_without_a_module() {
     let (status, message, wasm) = through_the_interface("");
     assert_eq!(status, 0, "{message}");
     assert!(wasm.is_empty());
+}
+
+#[test]
+fn parameter_derivatives_are_optional_in_the_extended_interface() {
+    let (status, description, wasm) = through_the_interface_with_options(MODEL, false);
+    assert_eq!(status, 1, "{description}");
+    assert!(wasm.starts_with(b"\0asm"));
+    let description: serde_json::Value = serde_json::from_str(&description).unwrap();
+    assert!(description.get("jacobian_p").is_none());
 }

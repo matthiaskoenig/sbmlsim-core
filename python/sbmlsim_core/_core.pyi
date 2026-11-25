@@ -278,7 +278,11 @@ class Runtime:
         """Loads `model.wasm` with its description."""
 
 def compile_sbml(
-    sbml: str, *, optimize: bool = True, jacobian: str = "auto"
+    sbml: str,
+    *,
+    optimize: bool = True,
+    jacobian: str = "auto",
+    parameter_jacobian: bool = True,
 ) -> CompiledModel:
     """Compiles the text of an SBML Level 3 document into `model.wasm` and its description."""
 

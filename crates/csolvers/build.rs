@@ -135,8 +135,8 @@ const SUITESPARSE_SOURCES: &[&str] = &[
 ];
 
 /// The C sources of this crate, relative to its directory: the KLU linear solver which keeps its
-/// symbolic analysis across the initializations of CVODE (`sbmlsim_SUNLinSol_KLUKept`).
-const CRATE_SOURCES: &[&str] = &["csrc/sunlinsol_klu_kept.c"];
+/// symbolic analysis across CVODE restarts and the fixed-pattern sparse matrix adapter.
+const CRATE_SOURCES: &[&str] = &["csrc/sunlinsol_klu_kept.c", "csrc/sunmatrix_sparse_fixed.c"];
 
 /// The include directories of SuiteSparse, relative to `third_party/SuiteSparse`.
 const SUITESPARSE_INCLUDES: &[&str] = &[

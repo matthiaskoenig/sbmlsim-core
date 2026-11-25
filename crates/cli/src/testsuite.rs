@@ -990,6 +990,7 @@ pub fn run(args: &TestsuiteArgs) -> anyhow::Result<bool> {
     let options = CompileOptions {
         jacobian: args.jacobian.choice(),
         optimize: !args.no_optimize,
+        ..CompileOptions::default()
     };
     if let Some(out) = &args.export {
         write_runtime(out)?;

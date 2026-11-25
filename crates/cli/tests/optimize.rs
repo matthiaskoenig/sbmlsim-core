@@ -69,6 +69,7 @@ fn compare(dir: &Path, choice: JacobianChoice) -> (Option<String>, usize, usize)
     let options = |optimize| CompileOptions {
         optimize,
         jacobian: choice,
+        ..CompileOptions::default()
     };
     let written = compile(&sbml, &options(false)).unwrap();
     let optimized = compile(&sbml, &options(true)).unwrap();
@@ -245,6 +246,7 @@ fn edge_values_keep_their_bits() {
         let options = |optimize| CompileOptions {
             optimize,
             jacobian: choice,
+            ..CompileOptions::default()
         };
         let written = compile(&sbml, &options(false)).unwrap();
         let optimized = compile(&sbml, &options(true)).unwrap();
@@ -483,6 +485,7 @@ fn literal_folding_gives_the_bits_of_the_code() {
         let options = |optimize| CompileOptions {
             optimize,
             jacobian: compiled_with,
+            ..CompileOptions::default()
         };
         let written = compile(&sbml, &options(false)).unwrap();
         let optimized = compile(&sbml, &options(true)).unwrap();

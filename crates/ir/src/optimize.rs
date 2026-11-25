@@ -46,6 +46,10 @@
 //!
 //! A program of an assignment rule whose expression is a common subexpression of later
 //! statements reuses the local of the rule.
+//! Read-only callback programs also cache up to 32 immutable state, parameter, or constant
+//! inputs with at least three remaining reads, ranked by frequency after arithmetic CSE.
+//! Inputs read only in lazy branches stay in those branches. Initialization, assignment,
+//! and constant-writing programs do not cache inputs across their stores.
 //!
 //! 4. **Constants** ([`Constants`]): a subtree which reads nothing but literals and the
 //!    parameters which no assignment rule assigns (directly, or through the assignment rules
@@ -243,7 +247,7 @@ fn hoisted(lets: &[Assignment], outputs: &[Expr], cse: bool, constants: &mut Con
     let mut roots = live(lets, &outputs);
     roots.extend(outputs.into_iter().map(Root::Output));
     let roots = constants.hoist_roots(roots, &mut HashMap::new());
-    common_subexpressions(roots, cse, &mut 0)
+    common_subexpressions(roots, cse, &mut 0, true)
 }
 
 /// The program of a function which evaluates `lets` into locals in their order (each reads only
@@ -254,7 +258,7 @@ pub fn program(lets: &[Assignment], outputs: &[Expr], cse: bool, commons: &mut u
     let outputs: Vec<Expr> = outputs.iter().map(fold).collect();
     let mut roots = live(lets, &outputs);
     roots.extend(outputs.into_iter().map(Root::Output));
-    common_subexpressions(roots, cse, commons)
+    common_subexpressions(roots, cse, commons, false)
 }
 
 /// The programs of a function of an event index ([`Branches`]): the lets any branch reads, then
@@ -283,7 +287,7 @@ fn columns(
         .map(fold)
         .collect();
     let prefix = constants.hoist_roots(live(rules, &all), &mut symbols);
-    let prefix = common_subexpressions(prefix, cse, &mut commons);
+    let prefix = common_subexpressions(prefix, cse, &mut commons, true);
     let branches = parameters
         .columns
         .iter()
@@ -306,7 +310,7 @@ fn columns(
             // not reach the column after it (which may keep its own, a value of a state)
             let mut of_the_column = symbols.clone();
             let roots = constants.hoist_roots(roots, &mut of_the_column);
-            Some(common_subexpressions(roots, cse, &mut commons))
+            Some(common_subexpressions(roots, cse, &mut commons, true))
         })
         .collect();
     Branches { prefix, branches }
@@ -331,7 +335,7 @@ fn branches_with(
     if let Some(c) = constants.as_deref_mut() {
         prefix = c.hoist_roots(prefix, &mut symbols);
     }
-    let prefix = common_subexpressions(prefix, cse, &mut commons);
+    let prefix = common_subexpressions(prefix, cse, &mut commons, true);
     let branches = outputs
         .into_iter()
         .map(|o| {
@@ -340,7 +344,7 @@ fn branches_with(
                 if let Some(c) = constants.as_deref_mut() {
                     roots = c.hoist_roots(roots, &mut symbols);
                 }
-                common_subexpressions(roots, cse, &mut commons)
+                common_subexpressions(roots, cse, &mut commons, true)
             })
         })
         .collect();
@@ -757,7 +761,12 @@ impl Dag {
 
 /// The program of the roots with the subtrees which the code would evaluate more than once
 /// (one of their evaluations eager) computed once into locals, when `enabled`.
-fn common_subexpressions(roots: Vec<Root>, enabled: bool, commons: &mut u32) -> Program {
+fn common_subexpressions(
+    roots: Vec<Root>,
+    enabled: bool,
+    commons: &mut u32,
+    cache_inputs: bool,
+) -> Program {
     let as_statement = |r: Root| match r {
         Root::Let(s, e) => Statement::Let(s, e),
         Root::Output(e) => Statement::Output(e),
@@ -792,6 +801,33 @@ fn common_subexpressions(roots: Vec<Root>, enabled: bool, commons: &mut u32) -> 
             if eager[id] && node.eager(position) {
                 eager[c] = true;
             }
+        }
+    }
+
+    if cache_inputs {
+        // Read-only callbacks may load an immutable input many times, especially across
+        // math calls that the machine-code compiler cannot prove preserve linear memory.
+        // Cache only the most frequently read inputs, after arithmetic CSE determines the
+        // remaining uses. Three uses amortize the definition; the fixed budget bounds extra
+        // locals and register pressure. Assignment-rule targets already have locals.
+        const MAX_CACHED_INPUTS: usize = 32;
+        let locals: HashSet<Symbol> = roots
+            .iter()
+            .filter_map(|root| match root {
+                Root::Let(symbol, _) => Some(*symbol),
+                Root::Output(_) => None,
+            })
+            .collect();
+        let mut inputs: Vec<usize> = (0..n)
+            .filter(|&id| {
+                evaluations[id] >= 3
+                    && eager[id]
+                    && matches!(dag.nodes[id], Node::Symbol(symbol @ (Symbol::State(_) | Symbol::Param(_) | Symbol::Constant(_))) if !locals.contains(&symbol))
+            })
+            .collect();
+        inputs.sort_unstable_by_key(|&id| (std::cmp::Reverse(evaluations[id]), id));
+        for id in inputs.into_iter().take(MAX_CACHED_INPUTS) {
+            shared[id] = true;
         }
     }
 

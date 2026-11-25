@@ -120,9 +120,16 @@ fn the_analytic_df_dp_gives_the_sensitivities_of_the_difference_quotient() {
     // `w` is read by no rate: the initialization derives `Vmax` from it
     assert!(analytic.rows(parameter("w")).is_empty());
 
-    // the same model.wasm without the pattern, whose `df/dp` is the difference quotient
-    let mut quotient = compiled.description.clone();
-    quotient.jacobian_p = None;
+    let quotient = compile(
+        &sbml(),
+        &CompileOptions {
+            parameter_jacobian: false,
+            ..CompileOptions::default()
+        },
+    )
+    .unwrap();
+    assert!(quotient.description.jacobian_p.is_none());
+    assert!(quotient.description.n_constants < compiled.description.n_constants);
     let runtime = Runtime::embedded().unwrap();
     let mut analytic = runtime
         .load(&compiled.wasm, &compiled.description)
@@ -130,10 +137,16 @@ fn the_analytic_df_dp_gives_the_sensitivities_of_the_difference_quotient() {
         .instantiate_native()
         .unwrap();
     let mut difference = runtime
-        .load(&compiled.wasm, &quotient)
+        .load(&quotient.wasm, &quotient.description)
         .unwrap()
         .instantiate_native()
         .unwrap();
+    let mut ordinary = request(true);
+    ordinary.sensitivities.clear();
+    let ordinary_with = analytic.simulate(&ordinary).unwrap();
+    let ordinary_without = difference.simulate(&ordinary).unwrap();
+    let bits = |values: &[f64]| values.iter().map(|v| v.to_bits()).collect::<Vec<_>>();
+    assert_eq!(bits(&ordinary_with.values), bits(&ordinary_without.values));
     let with = analytic.simulate(&request(true)).unwrap();
     let without = difference.simulate(&request(true)).unwrap();
 

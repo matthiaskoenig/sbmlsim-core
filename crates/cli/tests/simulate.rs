@@ -131,6 +131,30 @@ fn compile_writes_a_model_which_simulates() {
 }
 
 #[test]
+fn compile_can_omit_parameter_derivatives_without_changing_simulation() {
+    let sbml = Path::new(env!("CARGO_MANIFEST_DIR")).join("../host/tests/decay.xml");
+    let out = Path::new(env!("CARGO_TARGET_TMPDIR")).join("compiled-decay-ordinary");
+    let output = run(&[
+        "compile".as_ref(),
+        sbml.as_os_str(),
+        "--no-parameter-jacobian".as_ref(),
+        "-o".as_ref(),
+        out.as_os_str(),
+    ]);
+    assert!(output.status.success(), "{output:?}");
+    let description: ModelDescription =
+        serde_json::from_slice(&std::fs::read(out.join("model.json")).unwrap()).unwrap();
+    assert!(description.jacobian_p.is_none());
+    let output = run(&[
+        "simulate".as_ref(),
+        out.as_os_str(),
+        model_dir().join("request.json").as_os_str(),
+    ]);
+    assert!(output.status.success(), "{output:?}");
+    assert_csv(&String::from_utf8(output.stdout).unwrap());
+}
+
+#[test]
 fn compile_separates_an_unsolvable_from_an_overdetermined_algebraic_system() {
     let tmp = Path::new(env!("CARGO_TARGET_TMPDIR"));
     let model = |parameters: &str, rules: &str| {

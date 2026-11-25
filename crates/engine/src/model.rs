@@ -9,6 +9,15 @@ use sbmlsim_abi::ModelSizes;
 
 /// The functions of a compiled model, one per export of the contract `model/2`.
 pub trait ModelFns {
+    /// Begins a scope in which the supplied parameter buffer is unchanged except through
+    /// `defaults`, `init`, `assign`, or `event_apply`. Bridges may retain its synchronized
+    /// values until `end_parameters`; nested scopes may use different parameter buffers.
+    fn begin_parameters(&self, _p: &[f64]) {}
+    /// Ends the most recent parameter scope, including when its solver call fails.
+    fn end_parameters(&self) {}
+    /// Invalidates retained parameter values after a direct change to a scoped buffer.
+    fn parameters_changed(&self) {}
+
     /// A failure recorded by a fallible model bridge. Implementations may retain the first
     /// error; an engine with an internal failure is not used again.
     fn check_error(&self) -> Result<(), crate::EngineError> {
@@ -82,6 +91,25 @@ pub trait ModelFns {
         _out: &mut [f64],
     ) -> Result<bool, crate::EngineError> {
         Ok(false)
+    }
+}
+
+/// Bounds parameter reuse to solver calls whose inputs remain live. The bridge never
+/// dereferences a retained host pointer; the pointer only identifies a buffer in this scope.
+pub(crate) struct ParameterScope<'a> {
+    model: &'a dyn ModelFns,
+}
+
+impl<'a> ParameterScope<'a> {
+    pub(crate) fn new(model: &'a dyn ModelFns, p: &[f64]) -> Self {
+        model.begin_parameters(p);
+        Self { model }
+    }
+}
+
+impl Drop for ParameterScope<'_> {
+    fn drop(&mut self) {
+        self.model.end_parameters();
     }
 }
 

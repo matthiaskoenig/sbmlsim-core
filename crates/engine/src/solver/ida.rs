@@ -46,12 +46,12 @@ pub(super) unsafe extern "C" fn roots(
             let Some(projection) = p.interpolation.as_deref_mut() else {
                 return -1;
             };
-            let mut state = std::mem::take(&mut projection.probe);
+            let mut state = std::mem::take(&mut projection.workspace.probe);
             state.clear();
             state.extend_from_slice(values(y, p.n));
             if let Err(error) = projection.project(t, &mut state, &p.p) {
                 p.callback_error = Some(error);
-                projection.probe = state;
+                projection.workspace.probe = state;
                 return -1;
             }
             p.counts.roots += 1;
@@ -61,7 +61,7 @@ pub(super) unsafe extern "C" fn roots(
                 &p.p,
                 std::slice::from_raw_parts_mut(g, p.n_roots),
             );
-            projection.probe = state;
+            projection.workspace.probe = state;
             0
         })
     }
@@ -158,7 +158,7 @@ pub(super) unsafe extern "C" fn dense(
             };
             let n = p.n;
             let matrix = std::slice::from_raw_parts_mut(SUNDenseMatrix_Data(jac), n * n);
-            matrix.fill(0.0);
+            // SUNDIALS clears a direct solver matrix before invoking this callback.
             for j in 0..n {
                 for k in pattern.col_ptr[j] as usize..pattern.col_ptr[j + 1] as usize {
                     matrix[j * n + pattern.row_idx[k] as usize] = p.jac_values[k];
@@ -190,48 +190,16 @@ pub(super) unsafe extern "C" fn sparse(
             let Some(pattern) = jacobian(p, t, y, yp, w, base) else {
                 return -1;
             };
-            let n = p.n;
-            let capacity = SUNSparseMatrix_NNZ(jac) as usize;
-            // Every column writes the entries of the pattern, and a differential one also a
-            // diagonal which the pattern need not hold.
-            let required = pattern.nnz() + n - p.n_algebraic;
-            if capacity < required {
-                p.callback_error = Some(EngineError::Internal(format!(
-                    "the sparse Jacobian of IDA holds {capacity} entries, {required} are needed"
-                )));
-                return -1;
-            }
-            let data = std::slice::from_raw_parts_mut(SUNSparseMatrix_Data(jac), capacity);
-            let rows = std::slice::from_raw_parts_mut(SUNSparseMatrix_IndexValues(jac), capacity);
-            let cols = std::slice::from_raw_parts_mut(SUNSparseMatrix_IndexPointers(jac), n + 1);
-            let mut out = 0;
-            for j in 0..n {
-                cols[j] = out as i32;
-                let mut add_diagonal = j < n - p.n_algebraic;
-                for k in pattern.col_ptr[j] as usize..pattern.col_ptr[j + 1] as usize {
-                    let i = pattern.row_idx[k];
-                    if add_diagonal && i as usize > j {
-                        rows[out] = j as i32;
-                        data[out] = -cj;
-                        out += 1;
-                        add_diagonal = false;
-                    }
-                    rows[out] = i as i32;
-                    data[out] = p.jac_values[k];
-                    if add_diagonal && i as usize == j {
-                        data[out] -= cj;
-                        add_diagonal = false;
-                    }
-                    out += 1;
-                }
-                if add_diagonal {
-                    rows[out] = j as i32;
-                    data[out] = -cj;
-                    out += 1;
-                }
-            }
-            cols[n] = out as i32;
-            0
+            sbmlsim_SUNSparseMatrix_SetJacobian(
+                jac,
+                pattern.nnz() as sunindextype,
+                pattern.col_ptr.as_ptr().cast(),
+                pattern.row_idx.as_ptr().cast(),
+                p.jac_values.as_ptr(),
+                (p.n - p.n_algebraic) as sunindextype,
+                0,
+                cj,
+            )
         })
     }
 }
@@ -242,6 +210,7 @@ impl<const DAE: bool, H: crate::delay::Mode> Integrator<DAE, H> {
         let Some(t) = self.pending_ic else {
             return Ok(());
         };
+        let _parameters = crate::model::ParameterScope::new(problem.model, &problem.p);
         // The horizon sets the IC Newton scale even for zero-duration requests.
         let horizon = ic_horizon(t);
         // SAFETY: the IDA memory is initialized. The data pointer is valid throughout
@@ -289,6 +258,12 @@ fn ic_horizon(t: f64) -> f64 {
 pub(crate) struct Constraints<'a> {
     model: &'a dyn ModelFns,
     desc: &'a ModelDescription,
+    workspace: ConstraintWorkspace,
+}
+
+/// Owned projection storage, retained independently of a simulation's model borrows.
+pub(crate) struct ConstraintWorkspace {
+    requested: IntegratorSettings,
     settings: IntegratorSettings,
     solver: Integrator<true>,
     difference: Difference,
@@ -298,11 +273,23 @@ pub(crate) struct Constraints<'a> {
     jac_values: Vec<f64>,
 }
 
+#[cfg(test)]
+impl ConstraintWorkspace {
+    pub(crate) fn storage_identity(&self) -> (usize, usize, usize) {
+        (
+            self.solver.mem as usize,
+            self.jac_values.as_ptr() as usize,
+            self.difference.rates.as_ptr() as usize,
+        )
+    }
+}
+
 impl<'a> Constraints<'a> {
-    pub(crate) fn new(
+    pub(crate) fn cached(
         model: &'a dyn ModelFns,
         desc: &'a ModelDescription,
         settings: &IntegratorSettings,
+        workspace: Option<ConstraintWorkspace>,
     ) -> Result<Self, EngineError> {
         let linear = crate::linear_of(desc, settings)?;
         let config = Config {
@@ -313,6 +300,33 @@ impl<'a> Constraints<'a> {
             },
             n_sens: 0,
         };
+        let mut workspace = match workspace {
+            Some(workspace) if workspace.solver.config() == config => workspace,
+            _ => ConstraintWorkspace {
+                requested: settings.clone(),
+                settings: Self::projection_settings(settings),
+                solver: Integrator::new(config)?,
+                difference: crate::difference_of(desc),
+                parameters: Vec::new(),
+                counts: Counts::default(),
+                probe: Vec::new(),
+                jac_values: vec![0.0; desc.jacobian.pattern().nnz()],
+            },
+        };
+        if workspace.requested != *settings {
+            workspace.settings = Self::projection_settings(settings);
+            workspace.requested.clone_from(settings);
+        }
+        workspace.counts = Counts::default();
+        workspace.solver.begin();
+        Ok(Self {
+            model,
+            desc,
+            workspace,
+        })
+    }
+
+    fn projection_settings(settings: &IntegratorSettings) -> IntegratorSettings {
         let mut settings = settings.clone();
         // A strict crossing probe can be only 1e-12 time units beyond its root.
         // Project to roundoff even when the integration error budget is looser.
@@ -321,22 +335,16 @@ impl<'a> Constraints<'a> {
             Tolerance::Scalar(a) => *a = a.min(1e-14),
             Tolerance::PerState(values) => values.iter_mut().for_each(|a| *a = a.min(1e-14)),
         }
-        Ok(Self {
-            model,
-            desc,
-            settings,
-            solver: Integrator::new(config)?,
-            difference: crate::difference_of(desc),
-            parameters: Vec::new(),
-            counts: Counts::default(),
-            probe: Vec::new(),
-            jac_values: vec![0.0; desc.jacobian.pattern().nnz()],
-        })
+        settings
+    }
+
+    pub(crate) fn into_workspace(self) -> ConstraintWorkspace {
+        self.workspace
     }
 
     /// Work spent calculating consistent initial conditions on this memory.
     pub(crate) fn counts(&self) -> (Counts, SolverCounts) {
-        (self.counts, self.solver.counts())
+        (self.workspace.counts, self.workspace.solver.counts())
     }
 
     /// Estimate algebraic rates along (1, f) on the constraint manifold.
@@ -351,7 +359,7 @@ impl<'a> Constraints<'a> {
         let differential = y.len() - self.desc.n_algebraic as usize;
         let h = f64::EPSILON.cbrt() * t.abs().max(1.0);
         let (before, after) = ((t - h).max(0.0), t + h);
-        let mut state = std::mem::take(&mut self.probe);
+        let mut state = std::mem::take(&mut self.workspace.probe);
         state.clear();
         state.extend_from_slice(y);
         for j in 0..differential {
@@ -367,17 +375,19 @@ impl<'a> Constraints<'a> {
         for j in differential..rates.len() {
             rates[j] = (state[j] - rates[j]) / (after - before);
         }
-        self.probe = state;
+        self.workspace.probe = state;
         Ok(())
     }
 
     pub(crate) fn project(&mut self, t: f64, y: &mut [f64], p: &[f64]) -> Result<(), EngineError> {
         let n = y.len();
-        self.solver.start(t, y, ic_horizon(t), &self.settings, 0)?;
-        self.parameters.clear();
-        self.parameters.extend_from_slice(p);
+        self.workspace
+            .solver
+            .start(t, y, ic_horizon(t), &self.workspace.settings, 0)?;
+        self.workspace.parameters.clear();
+        self.workspace.parameters.extend_from_slice(p);
         let analytic = matches!(
-            self.solver.config.method,
+            self.workspace.solver.config.method,
             Method::Ida {
                 linear: Linear::Dense {
                     jacobian: Jacobian::Analytic
@@ -396,24 +406,24 @@ impl<'a> Constraints<'a> {
             n_roots: 0,
             n_discontinuity_roots: 0,
             model: self.model,
-            p: std::mem::take(&mut self.parameters),
+            p: std::mem::take(&mut self.workspace.parameters),
             pattern: Some(self.desc.jacobian.pattern()),
-            jac_values: std::mem::take(&mut self.jac_values),
+            jac_values: std::mem::take(&mut self.workspace.jac_values),
             jacobian_p: None,
             analytic,
-            difference: Some(&mut self.difference),
+            difference: Some(&mut self.workspace.difference),
             sensitivity: None,
             mem: ptr::null_mut(),
             krylov: ptr::null_mut(),
             counts: Counts::default(),
             callback_error: None,
         };
-        let result = self.solver.consistent(&mut problem);
-        self.counts = self.counts.add(problem.counts);
-        self.parameters = problem.p;
-        self.jac_values = problem.jac_values;
+        let result = self.workspace.solver.consistent(&mut problem);
+        self.workspace.counts = self.workspace.counts.add(problem.counts);
+        self.workspace.parameters = problem.p;
+        self.workspace.jac_values = problem.jac_values;
         result?;
-        y.copy_from_slice(self.solver.state());
+        y.copy_from_slice(self.workspace.solver.state());
         Ok(())
     }
 }
