@@ -129,6 +129,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(runtime::fit_problem_of_models, m)?)?;
     m.add_function(wrap_pyfunction!(compile_sbml, m)?)?;
     m.add_function(wrap_pyfunction!(runtime_wasm, m)?)?;
+    m.add_function(wrap_pyfunction!(plot_wasm, m)?)?;
     m.add_function(wrap_pyfunction!(chaos::chaos_expansion, m)?)?;
     m.add_function(wrap_pyfunction!(chaos::chaos_design_matrix, m)?)?;
     m.add_function(wrap_pyfunction!(chaos::chaos_predict, m)?)?;
@@ -152,4 +153,13 @@ fn runtime_wasm(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
     files.set_item("mathlib", PyBytes::new(py, sbmlsim_host::MATHLIB_WASM))?;
     files.set_item("compiler", PyBytes::new(py, sbmlsim_host::COMPILER_WASM))?;
     Ok(files)
+}
+
+/// The bytes of `plot.wasm` this extension embeds (the one of `sbmlsim-core runtime` and of the
+/// npm package of the release), the renderer of the figures in a page: the SVG of a `figure/1`
+/// spec byte for byte as `render_svg` gives it, its geometry and the pick of a point, through
+/// the C ABI of `crates/plot-wasm`.
+#[pyfunction]
+fn plot_wasm(py: Python<'_>) -> Bound<'_, PyBytes> {
+    PyBytes::new(py, sbmlsim_host::PLOT_WASM)
 }

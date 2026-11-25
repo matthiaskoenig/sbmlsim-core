@@ -1,11 +1,10 @@
 // The check before `npm pack` and `npm publish` (the script `prepack` of package.json): the
 // package ships the runtime of a build of the core and the license of the repository, which are
 // no files of the source of `js/`. `runtime/` is written by `sbmlsim-core runtime -o js/runtime`
-// (engine.wasm, mathlib.wasm, compiler.wasm and the notices of their third parties,
-// THIRD_PARTY.md), and the
-// license is copied from the root of the repository. The version of the package is the one of
-// the workspace of the crates and of `CORE_VERSION` of panels.mjs, so a release names one
-// version everywhere.
+// (engine.wasm, mathlib.wasm, compiler.wasm, plot.wasm and the notices of their third parties,
+// THIRD_PARTY.md), and the license is copied from the root of the repository. The version of
+// the package is the one of the workspace of the crates and of `CORE_VERSION` of panels.mjs, so
+// a release names one version everywhere.
 
 import { copyFile, readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -20,7 +19,8 @@ const fail = (message) => {
   process.exit(1);
 };
 
-for (const name of ["engine.wasm", "mathlib.wasm", "compiler.wasm", "THIRD_PARTY.md"]) {
+const RUNTIME = ["engine.wasm", "mathlib.wasm", "compiler.wasm", "plot.wasm", "THIRD_PARTY.md"];
+for (const name of RUNTIME) {
   if (!existsSync(path.join(here, "runtime", name))) {
     fail(`runtime/${name} is missing: run 'sbmlsim-core runtime -o js/runtime' of a release build first`);
   }

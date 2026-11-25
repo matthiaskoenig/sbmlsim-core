@@ -62,6 +62,24 @@ jobs:
       # `compiler.wasm`, the compiler of `js/compile.mjs`: the module of the npm package
       - run: cargo build -p sbmlsim-wasm --target wasm32-unknown-unknown --profile wasm
       - run: cargo test -p sbmlsim-wasm
+  plot_wasm_same_bytes:
+    # `plot.wasm`, the renderer of the figures in a page: built for wasm32-wasip1 (its crate says
+    # why), it must give in Node the golden SVG of every fixture of sbmlsim-plot byte for byte,
+    # the bytes the native renderer gives; needs no wasi-sdk (no C)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the toolchain of rust-toolchain.toml
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - run: cargo clippy -p sbmlsim-plot-wasm --all-targets --target wasm32-wasip1 -- -D warnings
+      - run: cargo build -p sbmlsim-plot-wasm --target wasm32-wasip1 --profile wasm
+      - run: cargo test -p sbmlsim-plot-wasm
+      - name: plot.wasm in Node gives the golden SVG of every fixture
+        run: node crates/plot-wasm/check_golden.mjs target/wasm32-wasip1/wasm/sbmlsim_plot_wasm.wasm
   same_bits_as_wasmtime:
     # the JavaScript loader in Node: its tests, and every passing case of the SBML Test Suite
     # gives in Node the CSV of the wasmtime host byte for byte (js/test/same_bits.test.mjs)

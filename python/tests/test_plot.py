@@ -104,6 +104,13 @@ def test_color_scale_viridis() -> None:
     assert len(sbmlsim_core.color_scale("magma", 1.0, 100.0, [10.0], log=True)) == 1
 
 
+def test_plot_wasm_magic() -> None:
+    wasm = sbmlsim_core.plot_wasm()
+    assert isinstance(wasm, bytes)
+    assert wasm.startswith(b"\0asm\x01\0\0\0")
+    assert wasm not in sbmlsim_core.runtime_wasm().values()
+
+
 def test_color_scale_unknown_name() -> None:
     with pytest.raises(ValueError, match="viridis"):
         sbmlsim_core.color_scale("jet", 0.0, 1.0, [0.5])

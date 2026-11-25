@@ -163,9 +163,11 @@ def the_runtime_and_the_inline_build() -> None:
 
     files: dict[str, bytes] = sbmlsim_core.runtime_wasm()
     engine: bytes = files["engine"]
+    plot: bytes = sbmlsim_core.plot_wasm()
+    sbmlsim_core.plot_wasm("svg")  # ty: ignore[too-many-positional-arguments]
     notices: str = sbmlsim_core.THIRD_PARTY
     script: str = web.script()
-    print(engine, notices, script)
+    print(engine, plot, notices, script)
 
 
 def a_polynomial_chaos_expansion(u: numpy.typing.NDArray[numpy.float64]) -> None:

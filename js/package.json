@@ -34,6 +34,7 @@
     "./runtime/engine.wasm": "./runtime/engine.wasm",
     "./runtime/mathlib.wasm": "./runtime/mathlib.wasm",
     "./runtime/compiler.wasm": "./runtime/compiler.wasm",
+    "./runtime/plot.wasm": "./runtime/plot.wasm",
     "./package.json": "./package.json"
   },
   "bin": {
@@ -49,6 +50,7 @@
     "runtime/engine.wasm",
     "runtime/mathlib.wasm",
     "runtime/compiler.wasm",
+    "runtime/plot.wasm",
     "runtime/THIRD_PARTY.md",
     "LICENSE"
   ],

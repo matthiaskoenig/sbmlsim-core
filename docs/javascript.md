@@ -10,7 +10,7 @@
 | `panels.mjs` | `./panels` | the routes of the panel service of sbmlsim, answered inside a page from a bundle |
 | `simulate.mjs` | the command `sbmlsim-core-simulate` | the CSV of `sbmlsim-core simulate` in Node |
 
-The package is published to npm as [`sbmlsim-core`](https://www.npmjs.com/package/sbmlsim-core), with the `compiler.wasm`, `engine.wasm` and `mathlib.wasm` of its release in `runtime/`:
+The package is published to npm as [`sbmlsim-core`](https://www.npmjs.com/package/sbmlsim-core), with the `compiler.wasm`, `engine.wasm`, `mathlib.wasm` and `plot.wasm` (the renderer of the figures of sbmlsim, `crates/plot-wasm`) of its release in `runtime/`:
 
 ```bash
 npm install sbmlsim-core

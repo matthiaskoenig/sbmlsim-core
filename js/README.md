@@ -117,4 +117,4 @@ The [glimepiride app](https://matthiaskoenig.github.io/sbmlsim-web/examples/glim
 
 ## License
 
-The JavaScript is MIT licensed. `runtime/engine.wasm` contains SUNDIALS (BSD-3-Clause) and KLU with AMD, COLAMD and BTF of SuiteSparse (LGPL-2.1-or-later), whose notices and sources are named in `runtime/THIRD_PARTY.md`; the package as a whole is `MIT AND BSD-3-Clause AND LGPL-2.1-or-later`.
+The JavaScript is MIT licensed. `runtime/engine.wasm` contains SUNDIALS (BSD-3-Clause) and KLU with AMD, COLAMD and BTF of SuiteSparse (LGPL-2.1-or-later), whose notices and sources are named in `runtime/THIRD_PARTY.md`, which also names the crates in `runtime/plot.wasm`, the renderer of the figures of sbmlsim (charton under Apache-2.0 and permissively licensed crates, with the texts of their licenses); the package as a whole is `MIT AND BSD-3-Clause AND LGPL-2.1-or-later`.

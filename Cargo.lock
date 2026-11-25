@@ -2563,6 +2563,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "sbmlsim-plot-wasm"
+version = "0.26.0"
+dependencies = [
+ "sbmlsim-plot",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "sbmlsim-python"
 version = "0.26.0"
 dependencies = [

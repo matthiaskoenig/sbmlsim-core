@@ -222,6 +222,15 @@ fn runtime_writes_the_modules_and_the_notices_of_the_engine() {
         std::fs::read(dir.join("mathlib.wasm")).unwrap(),
         sbmlsim_host::MATHLIB_WASM
     );
+    assert_eq!(
+        std::fs::read(dir.join("compiler.wasm")).unwrap(),
+        sbmlsim_host::COMPILER_WASM
+    );
+    assert_eq!(
+        std::fs::read(dir.join("plot.wasm")).unwrap(),
+        sbmlsim_host::PLOT_WASM
+    );
+    assert!(sbmlsim_host::PLOT_WASM.starts_with(b"\0asm"));
     let notices = std::fs::read_to_string(dir.join("THIRD_PARTY.md")).unwrap();
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../THIRD_PARTY.md");
     assert_eq!(notices, std::fs::read_to_string(repository).unwrap());

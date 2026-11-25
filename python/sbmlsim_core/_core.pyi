@@ -290,6 +290,12 @@ def compile_sbml(
 def runtime_wasm() -> dict[str, bytes]:
     """The bytes of `engine.wasm`, `mathlib.wasm` and `compiler.wasm` this extension embeds."""
 
+def plot_wasm() -> bytes:
+    """The bytes of `plot.wasm` this extension embeds, the renderer of the figures in a page.
+
+    A page renders a `figure/1` spec with it to the SVG `render_svg` gives, byte for byte.
+    """
+
 def fit_models(
     models: Mapping[str, LoadedModel],
     request: dict[str, Any],

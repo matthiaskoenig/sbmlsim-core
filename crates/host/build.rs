@@ -1,13 +1,15 @@
-//! Provides `engine.wasm`, `mathlib.wasm` and `compiler.wasm` in `OUT_DIR`, which `src/lib.rs`
-//! embeds.
+//! Provides `engine.wasm`, `mathlib.wasm`, `compiler.wasm` and `plot.wasm` in `OUT_DIR`, which
+//! `src/lib.rs` embeds.
 //!
-//! With `SBMLSIM_CORE_WASM_DIR` the three are copied from that directory. Otherwise they are
+//! With `SBMLSIM_CORE_WASM_DIR` the four are copied from that directory. Otherwise they are
 //! built by a nested cargo, in a target directory of their own (`wasm-build` in the target
 //! directory of the workspace, kept between builds): the engine as a `cdylib` for
 //! `wasm32-wasip1` with an imported (and exported) memory, which needs `WASI_SDK_PATH` for the
 //! C of `sbmlsim-csolvers`, mathlib for `wasm32-unknown-unknown` with the release profile, and
 //! `compiler.wasm` (`sbmlsim-wasm`, the compiler in a browser) for `wasm32-unknown-unknown`
-//! with the profile `wasm`, which is the release profile for size.
+//! with the profile `wasm`, which is the release profile for size, and `plot.wasm`
+//! (`sbmlsim-plot-wasm`, the renderer of the figures in a browser) for `wasm32-wasip1` with the
+//! profile `wasm` (its crate documents why not for `wasm32-unknown-unknown`).
 //!
 //! `engine.wasm` gets a custom section `sbmlsim.engine` (`sbmlsim_abi::ENGINE_SECTION`, when it
 //! has none) with the JSON `{"memory_minimum_pages":n,"output_format":k}`: the minimum of the
@@ -22,7 +24,8 @@ use std::process::Command;
 
 use sbmlsim_abi::{ENGINE_OUTPUT_FORMAT, ENGINE_SECTION};
 
-/// The variable of a directory with a prebuilt `engine.wasm` and `mathlib.wasm`.
+/// The variable of a directory with a prebuilt `engine.wasm`, `mathlib.wasm`, `compiler.wasm`
+/// and `plot.wasm`.
 const WASM_DIR: &str = "SBMLSIM_CORE_WASM_DIR";
 
 fn main() {
@@ -32,7 +35,7 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     if let Some(dir) = env::var_os(WASM_DIR) {
         let dir = PathBuf::from(dir);
-        for name in ["engine.wasm", "mathlib.wasm", "compiler.wasm"] {
+        for name in ["engine.wasm", "mathlib.wasm", "compiler.wasm", "plot.wasm"] {
             let source = dir.join(name);
             println!("cargo:rerun-if-changed={}", source.display());
             std::fs::copy(&source, out.join(name)).unwrap_or_else(|e| {
@@ -47,15 +50,25 @@ fn main() {
     }
     if env::var_os("WASI_SDK_PATH").is_none() {
         panic!(
-            "sbmlsim-host embeds engine.wasm and mathlib.wasm: set WASI_SDK_PATH (the wasi-sdk \
-             with which the engine is built for wasm32-wasip1) or {WASM_DIR} (a directory with \
-             a prebuilt engine.wasm and mathlib.wasm)"
+            "sbmlsim-host embeds engine.wasm, mathlib.wasm, compiler.wasm and plot.wasm: set \
+             WASI_SDK_PATH (the wasi-sdk with which the engine is built for wasm32-wasip1) or \
+             {WASM_DIR} (a directory with the four prebuilt)"
         );
     }
     let manifest = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
     let workspace = manifest.join("../..");
     for crate_dir in [
-        "abi", "engine", "csolvers", "mathlib", "sbml", "ir", "codegen", "compiler", "wasm",
+        "abi",
+        "engine",
+        "csolvers",
+        "mathlib",
+        "sbml",
+        "ir",
+        "codegen",
+        "compiler",
+        "wasm",
+        "plot",
+        "plot-wasm",
     ] {
         let dir = workspace.join("crates").join(crate_dir);
         for part in ["src", "csrc", "Cargo.toml", "build.rs"] {
@@ -145,9 +158,27 @@ fn main() {
         &[],
         "wasm32-unknown-unknown/wasm/sbmlsim_wasm.wasm",
     );
+    let plot = build(
+        &workspace,
+        &target_dir,
+        &[
+            "build",
+            "-p",
+            "sbmlsim-plot-wasm",
+            "--lib",
+            "--target",
+            "wasm32-wasip1",
+            "--profile",
+            "wasm",
+            "--locked",
+        ],
+        &[],
+        "wasm32-wasip1/wasm/sbmlsim_plot_wasm.wasm",
+    );
     std::fs::copy(engine, out.join("engine.wasm")).unwrap();
     std::fs::copy(mathlib, out.join("mathlib.wasm")).unwrap();
     std::fs::copy(compiler, out.join("compiler.wasm")).unwrap();
+    std::fs::copy(plot, out.join("plot.wasm")).unwrap();
     add_engine_section(&out.join("engine.wasm"));
 }
 
@@ -301,7 +332,7 @@ fn build(
         panic!(
             "building {artifact} failed ({status}); it needs WASI_SDK_PATH (the wasi-sdk of the \
              engine) and the targets of rust-toolchain.toml, or {WASM_DIR} with a prebuilt \
-             engine.wasm and mathlib.wasm"
+             engine.wasm, mathlib.wasm, compiler.wasm and plot.wasm"
         );
     }
     target_dir.join(artifact)
