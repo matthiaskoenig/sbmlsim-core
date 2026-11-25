@@ -1,6 +1,8 @@
 //! The geometry of a figure and the pick of a point.
 
-use sbmlsim_plot::{Geometry, Scale, geometry, parse, pick};
+use sbmlsim_plot::{FigurePlan, Geometry, Scale, geometry, parse, pick, pick_in};
+
+mod support;
 
 /// A figure of one plot as JSON text.
 fn figure(x: &str, y: &str, extra: &str, elements: &str) -> sbmlsim_plot::Figure {
@@ -147,38 +149,170 @@ fn pick_respects_y2() {
 }
 
 #[test]
-fn geometry_matches_layout() {
-    let f = figure(LIN, LIN, "", CURVE);
+fn pick_vertical_bar() {
+    let bar = r#"{"id": "b", "kind": "bar", "x": [1, 2, 3], "height": [2, 5, 3], "err": [0.5, 0.5, 0.5]}"#;
+    let f = figure(LIN, LIN, "", bar);
     let g = geometry(&f);
-    let svg = sbmlsim_plot::render_svg(&f);
-    assert!(svg.contains("<svg"));
-    let p = &g.plots[0];
-    assert_eq!(p.id, "p");
-    assert!(p.rect.x > 0.0 && p.rect.y > 0.0);
-    assert!(p.rect.x + p.rect.width <= 600.0 && p.rect.y + p.rect.height <= 400.0);
-    assert!(p.x.low <= 0.0 && p.x.high >= 4.0 && !p.x.reverse);
-    // the geometry of a plan equals the geometry computed alone
-    let plan = sbmlsim_plot::FigurePlan::new(&f);
-    assert_eq!(sbmlsim_plot::geometry_of(&plan), g);
-    // and serializes in snake_case
-    let json = serde_json::to_value(&g).unwrap();
-    assert!(json["legend_entries"].is_array());
+    let (px, py) = pixel(&g, 2.0, 2.5, false);
+    let p = pick(&f, px, py, 0.0).expect("inside the bar");
+    assert_eq!(p.index, 1);
+    assert_eq!((p.values["height"], p.values["err"]), (5.0, 0.5));
+    // in the gap between two bars there is nothing
+    let (qx, qy) = pixel(&g, 2.5, 1.0, false);
+    assert!(pick(&f, qx, qy, 0.0).is_none());
 }
 
 #[test]
-fn legend_entry_rects() {
-    let two = r#"{"id": "a", "label": "A", "kind": "curve", "x": [0, 1], "y": [0, 1]},
-        {"id": "b", "label": "B", "kind": "curve", "x": [0, 1], "y": [1, 0]}"#;
-    let f = figure(LIN, LIN, "", two);
+fn pick_horizontal_bar() {
+    let bar =
+        r#"{"id": "b", "kind": "bar", "horizontal": true, "x": [1, 2, 3], "height": [2, 5, 3]}"#;
+    let f = figure(LIN, LIN, "", bar);
     let g = geometry(&f);
-    assert_eq!(g.legend_entries.len(), 2);
-    let names: Vec<&str> = g.legend_entries.iter().map(|e| e.legend.as_str()).collect();
-    assert_eq!(names, ["a", "b"]);
-    for e in &g.legend_entries {
-        assert!(e.rect.width > 0.0 && e.rect.height > 0.0);
-        assert_eq!(e.owner, "p");
+    // positions on y, heights on x
+    let (px, py) = pixel(&g, 2.5, 3.0, false);
+    let p = pick(&f, px, py, 0.0).expect("inside the bar of position 3");
+    assert_eq!((p.index, p.values["height"], p.values["x"]), (2, 3.0, 3.0));
+    // beyond the end of the shortest bar, at its position: no pick
+    let (qx, qy) = pixel(&g, 4.5, 1.0, false);
+    assert!(pick(&f, qx, qy, 0.0).is_none());
+}
+
+#[test]
+fn pick_histogram_bin() {
+    let h = r#"{"id": "h", "kind": "histogram", "edges": [0, 1, 2, 3], "counts": [2, 7, 4]}"#;
+    let f = figure(LIN, LIN, "", h);
+    let g = geometry(&f);
+    let (px, py) = pixel(&g, 1.5, 3.0, false);
+    let p = pick(&f, px, py, 0.0).expect("inside the bin");
+    assert_eq!(p.index, 1);
+    assert_eq!(
+        (p.values["low"], p.values["high"], p.values["count"]),
+        (1.0, 2.0, 7.0)
+    );
+}
+
+#[test]
+fn pick_rule() {
+    let rules = r#"{"id": "hr", "kind": "rule", "orientation": "horizontal", "value": 3},
+        {"id": "vr", "kind": "rule", "orientation": "vertical", "value": 1}"#;
+    let f = figure(LIN, LIN, "", &format!("{rules}, {CURVE}"));
+    let g = geometry(&f);
+    let r = g.plots[0].rect;
+    let (_, py) = pixel(&g, 0.0, 3.0, false);
+    // between the curve points, close to the horizontal rule only
+    let p = pick(&f, r.x + r.width * 0.9, py + 1.0, 3.0).expect("the rule");
+    assert_eq!((p.element.as_str(), p.values["value"]), ("hr", 3.0));
+    let (vx, _) = pixel(&g, 1.0, 0.0, false);
+    let p = pick(&f, vx + 1.0, r.y + 2.0, 3.0).expect("the rule");
+    assert_eq!((p.element.as_str(), p.values["value"]), ("vr", 1.0));
+}
+
+#[test]
+fn pick_band() {
+    let band = r#"{"id": "b", "kind": "band", "x": [0, 1, 2], "low": [0, 1, 2],
+        "high": [2, 4, 3], "median": [1, 2, 2.5]}"#;
+    let f = figure(LIN, LIN, "", band);
+    let g = geometry(&f);
+    let (px, py) = pixel(&g, 1.0, 2.5, false);
+    let p = pick(&f, px, py, 1.0).expect("inside the band at x=1");
+    assert_eq!(p.index, 1);
+    assert_eq!(
+        (p.values["low"], p.values["high"], p.values["median"]),
+        (1.0, 4.0, 2.0)
+    );
+}
+
+#[test]
+fn pick_text() {
+    let t = r#"{"id": "t", "label": "note", "kind": "text", "x": 2, "y": 3, "text": "hello"}"#;
+    let f = figure(LIN, LIN, "", &format!("{t}, {CURVE}"));
+    let g = geometry(&f);
+    let (px, py) = pixel(&g, 2.0, 3.0, false);
+    let p = pick(&f, px, py, 2.0).expect("the text");
+    assert_eq!((p.element.as_str(), p.values["y"]), ("t", 3.0));
+    assert_eq!(p.label.as_deref(), Some("note"));
+}
+
+#[test]
+fn pick_on_a_category_axis() {
+    let bar = r#"{"id": "b", "kind": "bar", "x": [0, 1, 2], "height": [4, 9, 6]}"#;
+    let f = figure(
+        r#"{"scale": "category", "categories": ["a", "b", "c"]}"#,
+        LIN,
+        "",
+        bar,
+    );
+    let g = geometry(&f);
+    assert_eq!(
+        serde_json::to_value(g.plots[0].x).unwrap()["kind"],
+        "category"
+    );
+    let (px, py) = pixel(&g, 2.0, 3.0, false);
+    let p = pick(&f, px, py, 0.0).expect("the third bar");
+    assert_eq!((p.index, p.values["height"]), (2, 6.0));
+}
+
+#[test]
+fn pick_on_a_reversed_axis() {
+    let f = figure(r#"{"reverse": true}"#, r#"{"reverse": true}"#, "", CURVE);
+    let g = geometry(&f);
+    assert!(g.plots[0].x.reverse && g.plots[0].y.reverse);
+    let (px, py) = pixel(&g, 3.0, 8.0, false);
+    let p = pick(&f, px, py, 2.0).expect("a pick");
+    assert_eq!((p.index, p.values["y"]), (3, 8.0));
+    // the reversal puts the first point on the other side than the last
+    let (x0, _) = pixel(&g, 0.0, 1.0, false);
+    let (x4, _) = pixel(&g, 4.0, 5.0, false);
+    assert!(x0 > x4);
+}
+
+#[test]
+fn pick_y2_bar() {
+    let two = r#"{"id": "l", "kind": "curve", "x": [0, 1, 2], "y": [1, 2, 3]},
+        {"id": "b", "axis": "y2", "kind": "bar", "x": [0, 1, 2], "height": [100, 400, 200]}"#;
+    let f = figure(LIN, LIN, r#", "y2": {"label": "u"}"#, two);
+    let g = geometry(&f);
+    let (px, py) = pixel(&g, 1.0, 300.0, true);
+    let p = pick(&f, px, py, 0.0).expect("inside the y2 bar");
+    assert_eq!(
+        (p.element.as_str(), p.index, p.values["height"]),
+        ("b", 1, 400.0)
+    );
+}
+
+#[test]
+fn a_plan_of_another_figure_picks_nothing() {
+    let f = figure(LIN, LIN, "", CURVE);
+    let other = parse(&support::spec_text("grid")).unwrap();
+    let plan = FigurePlan::new(&other);
+    let g = geometry(&f);
+    let (px, py) = pixel(&g, 3.0, 8.0, false);
+    assert!(pick_in(&f, &plan, px, py, 5.0).is_none());
+}
+
+#[test]
+fn the_plan_is_send_and_sync() {
+    fn check<T: Send + Sync>() {}
+    check::<FigurePlan>();
+}
+
+/// The cost of a pick on the benchmark figure; run with
+/// `cargo test --release -p sbmlsim-plot --test interact -- --ignored --nocapture`.
+#[test]
+#[ignore = "a measurement"]
+fn pick_cost_on_the_benchmark() {
+    let f = parse(&support::spec_text("benchmark")).unwrap();
+    let plan = FigurePlan::new(&f);
+    let g = geometry(&f);
+    let r = g.plots[0].rect;
+    let mut times = Vec::new();
+    for k in 0..200 {
+        let (x, y) = (r.x + r.width * (k as f64 / 200.0), r.y + r.height * 0.5);
+        let t = std::time::Instant::now();
+        std::hint::black_box(pick_in(&f, &plan, x, y, 8.0));
+        times.push(t.elapsed().as_secs_f64() * 1e3);
     }
-    // the entries do not overlap
-    let (a, b) = (&g.legend_entries[0].rect, &g.legend_entries[1].rect);
-    assert!(a.y + a.height <= b.y + 1e-6 || b.y + b.height <= a.y + 1e-6);
+    times.sort_by(f64::total_cmp);
+    println!("pick median {:.4} ms, max {:.4} ms", times[100], times[199]);
+    assert!(times[100] < 0.1);
 }

@@ -141,7 +141,7 @@ pub fn geometry(figure: &Figure) -> Geometry {
     geometry_of(&FigurePlan::new(figure))
 }
 
-/// The geometry of a figure planned already.
+/// The geometry of a figure planned already (its plan is of that figure, whatever it is).
 pub fn geometry_of(plan: &FigurePlan) -> Geometry {
     let l = &plan.0.layout;
     let plots = l
@@ -183,19 +183,38 @@ pub fn pick(figure: &Figure, x: f64, y: f64, radius: f64) -> Option<Pick> {
 
 /// [`pick`] on a figure planned already.
 ///
-/// The points of every plot whose panel (grown by `radius`) holds the pixel are measured; a
-/// point is picked only where it is drawn, inside the panel. The nearest wins, the element
-/// drawn last on a tie. A hidden element is the caller's filter, not the crate's.
+/// `plan` must be the plan of the same figure (`FigurePlan::new(figure)`); a plan of another
+/// figure (other plot ids) gives `None`. The points of every plot whose panel (grown by
+/// `radius`) holds the pixel are measured; a point is picked only where it is drawn, inside the
+/// panel. The nearest wins, the element drawn last on a tie. A hidden element is the caller's
+/// filter, not the crate's.
+///
+/// The hit area of a point is its pixel for a curve, a text and a heatmap cell (the cell), the
+/// vertical segment between the edges at its x for a band and an area, the rectangle of a bar,
+/// of a histogram bin and, for a violin, the bounding rectangle of its density (its widest
+/// width over its range of values), the rectangle of a box together with its whisker line, and
+/// the line of a rule. A point in a rectangle has distance 0.
 pub fn pick_in(figure: &Figure, plan: &FigurePlan, x: f64, y: f64, radius: f64) -> Option<Pick> {
-    if !(x.is_finite() && y.is_finite() && radius >= 0.0) {
+    let boxes = &plan.0.layout.plots;
+    if !(x.is_finite() && y.is_finite() && radius >= 0.0)
+        || boxes.len() != figure.plots.len()
+        || boxes.iter().zip(&figure.plots).any(|(b, p)| b.id != p.id)
+    {
         return None;
     }
-    let mut best: Option<(f64, Pick)> = None;
-    for ((plot, pb), prep) in figure
+    let mut best = Best {
+        limit: radius,
+        at: (x, y),
+        plot: 0,
+        element: 0,
+        hit: None,
+    };
+    for (pi, ((plot, pb), prep)) in figure
         .plots
         .iter()
-        .zip(&plan.0.layout.plots)
+        .zip(boxes)
         .zip(&plan.0.prepared)
+        .enumerate()
     {
         let r = pb.rect;
         if x < r.x - radius || x > r.right() + radius || y < r.y - radius || y > r.bottom() + radius
@@ -208,32 +227,69 @@ pub fn pick_in(figure: &Figure, plan: &FigurePlan, x: f64, y: f64, radius: f64) 
             ya: &prep.ya,
             y2a: prep.y2a.as_ref(),
         };
-        for e in &plot.elements {
+        for (ei, e) in plot.elements.iter().enumerate() {
             let ya = match e.axis {
                 YAxisRef::Y => Some(map.ya),
                 YAxisRef::Y2 => map.y2a,
             };
             let Some(ya) = ya else { continue };
-            let m = Map { ya, ..map };
-            for c in candidates(&e.kind, &m, (x, y)) {
-                if c.distance <= radius && best.as_ref().is_none_or(|(d, _)| c.distance <= *d) {
-                    let label = c.label.or_else(|| e.label.clone());
-                    best = Some((
-                        c.distance,
-                        Pick {
-                            plot: plot.id.clone(),
-                            element: e.id.clone(),
-                            legend: e.legend_group().map(str::to_string),
-                            index: c.index,
-                            values: c.values,
-                            label,
-                        },
-                    ));
-                }
-            }
+            best.plot = pi;
+            best.element = ei;
+            measure(&e.kind, &Map { ya, ..map }, &mut best);
         }
     }
-    best.map(|(_, p)| p)
+    let hit = best.hit?;
+    let plot = &figure.plots[hit.plot];
+    let e = &plot.elements[hit.element];
+    Some(Pick {
+        plot: plot.id.clone(),
+        element: e.id.clone(),
+        legend: e.legend_group().map(str::to_string),
+        index: hit.index,
+        values: hit.values,
+        label: hit.label.or_else(|| e.label.clone()),
+    })
+}
+
+/// The best point so far.
+struct Hit {
+    plot: usize,
+    element: usize,
+    index: usize,
+    values: BTreeMap<String, f64>,
+    label: Option<String>,
+}
+
+/// The search: the pointer, the largest distance still of interest (the radius, then the
+/// distance of the best point), and the plot and element being measured.
+struct Best {
+    limit: f64,
+    at: (f64, f64),
+    plot: usize,
+    element: usize,
+    hit: Option<Hit>,
+}
+
+impl Best {
+    /// Offers a point at a pixel distance; its data is built only when it is the best so far.
+    fn offer(
+        &mut self,
+        distance: f64,
+        index: usize,
+        build: impl FnOnce() -> (BTreeMap<String, f64>, Option<String>),
+    ) {
+        if distance <= self.limit {
+            self.limit = distance;
+            let (values, label) = build();
+            self.hit = Some(Hit {
+                plot: self.plot,
+                element: self.element,
+                index,
+                values,
+                label,
+            });
+        }
+    }
 }
 
 /// The panel with the axes a point of an element is measured on.
@@ -275,14 +331,6 @@ impl Map<'_> {
     }
 }
 
-/// A point of an element near the pointer.
-struct Candidate {
-    distance: f64,
-    index: usize,
-    values: BTreeMap<String, f64>,
-    label: Option<String>,
-}
-
 fn values(pairs: &[(&str, f64)]) -> BTreeMap<String, f64> {
     pairs
         .iter()
@@ -320,20 +368,11 @@ fn overlaps(m: &Map, a: (f64, f64), b: (f64, f64)) -> bool {
         && a.1.min(b.1) <= r.bottom()
 }
 
-/// The points of an element with their distance to the pointer.
-fn candidates(kind: &ElementKind, m: &Map, at: (f64, f64)) -> Vec<Candidate> {
-    let mut out = Vec::new();
-    let mut add = |distance: f64, index: usize, v: BTreeMap<String, f64>, label: Option<String>| {
-        if distance.is_finite() {
-            out.push(Candidate {
-                distance,
-                index,
-                values: v,
-                label,
-            });
-        }
-    };
-    // the distance to the rectangle of an area-like mark, `(x0, y0)` and `(x1, y1)` in data
+/// Offers the points of an element to the search.
+fn measure(kind: &ElementKind, m: &Map, best: &mut Best) {
+    let at = best.at;
+    let no_label = None::<String>;
+    // the distance to the rectangle of an area-like mark, corners in data, `None` off the panel
     let area = |x0: f64, y0: f64, x1: f64, y1: f64| {
         let (a, b) = (
             (m.px(m.xa.u(x0)), m.py(m.ya.u(y0))),
@@ -341,18 +380,29 @@ fn candidates(kind: &ElementKind, m: &Map, at: (f64, f64)) -> Vec<Candidate> {
         );
         overlaps(m, a, b).then(|| to_rect(at, a, b))
     };
+    let err = |e: &Option<Vec<f64>>, i: usize| {
+        e.as_ref()
+            .and_then(|e| e.get(i))
+            .copied()
+            .unwrap_or(f64::NAN)
+    };
     match kind {
         ElementKind::Curve { x, y, xerr, yerr } => {
             for (i, (xv, yv)) in x.iter().zip(y).enumerate() {
+                let px = m.px(m.xa.u(*xv));
+                if !near(px, at.0, best.limit) {
+                    continue;
+                }
                 let Some(p) = m.point(*xv, *yv) else { continue };
-                let err = |e: &Option<Vec<f64>>| e.as_ref().and_then(|e| e.get(i)).copied();
-                let v = values(&[
-                    ("x", *xv),
-                    ("y", *yv),
-                    ("xerr", err(xerr).unwrap_or(f64::NAN)),
-                    ("yerr", err(yerr).unwrap_or(f64::NAN)),
-                ]);
-                add((at.0 - p.0).hypot(at.1 - p.1), i, v, None);
+                best.offer((at.0 - p.0).hypot(at.1 - p.1), i, || {
+                    let v = values(&[
+                        ("x", *xv),
+                        ("y", *yv),
+                        ("xerr", err(xerr, i)),
+                        ("yerr", err(yerr, i)),
+                    ]);
+                    (v, no_label.clone())
+                });
             }
         }
         ElementKind::Band {
@@ -362,39 +412,53 @@ fn candidates(kind: &ElementKind, m: &Map, at: (f64, f64)) -> Vec<Candidate> {
             median,
         } => {
             for (i, ((xv, lo), hi)) in x.iter().zip(low).zip(high).enumerate() {
-                let (a, b) = (m.point(*xv, *lo), m.point(*xv, *hi));
-                let (Some(a), Some(b)) = (a, b) else { continue };
-                let med = median.as_ref().and_then(|v| v.get(i)).copied();
-                let v = values(&[
-                    ("x", *xv),
-                    ("low", *lo),
-                    ("high", *hi),
-                    ("median", med.unwrap_or(f64::NAN)),
-                ]);
-                add(to_segment(at, a, b), i, v, None);
+                let px = m.px(m.xa.u(*xv));
+                if !near(px, at.0, best.limit) {
+                    continue;
+                }
+                let (Some(a), Some(b)) = (m.point(*xv, *lo), m.point(*xv, *hi)) else {
+                    continue;
+                };
+                best.offer(to_segment(at, a, b), i, || {
+                    let v = values(&[
+                        ("x", *xv),
+                        ("low", *lo),
+                        ("high", *hi),
+                        ("median", err(median, i)),
+                    ]);
+                    (v, no_label.clone())
+                });
             }
         }
         ElementKind::Area { x, from, to } => {
             for (i, ((xv, f), t)) in x.iter().zip(from).zip(to).enumerate() {
-                let (a, b) = (m.point(*xv, *f), m.point(*xv, *t));
-                let (Some(a), Some(b)) = (a, b) else { continue };
-                let v = values(&[
-                    ("x", *xv),
-                    ("from", *f),
-                    ("to", *t),
-                    ("low", *f),
-                    ("high", *t),
-                ]);
-                add(to_segment(at, a, b), i, v, None);
+                let px = m.px(m.xa.u(*xv));
+                if !near(px, at.0, best.limit) {
+                    continue;
+                }
+                let (Some(a), Some(b)) = (m.point(*xv, *f), m.point(*xv, *t)) else {
+                    continue;
+                };
+                best.offer(to_segment(at, a, b), i, || {
+                    let v = values(&[
+                        ("x", *xv),
+                        ("from", *f),
+                        ("to", *t),
+                        ("low", *f),
+                        ("high", *t),
+                    ]);
+                    (v, no_label.clone())
+                });
             }
         }
         ElementKind::Bar {
             x,
             height,
-            err,
+            err: errs,
             horizontal,
             width,
         } => {
+            // the bars run along the axis of their positions and across the axis of heights
             let (along, across) = if *horizontal {
                 (m.ya, m.xa)
             } else {
@@ -412,9 +476,10 @@ fn candidates(kind: &ElementKind, m: &Map, at: (f64, f64)) -> Vec<Candidate> {
                 if !overlaps(m, c0, c1) {
                     continue;
                 }
-                let e = err.as_ref().and_then(|e| e.get(i)).copied();
-                let v = values(&[("x", *p), ("height", *h), ("err", e.unwrap_or(f64::NAN))]);
-                add(to_rect(at, c0, c1), i, v, None);
+                best.offer(to_rect(at, c0, c1), i, || {
+                    let v = values(&[("x", *p), ("height", *h), ("err", err(errs, i))]);
+                    (v, no_label.clone())
+                });
             }
         }
         ElementKind::Box { positions, stats } => {
@@ -423,23 +488,22 @@ fn candidates(kind: &ElementKind, m: &Map, at: (f64, f64)) -> Vec<Candidate> {
                 let Some(r) = area(p - w / 2.0, b.q1, p + w / 2.0, b.q3) else {
                     continue;
                 };
-                let v = values(&[
-                    ("x", *p),
-                    ("low_whisker", b.low_whisker),
-                    ("q1", b.q1),
-                    ("median", b.median),
-                    ("q3", b.q3),
-                    ("high_whisker", b.high_whisker),
-                ]);
-                // the whiskers belong to the box: the nearest of the box and its whisker line
-                let whisker = {
-                    let (lo, hi) = (m.point(*p, b.low_whisker), m.point(*p, b.high_whisker));
-                    match (lo, hi) {
-                        (Some(lo), Some(hi)) => to_segment(at, lo, hi),
-                        _ => f64::INFINITY,
-                    }
+                // the whisker line belongs to the box
+                let whisker = match (m.point(*p, b.low_whisker), m.point(*p, b.high_whisker)) {
+                    (Some(lo), Some(hi)) => to_segment(at, lo, hi),
+                    _ => f64::INFINITY,
                 };
-                add(r.min(whisker), i, v, None);
+                best.offer(r.min(whisker), i, || {
+                    let v = values(&[
+                        ("x", *p),
+                        ("low_whisker", b.low_whisker),
+                        ("q1", b.q1),
+                        ("median", b.median),
+                        ("q3", b.q3),
+                        ("high_whisker", b.high_whisker),
+                    ]);
+                    (v, no_label.clone())
+                });
             }
         }
         ElementKind::Violin {
@@ -448,17 +512,19 @@ fn candidates(kind: &ElementKind, m: &Map, at: (f64, f64)) -> Vec<Candidate> {
         } => {
             let half = VIOLIN_WIDTH * spacing(positions) / 2.0;
             for (i, (p, d)) in positions.iter().zip(densities).enumerate() {
-                let vals: Vec<f64> = d.values.iter().copied().filter(|v| v.is_finite()).collect();
-                let (lo, hi) = vals
+                let (lo, hi) = d
+                    .values
                     .iter()
+                    .copied()
+                    .filter(|v| v.is_finite())
                     .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), v| {
-                        (a.min(*v), b.max(*v))
+                        (a.min(v), b.max(v))
                     });
                 if lo > hi {
                     continue;
                 }
                 if let Some(r) = area(p - half, lo, p + half, hi) {
-                    add(r, i, values(&[("x", *p)]), None);
+                    best.offer(r, i, || (values(&[("x", *p)]), no_label.clone()));
                 }
             }
         }
@@ -472,8 +538,10 @@ fn candidates(kind: &ElementKind, m: &Map, at: (f64, f64)) -> Vec<Candidate> {
                 if !overlaps(m, a, b) {
                     continue;
                 }
-                let v = values(&[("low", e[0]), ("high", e[1]), ("count", *c)]);
-                add(to_rect(at, a, b), i, v, None);
+                best.offer(to_rect(at, a, b), i, || {
+                    let v = values(&[("low", e[0]), ("high", e[1]), ("count", *c)]);
+                    (v, no_label.clone())
+                });
             }
         }
         ElementKind::Heatmap {
@@ -491,24 +559,18 @@ fn candidates(kind: &ElementKind, m: &Map, at: (f64, f64)) -> Vec<Candidate> {
                     let Some(d) = area(c - 0.5, r - 0.5, c + 0.5, r + 0.5) else {
                         continue;
                     };
-                    let label = format!("{} / {}", rows[i], columns[j]);
-                    add(
-                        d,
-                        i * columns.len() + j,
-                        values(&[("value", *v)]),
-                        Some(label),
-                    );
+                    best.offer(d, i * columns.len() + j, || {
+                        let label = format!("{} / {}", rows[i], columns[j]);
+                        (values(&[("value", *v)]), Some(label))
+                    });
                 }
             }
         }
         ElementKind::Text { x, y, .. } => {
             if let Some(p) = m.point(*x, *y) {
-                add(
-                    (at.0 - p.0).hypot(at.1 - p.1),
-                    0,
-                    values(&[("x", *x), ("y", *y)]),
-                    None,
-                );
+                best.offer((at.0 - p.0).hypot(at.1 - p.1), 0, || {
+                    (values(&[("x", *x), ("y", *y)]), no_label.clone())
+                });
             }
         }
         ElementKind::Rule { orientation, value } => {
@@ -523,10 +585,68 @@ fn candidates(kind: &ElementKind, m: &Map, at: (f64, f64)) -> Vec<Candidate> {
                 }
             };
             if on_panel {
-                add(dist, 0, values(&[("value", *value)]), None);
+                best.offer(dist, 0, || (values(&[("value", *value)]), no_label.clone()));
             }
         }
         ElementKind::Polygon { .. } => {}
     }
-    out
+}
+
+/// Whether a pixel coordinate is within `limit` of the pointer's (false for NaN).
+fn near(p: f64, at: f64, limit: f64) -> bool {
+    (p - at).abs() <= limit
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parse;
+
+    const TWO_LEGENDS: &str = r#"{"contract": "figure/1", "width": 600, "height": 400,
+        "grid": {"rows": 1, "columns": 2},
+        "plots": [
+          {"id": "p", "row": 0, "column": 0, "x": {}, "y": {}, "elements": [
+            {"id": "a", "label": "A", "kind": "curve", "x": [0, 1], "y": [0, 1]},
+            {"id": "b", "label": "B", "kind": "curve", "x": [0, 1], "y": [1, 0]}]},
+          {"id": "q", "row": 0, "column": 1, "x": {}, "y": {}, "elements": [
+            {"id": "c", "label": "C", "kind": "curve", "x": [0, 1], "y": [0, 2]}]}]}"#;
+
+    #[test]
+    fn geometry_matches_layout() {
+        let f = parse(TWO_LEGENDS).unwrap_or_else(|e| panic!("{e}"));
+        let plan = layout::plan(&f);
+        let g = geometry(&f);
+        assert_eq!(g.plots.len(), plan.layout.plots.len());
+        for (gp, lp) in g.plots.iter().zip(&plan.layout.plots) {
+            assert_eq!(gp.id, lp.id);
+            assert_eq!(gp.rect, PixelRect::from(lp.rect));
+            assert_eq!(gp.x, Scale::from(&lp.x));
+            assert_eq!(gp.y, Scale::from(&lp.y));
+            assert_eq!(gp.y2, lp.y2.as_ref().map(Scale::from));
+        }
+    }
+
+    #[test]
+    fn legend_entry_rects() {
+        let f = parse(TWO_LEGENDS).unwrap_or_else(|e| panic!("{e}"));
+        let plan = layout::plan(&f);
+        let g = geometry(&f);
+        let n: usize = plan.layout.legends.iter().map(|l| l.entries.len()).sum();
+        assert_eq!(g.legend_entries.len(), n);
+        assert!(n >= 3);
+        let mut seen = g.legend_entries.iter();
+        for lb in &plan.layout.legends {
+            let frame = lb.rect;
+            for e in &lb.entries {
+                let r = seen.next().unwrap().rect;
+                assert_eq!(r, PixelRect::from(e.rect));
+                assert!(
+                    r.x >= frame.x - 1e-6 && r.y >= frame.y - 1e-6,
+                    "{r:?} in {frame:?}"
+                );
+                assert!(r.x + r.width <= frame.right() + 1e-6);
+                assert!(r.y + r.height <= frame.bottom() + 1e-6);
+            }
+        }
+    }
 }
