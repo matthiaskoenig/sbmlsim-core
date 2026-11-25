@@ -8,15 +8,32 @@
 | `compile.mjs` | `./compile` | compiles an SBML document into `model.wasm` and its description with `compiler.wasm` |
 | `pool.mjs` (with `worker.mjs`) | `./pool` | a pool of workers which run the loader off the main thread |
 | `panels.mjs` | `./panels` | the routes of the panel service of sbmlsim, answered inside a page from a bundle |
+| `plot.mjs` | `./plot` | draws the figures of sbmlsim with `plot.wasm`, see [Figures](plot.md) |
 | `simulate.mjs` | the command `sbmlsim-core-simulate` | the CSV of `sbmlsim-core simulate` in Node |
 
-The package is published to npm as [`sbmlsim-core`](https://www.npmjs.com/package/sbmlsim-core), with the `compiler.wasm`, `engine.wasm` and `mathlib.wasm` of its release in `runtime/`:
+The package is published to npm as [`sbmlsim-core`](https://www.npmjs.com/package/sbmlsim-core), with the `compiler.wasm`, `engine.wasm`, `mathlib.wasm` and `plot.wasm` (the renderer of the figures of sbmlsim, `crates/plot-wasm`) of its release in `runtime/`:
 
 ```bash
 npm install sbmlsim-core
 ```
 
 A page imports the modules from its own files or from a CDN (`https://cdn.jsdelivr.net/npm/sbmlsim-core@0.26.0/panels.mjs`); a pool of a module of another origin starts its workers through a module of the page's own origin, which browsers require of a worker. A checkout serves the files of `js/` with the runtime of a build (`sbmlsim-core runtime -o js/runtime`, see [Installation](installation.md#building)). A release publishes the package from the tag `vX.Y.Z` (`.github/workflows/publish.yml`, trusted publishing with provenance, together with the python package on PyPI); the version of `js/package.json` is the one of the crates and of `CORE_VERSION`, which `npm pack` checks.
+
+## Draw a figure
+
+`plot.mjs` loads `plot.wasm` and renders a `figure/1` spec to SVG, gives its geometry and picks the data point under a pointer; every call is synchronous. A figure a pointer moves over is prepared once and then answers without parsing it again:
+
+```js
+import { loadPlot } from "sbmlsim-core/plot";
+
+const plot = await loadPlot(new URL("./plot.wasm", import.meta.url));
+const svg = plot.render(spec);
+const figure = plot.prepare(spec);
+canvas.onpointermove = (e) => show(figure.pick(e.offsetX, e.offsetY));
+figure.dispose();
+```
+
+A refused spec raises a `PlotError`. The contract, the classes of the SVG and the measured times are on the page [Figures](plot.md).
 
 ## A first simulation
 

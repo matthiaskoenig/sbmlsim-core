@@ -1,0 +1,31 @@
+[package]
+name = "sbmlsim-plot"
+description = "The figures of sbmlsim: the figure spec figure/1 and its renderer to SVG"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+# not on crates.io, as the rest of the workspace
+publish = false
+
+[lib]
+name = "sbmlsim_plot"
+
+[features]
+# the PNG of a figure, rasterized from its SVG with the bundled font; native only, never wasm
+png = ["dep:resvg"]
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+serde_path_to_error = "0.1.20"
+# the marks, scales and axes of a plot; pinned exactly, its API changes between releases
+charton = { version = "=0.9.1", default-features = false }
+# every transcendental function of a coordinate or a tick, the same bits natively and in wasm
+libm = "0.2"
+# the rasterizer of the PNG: no system fonts and no image formats but the PNG it writes
+resvg = { version = "0.50", default-features = false, features = ["text"], optional = true }
+
+[dev-dependencies]
+roxmltree.workspace = true

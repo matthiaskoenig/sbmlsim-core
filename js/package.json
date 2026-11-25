@@ -23,17 +23,19 @@
     "directory": "js"
   },
   "author": "Matthias König",
-  "license": "MIT AND BSD-3-Clause AND LGPL-2.1-or-later",
+  "license": "MIT AND BSD-3-Clause AND LGPL-2.1-or-later AND Apache-2.0",
   "type": "module",
   "exports": {
     ".": "./loader.mjs",
     "./compile": "./compile.mjs",
     "./pool": "./pool.mjs",
     "./panels": "./panels.mjs",
+    "./plot": "./plot.mjs",
     "./worker": "./worker.mjs",
     "./runtime/engine.wasm": "./runtime/engine.wasm",
     "./runtime/mathlib.wasm": "./runtime/mathlib.wasm",
     "./runtime/compiler.wasm": "./runtime/compiler.wasm",
+    "./runtime/plot.wasm": "./runtime/plot.wasm",
     "./package.json": "./package.json"
   },
   "bin": {
@@ -45,10 +47,12 @@
     "pool.mjs",
     "worker.mjs",
     "panels.mjs",
+    "plot.mjs",
     "simulate.mjs",
     "runtime/engine.wasm",
     "runtime/mathlib.wasm",
     "runtime/compiler.wasm",
+    "runtime/plot.wasm",
     "runtime/THIRD_PARTY.md",
     "LICENSE"
   ],

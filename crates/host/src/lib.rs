@@ -61,6 +61,12 @@ pub static MATHLIB_WASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/mathl
 /// and the description to `js/loader.mjs`, so a page compiles and simulates without a server.
 pub static COMPILER_WASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/compiler.wasm"));
 
+/// `plot.wasm` of this build (`sbmlsim-plot-wasm` for `wasm32-wasip1`), the renderer of the
+/// figures (`figure/1`) in a JavaScript host: the SVG of a spec, byte for byte the one of the
+/// native renderer, its geometry and the pick of a point, through the C ABI documented in
+/// `crates/plot-wasm`.
+pub static PLOT_WASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/plot.wasm"));
+
 /// The notices of the libraries [`ENGINE_WASM`] links statically (SUNDIALS, BSD-3-Clause; KLU
 /// and BTF, LGPL-2.1-or-later; AMD, COLAMD and SuiteSparse_config, BSD-3-Clause) with their
 /// versions, the commits of their submodules and their license texts: `THIRD_PARTY.md` of the

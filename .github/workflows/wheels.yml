@@ -1,5 +1,5 @@
 # The wheels of the python package sbmlsim-core: one abi3 wheel per platform, every one with the
-# same engine.wasm and mathlib.wasm. The runtime is built once (job `runtime`, the artifact
+# same engine.wasm, mathlib.wasm, compiler.wasm and plot.wasm. The runtime is built once (job `runtime`, the artifact
 # `runtime`, which `publish` also gives the npm package), and every wheel embeds it through
 # SBMLSIM_CORE_WASM_DIR, so the extension of every platform runs the bits of the JavaScript host.
 # The linux wheels are linked with zig against glibc 2.28 (manylinux_2_28). Every wheel is

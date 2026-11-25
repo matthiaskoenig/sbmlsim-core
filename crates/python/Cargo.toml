@@ -4,9 +4,11 @@ version.workspace = true
 edition.workspace = true
 # built by maturin into the python package `sbmlsim-core`, not published as a crate
 publish = false
-# the license of sbmlsim-host, whose engine.wasm (SUNDIALS, KLU and others, THIRD_PARTY.md) the
-# extension embeds once it binds the host
-license = "MIT AND BSD-3-Clause AND LGPL-2.1-or-later"
+# the license of sbmlsim-host, whose engine.wasm (SUNDIALS, KLU and others) and plot.wasm
+# (charton) the extension embeds, and of sbmlsim-plot with the feature png, which it links:
+# charton and resvg (Apache-2.0), arrayref (BSD-2-Clause), slotmap and zlib-rs (Zlib), yoke and
+# zerofrom (Unicode-3.0) and the font Inter (OFL-1.1), see THIRD_PARTY.md
+license = "MIT AND BSD-3-Clause AND LGPL-2.1-or-later AND Apache-2.0 AND BSD-2-Clause AND Zlib AND Unicode-3.0 AND OFL-1.1"
 authors.workspace = true
 description = "The python bindings of sbmlsim-core"
 
@@ -26,6 +28,8 @@ sbmlsim-chaos = { path = "../chaos" }
 # the fit of a model: the objective on the batch and the optimizers of basin (`fit/1`)
 sbmlsim-fit = { path = "../fit" }
 sbmlsim-compiler = { path = "../compiler" }
+# the figures: their SVG, PNG, geometry and picks (`figure/1`)
+sbmlsim-plot = { path = "../plot", features = ["png"] }
 # The native engine: the integrator compiled for the machine of the wheel (CVODE and KLU built
 # by `crates/csolvers`) with `model.wasm` and `mathlib.wasm` in wasmtime, which simulates about
 # twice as fast as `engine.wasm` in wasmtime does (`bench/SBMLSIM.md`). Its results are not

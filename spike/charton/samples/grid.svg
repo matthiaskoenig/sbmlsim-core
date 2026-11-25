@@ -1,0 +1,356 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="850" height="590" viewBox="0 0 850 590"><rect width="100%" height="100%" fill="white"/><text x="425" y="20" font-size="16" text-anchor="middle" font-family="Inter, sans-serif">2x2 grid of independent plots, row legends</text><svg x="0" y="30" width="360" height="280">
+<title id="g0-title">A</title>
+<defs><clipPath id="g0-clip-0"><rect x="55.050" y="33.600" width="298.950" height="189.400" /></clipPath>
+</defs>
+<g class="charton-background">
+<rect x="0.000" y="0.000" width="360.000" height="280.000" fill="rgba(255,255,255,1.000)" stroke="none" stroke-width="0.000" fill-opacity="1.000" stroke-opacity="1.000" />
+</g>
+<g class="charton-title">
+<text x="204.525" y="16.800" font-size="18.0" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', Ubuntu, Cantarell, 'Noto Sans', sans-serif" fill="rgba(51,51,51,1.000)" fill-opacity="1.000" text-anchor="middle" font-weight="bold" font-style="normal" dominant-baseline="middle" transform="rotate(0 204.525 16.800)">A</text>
+</g>
+<g class="charton-plot" clip-path="url(#g0-clip-0)">
+<g class="charton-mark charton-mark-0 charton-mark-line" data-layer="0" data-mark="line">
+<g class="charton-series">
+<path d="M 68.639 214.391 L 70.004 206.528 L 71.370 198.978 L 72.736 191.732 L 74.101 184.781 L 75.467 178.114 L 76.833 171.725 L 78.198 165.605 L 79.564 159.745 L 80.930 154.138 L 82.296 148.775 L 83.661 143.650 L 85.027 138.755 L 86.393 134.082 L 87.758 129.626 L 89.124 125.379 L 90.490 121.334 L 91.855 117.485 L 93.221 113.827 L 94.587 110.352 L 95.952 107.056 L 97.318 103.932 L 98.684 100.975 L 100.050 98.179 L 101.415 95.539 L 102.781 93.051 L 104.147 90.709 L 105.512 88.508 L 106.878 86.443 L 108.244 84.511 L 109.609 82.706 L 110.975 81.024 L 112.341 79.461 L 113.706 78.014 L 115.072 76.677 L 116.438 75.448 L 117.804 74.322 L 119.169 73.296 L 120.535 72.366 L 121.901 71.530 L 123.266 70.782 L 124.632 70.121 L 125.998 69.543 L 127.363 69.046 L 128.729 68.625 L 130.095 68.279 L 131.460 68.004 L 132.826 67.798 L 134.192 67.659 L 135.558 67.583 L 136.923 67.568 L 138.289 67.611 L 139.655 67.711 L 141.020 67.866 L 142.386 68.072 L 143.752 68.328 L 145.117 68.632 L 146.483 68.981 L 147.849 69.375 L 149.214 69.810 L 150.580 70.285 L 151.946 70.799 L 153.312 71.349 L 154.677 71.935 L 156.043 72.553 L 157.409 73.204 L 158.774 73.884 L 160.140 74.594 L 161.506 75.331 L 162.871 76.094 L 164.237 76.881 L 165.603 77.693 L 166.968 78.526 L 168.334 79.380 L 169.700 80.254 L 171.066 81.147 L 172.431 82.057 L 173.797 82.984 L 175.163 83.926 L 176.528 84.883 L 177.894 85.854 L 179.260 86.837 L 180.625 87.832" fill="none" stroke="rgba(31,119,180,1.000)" stroke-width="2.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="6,3" />
+<path d="M 205.208 106.906 L 206.574 107.991 L 207.939 109.076 L 209.305 110.160 L 210.671 111.242 L 212.036 112.323 L 213.402 113.401 L 214.768 114.477 L 216.133 115.550 L 217.499 116.620 L 218.865 117.687 L 220.230 118.749 L 221.596 119.808 L 222.962 120.863 L 224.328 121.913 L 225.693 122.958 L 227.059 123.998 L 228.425 125.033 L 229.790 126.063 L 231.156 127.087 L 232.522 128.105 L 233.887 129.118 L 235.253 130.124 L 236.619 131.124 L 237.984 132.117 L 239.350 133.104 L 240.716 134.084 L 242.082 135.058 L 243.447 136.024 L 244.813 136.984 L 246.179 137.936 L 247.544 138.881 L 248.910 139.819 L 250.276 140.749 L 251.641 141.672 L 253.007 142.587 L 254.373 143.495 L 255.738 144.394 L 257.104 145.287 L 258.470 146.171 L 259.836 147.048 L 261.201 147.916 L 262.567 148.777 L 263.933 149.630 L 265.298 150.475 L 266.664 151.312 L 268.030 152.140 L 269.395 152.961 L 270.761 153.774 L 272.127 154.579 L 273.492 155.376 L 274.858 156.165 L 276.224 156.945 L 277.590 157.718 L 278.955 158.483 L 280.321 159.240 L 281.687 159.988 L 283.052 160.729 L 284.418 161.462 L 285.784 162.187 L 287.149 162.904 L 288.515 163.613 L 289.881 164.315 L 291.246 165.008 L 292.612 165.694 L 293.978 166.372 L 295.344 167.042 L 296.709 167.705 L 298.075 168.360 L 299.441 169.008 L 300.806 169.647 L 302.172 170.280 L 303.538 170.905 L 304.903 171.522 L 306.269 172.133 L 307.635 172.736 L 309.000 173.331 L 310.366 173.920 L 311.732 174.501 L 313.098 175.075 L 314.463 175.642 L 315.829 176.202 L 317.195 176.755 L 318.560 177.302 L 319.926 177.841 L 321.292 178.374 L 322.657 178.900 L 324.023 179.419 L 325.389 179.932 L 326.754 180.438 L 328.120 180.937 L 329.486 181.430 L 330.852 181.917 L 332.217 182.398 L 333.583 182.872 L 334.949 183.340 L 336.314 183.802 L 337.680 184.257 L 339.046 184.707 L 340.411 185.151" fill="none" stroke="rgba(31,119,180,1.000)" stroke-width="2.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="6,3" />
+</g>
+</g>
+<g class="charton-mark charton-mark-1 charton-mark-path" data-layer="1" data-mark="path">
+<g class="charton-series" data-series="p0">
+<path d="M 73.168 155.269 L 86.757 155.269" fill="none" stroke="rgba(255,127,14,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+</g>
+<g class="charton-series" data-series="p1">
+<path d="M 95.816 87.302 L 109.405 87.302" fill="none" stroke="rgba(255,127,14,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+</g>
+<g class="charton-series" data-series="p2">
+<path d="M 118.464 62.619 L 132.052 62.619" fill="none" stroke="rgba(255,127,14,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+</g>
+<g class="charton-series" data-series="p3">
+<path d="M 141.111 62.142 L 154.700 62.142" fill="none" stroke="rgba(255,127,14,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+</g>
+<g class="charton-series" data-series="p4">
+<path d="M 163.759 74.131 L 177.348 74.131" fill="none" stroke="rgba(255,127,14,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+</g>
+<g class="charton-series" data-series="p5">
+<path d="M 186.407 91.557 L 199.995 91.557" fill="none" stroke="rgba(255,127,14,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+</g>
+<g class="charton-series" data-series="p6">
+<path d="M 209.055 110.374 L 222.643 110.374" fill="none" stroke="rgba(255,127,14,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+</g>
+<g class="charton-series" data-series="p7">
+<path d="M 231.702 128.393 L 245.291 128.393" fill="none" stroke="rgba(255,127,14,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+</g>
+<g class="charton-series" data-series="p8">
+<path d="M 254.350 144.555 L 267.939 144.555" fill="none" stroke="rgba(255,127,14,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+</g>
+<g class="charton-series" data-series="p9">
+<path d="M 276.998 158.464 L 290.586 158.464" fill="none" stroke="rgba(255,127,14,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+</g>
+<g class="charton-series" data-series="p10">
+<path d="M 299.645 170.099 L 313.234 170.099" fill="none" stroke="rgba(255,127,14,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+</g>
+<g class="charton-series" data-series="p11">
+<path d="M 322.293 179.632 L 335.882 179.632" fill="none" stroke="rgba(255,127,14,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+</g>
+</g>
+<g class="charton-mark charton-mark-2 charton-mark-errorbar" data-layer="2" data-mark="errorbar">
+<g class="charton-series">
+<line x1="79.963" y1="164.026" x2="79.963" y2="146.511" stroke="rgba(255,127,14,1.000)" stroke-width="1.000" stroke-opacity="1.000" />
+<line x1="76.963" y1="164.026" x2="82.963" y2="164.026" stroke="rgba(255,127,14,1.000)" stroke-width="1.000" stroke-opacity="1.000" />
+<line x1="76.963" y1="146.511" x2="82.963" y2="146.511" stroke="rgba(255,127,14,1.000)" stroke-width="1.000" stroke-opacity="1.000" />
+<line x1="102.610" y1="104.216" x2="102.610" y2="70.388" stroke="rgba(255,127,14,1.000)" stroke-width="1.000" stroke-opacity="1.000" />
+<line x1="99.610" y1="104.216" x2="105.610" y2="104.216" stroke="rgba(255,127,14,1.000)" stroke-width="1.000" stroke-opacity="1.000" />
+<line x1="99.610" y1="70.388" x2="105.610" y2="70.388" stroke="rgba(255,127,14,1.000)" stroke-width="1.000" stroke-opacity="1.000" />
+<line x1="125.258" y1="82.495" x2="125.258" y2="42.743" stroke="rgba(255,127,14,1.000)" stroke-width="1.000" stroke-opacity="1.000" />
+<line x1="122.258" y1="82.495" x2="128.258" y2="82.495" stroke="rgba(255,127,14,1.000)" stroke-width="1.000" stroke-opacity="1.000" />
+<line x1="122.258" y1="42.743" x2="128.258" y2="42.743" stroke="rgba(255,127,14,1.000)" stroke-width="1.000" stroke-opacity="1.000" />
+<line x1="147.906" y1="82.075" x2="147.906" y2="42.209" stroke="rgba(255,127,14,1.000)" stroke-width="1.000" stroke-opacity="1.000" />
+<line x1="144.906" y1="82.075" x2="150.906" y2="82.075" stroke="rgba(255,127,14,1.000)" stroke-width="1.000" stroke-opacity="1.000" />
+<line x1="144.906" y1="42.209" x2="150.906" y2="42.209" stroke="rgba(255,127,14,1.000)" stroke-width="1.000" stroke-opacity="1.000" />
+<line x1="170.553" y1="92.625" x2="170.553" y2="55.637" stroke="rgba(255,127,14,1.000)" stroke-width="1.000" stroke-opacity="1.000" />
+<line x1="167.553" y1="92.625" x2="173.553" y2="92.625" stroke="rgba(255,127,14,1.000)" stroke-width="1.000" stroke-opacity="1.000" />
+<line x1="167.553" y1="55.637" x2="173.553" y2="55.637" stroke="rgba(255,127,14,1.000)" stroke-width="1.000" stroke-opacity="1.000" />
+<line x1="193.201" y1="107.960" x2="193.201" y2="75.154" stroke="rgba(255,127,14,1.000)" stroke-width="1.000" stroke-opacity="1.000" />
+<line x1="190.201" y1="107.960" x2="196.201" y2="107.960" stroke="rgba(255,127,14,1.000)" stroke-width="1.000" stroke-opacity="1.000" />
+<line x1="190.201" y1="75.154" x2="196.201" y2="75.154" stroke="rgba(255,127,14,1.000)" stroke-width="1.000" stroke-opacity="1.000" />
+<line x1="215.849" y1="124.519" x2="215.849" y2="96.229" stroke="rgba(255,127,14,1.000)" stroke-width="1.000" stroke-opacity="1.000" />
+<line x1="212.849" y1="124.519" x2="218.849" y2="124.519" stroke="rgba(255,127,14,1.000)" stroke-width="1.000" stroke-opacity="1.000" />
+<line x1="212.849" y1="96.229" x2="218.849" y2="96.229" stroke="rgba(255,127,14,1.000)" stroke-width="1.000" stroke-opacity="1.000" />
+<line x1="238.497" y1="140.376" x2="238.497" y2="116.410" stroke="rgba(255,127,14,1.000)" stroke-width="1.000" stroke-opacity="1.000" />
+<line x1="235.497" y1="140.376" x2="241.497" y2="140.376" stroke="rgba(255,127,14,1.000)" stroke-width="1.000" stroke-opacity="1.000" />
+<line x1="235.497" y1="116.410" x2="241.497" y2="116.410" stroke="rgba(255,127,14,1.000)" stroke-width="1.000" stroke-opacity="1.000" />
+<line x1="261.144" y1="154.598" x2="261.144" y2="134.511" stroke="rgba(255,127,14,1.000)" stroke-width="1.000" stroke-opacity="1.000" />
+<line x1="258.144" y1="154.598" x2="264.144" y2="154.598" stroke="rgba(255,127,14,1.000)" stroke-width="1.000" stroke-opacity="1.000" />
+<line x1="258.144" y1="134.511" x2="264.144" y2="134.511" stroke="rgba(255,127,14,1.000)" stroke-width="1.000" stroke-opacity="1.000" />
+<line x1="283.792" y1="166.838" x2="283.792" y2="150.090" stroke="rgba(255,127,14,1.000)" stroke-width="1.000" stroke-opacity="1.000" />
+<line x1="280.792" y1="166.838" x2="286.792" y2="166.838" stroke="rgba(255,127,14,1.000)" stroke-width="1.000" stroke-opacity="1.000" />
+<line x1="280.792" y1="150.090" x2="286.792" y2="150.090" stroke="rgba(255,127,14,1.000)" stroke-width="1.000" stroke-opacity="1.000" />
+<line x1="306.440" y1="177.077" x2="306.440" y2="163.121" stroke="rgba(255,127,14,1.000)" stroke-width="1.000" stroke-opacity="1.000" />
+<line x1="303.440" y1="177.077" x2="309.440" y2="177.077" stroke="rgba(255,127,14,1.000)" stroke-width="1.000" stroke-opacity="1.000" />
+<line x1="303.440" y1="163.121" x2="309.440" y2="163.121" stroke="rgba(255,127,14,1.000)" stroke-width="1.000" stroke-opacity="1.000" />
+<line x1="329.087" y1="185.466" x2="329.087" y2="173.798" stroke="rgba(255,127,14,1.000)" stroke-width="1.000" stroke-opacity="1.000" />
+<line x1="326.087" y1="185.466" x2="332.087" y2="185.466" stroke="rgba(255,127,14,1.000)" stroke-width="1.000" stroke-opacity="1.000" />
+<line x1="326.087" y1="173.798" x2="332.087" y2="173.798" stroke="rgba(255,127,14,1.000)" stroke-width="1.000" stroke-opacity="1.000" />
+</g>
+</g>
+<g class="charton-mark charton-mark-3 charton-mark-point" data-layer="3" data-mark="point">
+<g class="charton-series">
+<rect x="76.418" y="151.724" width="7.090" height="7.090" fill="rgba(255,127,14,1.000)" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" fill-opacity="1.000" stroke-opacity="1.000" />
+<rect x="99.065" y="83.757" width="7.090" height="7.090" fill="rgba(255,127,14,1.000)" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" fill-opacity="1.000" stroke-opacity="1.000" />
+<rect x="121.713" y="59.074" width="7.090" height="7.090" fill="rgba(255,127,14,1.000)" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" fill-opacity="1.000" stroke-opacity="1.000" />
+<rect x="144.361" y="58.597" width="7.090" height="7.090" fill="rgba(255,127,14,1.000)" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" fill-opacity="1.000" stroke-opacity="1.000" />
+<rect x="167.008" y="70.586" width="7.090" height="7.090" fill="rgba(255,127,14,1.000)" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" fill-opacity="1.000" stroke-opacity="1.000" />
+<rect x="189.656" y="88.012" width="7.090" height="7.090" fill="rgba(255,127,14,1.000)" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" fill-opacity="1.000" stroke-opacity="1.000" />
+<rect x="212.304" y="106.829" width="7.090" height="7.090" fill="rgba(255,127,14,1.000)" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" fill-opacity="1.000" stroke-opacity="1.000" />
+<rect x="234.952" y="124.848" width="7.090" height="7.090" fill="rgba(255,127,14,1.000)" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" fill-opacity="1.000" stroke-opacity="1.000" />
+<rect x="257.599" y="141.010" width="7.090" height="7.090" fill="rgba(255,127,14,1.000)" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" fill-opacity="1.000" stroke-opacity="1.000" />
+<rect x="280.247" y="154.919" width="7.090" height="7.090" fill="rgba(255,127,14,1.000)" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" fill-opacity="1.000" stroke-opacity="1.000" />
+<rect x="302.895" y="166.554" width="7.090" height="7.090" fill="rgba(255,127,14,1.000)" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" fill-opacity="1.000" stroke-opacity="1.000" />
+<rect x="325.543" y="176.087" width="7.090" height="7.090" fill="rgba(255,127,14,1.000)" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" fill-opacity="1.000" stroke-opacity="1.000" />
+</g>
+</g>
+</g>
+<g class="charton-axis charton-axis-x" data-axis="x">
+<g class="charton-axis-line">
+<path d="M 55.050 223.000 L 354.000 223.000" fill="none" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+</g>
+<g class="charton-tick">
+<path d="M 68.639 223.000 L 68.639 229.000" fill="none" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+<path d="M 125.258 223.000 L 125.258 229.000" fill="none" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+<path d="M 181.877 223.000 L 181.877 229.000" fill="none" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+<path d="M 238.497 223.000 L 238.497 229.000" fill="none" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+<path d="M 295.116 223.000 L 295.116 229.000" fill="none" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+<path d="M 351.735 223.000 L 351.735 229.000" fill="none" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+</g>
+<g class="charton-tick-label">
+<text x="68.639" y="232.000" font-size="13.0" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', Ubuntu, Cantarell, 'Noto Sans', sans-serif" fill="rgba(51,51,51,1.000)" fill-opacity="1.000" text-anchor="middle" font-weight="normal" font-style="normal" dominant-baseline="hanging" transform="rotate(0 68.639 232.000)" data-value="0">0</text>
+<text x="125.258" y="232.000" font-size="13.0" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', Ubuntu, Cantarell, 'Noto Sans', sans-serif" fill="rgba(51,51,51,1.000)" fill-opacity="1.000" text-anchor="middle" font-weight="normal" font-style="normal" dominant-baseline="hanging" transform="rotate(0 125.258 232.000)" data-value="5">5</text>
+<text x="181.877" y="232.000" font-size="13.0" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', Ubuntu, Cantarell, 'Noto Sans', sans-serif" fill="rgba(51,51,51,1.000)" fill-opacity="1.000" text-anchor="middle" font-weight="normal" font-style="normal" dominant-baseline="hanging" transform="rotate(0 181.877 232.000)" data-value="10">10</text>
+<text x="238.497" y="232.000" font-size="13.0" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', Ubuntu, Cantarell, 'Noto Sans', sans-serif" fill="rgba(51,51,51,1.000)" fill-opacity="1.000" text-anchor="middle" font-weight="normal" font-style="normal" dominant-baseline="hanging" transform="rotate(0 238.497 232.000)" data-value="15">15</text>
+<text x="295.116" y="232.000" font-size="13.0" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', Ubuntu, Cantarell, 'Noto Sans', sans-serif" fill="rgba(51,51,51,1.000)" fill-opacity="1.000" text-anchor="middle" font-weight="normal" font-style="normal" dominant-baseline="hanging" transform="rotate(0 295.116 232.000)" data-value="20">20</text>
+<text x="351.735" y="232.000" font-size="13.0" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', Ubuntu, Cantarell, 'Noto Sans', sans-serif" fill="rgba(51,51,51,1.000)" fill-opacity="1.000" text-anchor="middle" font-weight="normal" font-style="normal" dominant-baseline="hanging" transform="rotate(0 351.735 232.000)" data-value="25">25</text>
+</g>
+<g class="charton-axis-title">
+<text x="204.525" y="255.000" font-size="15.0" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', Ubuntu, Cantarell, 'Noto Sans', sans-serif" fill="rgba(51,51,51,1.000)" fill-opacity="1.000" text-anchor="middle" font-weight="bold" font-style="normal" dominant-baseline="hanging" transform="rotate(0 204.525 255.000)">time [hr]</text>
+</g>
+</g>
+<g class="charton-axis charton-axis-y" data-axis="y">
+<g class="charton-axis-line">
+<path d="M 55.050 33.600 L 55.050 223.000" fill="none" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+</g>
+<g class="charton-tick">
+<path d="M 55.050 214.391 L 49.050 214.391" fill="none" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+<path d="M 55.050 131.243 L 49.050 131.243" fill="none" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+<path d="M 55.050 48.094 L 49.050 48.094" fill="none" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+</g>
+<g class="charton-tick-label">
+<text x="46.050" y="214.391" font-size="13.0" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', Ubuntu, Cantarell, 'Noto Sans', sans-serif" fill="rgba(51,51,51,1.000)" fill-opacity="1.000" text-anchor="end" font-weight="normal" font-style="normal" dominant-baseline="central" transform="rotate(0 46.050 214.391)" data-value="0">0</text>
+<text x="46.050" y="131.243" font-size="13.0" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', Ubuntu, Cantarell, 'Noto Sans', sans-serif" fill="rgba(51,51,51,1.000)" fill-opacity="1.000" text-anchor="end" font-weight="normal" font-style="normal" dominant-baseline="central" transform="rotate(0 46.050 131.243)" data-value="5">5</text>
+<text x="46.050" y="48.094" font-size="13.0" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', Ubuntu, Cantarell, 'Noto Sans', sans-serif" fill="rgba(51,51,51,1.000)" fill-opacity="1.000" text-anchor="end" font-weight="normal" font-style="normal" dominant-baseline="central" transform="rotate(0 46.050 48.094)" data-value="10">10</text>
+</g>
+<g class="charton-axis-title">
+<text x="17.500" y="128.300" font-size="15.0" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', Ubuntu, Cantarell, 'Noto Sans', sans-serif" fill="rgba(51,51,51,1.000)" fill-opacity="1.000" text-anchor="middle" font-weight="bold" font-style="normal" dominant-baseline="middle" transform="rotate(-90 17.500 128.300)">concentration [mg/l]</text>
+</g>
+</g>
+</svg><svg x="360" y="30" width="360" height="280">
+<title id="g1-title">B</title>
+<defs><clipPath id="g1-clip-0"><rect x="66.100" y="33.600" width="287.900" height="189.400" /></clipPath>
+</defs>
+<g class="charton-background">
+<rect x="0.000" y="0.000" width="360.000" height="280.000" fill="rgba(255,255,255,1.000)" stroke="none" stroke-width="0.000" fill-opacity="1.000" stroke-opacity="1.000" />
+</g>
+<g class="charton-title">
+<text x="210.050" y="16.800" font-size="18.0" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', Ubuntu, Cantarell, 'Noto Sans', sans-serif" fill="rgba(51,51,51,1.000)" fill-opacity="1.000" text-anchor="middle" font-weight="bold" font-style="normal" dominant-baseline="middle" transform="rotate(0 210.050 16.800)">B</text>
+</g>
+<g class="charton-plot" clip-path="url(#g1-clip-0)">
+<g class="charton-mark charton-mark-0 charton-mark-line" data-layer="0" data-mark="line">
+<g class="charton-series">
+<path d="M 79.186 44.451 L 80.502 44.453 L 81.817 44.455 L 83.132 44.457 L 84.447 44.459 L 85.762 44.461 L 87.078 44.464 L 88.393 44.466 L 89.708 44.469 L 91.023 44.472 L 92.338 44.476 L 93.654 44.479 L 94.969 44.483 L 96.284 44.487 L 97.599 44.491 L 98.915 44.496 L 100.230 44.501 L 101.545 44.506 L 102.860 44.512 L 104.175 44.518 L 105.491 44.525 L 106.806 44.532 L 108.121 44.539 L 109.436 44.548 L 110.751 44.556 L 112.067 44.566 L 113.382 44.575 L 114.697 44.586 L 116.012 44.598 L 117.328 44.610 L 118.643 44.623 L 119.958 44.637 L 121.273 44.652 L 122.588 44.668 L 123.904 44.686 L 125.219 44.704 L 126.534 44.724 L 127.849 44.745 L 129.164 44.768 L 130.480 44.792 L 131.795 44.819 L 133.110 44.847 L 134.425 44.876 L 135.740 44.908 L 137.056 44.943 L 138.371 44.980 L 139.686 45.019 L 141.001 45.061 L 142.317 45.106 L 143.632 45.154 L 144.947 45.205 L 146.262 45.261 L 147.577 45.319 L 148.893 45.382 L 150.208 45.450 L 151.523 45.522 L 152.838 45.599 L 154.153 45.681 L 155.469 45.768 L 156.784 45.862 L 158.099 45.962 L 159.414 46.069 L 160.730 46.183 L 162.045 46.305 L 163.360 46.434 L 164.675 46.573 L 165.990 46.720 L 167.306 46.877 L 168.621 47.044 L 169.936 47.222 L 171.251 47.411 L 172.566 47.612 L 173.882 47.826 L 175.197 48.053 L 176.512 48.295 L 177.827 48.551 L 179.143 48.822 L 180.458 49.110 L 181.773 49.415 L 183.088 49.737 L 184.403 50.078 L 185.719 50.438 L 187.034 50.819 L 188.349 51.220 L 189.664 51.643 L 190.979 52.089 L 192.295 52.558 L 193.610 53.051 L 194.925 53.568 L 196.240 54.111 L 197.555 54.680 L 198.871 55.276 L 200.186 55.898 L 201.501 56.549 L 202.816 57.228 L 204.132 57.935 L 205.447 58.671 L 206.762 59.436 L 208.077 60.231 L 209.392 61.055 L 210.708 61.909 L 212.023 62.793 L 213.338 63.706 L 214.653 64.649 L 215.968 65.620 L 217.284 66.621 L 218.599 67.650 L 219.914 68.708 L 221.229 69.793 L 222.545 70.905 L 223.860 72.045 L 225.175 73.210 L 226.490 74.400 L 227.805 75.615 L 229.121 76.854 L 230.436 78.117 L 231.751 79.401 L 233.066 80.708 L 234.381 82.035 L 235.697 83.383 L 237.012 84.750 L 238.327 86.135 L 239.642 87.538 L 240.957 88.959 L 242.273 90.395 L 243.588 91.847 L 244.903 93.314 L 246.218 94.795 L 247.534 96.289 L 248.849 97.795 L 250.164 99.314 L 251.479 100.844 L 252.794 102.385 L 254.110 103.936 L 255.425 105.496 L 256.740 107.066 L 258.055 108.644 L 259.370 110.231 L 260.686 111.825 L 262.001 113.426 L 263.316 115.034 L 264.631 116.648 L 265.947 118.268 L 267.262 119.894 L 268.577 121.525 L 269.892 123.161 L 271.207 124.802 L 272.523 126.447 L 273.838 128.096 L 275.153 129.748 L 276.468 131.405 L 277.783 133.065 L 279.099 134.728 L 280.414 136.394 L 281.729 138.062 L 283.044 139.733 L 284.359 141.407 L 285.675 143.083 L 286.990 144.761 L 288.305 146.441 L 289.620 148.123 L 290.936 149.806 L 292.251 151.492 L 293.566 153.178 L 294.881 154.866 L 296.196 156.556 L 297.512 158.246 L 298.827 159.938 L 300.142 161.631 L 301.457 163.325 L 302.772 165.020 L 304.088 166.715 L 305.403 168.412 L 306.718 170.109 L 308.033 171.807 L 309.349 173.506 L 310.664 175.205 L 311.979 176.905 L 313.294 178.605 L 314.609 180.306 L 315.925 182.007 L 317.240 183.709 L 318.555 185.411 L 319.870 187.114 L 321.185 188.817 L 322.501 190.520 L 323.816 192.224 L 325.131 193.928 L 326.446 195.632 L 327.762 197.336 L 329.077 199.041 L 330.392 200.746 L 331.707 202.451 L 333.022 204.156 L 334.338 205.861 L 335.653 207.567 L 336.968 209.273 L 338.283 210.979 L 339.598 212.685 L 340.914 214.391" fill="none" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+</g>
+</g>
+<g class="charton-mark charton-mark-1 charton-mark-point" data-layer="1" data-mark="point">
+<g class="charton-series">
+<circle cx="110.405" cy="42.209" r="3.000" fill="rgba(214,39,40,1.000)" stroke="none" stroke-width="0.000" fill-opacity="1.000" stroke-opacity="1.000" />
+<circle cx="175.837" cy="45.824" r="3.000" fill="rgba(214,39,40,1.000)" stroke="none" stroke-width="0.000" fill-opacity="1.000" stroke-opacity="1.000" />
+<circle cx="241.269" cy="86.953" r="3.000" fill="rgba(214,39,40,1.000)" stroke="none" stroke-width="0.000" fill-opacity="1.000" stroke-opacity="1.000" />
+<circle cx="306.701" cy="167.742" r="3.000" fill="rgba(214,39,40,1.000)" stroke="none" stroke-width="0.000" fill-opacity="1.000" stroke-opacity="1.000" />
+</g>
+</g>
+</g>
+<g class="charton-axis charton-axis-x" data-axis="x">
+<g class="charton-axis-line">
+<path d="M 66.100 223.000 L 354.000 223.000" fill="none" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+</g>
+<g class="charton-tick">
+<path d="M 79.186 223.000 L 79.186 229.000" fill="none" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+<path d="M 144.618 223.000 L 144.618 229.000" fill="none" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+<path d="M 210.050 223.000 L 210.050 229.000" fill="none" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+<path d="M 275.482 223.000 L 275.482 229.000" fill="none" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+<path d="M 340.914 223.000 L 340.914 229.000" fill="none" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+</g>
+<g class="charton-tick-label">
+<text x="79.186" y="232.000" font-size="13.0" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', Ubuntu, Cantarell, 'Noto Sans', sans-serif" fill="rgba(51,51,51,1.000)" fill-opacity="1.000" text-anchor="middle" font-weight="normal" font-style="normal" dominant-baseline="hanging" transform="rotate(0 79.186 232.000)" data-value="0.01">0.01</text>
+<text x="144.618" y="232.000" font-size="13.0" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', Ubuntu, Cantarell, 'Noto Sans', sans-serif" fill="rgba(51,51,51,1.000)" fill-opacity="1.000" text-anchor="middle" font-weight="normal" font-style="normal" dominant-baseline="hanging" transform="rotate(0 144.618 232.000)" data-value="0.1">0.1</text>
+<text x="210.050" y="232.000" font-size="13.0" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', Ubuntu, Cantarell, 'Noto Sans', sans-serif" fill="rgba(51,51,51,1.000)" fill-opacity="1.000" text-anchor="middle" font-weight="normal" font-style="normal" dominant-baseline="hanging" transform="rotate(0 210.050 232.000)" data-value="1">1</text>
+<text x="275.482" y="232.000" font-size="13.0" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', Ubuntu, Cantarell, 'Noto Sans', sans-serif" fill="rgba(51,51,51,1.000)" fill-opacity="1.000" text-anchor="middle" font-weight="normal" font-style="normal" dominant-baseline="hanging" transform="rotate(0 275.482 232.000)" data-value="10">10</text>
+<text x="340.914" y="232.000" font-size="13.0" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', Ubuntu, Cantarell, 'Noto Sans', sans-serif" fill="rgba(51,51,51,1.000)" fill-opacity="1.000" text-anchor="middle" font-weight="normal" font-style="normal" dominant-baseline="hanging" transform="rotate(0 340.914 232.000)" data-value="100">100</text>
+</g>
+<g class="charton-axis-title">
+<text x="210.050" y="255.000" font-size="15.0" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', Ubuntu, Cantarell, 'Noto Sans', sans-serif" fill="rgba(51,51,51,1.000)" fill-opacity="1.000" text-anchor="middle" font-weight="bold" font-style="normal" dominant-baseline="hanging" transform="rotate(0 210.050 255.000)">dose [mg]</text>
+</g>
+</g>
+<g class="charton-axis charton-axis-y" data-axis="y">
+<g class="charton-axis-line">
+<path d="M 66.100 33.600 L 66.100 223.000" fill="none" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+</g>
+<g class="charton-tick">
+<path d="M 66.100 197.314 L 60.100 197.314" fill="none" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+<path d="M 66.100 140.667 L 60.100 140.667" fill="none" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+<path d="M 66.100 84.021 L 60.100 84.021" fill="none" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+</g>
+<g class="charton-tick-label">
+<text x="57.100" y="197.314" font-size="13.0" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', Ubuntu, Cantarell, 'Noto Sans', sans-serif" fill="rgba(51,51,51,1.000)" fill-opacity="1.000" text-anchor="end" font-weight="normal" font-style="normal" dominant-baseline="central" transform="rotate(0 57.100 197.314)" data-value="0.01">0.01</text>
+<text x="57.100" y="140.667" font-size="13.0" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', Ubuntu, Cantarell, 'Noto Sans', sans-serif" fill="rgba(51,51,51,1.000)" fill-opacity="1.000" text-anchor="end" font-weight="normal" font-style="normal" dominant-baseline="central" transform="rotate(0 57.100 140.667)" data-value="0.10">0.10</text>
+<text x="57.100" y="84.021" font-size="13.0" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', Ubuntu, Cantarell, 'Noto Sans', sans-serif" fill="rgba(51,51,51,1.000)" fill-opacity="1.000" text-anchor="end" font-weight="normal" font-style="normal" dominant-baseline="central" transform="rotate(0 57.100 84.021)" data-value="1.00">1.00</text>
+</g>
+<g class="charton-axis-title">
+<text x="17.500" y="128.300" font-size="15.0" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', Ubuntu, Cantarell, 'Noto Sans', sans-serif" fill="rgba(51,51,51,1.000)" fill-opacity="1.000" text-anchor="middle" font-weight="bold" font-style="normal" dominant-baseline="middle" transform="rotate(-90 17.500 128.300)">response</text>
+</g>
+</g>
+</svg><svg x="0" y="310" width="360" height="280">
+<title id="g2-title">C</title>
+<defs><clipPath id="g2-clip-0"><rect x="55.050" y="33.600" width="298.950" height="189.400" /></clipPath>
+</defs>
+<g class="charton-background">
+<rect x="0.000" y="0.000" width="360.000" height="280.000" fill="rgba(255,255,255,1.000)" stroke="none" stroke-width="0.000" fill-opacity="1.000" stroke-opacity="1.000" />
+</g>
+<g class="charton-title">
+<text x="204.525" y="16.800" font-size="18.0" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', Ubuntu, Cantarell, 'Noto Sans', sans-serif" fill="rgba(51,51,51,1.000)" fill-opacity="1.000" text-anchor="middle" font-weight="bold" font-style="normal" dominant-baseline="middle" transform="rotate(0 204.525 16.800)">C</text>
+</g>
+<g class="charton-plot" clip-path="url(#g2-clip-0)">
+<g class="charton-mark charton-mark-0 charton-mark-bar" data-layer="0" data-mark="bar">
+<path d="M 73.734 223.000 L 73.734 119.925 L 111.103 119.925 L 111.103 223.000 Z" fill="rgba(140,86,75,1.000)" fill-opacity="1.000" fill-rule="evenodd" stroke="rgba(0,0,0,1.000)" stroke-width="0.800" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" data-value="oral" />
+<path d="M 148.472 223.000 L 148.472 58.724 L 185.841 58.724 L 185.841 223.000 Z" fill="rgba(140,86,75,1.000)" fill-opacity="1.000" fill-rule="evenodd" stroke="rgba(0,0,0,1.000)" stroke-width="0.800" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" data-value="iv" />
+<path d="M 223.209 223.000 L 223.209 177.905 L 260.578 177.905 L 260.578 223.000 Z" fill="rgba(140,86,75,1.000)" fill-opacity="1.000" fill-rule="evenodd" stroke="rgba(0,0,0,1.000)" stroke-width="0.800" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" data-value="renal" />
+<path d="M 297.947 223.000 L 297.947 132.810 L 335.316 132.810 L 335.316 223.000 Z" fill="rgba(140,86,75,1.000)" fill-opacity="1.000" fill-rule="evenodd" stroke="rgba(0,0,0,1.000)" stroke-width="0.800" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" data-value="hepatic" />
+</g>
+<g class="charton-mark charton-mark-1 charton-mark-errorbar" data-layer="1" data-mark="errorbar">
+<g class="charton-series">
+<line x1="92.419" y1="132.810" x2="92.419" y2="103.820" stroke="rgba(0,0,0,1.000)" stroke-width="1.200" stroke-opacity="1.000" />
+<line x1="86.419" y1="132.810" x2="98.419" y2="132.810" stroke="rgba(0,0,0,1.000)" stroke-width="1.200" stroke-opacity="1.000" />
+<line x1="86.419" y1="103.820" x2="98.419" y2="103.820" stroke="rgba(0,0,0,1.000)" stroke-width="1.200" stroke-opacity="1.000" />
+<line x1="167.156" y1="71.609" x2="167.156" y2="42.619" stroke="rgba(0,0,0,1.000)" stroke-width="1.200" stroke-opacity="1.000" />
+<line x1="161.156" y1="71.609" x2="173.156" y2="71.609" stroke="rgba(0,0,0,1.000)" stroke-width="1.200" stroke-opacity="1.000" />
+<line x1="161.156" y1="42.619" x2="173.156" y2="42.619" stroke="rgba(0,0,0,1.000)" stroke-width="1.200" stroke-opacity="1.000" />
+<line x1="241.894" y1="190.789" x2="241.894" y2="161.799" stroke="rgba(0,0,0,1.000)" stroke-width="1.200" stroke-opacity="1.000" />
+<line x1="235.894" y1="190.789" x2="247.894" y2="190.789" stroke="rgba(0,0,0,1.000)" stroke-width="1.200" stroke-opacity="1.000" />
+<line x1="235.894" y1="161.799" x2="247.894" y2="161.799" stroke="rgba(0,0,0,1.000)" stroke-width="1.200" stroke-opacity="1.000" />
+<line x1="316.631" y1="145.694" x2="316.631" y2="116.704" stroke="rgba(0,0,0,1.000)" stroke-width="1.200" stroke-opacity="1.000" />
+<line x1="310.631" y1="145.694" x2="322.631" y2="145.694" stroke="rgba(0,0,0,1.000)" stroke-width="1.200" stroke-opacity="1.000" />
+<line x1="310.631" y1="116.704" x2="322.631" y2="116.704" stroke="rgba(0,0,0,1.000)" stroke-width="1.200" stroke-opacity="1.000" />
+</g>
+</g>
+</g>
+<g class="charton-axis charton-axis-x" data-axis="x">
+<g class="charton-axis-line">
+<path d="M 55.050 223.000 L 354.000 223.000" fill="none" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+</g>
+<g class="charton-tick">
+<path d="M 92.419 223.000 L 92.419 229.000" fill="none" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+<path d="M 167.156 223.000 L 167.156 229.000" fill="none" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+<path d="M 241.894 223.000 L 241.894 229.000" fill="none" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+<path d="M 316.631 223.000 L 316.631 229.000" fill="none" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+</g>
+<g class="charton-tick-label">
+<text x="92.419" y="232.000" font-size="13.0" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', Ubuntu, Cantarell, 'Noto Sans', sans-serif" fill="rgba(51,51,51,1.000)" fill-opacity="1.000" text-anchor="middle" font-weight="normal" font-style="normal" dominant-baseline="hanging" transform="rotate(0 92.419 232.000)" data-value="oral">oral</text>
+<text x="167.156" y="232.000" font-size="13.0" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', Ubuntu, Cantarell, 'Noto Sans', sans-serif" fill="rgba(51,51,51,1.000)" fill-opacity="1.000" text-anchor="middle" font-weight="normal" font-style="normal" dominant-baseline="hanging" transform="rotate(0 167.156 232.000)" data-value="iv">iv</text>
+<text x="241.894" y="232.000" font-size="13.0" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', Ubuntu, Cantarell, 'Noto Sans', sans-serif" fill="rgba(51,51,51,1.000)" fill-opacity="1.000" text-anchor="middle" font-weight="normal" font-style="normal" dominant-baseline="hanging" transform="rotate(0 241.894 232.000)" data-value="renal">renal</text>
+<text x="316.631" y="232.000" font-size="13.0" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', Ubuntu, Cantarell, 'Noto Sans', sans-serif" fill="rgba(51,51,51,1.000)" fill-opacity="1.000" text-anchor="middle" font-weight="normal" font-style="normal" dominant-baseline="hanging" transform="rotate(0 316.631 232.000)" data-value="hepatic">hepatic</text>
+</g>
+<g class="charton-axis-title">
+<text x="204.525" y="255.000" font-size="15.0" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', Ubuntu, Cantarell, 'Noto Sans', sans-serif" fill="rgba(51,51,51,1.000)" fill-opacity="1.000" text-anchor="middle" font-weight="bold" font-style="normal" dominant-baseline="hanging" transform="rotate(0 204.525 255.000)">route</text>
+</g>
+</g>
+<g class="charton-axis charton-axis-y" data-axis="y">
+<g class="charton-axis-line">
+<path d="M 55.050 33.600 L 55.050 223.000" fill="none" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+</g>
+<g class="charton-tick">
+<path d="M 55.050 223.000 L 49.050 223.000" fill="none" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+<path d="M 55.050 158.578 L 49.050 158.578" fill="none" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+<path d="M 55.050 94.156 L 49.050 94.156" fill="none" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+</g>
+<g class="charton-tick-label">
+<text x="46.050" y="223.000" font-size="13.0" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', Ubuntu, Cantarell, 'Noto Sans', sans-serif" fill="rgba(51,51,51,1.000)" fill-opacity="1.000" text-anchor="end" font-weight="normal" font-style="normal" dominant-baseline="central" transform="rotate(0 46.050 223.000)" data-value="0">0</text>
+<text x="46.050" y="158.578" font-size="13.0" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', Ubuntu, Cantarell, 'Noto Sans', sans-serif" fill="rgba(51,51,51,1.000)" fill-opacity="1.000" text-anchor="end" font-weight="normal" font-style="normal" dominant-baseline="central" transform="rotate(0 46.050 158.578)" data-value="2">2</text>
+<text x="46.050" y="94.156" font-size="13.0" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', Ubuntu, Cantarell, 'Noto Sans', sans-serif" fill="rgba(51,51,51,1.000)" fill-opacity="1.000" text-anchor="end" font-weight="normal" font-style="normal" dominant-baseline="central" transform="rotate(0 46.050 94.156)" data-value="4">4</text>
+</g>
+<g class="charton-axis-title">
+<text x="21.400" y="128.300" font-size="15.0" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', Ubuntu, Cantarell, 'Noto Sans', sans-serif" fill="rgba(51,51,51,1.000)" fill-opacity="1.000" text-anchor="middle" font-weight="bold" font-style="normal" dominant-baseline="middle" transform="rotate(-90 21.400 128.300)">AUC [mg*hr/l]</text>
+</g>
+</g>
+</svg><svg x="360" y="310" width="360" height="280">
+<title id="g3-title">D</title>
+<defs><clipPath id="g3-clip-0"><rect x="66.100" y="33.600" width="287.900" height="189.400" /></clipPath>
+</defs>
+<g class="charton-background">
+<rect x="0.000" y="0.000" width="360.000" height="280.000" fill="rgba(255,255,255,1.000)" stroke="none" stroke-width="0.000" fill-opacity="1.000" stroke-opacity="1.000" />
+</g>
+<g class="charton-title">
+<text x="210.050" y="16.800" font-size="18.0" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', Ubuntu, Cantarell, 'Noto Sans', sans-serif" fill="rgba(51,51,51,1.000)" fill-opacity="1.000" text-anchor="middle" font-weight="bold" font-style="normal" dominant-baseline="middle" transform="rotate(0 210.050 16.800)">D</text>
+</g>
+<g class="charton-plot" clip-path="url(#g3-clip-0)">
+<g class="charton-mark charton-mark-0 charton-mark-polygon" data-layer="0" data-mark="polygon">
+<g class="charton-series" data-series="r0">
+<path d="M 79.186 214.391 L 80.062 208.213 L 80.937 202.199 L 81.812 196.346 L 82.688 190.650 L 83.563 185.109 L 84.438 179.720 L 85.314 174.479 L 86.189 169.384 L 87.064 164.431 L 87.940 159.617 L 88.815 154.940 L 89.690 150.398 L 90.566 145.986 L 91.441 141.703 L 92.316 137.546 L 93.192 133.512 L 94.067 129.599 L 94.943 125.805 L 95.818 122.126 L 96.693 118.560 L 97.569 115.106 L 98.444 111.760 L 99.319 108.521 L 100.195 105.386 L 101.070 102.353 L 101.945 99.420 L 102.821 96.585 L 103.696 93.845 L 104.571 91.199 L 105.447 88.645 L 106.322 86.180 L 107.197 83.803 L 108.073 81.511 L 108.948 79.304 L 109.823 77.179 L 110.699 75.134 L 111.574 73.168 L 112.449 71.278 L 113.325 69.464 L 114.200 67.723 L 115.075 66.054 L 115.951 64.456 L 116.826 62.926 L 117.701 61.463 L 118.577 60.066 L 119.452 58.732 L 120.327 57.462 L 121.203 56.253 L 122.078 55.104 L 122.953 54.013 L 123.829 52.979 L 124.704 52.001 L 125.579 51.078 L 126.455 50.208 L 127.330 49.389 L 128.206 48.622 L 129.081 47.904 L 129.956 47.234 L 130.832 46.612 L 131.707 46.036 L 132.582 45.504 L 133.458 45.017 L 134.333 44.572 L 135.208 44.169 L 136.084 43.807 L 136.959 43.484 L 137.834 43.200 L 138.710 42.954 L 139.585 42.744 L 140.460 42.571 L 141.336 42.432 L 142.211 42.328 L 143.086 42.256 L 143.962 42.217 L 144.837 42.209 L 145.712 42.232 L 146.588 42.285 L 147.463 42.366 L 148.338 42.476 L 149.214 42.613 L 150.089 42.777 L 150.964 42.967 L 151.840 43.183 L 152.715 43.423 L 153.590 43.686 L 154.466 43.973 L 155.341 44.283 L 156.216 44.614 L 157.092 44.966 L 157.967 45.339 L 158.842 45.732 L 159.718 46.145 L 160.593 46.576 L 161.469 47.026 L 162.344 47.493 L 163.219 47.978 L 164.095 48.479 L 164.970 48.996 L 165.845 49.528 L 166.721 50.076 L 167.596 50.638 L 168.471 51.215 L 169.347 51.804 L 170.222 52.408 L 171.097 53.023 L 171.973 53.651 L 172.848 54.291 L 173.723 54.942 L 174.599 55.604 L 175.474 56.277 L 176.349 56.960 L 177.225 57.652 L 178.100 58.354 L 178.975 59.066 L 179.851 59.785 L 180.726 60.513 L 181.601 61.249 L 182.477 61.993 L 183.352 62.744 L 184.227 63.501 L 185.103 64.266 L 185.978 65.037 L 186.853 65.813 L 187.729 66.596 L 188.604 67.384 L 189.479 68.177 L 190.355 68.975 L 191.230 69.778 L 192.105 70.585 L 192.981 71.396 L 193.856 72.211 L 194.732 73.029 L 195.607 73.851 L 196.482 74.676 L 197.358 75.504 L 198.233 76.334 L 199.108 77.167 L 199.984 78.002 L 200.859 78.840 L 201.734 79.679 L 202.610 80.520 L 203.485 81.362 L 204.360 82.205 L 205.236 83.050 L 206.111 83.895 L 206.986 84.741 L 207.862 85.588 L 208.737 86.435 L 209.612 87.282 L 210.488 88.130 L 211.363 88.977 L 212.238 89.824 L 213.114 90.671 L 213.989 91.517 L 214.864 92.362 L 215.740 93.207 L 216.615 94.051 L 217.490 94.894 L 218.366 95.736 L 219.241 96.576 L 220.116 97.415 L 220.992 98.253 L 221.867 99.089 L 222.742 99.923 L 223.618 100.756 L 224.493 101.586 L 225.368 102.415 L 226.244 103.241 L 227.119 104.065 L 227.995 104.887 L 228.870 105.707 L 229.745 106.524 L 230.621 107.339 L 231.496 108.151 L 232.371 108.960 L 233.247 109.767 L 234.122 110.570 L 234.997 111.371 L 235.873 112.169 L 236.748 112.964 L 237.623 113.756 L 238.499 114.545 L 239.374 115.330 L 240.249 116.112 L 241.125 116.891 L 242.000 117.667 L 242.875 118.439 L 243.751 119.208 L 244.626 119.973 L 245.501 120.735 L 246.377 121.493 L 247.252 122.248 L 248.127 122.999 L 249.003 123.746 L 249.878 124.490 L 250.753 125.229 L 251.629 125.965 L 252.504 126.698 L 253.379 127.426 L 254.255 128.150 L 255.130 128.871 L 256.005 129.588 L 256.881 130.300 L 257.756 131.009 L 258.631 131.714 L 259.507 132.415 L 260.382 133.111 L 261.258 133.804 L 262.133 134.493 L 263.008 135.177 L 263.884 135.858 L 264.759 136.534 L 265.634 137.206 L 266.510 137.874 L 267.385 138.538 L 268.260 139.198 L 269.136 139.854 L 270.011 140.506 L 270.886 141.153 L 271.762 141.796 L 272.637 142.435 L 273.512 143.070 L 274.388 143.701 L 275.263 144.328 L 276.138 144.950 L 277.014 145.568 L 277.889 146.182 L 278.764 146.792 L 279.640 147.398 L 280.515 148.000 L 281.390 148.597 L 282.266 149.190 L 283.141 149.780 L 284.016 150.365 L 284.892 150.945 L 285.767 151.522 L 286.642 152.095 L 287.518 152.663 L 288.393 153.228 L 289.268 153.788 L 290.144 154.344 L 291.019 154.896 L 291.894 155.444 L 292.770 155.988 L 293.645 156.528 L 294.521 157.064 L 295.396 157.596 L 296.271 158.124 L 297.147 158.648 L 298.022 159.168 L 298.897 159.683 L 299.773 160.195 L 300.648 160.703 L 301.523 161.207 L 302.399 161.708 L 303.274 162.204 L 304.149 162.696 L 305.025 163.185 L 305.900 163.669 L 306.775 164.150 L 307.651 164.627 L 308.526 165.100 L 309.401 165.570 L 310.277 166.035 L 311.152 166.497 L 312.027 166.955 L 312.903 167.410 L 313.778 167.860 L 314.653 168.307 L 315.529 168.751 L 316.404 169.190 L 317.279 169.626 L 318.155 170.059 L 319.030 170.488 L 319.905 170.913 L 320.781 171.335 L 321.656 171.753 L 322.531 172.168 L 323.407 172.579 L 324.282 172.987 L 325.157 173.391 L 326.033 173.792 L 326.908 174.190 L 327.784 174.584 L 328.659 174.974 L 329.534 175.362 L 330.410 175.746 L 331.285 176.126 L 332.160 176.504 L 333.036 176.878 L 333.911 177.249 L 334.786 177.616 L 335.662 177.981 L 336.537 178.342 L 337.412 178.700 L 338.288 179.055 L 339.163 179.407 L 340.038 179.755 L 340.914 180.101 L 340.914 197.246 L 340.038 197.073 L 339.163 196.899 L 338.288 196.723 L 337.412 196.545 L 336.537 196.366 L 335.662 196.186 L 334.786 196.004 L 333.911 195.820 L 333.036 195.634 L 332.160 195.447 L 331.285 195.259 L 330.410 195.068 L 329.534 194.876 L 328.659 194.683 L 327.784 194.487 L 326.908 194.290 L 326.033 194.091 L 325.157 193.891 L 324.282 193.689 L 323.407 193.485 L 322.531 193.279 L 321.656 193.072 L 320.781 192.863 L 319.905 192.652 L 319.030 192.439 L 318.155 192.225 L 317.279 192.009 L 316.404 191.791 L 315.529 191.571 L 314.653 191.349 L 313.778 191.126 L 312.903 190.900 L 312.027 190.673 L 311.152 190.444 L 310.277 190.213 L 309.401 189.980 L 308.526 189.746 L 307.651 189.509 L 306.775 189.270 L 305.900 189.030 L 305.025 188.788 L 304.149 188.544 L 303.274 188.297 L 302.399 188.049 L 301.523 187.799 L 300.648 187.547 L 299.773 187.293 L 298.897 187.037 L 298.022 186.779 L 297.147 186.519 L 296.271 186.257 L 295.396 185.993 L 294.521 185.727 L 293.645 185.460 L 292.770 185.190 L 291.894 184.918 L 291.019 184.644 L 290.144 184.368 L 289.268 184.089 L 288.393 183.809 L 287.518 183.527 L 286.642 183.243 L 285.767 182.957 L 284.892 182.668 L 284.016 182.378 L 283.141 182.085 L 282.266 181.791 L 281.390 181.494 L 280.515 181.195 L 279.640 180.895 L 278.764 180.592 L 277.889 180.287 L 277.014 179.980 L 276.138 179.671 L 275.263 179.359 L 274.388 179.046 L 273.512 178.731 L 272.637 178.413 L 271.762 178.094 L 270.886 177.772 L 270.011 177.448 L 269.136 177.122 L 268.260 176.795 L 267.385 176.465 L 266.510 176.133 L 265.634 175.799 L 264.759 175.462 L 263.884 175.124 L 263.008 174.784 L 262.133 174.442 L 261.258 174.097 L 260.382 173.751 L 259.507 173.403 L 258.631 173.052 L 257.756 172.700 L 256.881 172.346 L 256.005 171.989 L 255.130 171.631 L 254.255 171.271 L 253.379 170.908 L 252.504 170.544 L 251.629 170.178 L 250.753 169.810 L 249.878 169.440 L 249.003 169.069 L 248.127 168.695 L 247.252 168.319 L 246.377 167.942 L 245.501 167.563 L 244.626 167.182 L 243.751 166.800 L 242.875 166.415 L 242.000 166.029 L 241.125 165.641 L 240.249 165.252 L 239.374 164.861 L 238.499 164.468 L 237.623 164.073 L 236.748 163.678 L 235.873 163.280 L 234.997 162.881 L 234.122 162.481 L 233.247 162.079 L 232.371 161.675 L 231.496 161.271 L 230.621 160.865 L 229.745 160.457 L 228.870 160.049 L 227.995 159.639 L 227.119 159.228 L 226.244 158.816 L 225.368 158.403 L 224.493 157.988 L 223.618 157.573 L 222.742 157.157 L 221.867 156.740 L 220.992 156.322 L 220.116 155.903 L 219.241 155.484 L 218.366 155.063 L 217.490 154.642 L 216.615 154.221 L 215.740 153.799 L 214.864 153.377 L 213.989 152.954 L 213.114 152.531 L 212.238 152.107 L 211.363 151.684 L 210.488 151.260 L 209.612 150.837 L 208.737 150.413 L 207.862 149.989 L 206.986 149.566 L 206.111 149.143 L 205.236 148.720 L 204.360 148.298 L 203.485 147.876 L 202.610 147.455 L 201.734 147.035 L 200.859 146.615 L 199.984 146.197 L 199.108 145.779 L 198.233 145.363 L 197.358 144.947 L 196.482 144.533 L 195.607 144.121 L 194.732 143.710 L 193.856 143.301 L 192.981 142.893 L 192.105 142.488 L 191.230 142.084 L 190.355 141.683 L 189.479 141.284 L 188.604 140.887 L 187.729 140.493 L 186.853 140.102 L 185.978 139.714 L 185.103 139.328 L 184.227 138.946 L 183.352 138.567 L 182.477 138.192 L 181.601 137.820 L 180.726 137.452 L 179.851 137.088 L 178.975 136.728 L 178.100 136.373 L 177.225 136.022 L 176.349 135.675 L 175.474 135.334 L 174.599 134.998 L 173.723 134.667 L 172.848 134.341 L 171.973 134.021 L 171.097 133.707 L 170.222 133.399 L 169.347 133.098 L 168.471 132.803 L 167.596 132.515 L 166.721 132.233 L 165.845 131.960 L 164.970 131.693 L 164.095 131.435 L 163.219 131.184 L 162.344 130.942 L 161.469 130.708 L 160.593 130.484 L 159.718 130.268 L 158.842 130.062 L 157.967 129.865 L 157.092 129.679 L 156.216 129.502 L 155.341 129.337 L 154.466 129.182 L 153.590 129.039 L 152.715 128.907 L 151.840 128.787 L 150.964 128.679 L 150.089 128.584 L 149.214 128.502 L 148.338 128.434 L 147.463 128.379 L 146.588 128.338 L 145.712 128.311 L 144.837 128.300 L 143.962 128.304 L 143.086 128.323 L 142.211 128.359 L 141.336 128.412 L 140.460 128.481 L 139.585 128.568 L 138.710 128.672 L 137.834 128.795 L 136.959 128.937 L 136.084 129.099 L 135.208 129.280 L 134.333 129.481 L 133.458 129.704 L 132.582 129.948 L 131.707 130.213 L 130.832 130.501 L 129.956 130.813 L 129.081 131.147 L 128.206 131.506 L 127.330 131.890 L 126.455 132.299 L 125.579 132.734 L 124.704 133.196 L 123.829 133.685 L 122.953 134.202 L 122.078 134.747 L 121.203 135.322 L 120.327 135.926 L 119.452 136.562 L 118.577 137.228 L 117.701 137.927 L 116.826 138.658 L 115.951 139.423 L 115.075 140.223 L 114.200 141.057 L 113.325 141.927 L 112.449 142.835 L 111.574 143.779 L 110.699 144.762 L 109.823 145.785 L 108.948 146.847 L 108.073 147.951 L 107.197 149.097 L 106.322 150.285 L 105.447 151.518 L 104.571 152.795 L 103.696 154.118 L 102.821 155.488 L 101.945 156.906 L 101.070 158.372 L 100.195 159.889 L 99.319 161.456 L 98.444 163.076 L 97.569 164.748 L 96.693 166.476 L 95.818 168.258 L 94.943 170.098 L 94.067 171.995 L 93.192 173.952 L 92.316 175.968 L 91.441 178.047 L 90.566 180.188 L 89.690 182.394 L 88.815 184.666 L 87.940 187.004 L 87.064 189.411 L 86.189 191.887 L 85.314 194.435 L 84.438 197.055 L 83.563 199.750 L 82.688 202.521 L 81.812 205.368 L 80.937 208.295 L 80.062 211.302 L 79.186 214.391 Z" fill="rgba(44,160,44,1.000)" fill-opacity="0.250" fill-rule="evenodd" stroke="none" />
+</g>
+</g>
+<g class="charton-mark charton-mark-1 charton-mark-line" data-layer="1" data-mark="line">
+<g class="charton-series">
+<path d="M 79.186 214.391 L 80.062 209.978 L 80.937 205.682 L 81.812 201.501 L 82.688 197.433 L 83.563 193.476 L 84.438 189.626 L 85.314 185.882 L 86.189 182.243 L 87.064 178.705 L 87.940 175.267 L 88.815 171.926 L 89.690 168.681 L 90.566 165.530 L 91.441 162.471 L 92.316 159.502 L 93.192 156.620 L 94.067 153.826 L 94.943 151.115 L 95.818 148.487 L 96.693 145.941 L 97.569 143.473 L 98.444 141.083 L 99.319 138.770 L 100.195 136.530 L 101.070 134.364 L 101.945 132.269 L 102.821 130.244 L 103.696 128.287 L 104.571 126.397 L 105.447 124.572 L 106.322 122.811 L 107.197 121.114 L 108.073 119.477 L 108.948 117.900 L 109.823 116.382 L 110.699 114.922 L 111.574 113.517 L 112.449 112.168 L 113.325 110.872 L 114.200 109.628 L 115.075 108.436 L 115.951 107.294 L 116.826 106.201 L 117.701 105.157 L 118.577 104.159 L 119.452 103.206 L 120.327 102.299 L 121.203 101.435 L 122.078 100.614 L 122.953 99.835 L 123.829 99.097 L 124.704 98.398 L 125.579 97.739 L 126.455 97.117 L 127.330 96.533 L 128.206 95.984 L 129.081 95.472 L 129.956 94.993 L 130.832 94.549 L 131.707 94.137 L 132.582 93.758 L 133.458 93.409 L 134.333 93.092 L 135.208 92.804 L 136.084 92.545 L 136.959 92.315 L 137.834 92.112 L 138.710 91.936 L 139.585 91.786 L 140.460 91.662 L 141.336 91.563 L 142.211 91.489 L 143.086 91.437 L 143.962 91.409 L 144.837 91.404 L 145.712 91.420 L 146.588 91.458 L 147.463 91.516 L 148.338 91.595 L 149.214 91.693 L 150.089 91.810 L 150.964 91.946 L 151.840 92.099 L 152.715 92.271 L 153.590 92.459 L 154.466 92.664 L 155.341 92.885 L 156.216 93.122 L 157.092 93.373 L 157.967 93.640 L 158.842 93.921 L 159.718 94.215 L 160.593 94.523 L 161.469 94.844 L 162.344 95.178 L 163.219 95.524 L 164.095 95.882 L 164.970 96.251 L 165.845 96.632 L 166.721 97.023 L 167.596 97.425 L 168.471 97.836 L 169.347 98.258 L 170.222 98.688 L 171.097 99.128 L 171.973 99.577 L 172.848 100.034 L 173.723 100.499 L 174.599 100.972 L 175.474 101.452 L 176.349 101.940 L 177.225 102.435 L 178.100 102.936 L 178.975 103.444 L 179.851 103.958 L 180.726 104.478 L 181.601 105.004 L 182.477 105.535 L 183.352 106.071 L 184.227 106.613 L 185.103 107.159 L 185.978 107.709 L 186.853 108.264 L 187.729 108.823 L 188.604 109.386 L 189.479 109.952 L 190.355 110.522 L 191.230 111.096 L 192.105 111.672 L 192.981 112.251 L 193.856 112.834 L 194.732 113.418 L 195.607 114.005 L 196.482 114.594 L 197.358 115.186 L 198.233 115.779 L 199.108 116.374 L 199.984 116.971 L 200.859 117.569 L 201.734 118.168 L 202.610 118.768 L 203.485 119.370 L 204.360 119.972 L 205.236 120.576 L 206.111 121.180 L 206.986 121.784 L 207.862 122.389 L 208.737 122.994 L 209.612 123.599 L 210.488 124.204 L 211.363 124.809 L 212.238 125.415 L 213.114 126.019 L 213.989 126.624 L 214.864 127.228 L 215.740 127.831 L 216.615 128.434 L 217.490 129.036 L 218.366 129.637 L 219.241 130.238 L 220.116 130.837 L 220.992 131.435 L 221.867 132.032 L 222.742 132.628 L 223.618 133.223 L 224.493 133.816 L 225.368 134.408 L 226.244 134.998 L 227.119 135.587 L 227.995 136.174 L 228.870 136.759 L 229.745 137.343 L 230.621 137.925 L 231.496 138.505 L 232.371 139.083 L 233.247 139.659 L 234.122 140.233 L 234.997 140.805 L 235.873 141.375 L 236.748 141.943 L 237.623 142.509 L 238.499 143.072 L 239.374 143.633 L 240.249 144.192 L 241.125 144.748 L 242.000 145.302 L 242.875 145.854 L 243.751 146.403 L 244.626 146.950 L 245.501 147.494 L 246.377 148.036 L 247.252 148.575 L 248.127 149.111 L 249.003 149.645 L 249.878 150.176 L 250.753 150.704 L 251.629 151.230 L 252.504 151.753 L 253.379 152.273 L 254.255 152.791 L 255.130 153.305 L 256.005 153.817 L 256.881 154.326 L 257.756 154.832 L 258.631 155.336 L 259.507 155.836 L 260.382 156.334 L 261.258 156.829 L 262.133 157.321 L 263.008 157.810 L 263.884 158.296 L 264.759 158.779 L 265.634 159.259 L 266.510 159.736 L 267.385 160.211 L 268.260 160.682 L 269.136 161.150 L 270.011 161.616 L 270.886 162.078 L 271.762 162.538 L 272.637 162.994 L 273.512 163.448 L 274.388 163.898 L 275.263 164.346 L 276.138 164.790 L 277.014 165.232 L 277.889 165.671 L 278.764 166.106 L 279.640 166.539 L 280.515 166.969 L 281.390 167.395 L 282.266 167.819 L 283.141 168.240 L 284.016 168.658 L 284.892 169.073 L 285.767 169.485 L 286.642 169.894 L 287.518 170.300 L 288.393 170.703 L 289.268 171.103 L 290.144 171.500 L 291.019 171.895 L 291.894 172.286 L 292.770 172.675 L 293.645 173.060 L 294.521 173.443 L 295.396 173.823 L 296.271 174.200 L 297.147 174.574 L 298.022 174.946 L 298.897 175.314 L 299.773 175.680 L 300.648 176.043 L 301.523 176.403 L 302.399 176.760 L 303.274 177.114 L 304.149 177.466 L 305.025 177.815 L 305.900 178.161 L 306.775 178.505 L 307.651 178.845 L 308.526 179.183 L 309.401 179.519 L 310.277 179.851 L 311.152 180.181 L 312.027 180.508 L 312.903 180.833 L 313.778 181.155 L 314.653 181.474 L 315.529 181.791 L 316.404 182.105 L 317.279 182.416 L 318.155 182.725 L 319.030 183.032 L 319.905 183.335 L 320.781 183.637 L 321.656 183.935 L 322.531 184.232 L 323.407 184.525 L 324.282 184.817 L 325.157 185.105 L 326.033 185.392 L 326.908 185.676 L 327.784 185.957 L 328.659 186.236 L 329.534 186.513 L 330.410 186.787 L 331.285 187.059 L 332.160 187.329 L 333.036 187.596 L 333.911 187.861 L 334.786 188.123 L 335.662 188.384 L 336.537 188.642 L 337.412 188.897 L 338.288 189.151 L 339.163 189.402 L 340.038 189.651 L 340.914 189.898" fill="none" stroke="rgba(44,160,44,1.000)" stroke-width="1.500" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+</g>
+</g>
+</g>
+<g class="charton-axis charton-axis-x" data-axis="x">
+<g class="charton-axis-line">
+<path d="M 66.100 223.000 L 354.000 223.000" fill="none" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+</g>
+<g class="charton-tick">
+<path d="M 79.186 223.000 L 79.186 229.000" fill="none" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+<path d="M 133.713 223.000 L 133.713 229.000" fill="none" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+<path d="M 188.239 223.000 L 188.239 229.000" fill="none" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+<path d="M 242.766 223.000 L 242.766 229.000" fill="none" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+<path d="M 297.292 223.000 L 297.292 229.000" fill="none" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+<path d="M 351.819 223.000 L 351.819 229.000" fill="none" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+</g>
+<g class="charton-tick-label">
+<text x="79.186" y="232.000" font-size="13.0" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', Ubuntu, Cantarell, 'Noto Sans', sans-serif" fill="rgba(51,51,51,1.000)" fill-opacity="1.000" text-anchor="middle" font-weight="normal" font-style="normal" dominant-baseline="hanging" transform="rotate(0 79.186 232.000)" data-value="0">0</text>
+<text x="133.713" y="232.000" font-size="13.0" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', Ubuntu, Cantarell, 'Noto Sans', sans-serif" fill="rgba(51,51,51,1.000)" fill-opacity="1.000" text-anchor="middle" font-weight="normal" font-style="normal" dominant-baseline="hanging" transform="rotate(0 133.713 232.000)" data-value="5">5</text>
+<text x="188.239" y="232.000" font-size="13.0" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', Ubuntu, Cantarell, 'Noto Sans', sans-serif" fill="rgba(51,51,51,1.000)" fill-opacity="1.000" text-anchor="middle" font-weight="normal" font-style="normal" dominant-baseline="hanging" transform="rotate(0 188.239 232.000)" data-value="10">10</text>
+<text x="242.766" y="232.000" font-size="13.0" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', Ubuntu, Cantarell, 'Noto Sans', sans-serif" fill="rgba(51,51,51,1.000)" fill-opacity="1.000" text-anchor="middle" font-weight="normal" font-style="normal" dominant-baseline="hanging" transform="rotate(0 242.766 232.000)" data-value="15">15</text>
+<text x="297.292" y="232.000" font-size="13.0" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', Ubuntu, Cantarell, 'Noto Sans', sans-serif" fill="rgba(51,51,51,1.000)" fill-opacity="1.000" text-anchor="middle" font-weight="normal" font-style="normal" dominant-baseline="hanging" transform="rotate(0 297.292 232.000)" data-value="20">20</text>
+<text x="351.819" y="232.000" font-size="13.0" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', Ubuntu, Cantarell, 'Noto Sans', sans-serif" fill="rgba(51,51,51,1.000)" fill-opacity="1.000" text-anchor="middle" font-weight="normal" font-style="normal" dominant-baseline="hanging" transform="rotate(0 351.819 232.000)" data-value="25">25</text>
+</g>
+<g class="charton-axis-title">
+<text x="210.050" y="255.000" font-size="15.0" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', Ubuntu, Cantarell, 'Noto Sans', sans-serif" fill="rgba(51,51,51,1.000)" fill-opacity="1.000" text-anchor="middle" font-weight="bold" font-style="normal" dominant-baseline="hanging" transform="rotate(0 210.050 255.000)">time [hr]</text>
+</g>
+</g>
+<g class="charton-axis charton-axis-y" data-axis="y">
+<g class="charton-axis-line">
+<path d="M 66.100 33.600 L 66.100 223.000" fill="none" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+</g>
+<g class="charton-tick">
+<path d="M 66.100 214.391 L 60.100 214.391" fill="none" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+<path d="M 66.100 144.742 L 60.100 144.742" fill="none" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+<path d="M 66.100 75.093 L 60.100 75.093" fill="none" stroke="rgba(0,0,0,1.000)" stroke-width="1.000" stroke-opacity="1.000" stroke-linejoin="round" stroke-linecap="round" />
+</g>
+<g class="charton-tick-label">
+<text x="57.100" y="214.391" font-size="13.0" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', Ubuntu, Cantarell, 'Noto Sans', sans-serif" fill="rgba(51,51,51,1.000)" fill-opacity="1.000" text-anchor="end" font-weight="normal" font-style="normal" dominant-baseline="central" transform="rotate(0 57.100 214.391)" data-value="0">0</text>
+<text x="57.100" y="144.742" font-size="13.0" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', Ubuntu, Cantarell, 'Noto Sans', sans-serif" fill="rgba(51,51,51,1.000)" fill-opacity="1.000" text-anchor="end" font-weight="normal" font-style="normal" dominant-baseline="central" transform="rotate(0 57.100 144.742)" data-value="5">5</text>
+<text x="57.100" y="75.093" font-size="13.0" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', Ubuntu, Cantarell, 'Noto Sans', sans-serif" fill="rgba(51,51,51,1.000)" fill-opacity="1.000" text-anchor="end" font-weight="normal" font-style="normal" dominant-baseline="central" transform="rotate(0 57.100 75.093)" data-value="10">10</text>
+</g>
+<g class="charton-axis-title">
+<text x="28.550" y="128.300" font-size="15.0" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', Ubuntu, Cantarell, 'Noto Sans', sans-serif" fill="rgba(51,51,51,1.000)" fill-opacity="1.000" text-anchor="middle" font-weight="bold" font-style="normal" dominant-baseline="middle" transform="rotate(-90 28.550 128.300)">conc [mg/l]</text>
+</g>
+</g>
+</svg><g class="plot-legend" data-row="0"><line x1="730" y1="70" x2="754" y2="70" stroke="#1f77b4" stroke-width="2" stroke-dasharray="6 3"/><text x="760" y="70" font-size="12" dominant-baseline="central" font-family="Inter, sans-serif" fill="#333">model</text><rect x="738" y="86" width="8" height="8" fill="#ff7f0e" stroke="black"/><text x="760" y="90" font-size="12" dominant-baseline="central" font-family="Inter, sans-serif" fill="#333">data</text></g><g class="plot-legend" data-row="1"><rect x="730" y="345" width="24" height="10" fill="#8c564b" stroke="black" stroke-width="0.8"/><text x="760" y="350" font-size="12" dominant-baseline="central" font-family="Inter, sans-serif" fill="#333">AUC</text><line x1="730" y1="370" x2="754" y2="370" stroke="#2ca02c" stroke-width="2"/><text x="760" y="370" font-size="12" dominant-baseline="central" font-family="Inter, sans-serif" fill="#333">median</text><rect x="730" y="385" width="24" height="10" fill="#2ca02c" fill-opacity="0.25"/><text x="760" y="390" font-size="12" dominant-baseline="central" font-family="Inter, sans-serif" fill="#333">5-95 %</text></g></svg>

@@ -1,0 +1,22 @@
+[package]
+name = "sbmlsim-plot-wasm"
+version.workspace = true
+edition.workspace = true
+# not on crates.io: built into plot.wasm, which the npm package and the wheels carry
+publish = false
+license.workspace = true
+authors.workspace = true
+description = "Renders sbmlsim figures (figure/1) to SVG in a browser, plot.wasm"
+
+[lib]
+name = "sbmlsim_plot_wasm"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# the default features only: the PNG (resvg) is native, never in a wasm module
+sbmlsim-plot = { path = "../plot" }
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

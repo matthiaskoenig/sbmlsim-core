@@ -1,0 +1,20 @@
+[package]
+name = "charton-spike"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# not a member of the workspace of sbmlsim-core
+[workspace]
+
+[dependencies]
+# no default features: the png rasteriser only for the native build (feature `png` below)
+charton = { version = "=0.9.1", default-features = false }
+
+[features]
+default = ["png"]
+# off for the wasm build, which measures the size and speed of the renderer without a rasteriser
+png = ["charton/png"]
+
+[profile.release]
+opt-level = 3

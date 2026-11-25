@@ -95,6 +95,31 @@ const instance = await runtime.instantiate(wasm, description);
 
 `compile` is synchronous and takes a few milliseconds for a model of the size of the repressilator; a model which the compiler refuses raises a `CompileError` with its message. `optimize: false` leaves the optimizer of the compiler out (the results are the same) and `jacobian` is `"auto"`, `"difference-quotient"` or `"analytic"`, as the command line takes them. One compiler compiles any number of models, one after the other.
 
+## Draw a figure
+
+`plot.wasm` is the renderer of the figures of sbmlsim (a `figure/1` spec) built for `wasm32-wasip1`: it gives the SVG the python package draws, byte for byte, the geometry of the figure in pixels and the data point under a pointer. Every call is synchronous (5 to 10 ms for the benchmark figure in Node), so a redraw on a knob drag runs on the main thread:
+
+```js
+import { loadPlot } from "sbmlsim-core/plot";
+
+const plot = await loadPlot(new URL("./plot.wasm", import.meta.url)); // a URL, a path (Node), an ArrayBuffer, a Uint8Array or a WebAssembly.Module
+const svg = plot.render(spec); // a `figure/1` object or its JSON text
+const { width, height, plots, legend_entries } = plot.geometry(spec); // width, height: the drawn size, grown by legends outside
+const hit = plot.pick(spec, x, y, 8); // { plot, element, index, values } in data units, or null
+```
+
+`pick` parses the spec and plans the layout on every call. A figure a pointer moves over is prepared once, which answers without either (about 0.1 ms per pick in Node for the benchmark figure):
+
+```js
+const figure = plot.prepare(spec); // parsed and laid out once
+canvas.onpointermove = (event) => show(figure.pick(event.offsetX, event.offsetY));
+figure.svg(); // the same bytes as plot.render(spec)
+figure.geometry();
+figure.dispose(); // frees it in the module; a disposed figure throws when it is used; a figure dropped without `dispose()` is released when it is garbage collected, which is no deterministic point, so dispose it
+```
+
+A spec the renderer refuses raises a `PlotError` whose message is `path: what is wrong`, and the `Plot` stays usable. Any other failure out of the module (a panic, which aborts it, a trap, a stack overflow, an exhausted memory) leaves its memory in an unknown state, so that `Plot` is broken: the call throws an `Error` which carries the message of the panic, every later call throws too, and `loadPlot` gives a new instance. A string is a path in Node and a URL in a browser. A page which inlines everything uses `sbmlsimCore.loadPlot` of the inline build with the bytes of `sbmlsim_core.plot_wasm()`.
+
 ## A static app of interactive panels
 
 `python -m sbmlsim.serve --model id=module:attribute --export DIR` of sbmlsim writes the panels and the app of a model as a bundle; `createPanelEndpoint` answers the routes of the service from it, with the simulations on a pool of workers, and the components of [sbmlsim-web](https://matthiaskoenig.github.io/sbmlsim-web/) draw them:
@@ -117,4 +142,4 @@ The [glimepiride app](https://matthiaskoenig.github.io/sbmlsim-web/examples/glim
 
 ## License
 
-The JavaScript is MIT licensed. `runtime/engine.wasm` contains SUNDIALS (BSD-3-Clause) and KLU with AMD, COLAMD and BTF of SuiteSparse (LGPL-2.1-or-later), whose notices and sources are named in `runtime/THIRD_PARTY.md`; the package as a whole is `MIT AND BSD-3-Clause AND LGPL-2.1-or-later`.
+The JavaScript is MIT licensed. `runtime/engine.wasm` contains SUNDIALS (BSD-3-Clause) and KLU with AMD, COLAMD and BTF of SuiteSparse (LGPL-2.1-or-later), whose notices and sources are named in `runtime/THIRD_PARTY.md`, which also names the crates in `runtime/plot.wasm`, the renderer of the figures of sbmlsim (charton under Apache-2.0 and permissively licensed crates, with the texts of their licenses); the package as a whole is `MIT AND BSD-3-Clause AND LGPL-2.1-or-later AND Apache-2.0`.

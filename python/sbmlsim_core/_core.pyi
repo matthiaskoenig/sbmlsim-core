@@ -8,6 +8,7 @@ from typing import Any
 import numpy
 import numpy.typing
 
+FIGURE_CONTRACT: str
 FIT_CONTRACT: str
 MODEL_CONTRACT: str
 SIMULATION_CONTRACT: str
@@ -289,6 +290,12 @@ def compile_sbml(
 def runtime_wasm() -> dict[str, bytes]:
     """The bytes of `engine.wasm`, `mathlib.wasm` and `compiler.wasm` this extension embeds."""
 
+def plot_wasm() -> bytes:
+    """The bytes of `plot.wasm` this extension embeds, the renderer of the figures in a page.
+
+    A page renders a `figure/1` spec with it to the SVG `render_svg` gives, byte for byte.
+    """
+
 def fit_models(
     models: Mapping[str, LoadedModel],
     request: dict[str, Any],
@@ -327,3 +334,39 @@ def chaos_predict(
     threads: int | None = None,
 ) -> numpy.typing.NDArray[numpy.float64]:
     """The values of a polynomial chaos expansion at points of the unit cube."""
+
+def render_svg(spec: str) -> str:
+    """The SVG of a figure given as the JSON text of a `figure/1` spec.
+
+    Raises `ValueError` with the path and message of an invalid spec.
+    """
+
+def render_png(spec: str, dpi: float = 144.0) -> bytes:
+    """The PNG of a figure at `dpi`, of its drawn size (`figure_geometry`) times `dpi / 72`.
+
+    Raises `ValueError` for an invalid spec and `RuntimeError` for a figure which cannot be
+    rasterized, e.g. an image of more than 64 Mpx.
+    """
+
+def figure_geometry(spec: str) -> dict[str, Any]:
+    """The drawn size, panels, scales and legend entries of a figure in its pixels.
+
+    `width` and `height` are the size the figure is drawn at, the size of the spec grown by
+    the legends outside the plots.
+    """
+
+def pick(spec: str, x: float, y: float, radius: float = 8.0) -> dict[str, Any] | None:
+    """The data point nearest to the pixel `(x, y)` within `radius` pixels, or `None`."""
+
+def color_scale(
+    name: str,
+    low: float,
+    high: float,
+    values: Sequence[float],
+    center: float | None = None,
+    log: bool = False,
+) -> list[str]:
+    """The colours (`#rrggbb`) of `values` on a named colour scale.
+
+    Raises `ValueError` for an unknown name.
+    """

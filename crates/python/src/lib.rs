@@ -74,6 +74,7 @@ mod chaos;
 mod compile;
 mod errors;
 mod fit;
+mod plot;
 mod runtime;
 mod simulate;
 
@@ -99,6 +100,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("MODEL_CONTRACT", MODEL_CONTRACT)?;
     m.add("SIMULATION_CONTRACT", SIMULATION_CONTRACT)?;
     m.add("FIT_CONTRACT", sbmlsim_fit::FIT_CONTRACT)?;
+    m.add("FIGURE_CONTRACT", sbmlsim_plot::FIGURE_CONTRACT)?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     // the allocator this build routes its allocations through, which is not the same on
     // every platform: see `mod allocator`
@@ -127,9 +129,15 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(runtime::fit_problem_of_models, m)?)?;
     m.add_function(wrap_pyfunction!(compile_sbml, m)?)?;
     m.add_function(wrap_pyfunction!(runtime_wasm, m)?)?;
+    m.add_function(wrap_pyfunction!(plot_wasm, m)?)?;
     m.add_function(wrap_pyfunction!(chaos::chaos_expansion, m)?)?;
     m.add_function(wrap_pyfunction!(chaos::chaos_design_matrix, m)?)?;
     m.add_function(wrap_pyfunction!(chaos::chaos_predict, m)?)?;
+    m.add_function(wrap_pyfunction!(plot::render_svg, m)?)?;
+    m.add_function(wrap_pyfunction!(plot::render_png, m)?)?;
+    m.add_function(wrap_pyfunction!(plot::figure_geometry, m)?)?;
+    m.add_function(wrap_pyfunction!(plot::pick, m)?)?;
+    m.add_function(wrap_pyfunction!(plot::color_scale, m)?)?;
     Ok(())
 }
 
@@ -145,4 +153,13 @@ fn runtime_wasm(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
     files.set_item("mathlib", PyBytes::new(py, sbmlsim_host::MATHLIB_WASM))?;
     files.set_item("compiler", PyBytes::new(py, sbmlsim_host::COMPILER_WASM))?;
     Ok(files)
+}
+
+/// The bytes of `plot.wasm` this extension embeds (the one of `sbmlsim-core runtime` and of the
+/// npm package of the release), the renderer of the figures in a page: the SVG of a `figure/1`
+/// spec byte for byte as `render_svg` gives it, its geometry and the pick of a point, through
+/// the C ABI of `crates/plot-wasm`.
+#[pyfunction]
+fn plot_wasm(py: Python<'_>) -> Bound<'_, PyBytes> {
+    PyBytes::new(py, sbmlsim_host::PLOT_WASM)
 }

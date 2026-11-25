@@ -6,8 +6,9 @@ edition.workspace = true
 # (THIRD_PARTY.md, third_party)
 publish = false
 # MIT code; it embeds engine.wasm, which statically links SUNDIALS (BSD-3-Clause) and KLU, BTF
-# (LGPL-2.1-or-later), AMD, COLAMD and SuiteSparse_config (BSD-3-Clause), see THIRD_PARTY.md
-license = "MIT AND BSD-3-Clause AND LGPL-2.1-or-later"
+# (LGPL-2.1-or-later), AMD, COLAMD and SuiteSparse_config (BSD-3-Clause), and plot.wasm, which
+# contains charton (Apache-2.0), see THIRD_PARTY.md
+license = "MIT AND BSD-3-Clause AND LGPL-2.1-or-later AND Apache-2.0"
 authors.workspace = true
 description = "The wasmtime host of sbmlsim-core: links mathlib, a compiled model and the engine"
 

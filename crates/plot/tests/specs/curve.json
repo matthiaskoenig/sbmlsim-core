@@ -1,0 +1,48 @@
+{
+ "contract": "figure/1",
+ "width": 600,
+ "height": 400,
+ "grid": {
+  "rows": 1,
+  "columns": 1
+ },
+ "plots": [
+  {
+   "id": "p",
+   "row": 0,
+   "column": 0,
+   "x": {
+    "label": "time",
+    "unit": "hr"
+   },
+   "y": {
+    "label": "c",
+    "unit": "mM"
+   },
+   "elements": [
+    {
+     "id": "c",
+     "kind": "curve",
+     "label": "c",
+     "x": [
+      0,
+      1,
+      2
+     ],
+     "y": [
+      1,
+      2,
+      4
+     ],
+     "style": {
+      "color": "#1f77b4",
+      "marker": {
+       "type": "circle"
+      }
+     }
+    }
+   ]
+  }
+ ],
+ "title": "curve"
+}

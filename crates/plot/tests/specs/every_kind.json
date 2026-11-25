@@ -1,0 +1,448 @@
+{
+ "contract": "figure/1",
+ "width": 1200,
+ "height": 900,
+ "grid": {
+  "rows": 4,
+  "columns": 4
+ },
+ "plots": [
+  {
+   "id": "p_curve",
+   "row": 0,
+   "column": 0,
+   "x": {
+    "label": "time",
+    "unit": "hr"
+   },
+   "y": {
+    "label": "c",
+    "unit": "mM"
+   },
+   "elements": [
+    {
+     "id": "curve",
+     "kind": "curve",
+     "x": [
+      0,
+      1
+     ],
+     "y": [
+      1,
+      2
+     ]
+    }
+   ]
+  },
+  {
+   "id": "p_band",
+   "row": 0,
+   "column": 1,
+   "x": {
+    "label": "time",
+    "unit": "hr"
+   },
+   "y": {
+    "label": "c",
+    "unit": "mM"
+   },
+   "elements": [
+    {
+     "id": "band",
+     "kind": "band",
+     "x": [
+      0,
+      1
+     ],
+     "low": [
+      0,
+      1
+     ],
+     "high": [
+      2,
+      3
+     ],
+     "median": [
+      1,
+      2
+     ]
+    }
+   ]
+  },
+  {
+   "id": "p_area",
+   "row": 0,
+   "column": 2,
+   "x": {
+    "label": "time",
+    "unit": "hr"
+   },
+   "y": {
+    "label": "c",
+    "unit": "mM"
+   },
+   "elements": [
+    {
+     "id": "area",
+     "kind": "area",
+     "x": [
+      0,
+      1
+     ],
+     "from": [
+      0,
+      0
+     ],
+     "to": [
+      1,
+      2
+     ]
+    }
+   ]
+  },
+  {
+   "id": "p_bar",
+   "row": 0,
+   "column": 3,
+   "x": {
+    "label": "time",
+    "unit": "hr"
+   },
+   "y": {
+    "label": "c",
+    "unit": "mM"
+   },
+   "elements": [
+    {
+     "id": "bar",
+     "kind": "bar",
+     "x": [
+      0,
+      1
+     ],
+     "height": [
+      3,
+      4
+     ],
+     "err": [
+      0.1,
+      0.2
+     ],
+     "horizontal": false,
+     "width": 0.6
+    }
+   ]
+  },
+  {
+   "id": "p_box",
+   "row": 1,
+   "column": 0,
+   "x": {
+    "label": "time",
+    "unit": "hr"
+   },
+   "y": {
+    "label": "c",
+    "unit": "mM"
+   },
+   "elements": [
+    {
+     "id": "box",
+     "kind": "box",
+     "positions": [
+      0
+     ],
+     "stats": [
+      {
+       "low_whisker": 0,
+       "q1": 1,
+       "median": 2,
+       "q3": 3,
+       "high_whisker": 4,
+       "outliers": [
+        6
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "p_violin",
+   "row": 1,
+   "column": 1,
+   "x": {
+    "label": "time",
+    "unit": "hr"
+   },
+   "y": {
+    "label": "c",
+    "unit": "mM"
+   },
+   "elements": [
+    {
+     "id": "violin",
+     "kind": "violin",
+     "positions": [
+      0
+     ],
+     "densities": [
+      {
+       "values": [
+        0,
+        1,
+        2
+       ],
+       "density": [
+        0.1,
+        0.5,
+        0.1
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "p_hist",
+   "row": 1,
+   "column": 2,
+   "x": {
+    "label": "time",
+    "unit": "hr"
+   },
+   "y": {
+    "label": "c",
+    "unit": "mM"
+   },
+   "elements": [
+    {
+     "id": "hist",
+     "kind": "histogram",
+     "edges": [
+      0,
+      1,
+      2,
+      3
+     ],
+     "counts": [
+      1,
+      3,
+      2
+     ]
+    }
+   ]
+  },
+  {
+   "id": "p_heat",
+   "row": 1,
+   "column": 3,
+   "x": {
+    "label": "time",
+    "unit": "hr"
+   },
+   "y": {
+    "label": "c",
+    "unit": "mM"
+   },
+   "elements": [
+    {
+     "id": "heat",
+     "kind": "heatmap",
+     "rows": [
+      "a",
+      "b"
+     ],
+     "columns": [
+      "x",
+      "y",
+      "z"
+     ],
+     "values": [
+      [
+       1,
+       2,
+       3
+      ],
+      [
+       4,
+       5,
+       6
+      ]
+     ],
+     "text": [
+      [
+       "1",
+       "2",
+       "3"
+      ],
+      [
+       "4",
+       "5",
+       "6"
+      ]
+     ],
+     "scale": {
+      "name": "viridis",
+      "low": 1,
+      "high": 6
+     }
+    }
+   ],
+   "colorbar": {
+    "scale": {
+     "name": "viridis",
+     "low": 1,
+     "high": 6
+    },
+    "label": "v"
+   }
+  },
+  {
+   "id": "p_text",
+   "row": 2,
+   "column": 0,
+   "x": {
+    "label": "time",
+    "unit": "hr"
+   },
+   "y": {
+    "label": "c",
+    "unit": "mM"
+   },
+   "elements": [
+    {
+     "id": "text",
+     "kind": "text",
+     "x": 1,
+     "y": 1,
+     "text": "hi",
+     "anchor": "middle"
+    }
+   ]
+  },
+  {
+   "id": "p_rule",
+   "row": 2,
+   "column": 1,
+   "x": {
+    "label": "time",
+    "unit": "hr"
+   },
+   "y": {
+    "label": "c",
+    "unit": "mM"
+   },
+   "elements": [
+    {
+     "id": "rule",
+     "kind": "rule",
+     "orientation": "horizontal",
+     "value": 1.5
+    }
+   ]
+  },
+  {
+   "id": "p_poly",
+   "row": 2,
+   "column": 2,
+   "x": {
+    "label": "time",
+    "unit": "hr"
+   },
+   "y": {
+    "label": "c",
+    "unit": "mM"
+   },
+   "elements": [
+    {
+     "id": "poly",
+     "kind": "polygon",
+     "paths": [
+      [
+       [
+        0,
+        0
+       ],
+       [
+        1,
+        0
+       ],
+       [
+        1,
+        1
+       ]
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "id": "p_cat",
+   "row": 3,
+   "column": 0,
+   "x": {
+    "scale": "category",
+    "categories": [
+     "a",
+     "b"
+    ]
+   },
+   "y": {},
+   "elements": [
+    {
+     "id": "catbar",
+     "kind": "bar",
+     "x": [
+      0,
+      1
+     ],
+     "height": [
+      1,
+      2
+     ]
+    }
+   ]
+  },
+  {
+   "id": "p_logheat",
+   "row": 3,
+   "column": 1,
+   "x": {},
+   "y": {},
+   "colorbar": {
+    "scale": {
+     "name": "magma",
+     "low": 0.1,
+     "high": 100,
+     "log": true
+    }
+   },
+   "elements": [
+    {
+     "id": "logheat",
+     "kind": "heatmap",
+     "rows": [
+      "a"
+     ],
+     "columns": [
+      "x",
+      "y"
+     ],
+     "values": [
+      [
+       0.5,
+       null
+      ]
+     ],
+     "scale": {
+      "name": "magma",
+      "low": 0.1,
+      "high": 100,
+      "log": true
+     }
+    }
+   ]
+  }
+ ]
+}

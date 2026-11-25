@@ -14,6 +14,8 @@ members = [
     "crates/fit",
     "crates/chaos",
     "crates/cli",
+    "crates/plot",
+    "crates/plot-wasm",
     "crates/python",
     "crates/wasm",
 ]
@@ -32,8 +34,9 @@ serde_json = { version = "1", features = ["float_roundtrip"] }
 thiserror = "2"
 roxmltree = "0.20"
 
-# `compiler.wasm` of `crates/wasm`, the compiler in a browser: as small as the page which
-# fetches it needs, since the module is downloaded before the first model is compiled
+# `compiler.wasm` of `crates/wasm`, the compiler in a browser, and `plot.wasm` of
+# `crates/plot-wasm`, the renderer of the figures: as small as the page which fetches them
+# needs, since a module is downloaded before the first model is compiled or figure drawn
 [profile.wasm]
 inherits = "release"
 opt-level = "z"
