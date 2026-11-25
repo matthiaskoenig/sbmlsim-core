@@ -219,9 +219,17 @@ forward difference of the right hand side along the direction, one call per targ
 `sensitivity_jac_p_evals` and `sensitivity_model_rhs_evals` of the counters say which of the
 two a run took.
 
+The `changes` of a request are carried across: a change is applied to the state and the
+parameters moved along every sensitivity as well, and the difference of the two afterwards is
+the sensitivity after it, so a value set to a number has no derivative after the change, one a
+number is added to (a dose) keeps it, a form takes the derivatives of its terms, and a
+parameter set to a number no longer depends on the target. The `steady_state` before the start
+and the `steady_state_after` the end are integrations, and the sensitivities are integrated
+with them: the derivatives of the state the integration ends in.
+
 What a run of sensitivities does not carry is refused and not answered wrongly: the events of
-a model, a discontinuity of its math, an algebraic rule, a delay, the `changes` of a request,
-its `steady_state` and the iterative linear solver. `engine.wasm` refuses them as well (its
+a model, a discontinuity of its math, an algebraic rule, a delay and the iterative linear
+solver. `engine.wasm` refuses them as well (its
 output format carries the values of a table and nothing else): they are answered by the
 native engine, which the Rust host, the python bindings and the command line of sbmlsim-core
 call as a library.

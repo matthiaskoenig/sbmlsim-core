@@ -110,8 +110,7 @@ pub enum FitError {
 /// optimizer instead of one per parameter and condition, and the derivative of a residual
 /// instead of a difference of two of them (1e-8 of itself against [`DIFF_STEP`]). What a run
 /// of sensitivities does not carry (the events of a model, a discontinuity of its math, an
-/// algebraic rule, a delay, the changes of a request, its steady state) is the finite
-/// differences instead.
+/// algebraic rule, a delay) is the finite differences instead.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum JacobianChoice {
