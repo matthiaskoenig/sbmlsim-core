@@ -877,7 +877,7 @@ That's all there is to it!
 
 ## Figures (`crates/plot`, the crate `sbmlsim-plot`)
 
-The crate `sbmlsim-plot` renders the figures of sbmlsim to SVG on top of the crate charton 0.9.1 (Apache-2.0, Jiawen Wang, text below), which is a dependency of every build of the crate, wasm included. Its dependencies which the lock gained with it are under these licenses (each used under the first license of a dual license where a notice is required, i.e. under MIT): ahash 0.8.14, base64 0.22.1, csscolorparser 0.8.4, deranged 0.5.9, num-conv 0.2.2, powerfmt 0.2.1, siphasher 1.0.4, time 0.3.55, time-core 0.1.9, time-macros 0.2.32, uncased 0.9.10 and web-sys 0.3.107 (`MIT OR Apache-2.0`), phf, phf_generator, phf_macros and phf_shared 0.13.1 (MIT, Steven Fackler, Yuki Okushi), and, with the feature `png` below, the crates in the table there.
+The crate `sbmlsim-plot` renders the figures of sbmlsim to SVG on top of the crate charton 0.9.1 (Apache-2.0, Jiawen Wang), which is a dependency of every build of the crate, wasm included. Every crate the lock gained with it which offers the Apache License 2.0 (`MIT OR Apache-2.0`, `Apache-2.0 OR MIT`, `MIT/Apache-2.0`, and with Zlib or 0BSD as a further choice) is used under the Apache License 2.0, whose full text is below, and none of these crates ships a NOTICE file (Apache-2.0 section 4(d) has nothing to reproduce). These crates are ahash 0.8.14, base64 0.23.1, csscolorparser 0.8.4, deranged 0.5.9, num-conv 0.2.2, powerfmt 0.2.1, roxmltree 0.21.2, siphasher 1.0.4, time 0.3.55, time-core 0.1.9, time-macros 0.2.32, uncased 0.9.10 and web-sys 0.3.107, charton itself, and the crates of the table of the feature `png` below. The crates phf, phf_generator, phf_macros and phf_shared 0.13.1 are under MIT only (Copyright (c) 2014-2022 Steven Fackler, Yuki Okushi), with the text of the MIT License below.
 
 ### Apache License 2.0 (charton 0.9.1): `LICENSE` of the crate charton 0.9.1
 
@@ -1089,9 +1089,10 @@ The crate `sbmlsim-plot` renders the figures of sbmlsim to SVG on top of the cra
 
 The feature `png` of the crate `sbmlsim-plot` (native builds only, never in a wasm module and never in `engine.wasm`) rasterizes the SVG of a figure with resvg and the crates below, which it adds to the lock.
 
-| Crate | Version | License | Notice |
+| Crate | Version | License used | Notice |
 |---|---|---|---|
-| resvg, usvg | 0.50.0 | Apache-2.0 OR MIT (used under MIT) | Copyright 2017 the Resvg Authors |
+| resvg, usvg, kurbo, simplecss, svgtypes | 0.50.0, 0.50.0, 0.13.1, 0.2.2, 0.16.2 | Apache-2.0 (of `Apache-2.0 OR MIT`) | |
+| adler2, arrayvec, data-url, euclid, fdeflate, flate2, font-types, miniz_oxide (0.8.9 and 0.9.1), png, polycool, read-fonts, skrifa, tinyvec, unicode-bidi, unicode-script, unicode-vo | 2.0.1, 0.7.8, 0.3.2, 0.22.14, 0.3.7, 1.1.11, 0.12.7, 0.8.9 and 0.9.1, 0.18.1, 0.4.0, 0.46.0, 0.49.0, 1.13.3, 0.3.18, 0.5.9, 0.1.0 | Apache-2.0 (of a dual or triple license) | |
 | tiny-skia, tiny-skia-path | 0.12.0 | BSD-3-Clause | Copyright (c) 2011 Google Inc., (c) 2020 Yevhenii Reizner |
 | arrayref | 0.3.9 | BSD-2-Clause | Copyright (c) 2015 David Roundy |
 | fontdb | 0.24.0 | MIT | Copyright (c) 2020 Yevhenii Reizner |
@@ -1104,11 +1105,9 @@ The feature `png` of the crate `sbmlsim-plot` (native builds only, never in a wa
 | synstructure | 0.14.0 | MIT | Copyright 2016 Nika Layzell |
 | simd-adler32 | 0.3.10 | MIT | Copyright (c) 2021 Marvin Countryman |
 | xmlwriter | 0.1.0 | MIT | Copyright (c) 2019 Reizner Evgeniy |
-| unicode-vo | 0.1.0 | MIT OR Apache-2.0 (used under MIT) | Copyright (c) 2018 Reizner Evgeniy |
 | slotmap | 1.1.1 | Zlib | Copyright (c) 2021 Orson Peters |
-| yoke, yoke-derive, zerofrom, zerofrom-derive | 0.8.4, 0.1.8 | Unicode-3.0 | Copyright (c) 2020-2024 Unicode, Inc. |
-| tinyvec 1.13.3, miniz_oxide 0.8.9 and 0.9.1, adler2 2.0.1 | | Zlib, MIT or Apache-2.0 (used under MIT) | see the crates |
-| kurbo 0.13.1, simplecss 0.2.2, svgtypes 0.16.2, data-url 0.3.2, arrayvec 0.7.8, fdeflate 0.3.7, flate2 1.1.11, font-types 0.12.7, read-fonts 0.46.0, skrifa 0.49.0, png 0.18.1, polycool 0.4.0, unicode-bidi 0.3.18, unicode-script 0.5.9 | | MIT OR Apache-2.0 (used under MIT) | see the crates |
+| zlib-rs | 0.6.9 | Zlib | (C) 2024 Trifecta Tech Foundation, the text of the Zlib License below |
+| yoke, yoke-derive, zerofrom, zerofrom-derive | 0.8.4, 0.8.4, 0.1.8, 0.1.8 | Unicode-3.0 | Copyright (c) 2020-2024 Unicode, Inc. |
 
 The PNG is drawn with the font Inter 4.001, which the binary embeds: `crates/plot/fonts/Inter-Regular.ttf` is the copy of Inter 4.001 which the crate charton 0.9.1 ships (`assets/fonts/Inter-Regular.ttf`) and `crates/plot/fonts/Inter-Bold.ttf` is of the release v4.1 of https://github.com/rsms/inter (font version 4.001). Inter is under the SIL Open Font License 1.1, whose text is `crates/plot/fonts/LICENSE` and is copied below.
 
@@ -1209,9 +1208,9 @@ FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
 OTHER DEALINGS IN THE FONT SOFTWARE.
 ```
 
-### MIT License (the crates of the table under MIT)
+### MIT License (phf and the crates of the table under MIT)
 
-The license text is that of resvg, with the copyright line of the crate in the table.
+The license text is that of resvg (Copyright 2017 the Resvg Authors, the notice of resvg alone), with the copyright line of the crate in place of it.
 
 ```text
 Copyright 2017 the Resvg Authors
@@ -1307,7 +1306,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
-### slotmap: `LICENSE` of the crate slotmap 1.1.1
+### Zlib License (slotmap 1.1.1 and zlib-rs 0.6.9): `LICENSE` of the crate slotmap 1.1.1
 
 ```text
 Copyright (c) 2021 Orson Peters <orsonpeters@gmail.com>
