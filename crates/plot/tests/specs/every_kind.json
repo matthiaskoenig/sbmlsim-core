@@ -3,7 +3,7 @@
  "width": 1200,
  "height": 900,
  "grid": {
-  "rows": 3,
+  "rows": 4,
   "columns": 4
  },
  "plots": [
@@ -374,6 +374,73 @@
        ]
       ]
      ]
+    }
+   ]
+  },
+  {
+   "id": "p_cat",
+   "row": 3,
+   "column": 0,
+   "x": {
+    "scale": "category",
+    "categories": [
+     "a",
+     "b"
+    ]
+   },
+   "y": {},
+   "elements": [
+    {
+     "id": "catbar",
+     "kind": "bar",
+     "x": [
+      0,
+      1
+     ],
+     "height": [
+      1,
+      2
+     ]
+    }
+   ]
+  },
+  {
+   "id": "p_logheat",
+   "row": 3,
+   "column": 1,
+   "x": {},
+   "y": {},
+   "colorbar": {
+    "scale": {
+     "name": "magma",
+     "low": 0.1,
+     "high": 100,
+     "log": true
+    }
+   },
+   "elements": [
+    {
+     "id": "logheat",
+     "kind": "heatmap",
+     "rows": [
+      "a"
+     ],
+     "columns": [
+      "x",
+      "y"
+     ],
+     "values": [
+      [
+       0.5,
+       null
+      ]
+     ],
+     "scale": {
+      "name": "magma",
+      "low": 0.1,
+      "high": 100,
+      "log": true
+     }
     }
    ]
   }

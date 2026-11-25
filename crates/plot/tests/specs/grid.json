@@ -23,7 +23,7 @@
    },
    "elements": [
     {
-     "id": "l",
+     "id": "a_l",
      "kind": "curve",
      "label": "l",
      "x": [
@@ -51,7 +51,7 @@
    },
    "elements": [
     {
-     "id": "l",
+     "id": "b_l",
      "kind": "curve",
      "label": "l",
      "x": [
@@ -64,7 +64,7 @@
      ]
     },
     {
-     "id": "r",
+     "id": "b_r",
      "kind": "curve",
      "axis": "y2",
      "label": "r",
@@ -97,7 +97,7 @@
    },
    "elements": [
     {
-     "id": "l",
+     "id": "c_l",
      "kind": "curve",
      "x": [
       0,

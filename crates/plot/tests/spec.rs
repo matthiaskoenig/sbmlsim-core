@@ -19,7 +19,9 @@ fn parses_every_fixture() {
             let fig = parse(&text).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
             assert_eq!(fig.contract, FIGURE_CONTRACT);
             let back = serde_json::to_string(&fig).unwrap();
-            assert_eq!(parse(&back).unwrap(), fig, "{} round trip", path.display());
+            // NaN is no equal to itself, so the second write is compared as text
+            let again = serde_json::to_string(&parse(&back).unwrap()).unwrap();
+            assert_eq!(again, back, "{} round trip", path.display());
             n += 1;
         }
     }
@@ -74,6 +76,86 @@ fn refuses_duplicate_element_id() {
     let els = r#"{"id":"a","kind":"rule","orientation":"horizontal","value":1},{"id":"a","kind":"rule","orientation":"vertical","value":1}"#;
     let e = parse(&base(&plot("", els))).unwrap_err();
     assert_eq!(e.path, "plots[0].elements[1].id");
+    // the same id in two plots
+    let one = r#"{"id":"a","kind":"rule","orientation":"horizontal","value":1}"#;
+    let p2 = plot("", one).replace(r#""id":"p""#, r#""id":"q""#);
+    let s = base(&format!("{},{}", plot("", one), p2));
+    let e = parse(&s).unwrap_err();
+    assert_eq!(e.path, "plots[1].elements[0].id");
+}
+
+#[test]
+fn null_is_a_gap() {
+    let f = parse(&base(&plot(
+        "",
+        r#"{"id":"a","kind":"curve","x":[1,2,3],"y":[1,null,3],"xerr":null}"#,
+    )))
+    .unwrap();
+    let ElementKind::Curve { y, xerr, .. } = &f.plots[0].elements[0].kind else {
+        panic!()
+    };
+    assert!(y[1].is_nan() && y[0] == 1.0 && y[2] == 3.0);
+    assert!(xerr.is_none());
+    let back = serde_json::to_string(&f).unwrap();
+    assert!(back.contains(r#""y":[1.0,null,3.0]"#), "{back}");
+    assert!(!back.contains("xerr"), "{back}");
+    assert!(
+        !back.contains("null,") || back.contains("[1.0,null"),
+        "{back}"
+    );
+}
+
+#[test]
+fn legend_group_defaults() {
+    let f = parse(&base(&plot(
+        "",
+        r#"{"id":"a","kind":"rule","orientation":"horizontal","value":1,"label":"L"},
+           {"id":"b","kind":"rule","orientation":"horizontal","value":1,"label":"L","legend":"g"},
+           {"id":"c","kind":"rule","orientation":"horizontal","value":1}"#,
+    )))
+    .unwrap();
+    let e = &f.plots[0].elements;
+    assert_eq!(e[0].legend_group(), Some("a"));
+    assert_eq!(e[1].legend_group(), Some("g"));
+    assert_eq!(e[2].legend_group(), None);
+}
+
+#[test]
+fn refuses_unknown_color_scale_name() {
+    let el = r#"{"id":"h","kind":"heatmap","rows":["a"],"columns":["b"],"values":[[1]],"scale":{"name":"jet","low":0,"high":1}}"#;
+    let e = parse(&base(&plot("", el))).unwrap_err();
+    assert!(e.path.contains("scale") && e.message.contains("jet"), "{e}");
+}
+
+#[test]
+fn refuses_inconsistent_data() {
+    let bad = [
+        (
+            r#"{"id":"b","kind":"box","positions":[0],"stats":[{"low_whisker":3,"q1":1,"median":2,"q3":3,"high_whisker":4}]}"#,
+            "plots[0].elements[0].stats[0]",
+        ),
+        (
+            r#"{"id":"p","kind":"polygon","paths":[[[0,0],[1,1]]]}"#,
+            "plots[0].elements[0].paths[0]",
+        ),
+        (
+            r#"{"id":"p","kind":"polygon","paths":[]}"#,
+            "plots[0].elements[0].paths",
+        ),
+        (
+            r#"{"id":"h","kind":"histogram","edges":[],"counts":[]}"#,
+            "plots[0].elements[0].edges",
+        ),
+        (
+            r#"{"id":"h","kind":"heatmap","rows":["a"],"columns":["b"],"values":[[1]],"scale":{"name":"rdbu","low":0,"high":1,"center":2}}"#,
+            "plots[0].elements[0].scale.center",
+        ),
+    ];
+    for (el, path) in bad {
+        assert_eq!(parse(&base(&plot("", el))).unwrap_err().path, path, "{el}");
+    }
+    let s = base("").replace(r#""width":600"#, r#""width":600,"fonts":{"tick":0}"#);
+    assert_eq!(parse(&s).unwrap_err().path, "fonts.tick");
 }
 
 #[test]

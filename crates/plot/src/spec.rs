@@ -1,6 +1,9 @@
 //! The types of the figure spec `figure/1` and the validation of what the types cannot say.
 //!
 //! Every object refuses unknown fields and uses snake case. A field with a default may be absent.
+//!
+//! In every numeric data array JSON `null` is a gap, a value which is not there, and reads as
+//! `f64::NAN`; a NaN is written as `null`.
 
 // a negated comparison also refuses NaN, which is intended
 #![allow(clippy::neg_cmp_op_on_partial_ord)]
@@ -12,6 +15,7 @@ use serde::ser::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::FIGURE_CONTRACT;
+// SUB_PATH is the U+0001 marker of the path inside an element, see `in_element`
 use crate::error::{SUB_PATH, SpecError};
 
 fn yes() -> bool {
@@ -44,7 +48,7 @@ pub struct Figure {
     /// Height of the figure in pixels.
     pub height: f64,
     /// Title above all plots.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     /// Font sizes.
     #[serde(default)]
@@ -162,23 +166,23 @@ pub struct Plot {
     #[serde(default = "one")]
     pub column_span: u32,
     /// Title of the plot.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     /// The x axis.
     pub x: Axis,
     /// The left y axis.
     pub y: Axis,
     /// The optional right y axis.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub y2: Option<Axis>,
     /// Whether the plot has a legend, true by default.
     #[serde(default = "yes")]
     pub legend: bool,
     /// A color bar.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub colorbar: Option<ColorBar>,
     /// Legends declared as lists of legend groups; absent: derived from the elements.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub declared_legends: Option<Vec<Vec<String>>>,
     /// The elements drawn in the plot.
     pub elements: Vec<Element>,
@@ -212,28 +216,28 @@ pub struct Range {
 #[serde(deny_unknown_fields)]
 pub struct Axis {
     /// Label of the axis.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
     /// Unit shown with the label.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unit: Option<String>,
     /// Scale, linear by default.
     #[serde(default)]
     pub scale: AxisScale,
     /// Names of the categories of a category axis.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub categories: Option<Vec<String>>,
     /// Exact lower end.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min: Option<f64>,
     /// Exact upper end.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max: Option<f64>,
     /// Values the axis must hold, margins applied.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub frame: Option<Range>,
     /// The decades shown below the largest value of a log axis (6 when absent).
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_decades: Option<f64>,
     /// Reversed direction.
     #[serde(default)]
@@ -269,7 +273,7 @@ pub enum YAxisRef {
 /// fields of its kind; unknown fields are refused.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Element {
-    /// Id, unique within the plot.
+    /// Id, unique within the figure.
     pub id: String,
     /// Label in the legend.
     pub label: Option<String>,
@@ -283,13 +287,24 @@ pub struct Element {
     pub kind: ElementKind,
 }
 
+impl Element {
+    /// The legend group of the element: its `legend`, else its id when it has a label, else none.
+    pub fn legend_group(&self) -> Option<&str> {
+        match (&self.legend, &self.label) {
+            (Some(g), _) => Some(g),
+            (None, Some(_)) => Some(&self.id),
+            (None, None) => None,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Common {
     id: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     label: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     legend: Option<String>,
     #[serde(default)]
     axis: YAxisRef,
@@ -299,7 +314,84 @@ struct Common {
 
 const COMMON_KEYS: [&str; 5] = ["id", "label", "legend", "axis", "style"];
 
-fn in_element<E: serde::de::Error>(path: &serde_path_to_error::Path, message: String) -> E {
+/// The fields of the kinds of an element besides the common ones, `None` for an unknown kind.
+fn kind_fields(kind: &str) -> Option<&'static [&'static str]> {
+    Some(match kind {
+        "curve" => &["x", "y", "xerr", "yerr"],
+        "band" => &["x", "low", "high", "median"],
+        "area" => &["x", "from", "to"],
+        "bar" => &["x", "height", "err", "horizontal", "width"],
+        "box" => &["positions", "stats"],
+        "violin" => &["positions", "densities"],
+        "histogram" => &["edges", "counts"],
+        "heatmap" => &["rows", "columns", "values", "text", "scale"],
+        "text" => &["x", "y", "text", "anchor"],
+        "rule" => &["orientation", "value"],
+        "polygon" => &["paths"],
+        _ => return None,
+    })
+}
+
+/// Serde helpers of the numeric data arrays: JSON `null` is a gap and reads as NaN, and a NaN
+/// is written as `null`.
+mod nums {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    fn gap(v: Option<f64>) -> f64 {
+        v.unwrap_or(f64::NAN)
+    }
+    fn value(v: &f64) -> Option<f64> {
+        if v.is_nan() { None } else { Some(*v) }
+    }
+
+    pub mod vec {
+        use super::*;
+        pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<f64>, D::Error> {
+            Ok(Vec::<Option<f64>>::deserialize(d)?
+                .into_iter()
+                .map(gap)
+                .collect())
+        }
+        pub fn serialize<S: Serializer>(v: &[f64], s: S) -> Result<S::Ok, S::Error> {
+            v.iter().map(value).collect::<Vec<_>>().serialize(s)
+        }
+    }
+
+    pub mod opt_vec {
+        use super::*;
+        pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Vec<f64>>, D::Error> {
+            Ok(Option::<Vec<Option<f64>>>::deserialize(d)?
+                .map(|v| v.into_iter().map(gap).collect()))
+        }
+        pub fn serialize<S: Serializer>(v: &Option<Vec<f64>>, s: S) -> Result<S::Ok, S::Error> {
+            match v {
+                Some(v) => super::vec::serialize(v, s),
+                None => s.serialize_none(),
+            }
+        }
+    }
+
+    pub mod rows {
+        use super::*;
+        pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<Vec<f64>>, D::Error> {
+            Ok(Vec::<Vec<Option<f64>>>::deserialize(d)?
+                .into_iter()
+                .map(|r| r.into_iter().map(gap).collect())
+                .collect())
+        }
+        pub fn serialize<S: Serializer>(v: &[Vec<f64>], s: S) -> Result<S::Ok, S::Error> {
+            v.iter()
+                .map(|r| r.iter().map(value).collect::<Vec<_>>())
+                .collect::<Vec<_>>()
+                .serialize(s)
+        }
+    }
+}
+
+// An error inside an element carries the path inside it between two U+0001 characters in front
+// of the message, which `SpecError::from_serde` (error.rs) takes apart and joins to the path of
+// the element, since serde knows the path to the element only.
+fn in_element<E: serde::de::Error>(path: &dyn std::fmt::Display, message: String) -> E {
     E::custom(format!("{SUB_PATH}{path}{SUB_PATH}{message}"))
 }
 
@@ -309,6 +401,31 @@ impl<'de> Deserialize<'de> for Element {
         let serde_json::Value::Object(mut map) = value else {
             return Err(D::Error::custom("expected an object"));
         };
+        // serde cannot refuse unknown fields of the variants of a tagged enum, so the fields
+        // are checked against the list of the kind before the typed parse
+        if let Some(kind) = map.get("kind").and_then(|k| k.as_str())
+            && let Some(fields) = kind_fields(kind)
+            && let Some(unknown) = map.keys().find(|k| {
+                *k != "kind" && !COMMON_KEYS.contains(&k.as_str()) && !fields.contains(&k.as_str())
+            })
+        {
+            return Err(D::Error::custom(format!("unknown field `{unknown}`")));
+        }
+        // serde loses the path inside a tagged enum, so the name of the scale of a heatmap, the
+        // one field of a kind which can be refused by its value alone, is checked here
+        if let Some(n) = map
+            .get("scale")
+            .and_then(|c| c.get("name"))
+            .and_then(|n| n.as_str())
+            && serde_json::from_value::<ColorScaleName>(n.into()).is_err()
+        {
+            return Err(in_element(
+                &"scale.name",
+                format!(
+                    "unknown color scale `{n}`, expected one of viridis, magma, rdbu, coolwarm, greys"
+                ),
+            ));
+        }
         let mut common = serde_json::Map::new();
         for key in COMMON_KEYS {
             if let Some(v) = map.remove(key) {
@@ -317,16 +434,8 @@ impl<'de> Deserialize<'de> for Element {
         }
         let c: Common = serde_path_to_error::deserialize(serde_json::Value::Object(common))
             .map_err(|e| in_element(e.path(), e.inner().to_string()))?;
-        let given: Vec<String> = map.keys().cloned().collect();
         let kind: ElementKind = serde_path_to_error::deserialize(serde_json::Value::Object(map))
             .map_err(|e| in_element(e.path(), e.inner().to_string()))?;
-        // serde cannot refuse unknown fields of the variants of a tagged enum: a field which
-        // the kind does not write back is none of its fields
-        if let Ok(serde_json::Value::Object(known)) = serde_json::to_value(&kind)
-            && let Some(unknown) = given.iter().find(|k| !known.contains_key(*k))
-        {
-            return Err(D::Error::custom(format!("unknown field `{unknown}`")));
-        }
         Ok(Element {
             id: c.id,
             label: c.label,
@@ -366,56 +475,83 @@ pub enum ElementKind {
     /// A line and/or markers, with optional error bars.
     Curve {
         /// x values.
+        #[serde(with = "nums::vec")]
         x: Vec<f64>,
         /// y values.
+        #[serde(with = "nums::vec")]
         y: Vec<f64>,
         /// Error of x.
-        #[serde(default)]
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            with = "nums::opt_vec"
+        )]
         xerr: Option<Vec<f64>>,
         /// Error of y.
-        #[serde(default)]
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            with = "nums::opt_vec"
+        )]
         yerr: Option<Vec<f64>>,
     },
     /// A band between two curves with an optional median.
     Band {
         /// x values.
+        #[serde(with = "nums::vec")]
         x: Vec<f64>,
         /// Lower edge.
+        #[serde(with = "nums::vec")]
         low: Vec<f64>,
         /// Upper edge.
+        #[serde(with = "nums::vec")]
         high: Vec<f64>,
         /// Median line.
-        #[serde(default)]
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            with = "nums::opt_vec"
+        )]
         median: Option<Vec<f64>>,
     },
     /// A filled area between two curves.
     Area {
         /// x values.
+        #[serde(with = "nums::vec")]
         x: Vec<f64>,
         /// Start of the area.
+        #[serde(with = "nums::vec")]
         from: Vec<f64>,
         /// End of the area.
+        #[serde(with = "nums::vec")]
         to: Vec<f64>,
     },
     /// Bars.
     Bar {
         /// Positions, or category indices.
+        #[serde(with = "nums::vec")]
         x: Vec<f64>,
         /// Heights.
+        #[serde(with = "nums::vec")]
         height: Vec<f64>,
         /// Errors.
-        #[serde(default)]
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            with = "nums::opt_vec"
+        )]
         err: Option<Vec<f64>>,
         /// Horizontal bars.
         #[serde(default)]
         horizontal: bool,
         /// Width of a bar in axis units.
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         width: Option<f64>,
     },
     /// Box plots.
     Box {
         /// Positions.
+        #[serde(with = "nums::vec")]
         positions: Vec<f64>,
         /// Statistics per position.
         stats: Vec<BoxStats>,
@@ -423,6 +559,7 @@ pub enum ElementKind {
     /// Violins.
     Violin {
         /// Positions.
+        #[serde(with = "nums::vec")]
         positions: Vec<f64>,
         /// Density per position.
         densities: Vec<Density>,
@@ -430,8 +567,10 @@ pub enum ElementKind {
     /// A histogram.
     Histogram {
         /// Bin edges, one more than counts.
+        #[serde(with = "nums::vec")]
         edges: Vec<f64>,
         /// Counts per bin.
+        #[serde(with = "nums::vec")]
         counts: Vec<f64>,
     },
     /// A heat map.
@@ -441,9 +580,10 @@ pub enum ElementKind {
         /// Column names.
         columns: Vec<String>,
         /// Values, per row.
+        #[serde(with = "nums::rows")]
         values: Vec<Vec<f64>>,
         /// Text of the cells.
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         text: Option<Vec<Vec<String>>>,
         /// Color scale.
         scale: ColorScale,
@@ -521,23 +661,41 @@ pub struct BoxStats {
 #[serde(deny_unknown_fields)]
 pub struct Density {
     /// Values where the density is given.
+    #[serde(with = "nums::vec")]
     pub values: Vec<f64>,
     /// Density at the values.
+    #[serde(with = "nums::vec")]
     pub density: Vec<f64>,
+}
+
+/// The name of a color map.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ColorScaleName {
+    /// Viridis.
+    Viridis,
+    /// Magma.
+    Magma,
+    /// Red to blue, diverging.
+    Rdbu,
+    /// Cool to warm, diverging.
+    Coolwarm,
+    /// Greys.
+    Greys,
 }
 
 /// A color scale.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ColorScale {
-    /// Name of the color map, e.g. `viridis` or `rdbu`.
-    pub name: String,
+    /// Name of the color map.
+    pub name: ColorScaleName,
     /// Value of the low end.
     pub low: f64,
     /// Value of the high end.
     pub high: f64,
     /// Value at the middle of a diverging map.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub center: Option<f64>,
     /// Logarithmic scale.
     #[serde(default)]
@@ -551,7 +709,7 @@ pub struct ColorBar {
     /// The scale shown.
     pub scale: ColorScale,
     /// Label.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
 }
 
@@ -626,10 +784,10 @@ pub struct Marker {
     #[serde(default = "six")]
     pub size: f64,
     /// Fill color.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fill: Option<String>,
     /// Edge color.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub edge: Option<String>,
     /// Edge width, 1 by default.
     #[serde(default = "one_f")]
@@ -652,7 +810,7 @@ impl Default for Marker {
 #[serde(deny_unknown_fields)]
 pub struct Fill {
     /// Color `#rrggbb`.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
     /// Opacity, 1 by default.
     #[serde(default = "one_f")]
@@ -664,7 +822,7 @@ pub struct Fill {
 #[serde(deny_unknown_fields)]
 pub struct Style {
     /// Color `#rrggbb`; absent: the cycle by element position.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
     /// Opacity, 1 by default.
     #[serde(default = "one_f")]
@@ -676,7 +834,7 @@ pub struct Style {
     #[serde(default)]
     pub marker: Marker,
     /// Fill.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fill: Option<Fill>,
 }
 impl Default for Style {
@@ -722,6 +880,11 @@ fn check_scale(path: &str, s: &ColorScale) -> Result<(), SpecError> {
     }
     if s.log && s.low <= 0.0 {
         return err(format!("{path}.low"), "must be positive on a log scale");
+    }
+    if let Some(c) = s.center
+        && !(s.low..=s.high).contains(&c)
+    {
+        return err(format!("{path}.center"), "must be between low and high");
     }
     Ok(())
 }
@@ -815,6 +978,15 @@ fn check_kind(p: &str, kind: &ElementKind) -> Result<(), SpecError> {
         }
         Box { positions, stats } => {
             same_len(p, "stats", stats.len(), "positions", positions.len())?;
+            for (i, b) in stats.iter().enumerate() {
+                let order = [b.low_whisker, b.q1, b.median, b.q3, b.high_whisker];
+                if !order.windows(2).all(|w| w[0] <= w[1]) {
+                    return err(
+                        format!("{p}.stats[{i}]"),
+                        "needs low_whisker <= q1 <= median <= q3 <= high_whisker",
+                    );
+                }
+            }
         }
         Violin {
             positions,
@@ -838,6 +1010,9 @@ fn check_kind(p: &str, kind: &ElementKind) -> Result<(), SpecError> {
             }
         }
         Histogram { edges, counts } => {
+            if edges.is_empty() {
+                return err(format!("{p}.edges"), "must not be empty");
+            }
             if edges.len() != counts.len() + 1 {
                 return err(
                     format!("{p}.edges"),
@@ -881,7 +1056,20 @@ fn check_kind(p: &str, kind: &ElementKind) -> Result<(), SpecError> {
             }
             check_scale(&format!("{p}.scale"), scale)?;
         }
-        Text { .. } | Rule { .. } | Polygon { .. } => {}
+        Polygon { paths } => {
+            if paths.is_empty() {
+                return err(format!("{p}.paths"), "must not be empty");
+            }
+            for (i, ring) in paths.iter().enumerate() {
+                if ring.len() < 3 {
+                    return err(
+                        format!("{p}.paths[{i}]"),
+                        format!("{} points, a ring needs at least 3", ring.len()),
+                    );
+                }
+            }
+        }
+        Text { .. } | Rule { .. } => {}
     }
     Ok(())
 }
@@ -900,6 +1088,16 @@ pub(crate) fn validate(f: &Figure) -> Result<(), SpecError> {
     if !(f.height > 0.0) {
         return err("height".into(), "must be positive");
     }
+    for (name, v) in [
+        ("title", f.fonts.title),
+        ("label", f.fonts.label),
+        ("tick", f.fonts.tick),
+        ("legend", f.fonts.legend),
+    ] {
+        if !(v > 0.0) {
+            return err(format!("fonts.{name}"), "must be positive");
+        }
+    }
     if f.grid.rows == 0 {
         return err("grid.rows".into(), "must be at least 1");
     }
@@ -913,6 +1111,8 @@ pub(crate) fn validate(f: &Figure) -> Result<(), SpecError> {
         return err("grid.hspace".into(), "must not be negative");
     }
     let mut plot_ids = HashSet::new();
+    // the id of an element names its group in the drawing, so it is unique in the figure
+    let mut ids = HashSet::new();
     for (i, p) in f.plots.iter().enumerate() {
         let pp = format!("plots[{i}]");
         if !plot_ids.insert(p.id.as_str()) {
@@ -959,13 +1159,12 @@ pub(crate) fn validate(f: &Figure) -> Result<(), SpecError> {
         if let Some(c) = &p.colorbar {
             check_scale(&format!("{pp}.colorbar.scale"), &c.scale)?;
         }
-        let mut ids = HashSet::new();
         for (j, e) in p.elements.iter().enumerate() {
             let ep = format!("{pp}.elements[{j}]");
             if !ids.insert(e.id.as_str()) {
                 return err(
                     format!("{ep}.id"),
-                    format!("duplicate element id `{}`", e.id),
+                    format!("duplicate element id `{}` in the figure", e.id),
                 );
             }
             if e.axis == YAxisRef::Y2 && p.y2.is_none() {

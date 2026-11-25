@@ -1,6 +1,7 @@
 use std::fmt;
 
-/// Marks the sub path an element reports, see [`SpecError::from_serde`].
+/// The U+0001 character which brackets the path inside an element in a message of serde, see
+/// [`SpecError::from_serde`] and `in_element` of spec.rs, where the message is written.
 pub(crate) const SUB_PATH: &str = "\u{1}";
 
 /// What is wrong with a figure spec and where.
