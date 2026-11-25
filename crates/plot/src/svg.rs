@@ -186,6 +186,30 @@ pub(crate) struct ElementTag {
     pub kind: &'static str,
     /// The legend group of the element.
     pub legend: Option<String>,
+    /// Whether this chart writes the group of the element. The elements of the right y axis
+    /// are drawn by the overlay chart of that axis, whose writer writes their groups; the
+    /// writer of the primary chart leaves them out, so no group is written twice.
+    pub here: bool,
+}
+
+/// What the writer draws of one axis besides Charton's spine, ticks and tick labels.
+///
+/// Charton lays the tick labels out unrotated and without a title, and measures them with its
+/// own estimate; the crate measures them with the Inter table, reserves the difference in the
+/// margins, rotates the labels and draws the title at the Inter depth of the labels. So the
+/// axis title and the panel sit where the Inter measure puts them, and no sine or cosine of the
+/// standard library enters the layout (Charton's would be glibc's natively and another in
+/// wasm).
+#[derive(Debug, Clone, Default)]
+pub(crate) struct AxisHooks {
+    /// Whether the ticks and tick labels are hidden.
+    pub ticks_hidden: bool,
+    /// The rotation of the tick labels in the degrees of SVG (clockwise), 0 for none.
+    pub label_angle: f64,
+    /// The title, `None` when it is hidden or empty.
+    pub title: Option<String>,
+    /// The distance from the spine to the far side of the tick labels, measured in Inter.
+    pub labels_depth: f64,
 }
 
 /// The grid lines of one axis, as shares along the axis from the start of its domain.
@@ -204,14 +228,14 @@ pub(crate) struct PlotHooks {
     pub layers: Vec<LayerInfo>,
     /// The elements of the plot in their order.
     pub elements: Vec<ElementTag>,
-    /// Whether the ticks and tick labels of the x axis are hidden.
-    pub x_ticks_hidden: bool,
-    /// Whether the ticks and tick labels of the y axis are hidden.
-    pub y_ticks_hidden: bool,
-    /// Whether the title of the x axis is hidden.
-    pub x_title_hidden: bool,
-    /// Whether the title of the y axis is hidden.
-    pub y_title_hidden: bool,
+    /// The x axis.
+    pub x: AxisHooks,
+    /// The y axis.
+    pub y: AxisHooks,
+    /// The font size of the axis titles.
+    pub title_size: f64,
+    /// The gap between the tick labels and the title of an axis.
+    pub title_gap: f64,
     /// The grid lines.
     pub grid: GridLines,
 }
@@ -228,8 +252,8 @@ struct Frame {
     axis: bool,
     /// Whether it is the group of a layer, whose end ends the marker of the layer.
     mark: bool,
-    /// Whether it is the group of an axis title, whose text is written in the regular weight.
-    title: bool,
+    /// Whether it is inside the group of the tick labels, whose text the writer rotates.
+    tick_label: bool,
 }
 
 /// The backend Charton draws one plot through; it writes SVG into `body` and `defs`.
@@ -303,10 +327,69 @@ impl<'a> PlotWriter<'a> {
             self.open_element = None;
         }
         while self.next_element < until.min(self.hooks.elements.len()) {
-            self.open_element_group(self.next_element);
-            self.body.push_str("</g>");
+            if self.hooks.elements[self.next_element].here {
+                self.open_element_group(self.next_element);
+                self.body.push_str("</g>");
+            }
             self.next_element += 1;
         }
+    }
+
+    /// The hooks of the axis whose group is open.
+    fn axis_hooks(&self) -> Option<&AxisHooks> {
+        match self.axis {
+            Some(AxisKind::X) => Some(&self.hooks.x),
+            Some(AxisKind::Y) => Some(&self.hooks.y),
+            _ => None,
+        }
+    }
+
+    /// Writes the title of the open axis at the Inter depth of its tick labels, where Charton
+    /// would write it: below the bottom axis hanging from its band, left of the left axis
+    /// rotated and centred in its band.
+    fn axis_title(&mut self) {
+        let (Some(panel), Some(hooks)) = (self.panel, self.axis_hooks()) else {
+            return;
+        };
+        let Some(title) = hooks.title.clone() else {
+            return;
+        };
+        let (size, gap, depth) = (
+            self.hooks.title_size,
+            self.hooks.title_gap,
+            hooks.labels_depth,
+        );
+        let b = &mut self.body;
+        b.push_str("<g class=\"charton-axis-title\"><text");
+        if self.axis == Some(AxisKind::X) {
+            attr_num(b, "x", panel.x + panel.width / 2.0);
+            attr_num(b, "y", panel.y + panel.height + depth + gap);
+            attr_num(b, "font-size", size);
+            let _ = write!(
+                b,
+                " fill=\"{}\" text-anchor=\"middle\" dominant-baseline=\"hanging\">",
+                theme::FG
+            );
+        } else {
+            let (x, y) = (
+                panel.x - (depth + gap + size / 2.0),
+                panel.y + panel.height / 2.0,
+            );
+            attr_num(b, "x", x);
+            attr_num(b, "y", y);
+            attr_num(b, "font-size", size);
+            let _ = write!(
+                b,
+                " fill=\"{}\" text-anchor=\"middle\" dominant-baseline=\"middle\" transform=\"rotate(-90 ",
+                theme::FG
+            );
+            num(b, x);
+            b.push(' ');
+            num(b, y);
+            b.push_str(")\">");
+        }
+        escape(b, &title);
+        b.push_str("</text></g>");
     }
 
     /// Draws every element group which is not written yet; for a plot Charton drew no plot
@@ -524,6 +607,17 @@ impl RenderBackend for PlotWriter<'_> {
         if self.suppressed() || !finite(&[c.x, c.y]) {
             return Ok(());
         }
+        let mut c = c;
+        if self.stack.last().is_some_and(|f| f.tick_label)
+            && let Some(a) = self.axis_hooks()
+            && a.label_angle != 0.0
+        {
+            // a rotated label of the bottom axis ends at its tick, as Charton draws it
+            if self.axis == Some(AxisKind::X) {
+                c.text_anchor = "end".into();
+            }
+            c.angle = a.label_angle as f32;
+        }
         let b = &mut self.body;
         b.push_str("<text");
         attr_num(b, "x", f64::from(c.x));
@@ -540,9 +634,7 @@ impl RenderBackend for PlotWriter<'_> {
             escape(b, &c.dominant_baseline);
             b.push('"');
         }
-        let title = self.stack.last().is_some_and(|f| f.title);
-        let b = &mut self.body;
-        if !title && c.font_weight != "normal" && !c.font_weight.is_empty() {
+        if c.font_weight != "normal" && !c.font_weight.is_empty() {
             b.push_str(" font-weight=\"");
             escape(b, &c.font_weight);
             b.push('"');
@@ -620,14 +712,14 @@ impl RenderBackend for PlotWriter<'_> {
 
     fn begin_group(&mut self, g: &Group<'_>) {
         let parent_suppress = self.suppressed();
-        let parent_title = self.stack.last().is_some_and(|f| f.title);
+        let parent_tick_label = self.stack.last().is_some_and(|f| f.tick_label);
         let mut frame = Frame {
             wrote: false,
             suppress: parent_suppress,
             plot: false,
             axis: false,
             mark: false,
-            title: parent_title,
+            tick_label: parent_tick_label,
         };
         match g.role {
             Role::Plot => {
@@ -660,22 +752,11 @@ impl RenderBackend for PlotWriter<'_> {
                 frame.axis = true;
             }
             Role::Tick | Role::TickLabel => {
-                let hidden = match self.axis {
-                    Some(AxisKind::X) => self.hooks.x_ticks_hidden,
-                    Some(AxisKind::Y) => self.hooks.y_ticks_hidden,
-                    _ => false,
-                };
-                frame.suppress |= hidden;
+                frame.suppress |= self.axis_hooks().is_some_and(|a| a.ticks_hidden);
+                frame.tick_label |= g.role == Role::TickLabel;
             }
-            Role::AxisTitle => {
-                frame.title = true;
-                let hidden = match self.axis {
-                    Some(AxisKind::X) => self.hooks.x_title_hidden,
-                    Some(AxisKind::Y) => self.hooks.y_title_hidden,
-                    _ => false,
-                };
-                frame.suppress |= hidden;
-            }
+            // Charton gets no axis titles; the writer draws them, see `AxisHooks`
+            Role::AxisTitle => frame.suppress = true,
             _ => {}
         }
         // a series is a scope of Charton's own; the element group says what a host needs
@@ -727,6 +808,9 @@ impl RenderBackend for PlotWriter<'_> {
             self.catch_up(self.hooks.elements.len());
         }
         if frame.axis {
+            if frame.wrote {
+                self.axis_title();
+            }
             self.axis = None;
         }
         if frame.mark {

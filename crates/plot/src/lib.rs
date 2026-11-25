@@ -11,6 +11,7 @@ mod text;
 pub use error::SpecError;
 pub use render::render_svg;
 pub use spec::*;
+pub use text::text_width;
 
 /// The contract id of the figure spec, the value of its `contract` field.
 pub const FIGURE_CONTRACT: &str = "figure/1";

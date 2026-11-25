@@ -4,13 +4,14 @@
 //! natively and in wasm, whatever fonts the machine has. The table is the advance of every
 //! character of ASCII, Latin-1, Greek and of a few signs of units and numbers in
 //! `Inter-Regular.ttf` 4.001 (git 9221beed3), the font Charton 0.9.1 bundles
-//! (`assets/fonts/Inter-Regular.ttf`). It was written with fontTools:
+//! (`assets/fonts/Inter-Regular.ttf`). It was written by `text_table.py` next to this file,
+//! with fontTools, outside of the uv project of the repository:
 //!
 //! ```text
-//! uv run --with fonttools python gen_table.py Inter-Regular.ttf
+//! uv run --no-project --with fonttools python crates/plot/src/text_table.py Inter-Regular.ttf
 //! ```
 //!
-//! where `gen_table.py` reads `head.unitsPerEm` and, for every character of the ranges, the
+//! which takes `head.unitsPerEm` and, for every character of the ranges, the
 //! advance of its glyph in `hmtx` through the best `cmap`. Kerning is not applied; a character
 //! outside of the table takes the advance of the digit zero.
 
@@ -86,9 +87,69 @@ fn advance(c: char) -> u16 {
 }
 
 /// The width of a text in pixels at a font size in pixels, in Inter Regular.
-pub(crate) fn text_width(text: &str, size: f64) -> f64 {
+pub fn text_width(text: &str, size: f64) -> f64 {
     let units: u64 = text.chars().map(|c| u64::from(advance(c))).sum();
     units as f64 * size / UNITS_PER_EM
+}
+
+/// Charton's estimate of the width of a text (`estimate_text_width` of `core/utils.rs` of
+/// Charton 0.9.1, which is not public): what Charton reserves for a tick label, which the crate
+/// corrects to [`text_width`].
+pub(crate) fn charton_estimate(text: &str, size: f64) -> f64 {
+    let (mut wide, mut narrow, mut upper, mut other) = (0u32, 0u32, 0u32, 0u32);
+    for c in text.chars() {
+        if is_wide(c) {
+            wide += 1;
+        } else if matches!(
+            c,
+            '.' | ',' | ':' | ';' | '!' | 'i' | 'j' | 'l' | '-' | '|' | '1' | 't' | 'f' | 'r'
+        ) {
+            narrow += 1;
+        } else if c.is_ascii_uppercase() {
+            upper += 1;
+        } else {
+            other += 1;
+        }
+    }
+    (f64::from(wide) + f64::from(narrow) * 0.3 + f64::from(upper) * 0.65 + f64::from(other) * 0.55)
+        * size
+}
+
+/// Whether Charton counts a character one em wide (`is_wide` of Charton 0.9.1).
+const fn is_wide(c: char) -> bool {
+    matches!(c as u32,
+        0x1100..=0x115F
+        | 0x2E80..=0x303E
+        | 0x3041..=0x33FF
+        | 0x3400..=0x4DBF
+        | 0x4E00..=0x9FFF
+        | 0xA000..=0xA4CF
+        | 0xAC00..=0xD7A3
+        | 0xF900..=0xFAFF
+        | 0xFE10..=0xFE19
+        | 0xFE30..=0xFE4F
+        | 0xFF01..=0xFF60
+        | 0xFFE0..=0xFFE6
+        | 0x1F300..=0x1F9FF
+        | 0x20000..=0x3FFFD
+    )
+}
+
+/// The extent across its axis of a tick label of a width, rotated by `angle` degrees: the side
+/// of its rotated line box (the line is one em, the font size) which the axis band reserves, as
+/// Charton computes it, with the sine and cosine of `libm`.
+pub(crate) fn label_extent(width: f64, size: f64, angle: f64, bottom: bool) -> f64 {
+    let radians = angle * std::f64::consts::PI / 180.0;
+    let (sin, cos) = if angle == 0.0 {
+        (0.0, 1.0)
+    } else {
+        (libm::sin(radians).abs(), libm::cos(radians).abs())
+    };
+    if bottom {
+        width * sin + size * cos
+    } else {
+        width * cos + size * sin
+    }
 }
 
 #[cfg(test)]
@@ -107,6 +168,15 @@ mod tests {
         ] {
             assert!((text_width(text, 13.0) - width).abs() < 0.06, "{text}");
         }
+    }
+
+    #[test]
+    fn estimate_of_charton() {
+        // the class counts of Charton: 1 narrow, 0 0.55 each, at 13 px
+        assert!((charton_estimate("10", 13.0) - 0.85 * 13.0).abs() < 1e-12);
+        assert_eq!(label_extent(20.0, 11.0, 0.0, true), 11.0);
+        assert_eq!(label_extent(20.0, 11.0, 0.0, false), 20.0);
+        assert!((label_extent(20.0, 11.0, 90.0, true) - 20.0).abs() < 1e-9);
     }
 
     #[test]

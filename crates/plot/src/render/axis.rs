@@ -102,13 +102,23 @@ impl ResolvedAxis {
     }
 
     /// The ticks as coordinates with their labels, inside the domain.
+    ///
+    /// A tick outside of the domain is dropped. The tick rules keep a tick within a relative
+    /// 1e-9 of an end (a tick at an exact end computes as `24.000000000000004` or as the `log10`
+    /// of a decade a bit past it), which is set onto the end, so the end keeps its tick and
+    /// Charton is never given a tick outside of its domain.
     pub fn tick_coordinates(&self) -> Vec<(f64, String)> {
         let (lo, hi) = self.domain();
+        // a relative 1e-9 of a decade is an absolute 4.3e-10 of its log10
+        let slack = match self.transform {
+            Transform::Log => ((hi - lo) * 1e-9).max(1e-9),
+            Transform::Linear | Transform::Category => (hi - lo) * 1e-9,
+        };
         self.ticks
             .iter()
             .filter_map(|(v, label)| {
                 let u = self.u(*v);
-                u.is_finite().then(|| (u.clamp(lo, hi), label.clone()))
+                (u >= lo - slack && u <= hi + slack).then(|| (u.clamp(lo, hi), label.clone()))
             })
             .collect()
     }

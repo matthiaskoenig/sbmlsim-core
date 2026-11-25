@@ -16,9 +16,10 @@ use charton::prelude::*;
 
 use crate::spec::{Element, Figure, Plot};
 use crate::svg::{
-    self, ElementTag, FONT_FAMILY, GridLines, ID_PLACEHOLDER, PlotHooks, PlotWriter, escape, theme,
+    self, AxisHooks, ElementTag, FONT_FAMILY, GridLines, ID_PLACEHOLDER, PlotHooks, PlotWriter,
+    escape, theme,
 };
-use crate::text::text_width;
+use crate::text::{charton_estimate, label_extent, text_width};
 use axis::{ResolvedAxis, X_TICK_ROOM, Y_TICK_ROOM, axis_title};
 
 /// The anchors of the colour ramp of sbmlsim-web (`RAMP` of `plot.ts`): viridis over its first
@@ -107,7 +108,20 @@ pub(crate) struct PlotSvg {
     pub body: String,
     /// Its definitions (clip paths, gradients).
     pub defs: String,
+    /// The panel of the plot in the coordinates of its cell, `None` when Charton drew none.
+    #[allow(
+        dead_code,
+        reason = "the figure composition places the overlay of the right axis on it"
+    )]
+    pub panel: Option<Cell>,
 }
+
+/// The length of a tick mark in pixels.
+const TICK_LENGTH: f64 = 5.0;
+/// The gap between a tick mark and its label in pixels.
+const TICK_LABEL_PADDING: f64 = 3.0;
+/// The gap between the tick labels and the title of an axis in pixels (Charton's default).
+const TITLE_GAP: f64 = 10.0;
 
 /// The shares of the ticks of an axis along it, for its grid lines.
 fn grid_shares(axis: &ResolvedAxis) -> Vec<f64> {
@@ -117,8 +131,75 @@ fn grid_shares(axis: &ResolvedAxis) -> Vec<f64> {
         .collect()
 }
 
+/// The ticks of an axis as coordinates with their labels.
+type TickLabels = Vec<(f64, String)>;
+
+/// The labels of the ticks of an axis as Charton gets them: empty when they are hidden.
+fn tick_labels(a: &ResolvedAxis, visible: bool) -> TickLabels {
+    a.tick_coordinates()
+        .into_iter()
+        .map(|(u, l)| (u, if visible { l } else { String::new() }))
+        .collect()
+}
+
+/// How one axis is laid out: its hooks for the writer and what its margin must add to the band
+/// Charton reserves.
+struct AxisLayout {
+    hooks: AxisHooks,
+    /// Pixels the margin of the side of the axis adds: the Inter depth of the labels beyond
+    /// Charton's estimate of them, and the title.
+    extra: f64,
+}
+
+/// Lays out an axis over its tick labels: the bottom axis when `bottom`, else the left one.
+///
+/// Charton reserves `TICK_LENGTH + TICK_LABEL_PADDING` and its estimate of the unrotated labels
+/// across the axis (the font size for the bottom axis, the estimated width for the left one) and
+/// no title; the crate measures the rotated labels with the Inter table and adds the difference
+/// and the title to the margin.
+fn axis_layout(
+    axis: &crate::spec::Axis,
+    labels: &[(f64, String)],
+    tick: f64,
+    title: f64,
+    bottom: bool,
+) -> AxisLayout {
+    let angle = axis.tick_rotation;
+    let inter = labels
+        .iter()
+        .map(|(_, l)| label_extent(text_width(l, tick), tick, angle, bottom))
+        .fold(0.0, f64::max);
+    let charton = labels
+        .iter()
+        .map(|(_, l)| {
+            if bottom {
+                tick
+            } else {
+                charton_estimate(l, tick)
+            }
+        })
+        .fold(0.0, f64::max);
+    let name = axis_title(axis);
+    let title_text = (axis.label_visible && !name.is_empty()).then_some(name);
+    let title_room = if title_text.is_some() {
+        TITLE_GAP + title
+    } else {
+        0.0
+    };
+    AxisLayout {
+        hooks: AxisHooks {
+            ticks_hidden: !axis.ticks_visible,
+            label_angle: -angle,
+            title: title_text,
+            labels_depth: TICK_LENGTH + TICK_LABEL_PADDING + inter,
+        },
+        extra: inter - charton + title_room,
+    }
+}
+
 /// Draws one plot into a cell of the figure; the ids it writes start with `prefix`.
 pub(crate) fn render_plot(figure: &Figure, plot: &Plot, cell: Cell, prefix: String) -> PlotSvg {
+    let fonts = &figure.fonts;
     let (mut xs, mut ys) = (Vec::new(), Vec::new());
     for e in plot
         .elements
@@ -131,6 +212,21 @@ pub(crate) fn render_plot(figure: &Figure, plot: &Plot, cell: Cell, prefix: Stri
     let title_room = if plot.title.is_some() { 24.0 } else { 0.0 };
     let xa = axis::resolve(&plot.x, &xs, cell.width - 90.0, X_TICK_ROOM);
     let ya = axis::resolve(&plot.y, &ys, cell.height - 70.0 - title_room, Y_TICK_ROOM);
+    let x_labels = tick_labels(&xa, plot.x.ticks_visible);
+    let y_labels = tick_labels(&ya, plot.y.ticks_visible);
+    let xl = axis_layout(&plot.x, &x_labels, fonts.tick, fonts.label, true);
+    let yl = axis_layout(&plot.y, &y_labels, fonts.tick, fonts.label, false);
+    // the last tick label of an unrotated x axis reaches half its width past the panel
+    let overhang = match x_labels.last() {
+        Some((_, l)) if plot.x.tick_rotation == 0.0 => text_width(l, fonts.tick) / 2.0,
+        _ => 0.0,
+    };
+    let margins = Margins {
+        top: PAD,
+        right: PAD + overhang,
+        bottom: (PAD + xl.extra).max(0.0),
+        left: (PAD + yl.extra).max(0.0),
+    };
     let colors = element_colors(&plot.elements);
     let hooks = PlotHooks {
         layers: Vec::new(),
@@ -141,12 +237,13 @@ pub(crate) fn render_plot(figure: &Figure, plot: &Plot, cell: Cell, prefix: Stri
                 id: e.id.clone(),
                 kind: kind_name(e),
                 legend: e.legend_group().map(str::to_string),
+                here: e.axis == crate::spec::YAxisRef::Y,
             })
             .collect(),
-        x_ticks_hidden: !plot.x.ticks_visible,
-        y_ticks_hidden: !plot.y.ticks_visible,
-        x_title_hidden: !plot.x.label_visible,
-        y_title_hidden: !plot.y.label_visible,
+        x: xl.hooks,
+        y: yl.hooks,
+        title_size: fonts.label,
+        title_gap: TITLE_GAP,
         grid: GridLines {
             x: if plot.x.grid {
                 grid_shares(&xa)
@@ -160,33 +257,68 @@ pub(crate) fn render_plot(figure: &Figure, plot: &Plot, cell: Cell, prefix: Stri
             },
         },
     };
-    match chart_of(figure, plot, cell, &colors, &xa, &ya) {
-        Ok((chart, layers)) => {
-            let hooks = PlotHooks { layers, ..hooks };
-            let mut writer = PlotWriter::new(prefix, &hooks);
-            let mut chart = chart;
-            let failed = chart.render(&mut writer).err();
-            writer.finish();
-            let mut body = writer.body;
-            if let Some(e) = failed {
-                error_text(&mut body, cell, &e.to_string());
-            }
-            PlotSvg {
-                body,
-                defs: writer.defs,
-            }
-        }
-        Err(e) => {
-            let mut writer = PlotWriter::new(prefix, &hooks);
-            writer.finish();
-            let mut body = writer.body;
-            error_text(&mut body, cell, &e.to_string());
-            PlotSvg {
-                body,
-                defs: writer.defs,
-            }
-        }
+    let built = chart_of(
+        figure,
+        plot,
+        cell,
+        &colors,
+        (&xa, &ya),
+        (x_labels, y_labels),
+        margins,
+    );
+    let (chart, layers, failed) = match built {
+        Ok((chart, layers)) => (Some(chart), layers, None),
+        Err(e) => (None, Vec::new(), Some(e)),
+    };
+    let hooks = PlotHooks { layers, ..hooks };
+    let mut writer = PlotWriter::new(prefix, &hooks);
+    let failed = match chart {
+        Some(mut chart) => chart.render(&mut writer).err(),
+        None => failed,
+    };
+    writer.finish();
+    let panel = writer.panel.map(|r| Cell {
+        x: r.x,
+        y: r.y,
+        width: r.width,
+        height: r.height,
+    });
+    let mut body = writer.body;
+    if let Some(e) = failed {
+        error_text(&mut body, cell, &e.to_string());
     }
+    // the elements of the right y axis: the overlay chart of that axis (the figure composition)
+    // draws them and writes their groups; until it does, their groups are written here empty
+    for e in plot
+        .elements
+        .iter()
+        .filter(|e| e.axis != crate::spec::YAxisRef::Y)
+    {
+        body.push_str("<g class=\"sbmlsim-element sbmlsim-");
+        body.push_str(kind_name(e));
+        body.push_str("\" data-element=\"");
+        escape(&mut body, &e.id);
+        body.push('"');
+        if let Some(l) = e.legend_group() {
+            body.push_str(" data-legend=\"");
+            escape(&mut body, l);
+            body.push('"');
+        }
+        body.push_str("></g>");
+    }
+    PlotSvg {
+        body,
+        defs: writer.defs,
+        panel,
+    }
+}
+
+/// The margins of a plot inside its cell in pixels, outside the bands Charton reserves.
+struct Margins {
+    top: f64,
+    right: f64,
+    bottom: f64,
+    left: f64,
 }
 
 /// Writes the message of a plot Charton could not draw.
@@ -221,13 +353,17 @@ fn kind_name(e: &Element) -> &'static str {
 }
 
 /// The Charton chart of a plot and what its layers draw.
+///
+/// Charton gets the tick labels unrotated and no axis titles (see `axis_layout`); the writer
+/// rotates the labels and draws the titles.
 fn chart_of(
     figure: &Figure,
     plot: &Plot,
     cell: Cell,
     colors: &[String],
-    xa: &ResolvedAxis,
-    ya: &ResolvedAxis,
+    (xa, ya): (&ResolvedAxis, &ResolvedAxis),
+    (x_labels, y_labels): (TickLabels, TickLabels),
+    m: Margins,
 ) -> Result<(LayeredChart, Vec<svg::LayerInfo>), charton::error::ChartonError> {
     let fonts = &figure.fonts;
     let layers = marks::build(&plot.elements, colors, fonts, xa, ya)?;
@@ -235,43 +371,23 @@ fn chart_of(
         mult: (0.0, 0.0),
         add: (0.0, 0.0),
     };
-    let ticks_of = |a: &ResolvedAxis, visible: bool| -> Vec<(f64, String)> {
-        a.tick_coordinates()
-            .into_iter()
-            .map(|(u, l)| (u, if visible { l } else { String::new() }))
-            .collect()
-    };
-    let title_of = |a: &crate::spec::Axis| {
-        if a.label_visible {
-            axis_title(a)
-        } else {
-            String::new()
-        }
-    };
-    let x_ticks = ticks_of(xa, plot.x.ticks_visible);
-    // the last tick label of the x axis reaches half its width past the panel
-    let overhang = x_ticks
-        .last()
-        .map(|(_, l)| text_width(l, fonts.tick) / 2.0)
-        .unwrap_or(0.0);
     let (w, h) = (cell.width.max(1.0), cell.height.max(1.0));
     let (x0, x1) = xa.domain();
     let (y0, y1) = ya.domain();
     let (fg, soft) = (theme::FG, theme::FG_SOFT);
     let (tick, label) = (fonts.tick, fonts.label);
-    let (x_angle, y_angle) = (-plot.x.tick_rotation, -plot.y.tick_rotation);
     let mut chart = layers
         .chart
         .with_size(w.round() as u32, h.round() as u32)
-        .with_margins(PAD / h, (PAD + overhang) / w, PAD / h, PAD / w)
+        .with_margins(m.top / h, m.right / w, m.bottom / h, m.left / w)
         .with_x_domain(x0, x1)
         .with_x_expand(zero)
         .with_y_domain(y0, y1)
         .with_y_expand(zero)
-        .with_x_ticks(x_ticks)
-        .with_y_ticks(ticks_of(ya, plot.y.ticks_visible))
-        .with_x_label(title_of(&plot.x))
-        .with_y_label(title_of(&plot.y))
+        .with_x_ticks(x_labels)
+        .with_y_ticks(y_labels)
+        .with_x_label("")
+        .with_y_label("")
         .configure_theme(move |t| {
             t.with_show_legend(false)
                 .with_grid(false)
@@ -284,10 +400,12 @@ fn chart_of(
                 .with_tick_color(soft)
                 .with_axis_width(1.0)
                 .with_tick_width(1.0)
+                .with_tick_length(TICK_LENGTH)
+                .with_tick_label_padding(TICK_LABEL_PADDING)
                 .with_title_size(label)
                 .with_title_color(fg)
-                .with_x_tick_label_angle(x_angle)
-                .with_y_tick_label_angle(y_angle)
+                .with_x_tick_label_angle(0.0)
+                .with_y_tick_label_angle(0.0)
         });
     if let Some(t) = &plot.title {
         chart = chart.with_title(t.clone());

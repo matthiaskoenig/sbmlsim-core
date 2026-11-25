@@ -3,7 +3,7 @@
 mod support;
 
 use roxmltree::{Document, Node};
-use sbmlsim_plot::{parse, render_svg};
+use sbmlsim_plot::{parse, render_svg, text_width};
 use support::{assert_golden, spec_text};
 
 /// Renders a figure of JSON text.
@@ -115,13 +115,16 @@ fn every_element_is_a_group() {
             "element {id} draws nothing"
         );
     }
-    // the fixture of every kind: one group per element, also of the kinds drawn later
-    let every = parse(&spec_text("every_kind")).unwrap();
-    let svg = render_svg(&every);
-    let doc = Document::parse(&svg).unwrap();
-    for plot in &every.plots {
-        for e in &plot.elements {
-            element_group(&doc, &e.id);
+    // the fixture of every kind: one group per element, also of the kinds drawn later, and the
+    // grid, whose elements of a right y axis are written once
+    for name in ["every_kind", "grid"] {
+        let every = parse(&spec_text(name)).unwrap();
+        let svg = render_svg(&every);
+        let doc = Document::parse(&svg).unwrap();
+        for plot in &every.plots {
+            for e in &plot.elements {
+                element_group(&doc, &e.id);
+            }
         }
     }
 }
@@ -265,6 +268,44 @@ fn exact_ends_of_an_axis() {
     let ticks = tick_values(&doc, "x");
     assert_eq!(ticks.first(), Some(&0.0), "{ticks:?}");
     assert!(ticks.iter().all(|t| *t <= 24.0), "{ticks:?}");
+}
+
+#[test]
+fn axis_title_clears_the_inter_width_of_the_tick_labels() {
+    // tick labels like 123456.8, which Charton's estimate measures 15 % short
+    let json = figure(
+        LINEAR,
+        r#"{"label": "amount", "unit": "mmol"}"#,
+        r#"{"id": "c", "kind": "curve", "x": [0, 1], "y": [123456.7, 123457.9]}"#,
+    );
+    let svg = render(&json);
+    let doc = Document::parse(&svg).unwrap();
+    let in_y = |n: &Node| n.ancestors().any(|a| a.attribute("data-axis") == Some("y"));
+    let number = |n: &Node, a: &str| n.attribute(a).unwrap().parse::<f64>().unwrap();
+    let labels: Vec<Node> = doc
+        .descendants()
+        .filter(|n| n.has_tag_name("text") && inside(*n, "charton-tick-label") && in_y(n))
+        .collect();
+    assert!(labels.iter().any(|n| n.text().unwrap().len() >= 8));
+    // the left edge of the widest label in Inter: the labels end at their x
+    let left = labels
+        .iter()
+        .map(|n| number(n, "x") - text_width(n.text().unwrap(), 11.0))
+        .fold(f64::INFINITY, f64::min);
+    let title = doc
+        .descendants()
+        .find(|n| n.has_tag_name("text") && inside(*n, "charton-axis-title") && in_y(n))
+        .unwrap();
+    assert_eq!(title.text(), Some("amount [mmol]"));
+    // the title is rotated about its anchor, so its right edge is half a line right of it
+    let right = number(&title, "x") + 13.0 / 2.0;
+    let gap = left - right;
+    assert!(
+        (gap - 10.0).abs() < 0.02,
+        "gap of {gap} between the labels and the title"
+    );
+    // and the title is inside the figure
+    assert!(number(&title, "x") - 13.0 / 2.0 >= 0.0);
 }
 
 #[test]
@@ -452,6 +493,11 @@ fn golden_curve() {
 #[test]
 fn golden_benchmark() {
     assert_golden("benchmark", &render(&spec_text("benchmark")));
+}
+
+#[test]
+fn golden_rotated() {
+    assert_golden("rotated", &render(&spec_text("rotated")));
 }
 
 #[test]
