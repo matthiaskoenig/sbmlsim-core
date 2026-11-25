@@ -81,7 +81,6 @@ impl Rect {
 
 /// How an axis maps its values onto its side of the panel.
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code, reason = "the geometry and the pick of a figure read it")]
 pub(crate) struct ScaleInfo {
     /// Linear, logarithmic or the positions of categories (a heatmap's rows and columns).
     pub kind: AxisScale,
@@ -111,7 +110,6 @@ impl ScaleInfo {
 
 /// The panel of a plot and its scales.
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code, reason = "the geometry and the pick of a figure read it")]
 pub(crate) struct PlotBox {
     /// The id of the plot.
     pub id: String,
@@ -136,7 +134,6 @@ pub(crate) enum LegendOwner {
 
 /// One entry of a legend.
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code, reason = "the geometry and the pick of a figure read it")]
 pub(crate) struct EntryBox {
     /// The legend group of the entry.
     pub legend: String,
@@ -154,7 +151,6 @@ pub(crate) struct LegendBox {
     /// The frame.
     pub rect: Rect,
     /// The entries, from the top.
-    #[allow(dead_code, reason = "the geometry and the pick of a figure read it")]
     pub entries: Vec<EntryBox>,
 }
 
@@ -171,12 +167,6 @@ pub(crate) struct Layout {
     pub legends: Vec<LegendBox>,
     /// The band of the title over the panels, `None` without a title.
     pub title: Option<Rect>,
-}
-
-/// The layout of a figure.
-#[allow(dead_code, reason = "the geometry and the pick of a figure read it")]
-pub(crate) fn layout(figure: &Figure) -> Layout {
-    plan(figure).layout
 }
 
 /// A figure laid out, with what drawing it needs beyond the boxes.
@@ -369,7 +359,7 @@ fn estimate(figure: &Figure) -> Vec<(f64, f64)> {
 
 /// Rounds a coordinate to the two decimals of the SVG, so a nested `<svg>` starts where it is
 /// written.
-fn round2(v: f64) -> f64 {
+pub(crate) fn round2(v: f64) -> f64 {
     (v * 100.0).round() / 100.0
 }
 
@@ -919,7 +909,7 @@ mod tests {
     fn panels_land_on_the_layout() {
         for name in ["grid", "every_kind", "benchmark", "rotated", "curve"] {
             let figure = fixture(name);
-            let lay = layout(&figure);
+            let lay = plan(&figure).layout;
             let drawn = drawn_panels(&crate::render_svg(&figure));
             assert_eq!(drawn.len(), lay.plots.len(), "{name}");
             for ((id, d), b) in drawn.iter().zip(&lay.plots) {

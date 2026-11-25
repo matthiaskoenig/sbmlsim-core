@@ -6,6 +6,8 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
+# not on crates.io, as the rest of the workspace
+publish = false
 
 [lib]
 name = "sbmlsim_plot"
