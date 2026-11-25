@@ -1,0 +1,73 @@
+{
+ "contract": "figure/1",
+ "width": 600,
+ "height": 400,
+ "grid": {
+  "rows": 1,
+  "columns": 1
+ },
+ "plots": [
+  {
+   "id": "p",
+   "row": 0,
+   "column": 0,
+   "x": {
+    "label": "time",
+    "unit": "hr"
+   },
+   "y": {
+    "label": "c",
+    "unit": "mM",
+    "frame": {
+     "low": 0,
+     "high": 3
+    },
+    "min": 0
+   },
+   "elements": [
+    {
+     "id": "live",
+     "kind": "curve",
+     "label": "live",
+     "legend": "run",
+     "x": [
+      0,
+      1,
+      2
+     ],
+     "y": [
+      1,
+      2,
+      3
+     ]
+    },
+    {
+     "id": "frozen",
+     "kind": "curve",
+     "legend": "run",
+     "x": [
+      0,
+      1,
+      2
+     ],
+     "y": [
+      1,
+      1.5,
+      2
+     ],
+     "style": {
+      "line": {
+       "type": "dashed"
+      },
+      "opacity": 0.6
+     }
+    }
+   ],
+   "declared_legends": [
+    [
+     "run"
+    ]
+   ]
+  }
+ ]
+}

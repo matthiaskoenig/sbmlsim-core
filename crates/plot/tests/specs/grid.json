@@ -1,0 +1,120 @@
+{
+ "contract": "figure/1",
+ "width": 600,
+ "height": 400,
+ "grid": {
+  "rows": 2,
+  "columns": 2,
+  "wspace": 0.4,
+  "hspace": 0.2
+ },
+ "plots": [
+  {
+   "id": "a",
+   "row": 0,
+   "column": 0,
+   "x": {
+    "label": "time",
+    "unit": "hr"
+   },
+   "y": {
+    "label": "c",
+    "unit": "mM"
+   },
+   "elements": [
+    {
+     "id": "l",
+     "kind": "curve",
+     "label": "l",
+     "x": [
+      0,
+      1
+     ],
+     "y": [
+      1,
+      2
+     ]
+    }
+   ]
+  },
+  {
+   "id": "b",
+   "row": 0,
+   "column": 1,
+   "x": {
+    "label": "time",
+    "unit": "hr"
+   },
+   "y": {
+    "label": "c",
+    "unit": "mM"
+   },
+   "elements": [
+    {
+     "id": "l",
+     "kind": "curve",
+     "label": "l",
+     "x": [
+      0,
+      1
+     ],
+     "y": [
+      1,
+      2
+     ]
+    },
+    {
+     "id": "r",
+     "kind": "curve",
+     "axis": "y2",
+     "label": "r",
+     "x": [
+      0,
+      1
+     ],
+     "y": [
+      10,
+      20
+     ]
+    }
+   ],
+   "y2": {
+    "label": "r",
+    "unit": "nM"
+   }
+  },
+  {
+   "id": "c",
+   "row": 1,
+   "column": 0,
+   "x": {
+    "label": "time",
+    "unit": "hr"
+   },
+   "y": {
+    "label": "c",
+    "unit": "mM"
+   },
+   "elements": [
+    {
+     "id": "l",
+     "kind": "curve",
+     "x": [
+      0,
+      1
+     ],
+     "y": [
+      1,
+      2
+     ]
+    }
+   ],
+   "row_span": 1,
+   "column_span": 2
+  }
+ ],
+ "legend": {
+  "scope": "row",
+  "position": "outside"
+ }
+}

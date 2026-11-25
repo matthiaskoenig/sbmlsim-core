@@ -14,6 +14,7 @@ members = [
     "crates/fit",
     "crates/chaos",
     "crates/cli",
+    "crates/plot",
     "crates/python",
     "crates/wasm",
 ]
