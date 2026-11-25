@@ -18,6 +18,7 @@ nav = [
   { "Simulation" = "simulating.md" },
   { "Fitting" = "fitting.md" },
   { "Delay equations" = "delays.md" },
+  { "Figures" = "plot.md" },
   { "Semantics" = "semantics.md" },
   { "Language bindings" = [
     { "Python" = "python.md" },

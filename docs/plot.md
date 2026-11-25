@@ -1,0 +1,185 @@
+# Figures
+
+`sbmlsim-plot` is the renderer of the figures of sbmlsim. One description of a figure, the JSON spec `figure/1`, is drawn to a static SVG or PNG file by the python package and to the same SVG inside a page by `plot.wasm`, so a figure of a report and the figure of an interactive panel are one drawing. The renderer computes the same bits on every target (the transcendental functions are the ones of `libm`), which is why the SVG of the wasm module is byte for byte the SVG of the native renderer; the tests compare them, and `js/check_golden.mjs` runs the module in Node against the golden files of the crate.
+
+The same crate answers two questions a page needs beside the drawing: the geometry of the figure (where the panels, their scales and the legend entries are, in pixels) and the data point under a pointer (`pick`). A figure a pointer moves over is prepared once, so a pick costs about 0.1 ms.
+
+A minimal spec:
+
+```json
+{
+  "contract": "figure/1",
+  "width": 480,
+  "height": 320,
+  "grid": {"rows": 1, "columns": 1},
+  "plots": [{
+    "id": "main",
+    "row": 0,
+    "column": 0,
+    "x": {"label": "time", "unit": "h"},
+    "y": {"label": "concentration", "unit": "mM"},
+    "elements": [{
+      "id": "c",
+      "kind": "curve",
+      "label": "C",
+      "x": [0, 1, 2, 3],
+      "y": [0.0, 1.0, null, 0.5]
+    }]
+  }]
+}
+```
+
+## The contract figure/1
+
+The contract id is `figure/1` (`FIGURE_CONTRACT` in python, `sbmlsim_plot::FIGURE_CONTRACT` in Rust). Every object refuses unknown fields, every name is snake case, and a field with a default may be absent. In every numeric data array JSON `null` is a gap, a value which is not there: it breaks a line and leaves out a marker or a bar, and a value the renderer cannot draw is written back as `null`. A color is the text `#rrggbb`.
+
+### Figure
+
+| field | type | default | meaning |
+|---|---|---|---|
+| `contract` | text | required | must be `figure/1` |
+| `width`, `height` | number | required | size of the figure in pixels, positive |
+| `title` | text | none | title above all plots |
+| `fonts` | Fonts | see below | font sizes |
+| `grid` | Grid | required | the grid the plots are placed in |
+| `legend` | LegendSettings | see below | legend settings of the figure |
+| `plots` | list of Plot | required | the plots |
+
+`Fonts` has `title` (16), `label` (13), `tick` (11) and `legend` (11), in points, each positive. `Grid` has `rows` and `columns` (at least 1) and `wspace` and `hspace` (0.3), the space between plots as a fraction of a plot, not negative. `LegendSettings` has `scope` (`plot`, a legend per plot, or `row`, one legend per row of the grid) and `position` (`inside` or `outside`, right of the plot).
+
+### Plot
+
+| field | type | default | meaning |
+|---|---|---|---|
+| `id` | text | required | id of the plot, unique |
+| `row`, `column` | integer | required | top left cell of the grid, from 0 |
+| `row_span`, `column_span` | integer | 1 | cells it spans, within the grid |
+| `title` | text | none | title of the plot |
+| `x`, `y` | Axis | required | the x axis and the left y axis |
+| `y2` | Axis | none | the right y axis, which elements select with `axis: "y2"` |
+| `legend` | boolean | true | whether the plot has a legend |
+| `colorbar` | ColorBar | none | a color bar |
+| `declared_legends` | list of list of text | none | the legends the plot may show in some state of a page, each a list of entry labels: the legend takes the room of the largest of them, so the plot and the figure keep their size when entries come and go, and a label without an element is not drawn; absent, the legend takes the room of the entries drawn |
+| `legend_order` | list of text | none | the order of the legend entries as legend groups: the listed groups first in this order, the others after them in the order their elements first appear; a listed group without elements is ignored, a group listed twice is refused; it lets a writer draw elements under others and still list them last |
+| `elements` | list of Element | required | what the plot draws, in the order of drawing |
+
+### Axis
+
+| field | type | default | meaning |
+|---|---|---|---|
+| `label` | text | none | label of the axis |
+| `unit` | text | none | unit shown with the label |
+| `scale` | `linear`, `log`, `category` | `linear` | the scale; a category axis puts its categories at the positions 0, 1, ... |
+| `categories` | list of text | none | names of the categories, required for a category axis and refused for another |
+| `min`, `max` | number | none | exact ends of the axis, `max` above `min`, positive on a log axis |
+| `frame` | Range (`low`, `high`) | none | values the axis must hold, with the margins applied, in contrast to `min` and `max`, which are the ends themselves; `low` positive on a log axis |
+| `max_decades` | number | 6 | the decades shown below the largest value of a log axis, positive, so the tiny first values of an integration do not stretch it; data within the decades keep their limits |
+| `reverse` | boolean | false | reversed direction |
+| `grid` | boolean | false | grid lines |
+| `label_visible` | boolean | true | whether the label is shown |
+| `ticks_visible` | boolean | true | whether the ticks are shown |
+| `tick_rotation` | number | 0 | rotation of the tick labels in degrees |
+
+### Element
+
+An element is one flat object with the common fields and the fields of its `kind`; a field of another kind is refused.
+
+| common field | type | default | meaning |
+|---|---|---|---|
+| `id` | text | required | unique within the figure |
+| `kind` | text | required | one of the kinds below |
+| `label` | text | none | label in the legend |
+| `legend` | text | none | the legend group; absent, the id when a label is set, else the element is in no legend. Elements of one group have one legend entry, which a page toggles them by |
+| `axis` | `y` or `y2` | `y` | the y axis it is drawn against; `y2` needs the `y2` axis of the plot |
+| `style` | Style | see below | the style |
+
+| kind | fields | meaning |
+|---|---|---|
+| `curve` | `x`, `y`, optional `xerr`, `yerr` | a line and/or markers with error bars, all of the length of `x` |
+| `band` | `x`, `low`, `high`, optional `median` | a band between two curves with a median line |
+| `area` | `x`, `from`, `to` | a filled area between two curves |
+| `bar` | `x`, `height`, optional `err`, `horizontal` (false), `width` | bars at positions or category indices; `width` in axis units, positive |
+| `box` | `positions`, `stats` | box plots, `stats` one per position: `low_whisker <= q1 <= median <= q3 <= high_whisker` and `outliers` (default empty) |
+| `violin` | `positions`, `densities` | violins, one `Density` (`values` and `density` of one length) per position |
+| `histogram` | `edges`, `counts` | `edges` has one more value than `counts` and is not empty |
+| `heatmap` | `rows`, `columns`, `values`, optional `text`, `scale` | `values` has a row per name of `rows` of the length of `columns`; `text` is the text of the cells in the same shape; `scale` is a ColorScale |
+| `text` | `x`, `y`, `text`, `anchor` (`start`, `middle`, `end`; `start`) | a text at a position |
+| `rule` | `orientation` (`horizontal`, `vertical`), `value` | a line across the plot at `value` of the other axis |
+| `polygon` | `paths` | filled polygons, each ring of `[x, y]` pairs with at least 3 points |
+
+### Style
+
+`color` (`#rrggbb`; absent, the cycle by element position), `opacity` (1, between 0 and 1), `line` (`type` of `solid`, `dashed`, `dotted`, `dashdot`, `none`, default `solid`, and `width` in pixels, 2, not negative), `marker` (`type` of `none`, `circle`, `square`, `triangle`, `diamond`, `cross`, `plus`, `x`, default `none`; `size` 6; `fill` and `edge` colors; `edge_width` 1) and `fill` (`color` and `opacity` 1).
+
+### Color scales
+
+A `ColorScale` has `name` (`viridis`, `magma`, `rdbu`, `coolwarm`, `greys`), `low` and `high` (`high` above `low`), `center` (the value at the middle of a diverging map, between `low` and `high`) and `log` (false; `low` must be positive). A `ColorBar` has a `scale` and an optional `label`. The python function `color_scale(name, low, high, values, center=None, log=False)` gives the `#rrggbb` of values on a scale, so a page and a file color a legend swatch alike.
+
+### Errors
+
+A spec the renderer refuses is reported as `path: what is wrong`, the path in the notation of the spec, e.g. `plots[0].elements[1].y: 3 values, x has 4`, `plots[0].x.categories: a category axis needs categories`, `plots[0].elements[0].scale.name: unknown color scale ...` or `contract: expected figure/1, got ...`. Besides the shapes above the checks are: the plot ids and the element ids are unique within the figure (the element ids of all plots together), a plot lies in the grid, an element on `y2` needs the axis, colors are `#rrggbb`, opacities lie between 0 and 1 and widths and sizes are not negative.
+
+## Semantic classes of the SVG
+
+The SVG carries plain light-theme values as presentation attributes and nothing of it is a `var()`, which renderers outside of a browser (cairosvg, Inkscape) do not read. A page restyles it with a stylesheet on the classes and attributes:
+
+- `sbmlsim-figure` is the root, `sbmlsim-figure-title` the title, `sbmlsim-plot` the group of a plot,
+- every element is one group `<g class="sbmlsim-element sbmlsim-<kind>" data-element="<id>">`, with `data-legend="<group>"` when it is in a legend group,
+- a legend is `sbmlsim-legend` with `sbmlsim-legend-frame` and per entry `<g class="sbmlsim-legend-entry" data-legend="<group>">` of a `sbmlsim-legend-swatch` and a `sbmlsim-legend-label`: a page toggles the elements of a group (the groups with the same `data-legend`) by clicking its entry,
+- the color bar is `sbmlsim-colorbar` with `sbmlsim-colorbar-ticks`, `sbmlsim-colorbar-tick-labels` and `sbmlsim-colorbar-label`,
+- the axes use the classes of the layer which draws them, `charton-axis`, `charton-axis-line`, `charton-axis-title`, `charton-tick`, `charton-tick-label`, `charton-grid` and `charton-background`.
+
+Coordinates have at most two decimals, and a primitive with a coordinate which is no finite number is not written.
+
+## Python
+
+```python
+import json
+import sbmlsim_core
+
+spec = json.dumps(figure)  # a figure/1 dict
+svg = sbmlsim_core.render_svg(spec)  # str
+png = sbmlsim_core.render_png(spec, dpi=144.0)  # bytes, 72 dpi is the size of the spec
+geometry = sbmlsim_core.figure_geometry(spec)  # plots and legend_entries
+hit = sbmlsim_core.pick(spec, 120.0, 80.0, 8.0)  # dict or None
+colors = sbmlsim_core.color_scale("viridis", 0.0, 1.0, [0.0, 0.5, 1.0])
+```
+
+`render_svg`, `render_png`, `figure_geometry` and `pick` take the JSON text of the spec and raise a `ValueError` with the path and message of an invalid spec; `render_png` raises a `RuntimeError` for a figure which cannot be rasterized. `geometry["plots"]` has per plot its `id`, its panel `rect` (`x`, `y`, `width`, `height` in pixels) and the `x`, `y` and `y2` scales (`kind`, `low`, `high`, `reverse`); `legend_entries` has per entry its `legend` group, its `owner` (a plot id or `row:<n>`) and its `rect`. A hit has the `plot`, the `element`, the `legend` group, the `index` of the point in the data of the element (the cell of a heatmap in row order), the `values` at the point in data units (`x`, `y`, `xerr`, `yerr` of a curve, `low`, `high` and `median` of a band, the five numbers of a box, `value` of a heatmap cell and so on) and the `label`. `sbmlsim_core.plot_wasm()` gives the bytes of `plot.wasm`, so a page which inlines everything needs no file.
+
+## JavaScript
+
+`js/plot.mjs` (the export `sbmlsim-core/plot`) loads `plot.wasm`; its documentation is in the [JavaScript page](javascript.md#draw-a-figure) and in `js/README.md`:
+
+```js
+import { loadPlot } from "sbmlsim-core/plot";
+
+const plot = await loadPlot(new URL("./plot.wasm", import.meta.url));
+const svg = plot.render(spec);
+const figure = plot.prepare(spec);          // parsed and laid out once
+canvas.onpointermove = (e) => show(figure.pick(e.offsetX, e.offsetY));
+figure.dispose();
+```
+
+A prepared figure answers `svg()`, `geometry()` and `pick(x, y, radius)` without parsing or planning again. A refused spec raises a `PlotError` with `path: what is wrong` and the `Plot` stays usable; a panic or a trap breaks the instance, every later call throws, and `loadPlot` gives a new one.
+
+## The module and its ABI
+
+`plot.wasm` is built for `wasm32-wasip1` and exports a C ABI like `compiler.wasm` (`allocate`, `render`, `geometry`, `pick`, `deallocate`, and `prepare`, `render_prepared`, `geometry_prepared`, `pick_prepared`, `release` for prepared figures). The precise contract, the five WASI functions it imports and why the target is `wasm32-wasip1` are in the documentation of the crate `crates/plot-wasm` (`src/lib.rs`).
+
+## PNG
+
+PNG is drawn natively only, behind the feature `png` of the crate (the python package enables it, the wasm module does not): the SVG is rasterized with resvg at `dpi / 72` times the size of the spec, with the font Inter (OFL-1.1) embedded in the binary, so a PNG does not depend on the fonts of the machine. The notices of the fonts and of the crates are in `THIRD_PARTY.md`.
+
+## Performance
+
+Measured on the benchmark figure of the crate:
+
+| operation | time |
+|---|---|
+| native SVG render | about 1 to 1.5 ms |
+| `plot.wasm` render in Node, JSON included | about 5 to 10 ms |
+| pick on a prepared figure | about 0.1 ms |
+| PNG at 144 dpi | about 36 ms |
+
+`plot.wasm` is 1.32 MB raw and 394 kB gzipped.
