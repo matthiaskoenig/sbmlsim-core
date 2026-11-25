@@ -14,11 +14,21 @@
 //!
 //! The legends follow the legend settings of the figure. Inside, a legend is placed in the
 //! corner of the panel of its plot (of a row: of its rightmost plot) which covers the fewest
-//! data, the upper right one on a tie. Outside, the legend of a plot is right of its panel and
-//! its right axis, and the column gets the room of its widest legend; the legend of a row is
-//! right of the grid at the top of the panels of its row. The panels keep their size, the
-//! figure grows by the room of the legends (and in height when a legend outside is taller than
-//! the figure).
+//! data, the upper right one on a tie; a legend which does not fit into that panel goes outside
+//! instead. Outside, the legend of a plot is right of its panel and its right axis, and the
+//! column gets the room of its widest legend; the legend of a row is right of the grid at the
+//! top of the panels of its row. The panels keep their size and the figure grows by the room of
+//! the legends: right by their width, and down by the part of a legend which reaches below the
+//! room of its last row, which that row gets before the next one, so a tall legend never
+//! reaches into the row below it.
+//!
+//! Planning a figure resolves its axes twice and probes Charton's bands of every plot, a few
+//! tenths of a millisecond. A caller which needs the geometry more than once (the geometry and
+//! the pick of a figure, the pick on every pointer move of a page) plans the figure once with
+//! [`plan`] and keeps the [`Plan`]: [`Plan::layout`] is the geometry, the pick reads the
+//! `Layout` it is given, and `render::render_planned` draws the figure on the same plan, so the
+//! drawing and the geometry come from one layout. [`layout`] is the plan's layout for a caller
+//! which needs it once.
 
 use crate::render::axis::{ResolvedAxis, Transform};
 use crate::render::legend::{self, Entry};
@@ -175,6 +185,17 @@ pub(crate) struct Plan {
     pub canvases: Vec<Rect>,
     /// The entries of every legend of the layout.
     pub entries: Vec<Vec<Entry>>,
+}
+
+/// Where a legend goes.
+#[derive(Debug, Clone, Copy)]
+enum Place {
+    /// Inside the panel of the plot at this position.
+    Inside(usize),
+    /// Right of the plot at this position.
+    RightOfPlot(usize),
+    /// Right of the grid, at the top of this row.
+    RightOfGrid(usize),
 }
 
 /// The extent of the panels along one direction of the grid.
@@ -364,10 +385,6 @@ pub(crate) fn plan(figure: &Figure) -> Plan {
     let prepared = prepare_all(&sizes);
     let (mut panels, room) = grid(figure, &depths_of(&prepared));
 
-    let mut width = figure.width;
-    let mut height = figure.height;
-    let mut legends = Vec::new();
-    let mut entries = Vec::new();
     let plot_entries: Vec<Vec<Entry>> = figure
         .plots
         .iter()
@@ -381,118 +398,173 @@ pub(crate) fn plan(figure: &Figure) -> Plan {
         })
         .collect();
     let end_column = |p: &Plot| (p.column + p.column_span - 1) as usize;
-    match (figure.legend.scope, figure.legend.position) {
-        (LegendScope::Plot, LegendPosition::Inside) => {
+    let end_row = |p: &Plot| (p.row + p.row_span - 1) as usize;
+    let fits = |panel: &Rect, (w, h): (f64, f64)| {
+        w + 2.0 * LEGEND_INSET <= panel.width && h + 2.0 * LEGEND_INSET <= panel.height
+    };
+    let inside = figure.legend.position == LegendPosition::Inside;
+    // every legend with where it goes; a legend inside which does not fit into its panel goes
+    // outside instead
+    let mut pending: Vec<(LegendOwner, Place, Vec<Entry>)> = Vec::new();
+    match figure.legend.scope {
+        LegendScope::Plot => {
             for (i, list) in plot_entries.into_iter().enumerate() {
                 if list.is_empty() {
                     continue;
                 }
-                let size = legend::size(&list, fonts);
-                let rect = corner(&figure.plots[i], &prepared[i], panels[i], size);
-                legends.push((LegendOwner::Plot(figure.plots[i].id.clone()), rect, list));
-            }
-        }
-        (LegendScope::Plot, LegendPosition::Outside) => {
-            // the room of the widest legend of the plots which end in a column, the columns
-            // right of it moved by it
-            let columns = figure.grid.columns as usize;
-            let mut extra = vec![0.0f64; columns];
-            for (p, list) in figure.plots.iter().zip(&plot_entries) {
-                if !list.is_empty() {
-                    let w = legend::size(list, fonts).0;
-                    extra[end_column(p)] = extra[end_column(p)].max(LEGEND_GAP + w);
-                }
-            }
-            let shift: Vec<f64> = (0..columns)
-                .map(|c| extra[..c].iter().sum::<f64>())
-                .collect();
-            for (p, r) in figure.plots.iter().zip(panels.iter_mut()) {
-                let (a, b) = (shift[p.column as usize], shift[end_column(p)]);
-                r.x += a;
-                r.width += b - a;
-            }
-            width += extra.iter().sum::<f64>();
-            for (i, list) in plot_entries.into_iter().enumerate() {
-                if list.is_empty() {
-                    continue;
-                }
-                let (w, h) = legend::size(&list, fonts);
-                let p = &figure.plots[i];
-                let rect = Rect {
-                    x: panels[i].right() + room.right[end_column(p)] + LEGEND_GAP,
-                    y: panels[i].y,
-                    width: w,
-                    height: h,
+                let place = if inside && fits(&panels[i], legend::size(&list, fonts)) {
+                    Place::Inside(i)
+                } else {
+                    Place::RightOfPlot(i)
                 };
-                height = height.max(rect.bottom() + PAD);
-                legends.push((LegendOwner::Plot(p.id.clone()), rect, list));
+                pending.push((LegendOwner::Plot(figure.plots[i].id.clone()), place, list));
             }
         }
-        (LegendScope::Row, position) => {
-            let rows = figure.grid.rows;
-            let mut row_lists: Vec<Vec<Entry>> = vec![Vec::new(); rows as usize];
-            let mut lists_of_row: Vec<Vec<Vec<Entry>>> = vec![Vec::new(); rows as usize];
+        LegendScope::Row => {
+            let mut lists_of_row: Vec<Vec<Vec<Entry>>> =
+                vec![Vec::new(); figure.grid.rows as usize];
             for (p, list) in figure.plots.iter().zip(plot_entries) {
                 lists_of_row[p.row as usize].push(list);
             }
             for (r, lists) in lists_of_row.into_iter().enumerate() {
-                row_lists[r] = legend::merge(lists);
-            }
-            if position == LegendPosition::Outside {
-                let grid_right = figure
+                let list = legend::merge(lists);
+                if list.is_empty() {
+                    continue;
+                }
+                // the rightmost plot of the row with a legend holds a legend inside
+                let host = figure
                     .plots
                     .iter()
-                    .zip(&panels)
-                    .map(|(p, r)| r.right() + room.right[end_column(p)])
-                    .fold(0.0, f64::max);
-                let mut widest = 0.0f64;
-                for (r, list) in row_lists.into_iter().enumerate() {
-                    if list.is_empty() {
-                        continue;
+                    .enumerate()
+                    .filter(|(_, p)| p.row as usize == r && p.legend)
+                    .max_by_key(|(i, p)| (p.column + p.column_span, usize::MAX - i))
+                    .map(|(i, _)| i);
+                let place = match host {
+                    Some(i) if inside && fits(&panels[i], legend::size(&list, fonts)) => {
+                        Place::Inside(i)
                     }
-                    let (w, h) = legend::size(&list, fonts);
-                    widest = widest.max(w);
-                    // the top of the panels of the row: of a plot which starts in it
-                    let top = figure
-                        .plots
-                        .iter()
-                        .zip(&panels)
-                        .filter(|(p, _)| p.row as usize == r)
+                    _ => Place::RightOfGrid(r),
+                };
+                pending.push((LegendOwner::Row(r as u32), place, list));
+            }
+        }
+    }
+
+    // the legends right of a plot: the column gets the room of its widest one, the columns
+    // right of it move by it
+    let columns = figure.grid.columns as usize;
+    let mut extra = vec![0.0f64; columns];
+    for (_, place, list) in &pending {
+        if let Place::RightOfPlot(i) = place {
+            let c = end_column(&figure.plots[*i]);
+            extra[c] = extra[c].max(LEGEND_GAP + legend::size(list, fonts).0);
+        }
+    }
+    let shift: Vec<f64> = (0..columns)
+        .map(|c| extra[..c].iter().sum::<f64>())
+        .collect();
+    for (p, r) in figure.plots.iter().zip(panels.iter_mut()) {
+        let (a, b) = (shift[p.column as usize], shift[end_column(p)]);
+        r.x += a;
+        r.width += b - a;
+    }
+    let mut width = figure.width + extra.iter().sum::<f64>();
+    // the legends right of the grid
+    let grid_right = figure
+        .plots
+        .iter()
+        .zip(&panels)
+        .map(|(p, r)| r.right() + room.right[end_column(p)])
+        .fold(0.0, f64::max);
+    let widest = pending
+        .iter()
+        .filter(|(_, place, _)| matches!(place, Place::RightOfGrid(_)))
+        .map(|(_, _, list)| legend::size(list, fonts).0)
+        .fold(0.0, f64::max);
+    if widest > 0.0 {
+        width += LEGEND_GAP + widest;
+    }
+    // the legends outside, at the top of their plot or row, and the last row of the grid they
+    // reach down to
+    let mut outside: Vec<Option<(Rect, usize, usize)>> = pending
+        .iter()
+        .map(|(_, place, list)| {
+            let (w, h) = legend::size(list, fonts);
+            match place {
+                Place::Inside(_) => None,
+                Place::RightOfPlot(i) => {
+                    let p = &figure.plots[*i];
+                    let rect = Rect {
+                        x: panels[*i].right() + room.right[end_column(p)] + LEGEND_GAP,
+                        y: panels[*i].y,
+                        width: w,
+                        height: h,
+                    };
+                    Some((rect, p.row as usize, end_row(p)))
+                }
+                Place::RightOfGrid(r) => {
+                    let of_row = || {
+                        figure
+                            .plots
+                            .iter()
+                            .zip(&panels)
+                            .filter(|(p, _)| p.row as usize == *r)
+                    };
+                    let top = of_row()
                         .map(|(_, rect)| rect.y)
                         .fold(f64::INFINITY, f64::min);
+                    let last = of_row().map(|(p, _)| end_row(p)).max().unwrap_or(*r);
                     let rect = Rect {
                         x: grid_right + LEGEND_GAP,
                         y: top,
                         width: w,
                         height: h,
                     };
-                    height = height.max(rect.bottom() + PAD);
-                    legends.push((LegendOwner::Row(r as u32), rect, list));
-                }
-                if widest > 0.0 {
-                    width += LEGEND_GAP + widest;
-                }
-            } else {
-                for (r, list) in row_lists.into_iter().enumerate() {
-                    if list.is_empty() {
-                        continue;
-                    }
-                    // the rightmost plot of the row with a legend holds it
-                    let host = figure
-                        .plots
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, p)| p.row as usize == r && p.legend)
-                        .max_by_key(|(i, p)| (p.column + p.column_span, usize::MAX - i));
-                    let Some((i, p)) = host else {
-                        continue;
-                    };
-                    let size = legend::size(&list, fonts);
-                    let rect = corner(p, &prepared[i], panels[i], size);
-                    legends.push((LegendOwner::Row(r as u32), rect, list));
+                    Some((rect, *r, last))
                 }
             }
-        }
+        })
+        .collect();
+    // a legend outside which reaches below the room of its last row gives that row the room
+    // of its overflow: the rows below move down, the figure grows, the panels keep their size
+    let rows = figure.grid.rows as usize;
+    let mut row_bottom = vec![f64::NEG_INFINITY; rows];
+    for (p, r) in figure.plots.iter().zip(&panels) {
+        let e = end_row(p);
+        row_bottom[e] = row_bottom[e].max(r.bottom() + room.bottom[e]);
+    }
+    let mut overflow = vec![0.0f64; rows];
+    for (rect, _, last) in outside.iter().flatten() {
+        overflow[*last] = overflow[*last].max(rect.bottom() - row_bottom[*last]);
+    }
+    let down: Vec<f64> = (0..rows)
+        .map(|r| overflow[..r].iter().sum::<f64>())
+        .collect();
+    for (p, r) in figure.plots.iter().zip(panels.iter_mut()) {
+        let (a, b) = (down[p.row as usize], down[end_row(p)]);
+        r.y += a;
+        r.height += b - a;
+    }
+    for (rect, first, _) in outside.iter_mut().flatten() {
+        // a legend moves with the first row of its plot or row
+        rect.y += down[*first];
+    }
+    let height = figure.height + overflow.iter().sum::<f64>();
+    // the legends inside, in the panels where they end up
+    let mut legends = Vec::with_capacity(pending.len());
+    let mut entries = Vec::with_capacity(pending.len());
+    for ((owner, place, list), out) in pending.into_iter().zip(outside) {
+        let rect = match (place, out) {
+            (_, Some((rect, _, _))) => rect,
+            (Place::Inside(i), None) | (Place::RightOfPlot(i), None) => corner(
+                &figure.plots[i],
+                &prepared[i],
+                panels[i],
+                legend::size(&list, fonts),
+            ),
+            (Place::RightOfGrid(_), None) => continue,
+        };
+        legends.push((owner, rect, list));
     }
 
     let canvases: Vec<Rect> = figure
@@ -816,6 +888,10 @@ mod tests {
         crate::parse(&std::fs::read_to_string(path).unwrap()).unwrap()
     }
 
+    /// The guard of the two-pass placement: the panel Charton draws is the panel of the layout.
+    /// It rests on Charton laying a panel out as its canvas less its margins less the bands of
+    /// its axes and title (`resolve_scene` of Charton 0.9.1), which the probe measures; a Charton
+    /// upgrade which changes that fails here first. Keep it.
     #[test]
     fn panels_land_on_the_layout() {
         for name in ["grid", "every_kind", "benchmark", "rotated", "curve"] {

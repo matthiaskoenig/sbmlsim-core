@@ -11,7 +11,7 @@
 
 use std::fmt::Write as _;
 
-use super::marks::{Stroke, fill_of};
+use super::marks::{ERROR_WIDTH, Stroke, fill_of};
 use super::stats_marks::{outline_of, solid_fill};
 use crate::layout::Rect;
 use crate::spec::{Element, ElementKind, Fonts, MarkerType, Plot};
@@ -28,6 +28,8 @@ const SWATCH_GAP: f64 = 6.0;
 const ENTRY_HEIGHT: f64 = 1.6;
 /// The height of a filled swatch in font sizes of the legend.
 const BOX_HEIGHT: f64 = 0.8;
+/// The length of the error bar of a swatch in font sizes of the legend.
+const ERROR_BAR: f64 = 1.1;
 /// The opacity of the background of a legend.
 const FRAME_OPACITY: f64 = 0.85;
 
@@ -170,9 +172,20 @@ pub(crate) fn draw(
 
 /// Writes a horizontal line through the swatch.
 fn line(out: &mut String, s: &Stroke) {
-    out.push_str("<path d=\"M0 0L");
-    crate::svg::num(out, SWATCH_WIDTH);
-    out.push_str(" 0\" fill=\"none\"");
+    segment(out, s, (0.0, 0.0), (SWATCH_WIDTH, 0.0));
+}
+
+/// Writes a segment of a stroke in the swatch.
+fn segment(out: &mut String, s: &Stroke, (x1, y1): (f64, f64), (x2, y2): (f64, f64)) {
+    out.push_str("<path d=\"M");
+    crate::svg::num(out, x1);
+    out.push(' ');
+    crate::svg::num(out, y1);
+    out.push('L');
+    crate::svg::num(out, x2);
+    out.push(' ');
+    crate::svg::num(out, y2);
+    out.push_str("\" fill=\"none\"");
     attr_css(out, "stroke", &s.color);
     attr_num(out, "stroke-width", s.width);
     let dash: Vec<f32> = s.dash.iter().map(|d| *d as f32).collect();
@@ -203,9 +216,24 @@ fn swatch(e: &Element, color: &str, fonts: &Fonts) -> String {
     let style = &e.style;
     let mut out = String::new();
     match &e.kind {
-        ElementKind::Curve { .. } => {
+        ElementKind::Curve { xerr, yerr, .. } => {
             if let Some(s) = Stroke::of_line(style, color) {
                 line(&mut out, &s);
+            }
+            // the error bars of the curve, a short bar through the middle of the swatch
+            let bar = Stroke {
+                color: color.to_string(),
+                width: ERROR_WIDTH,
+                dash: Vec::new(),
+                opacity: style.opacity,
+            };
+            let half = ERROR_BAR * fonts.legend / 2.0;
+            let mid = SWATCH_WIDTH / 2.0;
+            if yerr.is_some() {
+                segment(&mut out, &bar, (mid, -half), (mid, half));
+            }
+            if xerr.is_some() {
+                segment(&mut out, &bar, (mid - half, 0.0), (mid + half, 0.0));
             }
             let m = &style.marker;
             if m.kind != MarkerType::None && m.size > 0.0 {

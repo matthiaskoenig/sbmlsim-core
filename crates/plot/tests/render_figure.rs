@@ -586,6 +586,151 @@ fn right_axis() {
 }
 
 #[test]
+fn tall_legend_grows_its_row() {
+    let labels: Vec<String> = (1..=11)
+        .map(|k| {
+            curve(
+                &format!("{{p}}_{k}"),
+                &format!(r#""label": "dose {k}","#),
+                "[0, 1]",
+                "[0, 1]",
+            )
+        })
+        .collect();
+    let of = |p: &str| -> Vec<String> { labels.iter().map(|e| e.replace("{p}", p)).collect() };
+    let json = figure(
+        500.0,
+        320.0,
+        r#""legend": {"position": "outside"}, "fonts": {"legend": 10},"#,
+        2,
+        1,
+        &[plot("a", 0, 0, "", &of("a")), plot("b", 1, 0, "", &of("b"))],
+    );
+    let svg = render(&json);
+    let doc = Document::parse(&svg).unwrap();
+    let found = legends(&doc);
+    assert_eq!(found.len(), 2);
+    let (a, b) = (panel(&doc, "a"), panel(&doc, "b"));
+    let (la, lb) = (found[0].frame, found[1].frame);
+    assert!(
+        la.height > a.height,
+        "the legend {la:?} is not taller than its panel {a:?}"
+    );
+    for (what, r) in [("panel", b), ("legend", lb)] {
+        assert!(
+            !la.overlaps(&r),
+            "the legend of row 0 {la:?} overlaps the {what} of row 1 {r:?}"
+        );
+    }
+    // nothing of the plot of row 1 reaches up into the legend of row 0
+    for t in plot_node(&doc, "b")
+        .descendants()
+        .filter(|n| n.has_tag_name("text"))
+    {
+        let (_, dy) = offset(t);
+        assert!(
+            number(t, "y") + dy > la.bottom(),
+            "{:?} above {la:?}",
+            t.text()
+        );
+    }
+    let (_, h) = figure_size(&doc);
+    assert!(h > 320.0, "the figure keeps its height {h}");
+    assert!(lb.bottom() <= h, "{lb:?} below the figure of height {h}");
+    // the panels keep their size
+    assert!((a.height - b.height).abs() < 0.01, "{a:?} {b:?}");
+}
+
+#[test]
+fn legend_too_large_inside_goes_outside() {
+    let labels: Vec<String> = (1..=12)
+        .map(|k| {
+            curve(
+                &format!("c{k}"),
+                &format!(r#""label": "dose {k}","#),
+                "[0, 1]",
+                "[0, 1]",
+            )
+        })
+        .collect();
+    let svg = render(&figure(
+        400.0,
+        250.0,
+        r#""legend": {"position": "inside"},"#,
+        1,
+        1,
+        &[plot("p", 0, 0, "", &labels)],
+    ));
+    let doc = Document::parse(&svg).unwrap();
+    let p = panel(&doc, "p");
+    let frame = legends(&doc)[0].frame;
+    let (w, _) = figure_size(&doc);
+    assert!(frame.x > p.right(), "{frame:?} not right of {p:?}");
+    assert!(
+        w > 400.0 && frame.right() <= w,
+        "{frame:?} in a figure of width {w}"
+    );
+}
+
+#[test]
+fn swatch_shows_error_bars() {
+    let svg = render(&one_plot(
+        r#"{"position": "outside"}"#,
+        &[curve(
+            "data",
+            r#""label": "data", "yerr": [0.1, 0.1], "style": {"line": {"type": "none"}, "marker": {"type": "circle"}},"#,
+            "[0, 1]",
+            "[1, 2]",
+        )],
+    ));
+    let doc = Document::parse(&svg).unwrap();
+    let swatch = doc
+        .descendants()
+        .find(|n| has_class(*n, "sbmlsim-legend-swatch"))
+        .expect("a swatch");
+    let vertical = swatch
+        .descendants()
+        .filter(|n| n.has_tag_name("path"))
+        .any(|n| {
+            let d = n.attribute("d").unwrap();
+            let pts: Vec<f64> = d
+                .split(['M', 'L', ' '])
+                .filter(|s| !s.is_empty())
+                .map(|s| s.parse().unwrap())
+                .collect();
+            pts.len() == 4 && pts[0] == pts[2] && pts[1] != pts[3]
+        });
+    assert!(vertical, "no error bar in the swatch");
+    assert!(
+        swatch.descendants().any(|n| n.has_tag_name("circle")),
+        "no marker in the swatch"
+    );
+}
+
+#[test]
+fn rotated_right_axis_labels_clear_the_ticks() {
+    // a label rotated by 90 degrees about the middle of its start reaches half its line height
+    // back towards the axis; it starts that much further out, past the tick and its padding
+    let json = r#"{"contract": "figure/1", "width": 500, "height": 300,
+        "grid": {"rows": 1, "columns": 1},
+        "plots": [{"id": "p", "row": 0, "column": 0, "x": {}, "y": {},
+            "y2": {"label": "amount", "tick_rotation": 90},
+            "elements": [{"id": "r", "kind": "curve", "axis": "y2", "x": [0, 1], "y": [0, 100]}]}]}"#;
+    let svg = render(json);
+    let doc = Document::parse(&svg).unwrap();
+    let p = panel(&doc, "p");
+    let ticks = axis_texts(&doc, "p", "y2");
+    assert!(!ticks.is_empty());
+    for (text, x, _) in ticks {
+        // tick 5, padding 3, half the tick font of 11
+        assert!(
+            (x - (p.right() + 5.0 + 3.0 + 5.5)).abs() < 0.02,
+            "{text} at {x}, panel {p:?}"
+        );
+    }
+}
+
+#[test]
 fn golden_grid() {
     assert_golden("grid", &render(&spec_text("grid")));
 }

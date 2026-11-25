@@ -628,8 +628,13 @@ fn fnv1a(text: &str) -> u64 {
 /// page restyles the figure with a stylesheet. The same figure gives the same bytes natively
 /// and in wasm.
 pub fn render_svg(figure: &Figure) -> String {
+    render_planned(figure, &layout::plan(figure))
+}
+
+/// Renders a figure as SVG on its plan, [`layout::plan`] of the same figure: a caller which also
+/// needs the geometry of the figure plans it once and passes the plan to both.
+pub(crate) fn render_planned(figure: &Figure, plan: &layout::Plan) -> String {
     let fonts = &figure.fonts;
-    let plan = layout::plan(figure);
     let lay = &plan.layout;
     let mut defs = String::new();
     let mut plots = String::new();

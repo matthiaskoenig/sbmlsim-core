@@ -111,7 +111,15 @@ pub(crate) fn draw(
             );
         }
         out.push_str("</g><g class=\"charton-tick-label\">");
-        let lx = x + TICK_LENGTH + TICK_LABEL_PADDING;
+        // a label rotated about the middle of its start reaches half its line height times the
+        // sine back towards the axis; it starts that much further out, so the rotated label
+        // spans `label_extent` from the padding on, as the layout reserved
+        let sin = if axis.tick_rotation == 0.0 {
+            0.0
+        } else {
+            libm::sin(axis.tick_rotation * std::f64::consts::PI / 180.0).abs()
+        };
+        let lx = x + TICK_LENGTH + TICK_LABEL_PADDING + fonts.tick / 2.0 * sin;
         for (u, label) in &layout.ticks {
             let y = y_of(*u);
             out.push_str("<text");
