@@ -261,6 +261,26 @@ unsafe extern "C" {
         sparsetype: c_int,
         sunctx: SUNContext,
     ) -> SUNMatrix;
+    /// A CSC matrix whose fixed pattern is preserved by zero and copy operations.
+    /// Its clones share immutable pattern metadata; numeric storage remains private.
+    pub fn sbmlsim_SUNSparseMatrix_Fixed(
+        n: sunindextype,
+        capacity: sunindextype,
+        sunctx: SUNContext,
+    ) -> SUNMatrix;
+    /// Installs a model pattern once, then updates only numeric Jacobian entries.
+    /// Every subsequent call must use the same model pattern. `ode` adds every
+    /// diagonal for CVODE; otherwise only `differential` diagonals receive `-cj`.
+    pub fn sbmlsim_SUNSparseMatrix_SetJacobian(
+        a: SUNMatrix,
+        nnz: sunindextype,
+        columns: *const sunindextype,
+        rows: *const sunindextype,
+        values: *const sunrealtype,
+        differential: sunindextype,
+        ode: c_int,
+        cj: sunrealtype,
+    ) -> SUNErrCode;
     pub fn SUNSparseMatrix_NNZ(a: SUNMatrix) -> sunindextype;
     /// The non-zero values of a sparse matrix (`nnz` of them).
     pub fn SUNSparseMatrix_Data(a: SUNMatrix) -> *mut sunrealtype;
@@ -269,6 +289,9 @@ unsafe extern "C" {
     /// The `n + 1` (CSC) or `m + 1` (CSR) offsets of the columns or rows into the values.
     pub fn SUNSparseMatrix_IndexPointers(a: SUNMatrix) -> *mut sunindextype;
     pub fn SUNMatZero(a: SUNMatrix) -> SUNErrCode;
+    pub fn SUNMatClone(a: SUNMatrix) -> SUNMatrix;
+    pub fn SUNMatCopy(a: SUNMatrix, b: SUNMatrix) -> SUNErrCode;
+    pub fn SUNMatScaleAddI(c: sunrealtype, a: SUNMatrix) -> SUNErrCode;
     pub fn SUNMatDestroy(a: SUNMatrix);
 
     // linear solvers

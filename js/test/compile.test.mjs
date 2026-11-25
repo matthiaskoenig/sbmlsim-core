@@ -97,6 +97,22 @@ test("the arguments of a compilation are checked", async () => {
   const instance = await compiler();
   assert.throws(() => instance.compile(readFileSync(DECAY_SBML)), TypeError);
   assert.throws(() => instance.compile("<sbml/>", { jacobian: "none" }), TypeError);
+  assert.throws(() => instance.compile("<sbml/>", { parameterJacobian: "false" }), TypeError);
+});
+
+test("parameter derivatives can be omitted without changing ordinary simulations", async () => {
+  const sbml = readFileSync(DECAY_SBML, "utf8");
+  const instance = await compiler();
+  const complete = instance.compile(sbml);
+  const ordinary = instance.compile(sbml, { parameterJacobian: false });
+  assert.ok(complete.description.jacobian_p);
+  assert.equal(ordinary.description.jacobian_p, undefined);
+  assert.ok(ordinary.wasm.length < complete.wasm.length);
+  const runtime = await loaderRuntime();
+  const settings = request({ end: 20, output: { uniform: { steps: 20 } } });
+  const left = (await runtime.instantiate(complete.wasm, complete.description)).simulate(settings);
+  const right = (await runtime.instantiate(ordinary.wasm, ordinary.description)).simulate(settings);
+  assert.deepEqual(new Uint8Array(left.values.buffer), new Uint8Array(right.values.buffer));
 });
 
 test("the compiler refuses a module which is not compiler.wasm", async () => {

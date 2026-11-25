@@ -68,6 +68,11 @@ instance.stats()  # the statistics of the integrator, counts and the state of th
 results = model.simulate_many(requests, threads=None)
 ```
 
+For ordinary simulations, `compile_sbml(sbml_text, parameter_jacobian=False)` omits analytic
+parameter derivatives and the constants used only by them. This reduces compilation and
+initialization work without changing simulation results. The default remains `True`.
+Forward sensitivities remain available with `False`, using numerical parameter derivatives.
+
 The compiler reads SBML core of any level and version, flat and without a required package but `distrib` (the uncertainties of its fitted parameters, which are ignored), as the command line does ([Compiling a model](compiling.md)). The request is the one of [Simulating](simulating.md). Its nested enums are serde's externally tagged ones: an output is `{"uniform": {"steps": 100}}`, `{"times": [0.0, 1.0]}` or, a unit variant and so a bare string, `"integrator_steps"` (the steps of the integrator, whose number of rows differs by point, which is why `simulate_many` gives one table per point), and the absolute tolerance of the settings is `{"scalar": 1e-12}` or `{"per_state": [1e-12, 1e-10]}` with one value per state in the order of the state vector (a vector of another length is a `PointError` of that point in a batch):
 
 ```python

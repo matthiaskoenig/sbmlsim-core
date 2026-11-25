@@ -3,10 +3,9 @@
 //! `model.wasm` (and `mathlib.wasm`) wasmtime compiles to native code.
 //!
 //! It is the configuration `native` of the benchmark: the integrator as fast as Rust and C make
-//! it on the machine, with the same model code as the other hosts. Every call of a function of
-//! the model copies the vectors the engine lends into the memory of the model and the results
-//! back (the model reads and writes nothing but its memory), a few hundred bytes of a model of
-//! the size of a PBPK model.
+//! it on the machine, with the same model code as the other hosts. Calls copy the state into
+//! model memory and the results back. Parameters remain resident during explicitly scoped
+//! solver calls, with synchronization after mutable model calls or direct parameter changes.
 //!
 //! Its results are not bitwise those of `engine.wasm`: the C solvers call the `pow` and `sqrt`
 //! of the C library of the host (`SUNRpowerR` in the step size of CVODE), `engine.wasm` those of
@@ -278,18 +277,36 @@ fn native_instance(
         sizes: sizes.typed(&store)?,
         event_sizes: event_sizes.typed(&store)?,
     };
-    let inner = Rc::new(RefCell::new(Inner { store, memory }));
-    let model = WasmModel {
-        inner: inner.clone(),
-        functions,
-        layout,
-        events: desc.events.len(),
-        error: RefCell::new(None),
+    let inner = Rc::new(RefCell::new(Inner {
+        store,
+        memory,
+        parameter_scopes: Vec::new(),
+        parameters: None,
+        #[cfg(test)]
+        parameter_copies: 0,
+    }));
+    // Small parameter copies can cost less than residency tracking. Specialize the
+    // bridge so their callback path contains no cache checks or cache writes. Delay
+    // wrappers do not promise stable parameter buffers, so retain their direct copies.
+    let model: Box<dyn ModelFns> = if desc.n_delays == 0 && layout.out - layout.p >= 4096 {
+        Box::new(WasmModel::<true>::new(
+            inner.clone(),
+            functions,
+            layout,
+            desc.events.len(),
+        ))
+    } else {
+        Box::new(WasmModel::<false>::new(
+            inner.clone(),
+            functions,
+            layout,
+            desc.events.len(),
+        ))
     };
     // an instance of `engine.wasm` is bounded by the memory of its guest, which bounds its
     // result with it; the native engine allocates its result in the memory of the host, so the
     // limit of the instance is given to it as the values a result may hold
-    let engine = sbmlsim_engine::Engine::new(Box::new(model), desc.clone())
+    let engine = sbmlsim_engine::Engine::new(model, desc.clone())
         .map_err(|e| anyhow::anyhow!("{e}"))?
         .with_max_output_values(max_memory / size_of::<f64>());
     Ok(NativeInstance {
@@ -382,6 +399,11 @@ impl Layout {
 struct Inner {
     store: Store<MemoryLimit>,
     memory: Memory,
+    /// Host buffers are identified only while the corresponding solver scope is live.
+    parameter_scopes: Vec<(usize, usize)>,
+    parameters: Option<(usize, usize)>,
+    #[cfg(test)]
+    parameter_copies: usize,
 }
 
 impl Inner {
@@ -413,7 +435,7 @@ impl Inner {
 
 /// A model of `model/2` in wasmtime behind [`ModelFns`]. The first trap is recorded and
 /// returned by the engine as an internal error, without unwinding across the C ABI.
-struct WasmModel {
+struct WasmModel<const CACHE_PARAMETERS: bool> {
     inner: Rc<RefCell<Inner>>,
     functions: Functions,
     layout: Layout,
@@ -426,19 +448,55 @@ fn ptr(at: usize) -> i32 {
     i32::try_from(at).expect("the memory of a model is below 2 GiB")
 }
 
-impl WasmModel {
-    /// The store, after `y` and `p` are written into the memory, and the layout.
+impl<const CACHE_PARAMETERS: bool> WasmModel<CACHE_PARAMETERS> {
+    fn new(inner: Rc<RefCell<Inner>>, functions: Functions, layout: Layout, events: usize) -> Self {
+        Self {
+            inner,
+            functions,
+            layout,
+            events,
+            error: RefCell::new(None),
+        }
+    }
+
+    /// The store after synchronizing state and, when needed, parameters.
     fn enter(&self, y: &[f64], p: &[f64]) -> (std::cell::RefMut<'_, Inner>, Layout) {
         let mut inner = self.inner.borrow_mut();
         let l = self.layout;
         inner.put(l.y, y);
-        inner.put(l.p, p);
+        if !CACHE_PARAMETERS {
+            inner.put(l.p, p);
+            #[cfg(test)]
+            {
+                inner.parameter_copies += 1;
+            }
+            return (inner, l);
+        }
+        let key = (p.as_ptr() as usize, p.len());
+        let scoped = inner.parameter_scopes.contains(&key);
+        if !scoped || inner.parameters != Some(key) {
+            inner.put(l.p, p);
+            #[cfg(test)]
+            {
+                inner.parameter_copies += 1;
+            }
+            inner.parameters = scoped.then_some(key);
+        }
         (inner, l)
+    }
+
+    /// Mutable model calls must observe edits made directly to their input arrays.
+    /// Their output is copied back to the same host buffer before it can be reused.
+    fn enter_mutating(&self, y: &[f64], p: &[f64]) -> (std::cell::RefMut<'_, Inner>, Layout) {
+        if CACHE_PARAMETERS {
+            self.inner.borrow_mut().parameters = None;
+        }
+        self.enter(y, p)
     }
 }
 
 /// The result of a call of the model, which traps only for a defect of the model.
-impl WasmModel {
+impl<const CACHE_PARAMETERS: bool> WasmModel<CACHE_PARAMETERS> {
     fn ok<T: Default>(&self, result: wasmtime::Result<T>) -> T {
         match result {
             Ok(value) => value,
@@ -452,7 +510,35 @@ impl WasmModel {
     }
 }
 
-impl ModelFns for WasmModel {
+impl<const CACHE_PARAMETERS: bool> ModelFns for WasmModel<CACHE_PARAMETERS> {
+    fn begin_parameters(&self, p: &[f64]) {
+        if !CACHE_PARAMETERS {
+            return;
+        }
+        self.inner
+            .borrow_mut()
+            .parameter_scopes
+            .push((p.as_ptr() as usize, p.len()));
+    }
+
+    fn end_parameters(&self) {
+        if !CACHE_PARAMETERS {
+            return;
+        }
+        let mut inner = self.inner.borrow_mut();
+        inner.parameter_scopes.pop();
+        // A nested projection may have synchronized a different buffer. Force the next
+        // caller to establish residency again rather than relying on its address alone.
+        inner.parameters = None;
+    }
+
+    fn parameters_changed(&self) {
+        if !CACHE_PARAMETERS {
+            return;
+        }
+        self.inner.borrow_mut().parameters = None;
+    }
+
     fn set_history(
         &self,
         data: &[u8],
@@ -477,7 +563,7 @@ impl ModelFns for WasmModel {
 
         // Fixed vectors occupy [0, at). A wasm offset remains valid across memory growth.
         let mut inner = self.inner.borrow_mut();
-        let Inner { store, memory } = &mut *inner;
+        let Inner { store, memory, .. } = &mut *inner;
         let pages = end.div_ceil(PAGE) as u64;
         let allocated = memory.size(&*store);
         if pages > allocated {
@@ -543,7 +629,7 @@ impl ModelFns for WasmModel {
     }
 
     fn defaults(&self, p: &mut [f64], y: &mut [f64]) {
-        let (mut m, l) = self.enter(y, p);
+        let (mut m, l) = self.enter_mutating(y, p);
         self.ok(self
             .functions
             .defaults
@@ -552,7 +638,7 @@ impl ModelFns for WasmModel {
         m.get(l.y, y);
     }
     fn init(&self, t: f64, p: &mut [f64], y: &mut [f64], fixed: &[u8]) {
-        let (mut m, l) = self.enter(y, p);
+        let (mut m, l) = self.enter_mutating(y, p);
         m.put_bytes(l.bytes, fixed);
         let args = (t, ptr(l.p), ptr(l.y), ptr(l.bytes));
         self.ok(self.functions.init.call(&mut m.store, args));
@@ -609,7 +695,7 @@ impl ModelFns for WasmModel {
         m.get(l.out, out);
     }
     fn event_apply(&self, i: u32, t: f64, values: &[f64], y: &mut [f64], p: &mut [f64]) {
-        let (mut m, l) = self.enter(y, p);
+        let (mut m, l) = self.enter_mutating(y, p);
         m.put(l.values, values);
         let args = (i as i32, t, ptr(l.values), ptr(l.y), ptr(l.p));
         self.ok(self.functions.event_apply.call(&mut m.store, args));
@@ -624,7 +710,7 @@ impl ModelFns for WasmModel {
         m.get(l.out, out);
     }
     fn assign(&self, t: f64, y: &mut [f64], p: &mut [f64]) {
-        let (mut m, l) = self.enter(y, p);
+        let (mut m, l) = self.enter_mutating(y, p);
         self.ok(self
             .functions
             .assign
@@ -663,5 +749,87 @@ mod tests {
         let l = Layout::of(&desc);
         assert!(l.y < l.p && l.p < l.out && l.out <= l.values && l.values <= l.bytes);
         assert!(l.end.is_multiple_of(8) && l.end > l.bytes);
+    }
+
+    #[test]
+    fn large_parameter_buffers_are_reused_and_refreshed_between_runs() {
+        let padding: String = (0..600)
+            .map(|i| format!(r#"<parameter id="padding{i}" value="0" constant="true"/>"#))
+            .collect();
+        let document = format!(
+            r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2"><model id="decay">
+<listOfCompartments><compartment id="C" size="1" constant="true"/></listOfCompartments>
+<listOfSpecies><species id="y" compartment="C" initialAmount="1" hasOnlySubstanceUnits="true" boundaryCondition="false" constant="false"/></listOfSpecies>
+<listOfParameters><parameter id="k" value="0.5" constant="true"/>{padding}</listOfParameters>
+<listOfRules><rateRule variable="y"><math xmlns="http://www.w3.org/1998/Math/MathML"><apply><times/><cn>-1</cn><ci>k</ci><ci>y</ci></apply></math></rateRule></listOfRules>
+</model></sbml>"#
+        );
+        let model = sbmlsim_compiler::compile(
+            &document,
+            &sbmlsim_compiler::CompileOptions {
+                parameter_jacobian: false,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let runtime = Runtime::embedded().unwrap();
+        let mut instance = runtime
+            .instantiate_native(&model.wasm, &model.description)
+            .unwrap();
+        let mut request = SimulationRequest {
+            contract: abi::SIMULATION_CONTRACT.into(),
+            start: 0.0,
+            end: 10.0,
+            output: abi::Output::Uniform { steps: 1 },
+            preinit: vec![],
+            changes: vec![],
+            steady_state: None,
+            steady_state_after: None,
+            before_events: false,
+            selections: vec!["y".into()],
+            settings: abi::IntegratorSettings {
+                relative_tolerance: 1e-10,
+                ..abi::IntegratorSettings::default()
+            },
+            seed: 0,
+            sensitivities: vec![],
+            local_errors: false,
+        };
+        let before = instance.inner.borrow().parameter_copies;
+        let first = instance.simulate(&request).unwrap();
+        let copies = instance.inner.borrow().parameter_copies - before;
+        assert!(copies as u64 * 2 < instance.stats().rhs_evals);
+        assert!(instance.inner.borrow().parameter_scopes.is_empty());
+        let end_value = |result: &SimulationResult| *result.values.last().unwrap();
+        assert!((end_value(&first) - (-5.0f64).exp()).abs() < 1e-9);
+
+        request.preinit = vec![("k".into(), 1.0)];
+        let changed = instance.simulate(&request).unwrap();
+        assert!((end_value(&changed) - (-10.0f64).exp()).abs() < 1e-9);
+        request.preinit.clear();
+        let repeated = instance.simulate(&request).unwrap();
+        assert!(
+            first
+                .values
+                .iter()
+                .zip(&repeated.values)
+                .all(|(a, b)| a.to_bits() == b.to_bits())
+        );
+
+        // Numerical parameter derivatives perturb and restore the same scoped buffer.
+        request.sensitivities = vec!["k".into()];
+        let sensitive = instance.simulate(&request).unwrap();
+        assert!(instance.stats().sensitivity_model_rhs_evals > 0);
+        let derivative = *sensitive.sensitivities.unwrap().values.last().unwrap();
+        assert!((derivative + 10.0 * (-5.0f64).exp()).abs() < 1e-6);
+        request.sensitivities.clear();
+        let restored = instance.simulate(&request).unwrap();
+        assert!(
+            first
+                .values
+                .iter()
+                .zip(&restored.values)
+                .all(|(a, b)| a.to_bits() == b.to_bits())
+        );
     }
 }

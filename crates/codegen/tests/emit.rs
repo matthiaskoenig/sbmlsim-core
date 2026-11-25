@@ -178,6 +178,76 @@ fn wasm_of(model: &Model) -> Vec<u8> {
 }
 
 #[test]
+fn immutable_repeated_inputs_are_loaded_once_in_optimized_callbacks() {
+    let m = model(
+        r#"<listOfParameters><parameter id="k" value="0.1" constant="true"/>
+<parameter id="x" value="1" constant="false"/><parameter id="y" value="0" constant="false"/>
+<parameter id="z" value="0" constant="false"/></listOfParameters>
+<listOfRules>
+<rateRule variable="x"><math $><apply><times/><apply><plus/><ci>x</ci><cn>1</cn></apply><ci>k</ci></apply></math></rateRule>
+<rateRule variable="y"><math $><apply><times/><apply><plus/><ci>x</ci><cn>2</cn></apply><ci>k</ci></apply></math></rateRule>
+<rateRule variable="z"><math $><apply><times/><apply><plus/><ci>x</ci><cn>3</cn></apply><ci>k</ci></apply></math></rateRule>
+</listOfRules>"#,
+    );
+    let loads = |wasm: &[u8]| {
+        parse(wasm)
+            .body(abi::RHS)
+            .iter()
+            .filter(|op| matches!(op, Operator::F64Load { .. }))
+            .count()
+    };
+    assert_eq!(loads(&emit_with(&m, JacobianChoice::Auto).unwrap().0), 6);
+    assert_eq!(
+        loads(&emit_optimized(&m, JacobianChoice::Auto).unwrap().0),
+        2
+    );
+}
+
+#[test]
+fn omitting_parameter_jacobian_omits_its_export_and_constants() {
+    let m = model(
+        r#"<listOfParameters><parameter id="k" value="4" constant="true"/>
+<parameter id="x" value="1" constant="false"/></listOfParameters>
+<listOfRules><rateRule variable="x"><math $><apply><times/>
+<apply><power/><ci>k</ci><cn>0.75</cn></apply><ci>x</ci>
+</apply></math></rateRule></listOfRules>"#,
+    );
+    for optimized in [false, true] {
+        let emit = |parameter_jacobian| {
+            sbmlsim_codegen::emit_with_options(
+                &m,
+                JacobianChoice::Auto,
+                optimized,
+                parameter_jacobian,
+                sbmlsim_codegen::Limits::default(),
+            )
+            .unwrap()
+        };
+        let (with, a) = emit(true);
+        let (without, b) = emit(false);
+        wasmparser::validate(&without).unwrap();
+        assert!(a.jacobian_p.is_some());
+        assert!(b.jacobian_p.is_none());
+        assert!(
+            parse(&with)
+                .exports
+                .iter()
+                .any(|(name, _, _)| name == abi::JAC_P)
+        );
+        assert!(
+            !parse(&without)
+                .exports
+                .iter()
+                .any(|(name, _, _)| name == abi::JAC_P)
+        );
+        assert!(without.len() < with.len());
+        if optimized {
+            assert!(b.n_constants < a.n_constants);
+        }
+    }
+}
+
+#[test]
 fn emitted_module_validates() {
     let wasm = wasm_of(&small());
     wasmparser::validate(&wasm).unwrap();

@@ -141,7 +141,11 @@ fn klu_handles_a_differential_equation_without_a_diagonal_derivative() {
 fn the_dae_trajectory_agrees_with_the_analytic_solution() {
     for optimize in [false, true] {
         for jacobian in [JacobianChoice::Analytic, JacobianChoice::DifferenceQuotient] {
-            let loaded = decay(CompileOptions { optimize, jacobian });
+            let loaded = decay(CompileOptions {
+                optimize,
+                jacobian,
+                ..CompileOptions::default()
+            });
             let mut wasm = loaded.instantiate().unwrap();
             #[cfg(feature = "native")]
             let mut native = loaded.instantiate_native().unwrap();

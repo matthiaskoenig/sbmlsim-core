@@ -28,6 +28,10 @@ pub struct CompileOptions {
     /// difference quotient; `Analytic` the analytic one, refused for a model which has none
     /// (see `sbmlsim_codegen::emit_with`).
     pub jacobian: JacobianChoice,
+    /// Include the optional analytic parameter Jacobian when available. Disable this for
+    /// ordinary simulations to avoid its derivative compilation and cached constants.
+    /// Forward sensitivities still work through their numerical derivative fallback.
+    pub parameter_jacobian: bool,
 }
 
 impl Default for CompileOptions {
@@ -35,6 +39,7 @@ impl Default for CompileOptions {
         Self {
             optimize: true,
             jacobian: JacobianChoice::Auto,
+            parameter_jacobian: true,
         }
     }
 }
@@ -52,11 +57,13 @@ pub struct CompiledModel {
 pub fn compile(sbml: &str, options: &CompileOptions) -> Result<CompiledModel, CompileError> {
     let doc = sbmlsim_sbml::read(sbml).map_err(from_read_error)?;
     let model = sbmlsim_ir::build(&doc)?;
-    let (wasm, description) = if options.optimize {
-        sbmlsim_codegen::emit_optimized(&model, options.jacobian)?
-    } else {
-        sbmlsim_codegen::emit_with(&model, options.jacobian)?
-    };
+    let (wasm, description) = sbmlsim_codegen::emit_with_options(
+        &model,
+        options.jacobian,
+        options.optimize,
+        options.parameter_jacobian,
+        Limits::default(),
+    )?;
     Ok(CompiledModel { wasm, description })
 }
 
@@ -71,8 +78,13 @@ pub fn compile_with_limits(
 ) -> Result<CompiledModel, CompileError> {
     let doc = sbmlsim_sbml::read(sbml).map_err(from_read_error)?;
     let model = sbmlsim_ir::build(&doc)?;
-    let (wasm, description) =
-        sbmlsim_codegen::emit_with_limits(&model, options.jacobian, options.optimize, limits)?;
+    let (wasm, description) = sbmlsim_codegen::emit_with_options(
+        &model,
+        options.jacobian,
+        options.optimize,
+        options.parameter_jacobian,
+        limits,
+    )?;
     Ok(CompiledModel { wasm, description })
 }
 

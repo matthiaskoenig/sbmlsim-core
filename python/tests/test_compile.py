@@ -72,6 +72,14 @@ def test_compile_refuses_an_unknown_jacobian(decay_sbml: str) -> None:
         sbmlsim_core.compile_sbml(decay_sbml, jacobian="symbolic")
 
 
+def test_parameter_jacobian_can_be_omitted(decay_sbml: str) -> None:
+    with_jacobian = sbmlsim_core.compile_sbml(decay_sbml)
+    without_jacobian = sbmlsim_core.compile_sbml(decay_sbml, parameter_jacobian=False)
+    assert with_jacobian.description.get("jacobian_p") is not None
+    assert without_jacobian.description.get("jacobian_p") is None
+    assert len(without_jacobian.wasm) < len(with_jacobian.wasm)
+
+
 def test_compile_names_the_entities_an_algebraic_rule_cannot_determine() -> None:
     with pytest.raises(
         sbmlsim_core.CompileError,

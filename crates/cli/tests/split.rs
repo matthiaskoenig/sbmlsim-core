@@ -109,6 +109,7 @@ fn compare(
         &CompileOptions {
             optimize,
             jacobian: JacobianChoice::Auto,
+            ..CompileOptions::default()
         },
     )
     .unwrap();
@@ -130,7 +131,11 @@ fn compare(
         JacobianKind::Analytic(_) => JacobianChoice::Analytic,
         JacobianKind::ColoredDifference { .. } => JacobianChoice::DifferenceQuotient,
     };
-    let options = CompileOptions { optimize, jacobian };
+    let options = CompileOptions {
+        optimize,
+        jacobian,
+        ..CompileOptions::default()
+    };
     let split = match compile_with_limits(&sbml, &options, limits) {
         Ok(split) => split,
         Err(error) if is_above_the_limits(&error) => return Err(error.to_string()),

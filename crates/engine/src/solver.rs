@@ -45,7 +45,7 @@ use crate::model::ModelFns;
 mod delay;
 mod ida;
 mod krylov;
-pub(crate) use ida::Constraints;
+pub(crate) use ida::{ConstraintWorkspace, Constraints};
 
 /// The number of states above which [`LinearSolver::Auto`](sbmlsim_abi::LinearSolver::Auto)
 /// takes KLU, else the dense solver.
@@ -800,6 +800,7 @@ unsafe extern "C" fn sens_rhs(
                     .model
                     .rhs(t, values(y, n), &problem.p, &mut sensitivity.f);
                 problem.p.copy_from_slice(&sensitivity.p);
+                problem.model.parameters_changed();
                 problem.counts.sensitivity_model_rhs += 1;
                 let f = values(ydot, n);
                 for (row, out) in out.iter_mut().enumerate() {
@@ -836,7 +837,7 @@ unsafe extern "C" fn jac_dense(
             }
             let n = pattern.n as usize;
             let matrix = std::slice::from_raw_parts_mut(SUNDenseMatrix_Data(jac), n * n);
-            matrix.fill(0.0);
+            // SUNDIALS clears a direct solver matrix before invoking this callback.
             for j in 0..n {
                 let (start, end) = (pattern.col_ptr[j] as usize, pattern.col_ptr[j + 1] as usize);
                 for k in start..end {
@@ -858,37 +859,29 @@ unsafe extern "C" fn jac_sparse(
     _tmp2: N_Vector,
     _tmp3: N_Vector,
 ) -> c_int {
-    // SAFETY: as in `rhs`. The matrix is the CSC matrix of the linear solver; its capacity is
-    // read every call, since CVODE may have grown it (`SUNMatScaleAddI` adds the diagonal of a
-    // pattern which lacks it), and the index arrays are written from the pattern every call.
+    // SAFETY: as in `rhs`. The fixed sparse adapter installs the pattern once,
+    // preserving it across SUNDIALS zero/copy operations and adding missing diagonals.
     unsafe {
         let problem = problem(data);
         callback(problem, |problem| {
             let Some(pattern) = problem.pattern else {
                 return -1;
             };
-            let n = pattern.n as usize;
             let nnz = pattern.row_idx.len();
-            let capacity = SUNSparseMatrix_NNZ(jac);
-            if capacity < 0 || (capacity as usize) < nnz {
-                return -1;
-            }
             let code = jacobian_values(problem, pattern, t, y, fy, tmp1);
             if code != 0 {
                 return code;
             }
-            let capacity = capacity as usize;
-            let data = std::slice::from_raw_parts_mut(SUNSparseMatrix_Data(jac), capacity);
-            let rows = std::slice::from_raw_parts_mut(SUNSparseMatrix_IndexValues(jac), capacity);
-            let cols = std::slice::from_raw_parts_mut(SUNSparseMatrix_IndexPointers(jac), n + 1);
-            for (c, p) in cols.iter_mut().zip(&pattern.col_ptr) {
-                *c = *p as sunindextype;
-            }
-            for (r, i) in rows.iter_mut().zip(&pattern.row_idx) {
-                *r = *i as sunindextype;
-            }
-            data[..nnz].copy_from_slice(&problem.jac_values);
-            0
+            sbmlsim_SUNSparseMatrix_SetJacobian(
+                jac,
+                nnz as sunindextype,
+                pattern.col_ptr.as_ptr().cast(),
+                pattern.row_idx.as_ptr().cast(),
+                problem.jac_values.as_ptr(),
+                pattern.n as sunindextype,
+                1,
+                0.0,
+            )
         })
     }
 }
@@ -932,6 +925,10 @@ pub(crate) struct Integrator<const DAE: bool, H: crate::delay::Mode = crate::del
     /// Whether the linear solver (or the nonlinear solver) and the Jacobian are attached; a
     /// failed attach is retried by the next segment.
     attached: bool,
+    /// Stable settings already applied to this memory; ReInit retains them.
+    settings: Option<IntegratorSettings>,
+    /// IDA keeps its copied identifier vector across reinitializations.
+    id_set: bool,
     /// The last error, written by [`record_error`] through the pointer of the context.
     errors: Box<ErrorLog>,
     /// The counters of the (re)initializations of the simulation before the current one.
@@ -1111,6 +1108,8 @@ impl<const DAE: bool, H: crate::delay::Mode> Integrator<DAE, H> {
             krylov: None,
             initialized: false,
             attached: false,
+            settings: None,
+            id_set: false,
             errors: Box::default(),
             totals: SolverCounts::default(),
             live: false,
@@ -1220,17 +1219,16 @@ impl<const DAE: bool, H: crate::delay::Mode> Integrator<DAE, H> {
                     }
                 }
                 Linear::Klu { nnz, .. } => {
-                    // a capacity of at least 1, CVODE grows it when it adds the diagonal
+                    // Reserve missing diagonals once; the fixed adapter never grows the matrix.
                     let extra = if let Method::Ida { n_algebraic, .. } = config.method {
                         config.n - n_algebraic
                     } else {
-                        0
+                        config.n
                     };
                     let capacity = (nnz + extra).max(1) as sunindextype;
-                    cvode.matrix = SUNSparseMatrix(n, n, capacity, CSC_MAT, cvode.ctx);
+                    cvode.matrix = sbmlsim_SUNSparseMatrix_Fixed(n, capacity, cvode.ctx);
                     if !cvode.matrix.is_null() {
-                        // the pattern of the matrix is the same in every segment (`jac_sparse`
-                        // writes the pattern of the model, CVODE adds the missing diagonal), so
+                        // The adapter keeps the model pattern and required diagonal fixed, so
                         // KLU keeps its symbolic analysis across the restarts, with bitwise the
                         // results of `SUNLinSol_KLU`
                         cvode.solver = sbmlsim_SUNLinSol_KLUKept(cvode.y, cvode.matrix, cvode.ctx);
@@ -1317,7 +1315,10 @@ impl<const DAE: bool, H: crate::delay::Mode> Integrator<DAE, H> {
                     )?;
                     self.initialized = true;
                 }
-                self.flag(IDASetId(self.mem, self.id), t0)?;
+                if !self.id_set {
+                    self.flag(IDASetId(self.mem, self.id), t0)?;
+                    self.id_set = true;
+                }
                 self.pending_ic = Some(t0);
             } else if self.initialized {
                 self.flag(CVodeReInit(self.mem, t0, self.y), t0)?;
@@ -1371,22 +1372,6 @@ impl<const DAE: bool, H: crate::delay::Mode> Integrator<DAE, H> {
                 }
                 self.attached = true;
             }
-            let rtol = settings.relative_tolerance;
-            match &settings.absolute_tolerance {
-                Tolerance::Scalar(atol) => {
-                    self.flag(
-                        backend!(self, CVodeSStolerances, IDASStolerances, rtol, *atol),
-                        t0,
-                    )?;
-                }
-                Tolerance::PerState(atol) => {
-                    values(self.abstol, n).copy_from_slice(atol);
-                    self.flag(
-                        backend!(self, CVodeSVtolerances, IDASVtolerances, rtol, self.abstol),
-                        t0,
-                    )?;
-                }
-            }
             // `long` is 32 bits on wasm32: the largest count it holds (`as u32` of `i64::MAX` is
             // `u32::MAX`, so the bound changes nothing on 64-bit targets)
             let max_steps = settings.maximum_num_steps.min(c_long::MAX as u32) as c_long;
@@ -1394,6 +1379,8 @@ impl<const DAE: bool, H: crate::delay::Mode> Integrator<DAE, H> {
                 backend!(self, CVodeSetMaxNumSteps, IDASetMaxNumSteps, max_steps),
                 t0,
             )?;
+            // Delay overlap control changes these settings within a segment.
+            // Restore the request at every restart even when stable settings match.
             // 0.0 is CVODE's own default for both: no largest step, an estimated first step
             self.flag(
                 backend!(
@@ -1413,105 +1400,127 @@ impl<const DAE: bool, H: crate::delay::Mode> Integrator<DAE, H> {
                 ),
                 t0,
             )?;
-            // The order of the method the run uses: IDA integrates a DAE model with the BDF
-            // whatever `stiff` says, CVODE with the BDF or with Adams. Every setting of this
-            // block is applied at every (re)initialization, with the default of the solver
-            // where the request leaves it at 0: the memory is reused between the simulations
-            // of an instance, and a setting of a simulation before would otherwise stay.
-            let (given, default) = if DAE || settings.stiff {
-                (settings.maximum_bdf_order, BDF_ORDER)
-            } else {
-                (settings.maximum_adams_order, ADAMS_ORDER)
-            };
-            let order = if given > 0 { given } else { default };
-            self.flag(
-                backend!(self, CVodeSetMaxOrd, IDASetMaxOrd, c_int::from(order)),
-                t0,
-            )?;
-            // 0.0 is the default of CVODE and of IDA as well: no smallest step
-            self.flag(
-                backend!(
-                    self,
-                    CVodeSetMinStep,
-                    IDASetMinStep,
-                    settings.minimum_time_step
-                ),
-                t0,
-            )?;
-            // CalcIC sets differential rates. For an explicitly time-dependent algebraic
-            // equation its initial algebraic derivative guess is zero. The default of a DAE
-            // model permits enough reductions for IDA to estimate and control that rate.
-            let failures = or_default(
-                settings.maximum_error_test_failures,
-                if DAE {
-                    IDA_ERROR_TEST_FAILURES
+            if self.settings.as_ref() != Some(settings) {
+                // A failed application must not leave an older cache entry valid.
+                self.settings = None;
+                let rtol = settings.relative_tolerance;
+                match &settings.absolute_tolerance {
+                    Tolerance::Scalar(atol) => {
+                        self.flag(
+                            backend!(self, CVodeSStolerances, IDASStolerances, rtol, *atol),
+                            t0,
+                        )?;
+                    }
+                    Tolerance::PerState(atol) => {
+                        values(self.abstol, n).copy_from_slice(atol);
+                        self.flag(
+                            backend!(self, CVodeSVtolerances, IDASVtolerances, rtol, self.abstol),
+                            t0,
+                        )?;
+                    }
+                }
+                // The order of the method the run uses: IDA integrates a DAE model with the BDF
+                // whatever `stiff` says, CVODE with the BDF or with Adams. A changed
+                // request also restores defaults where it leaves a setting at 0.
+                let (given, default) = if DAE || settings.stiff {
+                    (settings.maximum_bdf_order, BDF_ORDER)
                 } else {
-                    CVODE_ERROR_TEST_FAILURES
-                },
-            );
-            self.flag(
-                backend!(
-                    self,
-                    CVodeSetMaxErrTestFails,
-                    IDASetMaxErrTestFails,
-                    failures
-                ),
-                t0,
-            )?;
-            let iterations = or_default(
-                settings.maximum_nonlinear_iterations,
-                if DAE {
-                    IDA_NONLINEAR_ITERATIONS
-                } else {
-                    CVODE_NONLINEAR_ITERATIONS
-                },
-            );
-            self.flag(
-                backend!(
-                    self,
-                    CVodeSetMaxNonlinIters,
-                    IDASetMaxNonlinIters,
-                    iterations
-                ),
-                t0,
-            )?;
-            let convergence_failures =
-                or_default(settings.maximum_convergence_failures, CONVERGENCE_FAILURES);
-            self.flag(
-                backend!(
-                    self,
-                    CVodeSetMaxConvFails,
-                    IDASetMaxConvFails,
-                    convergence_failures
-                ),
-                t0,
-            )?;
-            let coefficient = if settings.nonlinear_convergence_coefficient > 0.0 {
-                settings.nonlinear_convergence_coefficient
-            } else if DAE {
-                IDA_CONVERGENCE_COEFFICIENT
-            } else {
-                CVODE_CONVERGENCE_COEFFICIENT
-            };
-            self.flag(
-                backend!(
-                    self,
-                    CVodeSetNonlinConvCoef,
-                    IDASetNonlinConvCoef,
-                    coefficient
-                ),
-                t0,
-            )?;
-            if !DAE {
-                // of the BDF, which `check_settings` has refused it without
+                    (settings.maximum_adams_order, ADAMS_ORDER)
+                };
+                let order = if given > 0 { given } else { default };
                 self.flag(
-                    CVodeSetStabLimDet(self.mem, c_int::from(settings.stability_limit_detection)),
+                    backend!(self, CVodeSetMaxOrd, IDASetMaxOrd, c_int::from(order)),
                     t0,
                 )?;
-            } else {
-                // The engine turns it on of its own where an algebraic jump is interpolated
-                // over, see `Integrator::consistent`.
-                self.suppress_algebraic = settings.suppress_algebraic;
+                // 0.0 is the default of CVODE and of IDA as well: no smallest step
+                self.flag(
+                    backend!(
+                        self,
+                        CVodeSetMinStep,
+                        IDASetMinStep,
+                        settings.minimum_time_step
+                    ),
+                    t0,
+                )?;
+                // CalcIC sets differential rates. For an explicitly time-dependent algebraic
+                // equation its initial algebraic derivative guess is zero. The default of a DAE
+                // model permits enough reductions for IDA to estimate and control that rate.
+                let failures = or_default(
+                    settings.maximum_error_test_failures,
+                    if DAE {
+                        IDA_ERROR_TEST_FAILURES
+                    } else {
+                        CVODE_ERROR_TEST_FAILURES
+                    },
+                );
+                self.flag(
+                    backend!(
+                        self,
+                        CVodeSetMaxErrTestFails,
+                        IDASetMaxErrTestFails,
+                        failures
+                    ),
+                    t0,
+                )?;
+                let iterations = or_default(
+                    settings.maximum_nonlinear_iterations,
+                    if DAE {
+                        IDA_NONLINEAR_ITERATIONS
+                    } else {
+                        CVODE_NONLINEAR_ITERATIONS
+                    },
+                );
+                self.flag(
+                    backend!(
+                        self,
+                        CVodeSetMaxNonlinIters,
+                        IDASetMaxNonlinIters,
+                        iterations
+                    ),
+                    t0,
+                )?;
+                let convergence_failures =
+                    or_default(settings.maximum_convergence_failures, CONVERGENCE_FAILURES);
+                self.flag(
+                    backend!(
+                        self,
+                        CVodeSetMaxConvFails,
+                        IDASetMaxConvFails,
+                        convergence_failures
+                    ),
+                    t0,
+                )?;
+                let coefficient = if settings.nonlinear_convergence_coefficient > 0.0 {
+                    settings.nonlinear_convergence_coefficient
+                } else if DAE {
+                    IDA_CONVERGENCE_COEFFICIENT
+                } else {
+                    CVODE_CONVERGENCE_COEFFICIENT
+                };
+                self.flag(
+                    backend!(
+                        self,
+                        CVodeSetNonlinConvCoef,
+                        IDASetNonlinConvCoef,
+                        coefficient
+                    ),
+                    t0,
+                )?;
+                if !DAE {
+                    // of the BDF, which `check_settings` has refused it without
+                    self.flag(
+                        CVodeSetStabLimDet(
+                            self.mem,
+                            c_int::from(settings.stability_limit_detection),
+                        ),
+                        t0,
+                    )?;
+                } else {
+                    // The engine turns it on of its own where an algebraic jump is interpolated
+                    // over, see `Integrator::consistent`.
+                    self.suppress_algebraic = settings.suppress_algebraic;
+                }
+                self.settings = Some(settings.clone());
             }
             self.flag(backend!(self, CVodeSetStopTime, IDASetStopTime, tstop), t0)?;
             let nr = c_int::try_from(n_roots).map_err(|_| {
@@ -1845,6 +1854,7 @@ impl<const DAE: bool, H: crate::delay::Mode> Integrator<DAE, H> {
         tout: f64,
         itask: c_int,
     ) -> Result<(f64, c_int), EngineError> {
+        let _parameters = crate::model::ParameterScope::new(problem.model, &problem.p);
         let mut tret = f64::NAN;
         if matches!(self.config.method, Method::Bdf(Linear::Gmres { .. })) {
             if self.krylov.is_none() {
@@ -1916,6 +1926,60 @@ mod tests {
         })
         .unwrap();
         assert!(cvode.yp.is_null() && cvode.id.is_null());
+    }
+
+    #[test]
+    fn a_restart_restores_dynamic_limits_even_when_settings_match() {
+        let model = crate::model::Decay { k: 0.5 };
+        let desc = model.description();
+        let (mut p, mut y) = (vec![0.0; desc.parameters.len()], vec![0.0]);
+        model.defaults(&mut p, &mut y);
+        let mut solver = Integrator::<false>::new(Config {
+            n: 1,
+            method: Method::Adams,
+            n_sens: 0,
+        })
+        .unwrap();
+        let settings = IntegratorSettings {
+            stiff: false,
+            initial_time_step: 0.001,
+            maximum_time_step: 0.1,
+            maximum_num_steps: 2000,
+            ..IntegratorSettings::default()
+        };
+        solver.start(0.0, &y, 1.0, &settings, 0).unwrap();
+        // Root budgets and delay overlap trials temporarily override these options.
+        solver.set_max_steps(1).unwrap();
+        unsafe {
+            assert_eq!(CVodeSetMaxStep(solver.mem, 0.0001), 0);
+            assert_eq!(CVodeSetInitStep(solver.mem, 0.0001), 0);
+        }
+        solver.start(0.0, &y, 1.0, &settings, 0).unwrap();
+        let mut problem = Problem {
+            n: 1,
+            n_model: 1,
+            n_algebraic: 0,
+            interpolation: None,
+            n_roots: 0,
+            n_discontinuity_roots: 0,
+            model: &model,
+            p,
+            pattern: None,
+            jac_values: Vec::new(),
+            jacobian_p: None,
+            analytic: false,
+            difference: None,
+            mem: ptr::null_mut(),
+            krylov: ptr::null_mut(),
+            sensitivity: None,
+            counts: Counts::default(),
+            callback_error: None,
+        };
+        solver.integrate(&mut problem, 1.0, CV_NORMAL).unwrap();
+        let counts = solver.current();
+        assert_eq!(counts.state.actual_initial_time_step, 0.001);
+        assert!(counts.steps < 100, "{counts:?}");
+        assert!((solver.state()[0] - (-0.5f64).exp()).abs() < 1e-5);
     }
 
     /// Integrates Robertson with a configuration to `4e10`, returns the state at the outputs

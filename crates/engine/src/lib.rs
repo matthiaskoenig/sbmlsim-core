@@ -230,6 +230,15 @@ struct Scratch {
     steady_rates: Vec<f64>,
     events: events::Scratch,
     segments: segments::Scratch,
+    /// DAE-only state stays out of the ODE scratch allocation.
+    dae: Option<Box<DaeScratch>>,
+}
+
+#[derive(Default)]
+struct DaeScratch {
+    initialization: Option<initial::Cache>,
+    projection: Option<solver::ConstraintWorkspace>,
+    interpolation: Option<solver::ConstraintWorkspace>,
 }
 
 /// Lookups and finite-difference workspace reused by simulations of this model.
@@ -1591,7 +1600,16 @@ fn run_model<const DAE: bool, H: delay::Mode>(
         n_model: n,
         n_algebraic: desc.n_algebraic as usize,
         interpolation: if DAE && desc.n_discontinuity_roots > 0 {
-            Some(Box::new(solver::Constraints::new(model, desc, settings)?))
+            Some(Box::new(solver::Constraints::cached(
+                model,
+                desc,
+                settings,
+                scratch
+                    .dae
+                    .get_or_insert_with(Box::default)
+                    .interpolation
+                    .take(),
+            )?))
         } else {
             None
         },
@@ -1618,7 +1636,16 @@ fn run_model<const DAE: bool, H: delay::Mode>(
     // the state of CVODE: the model reads its first `n` values
     y0.resize(n_cvode, 0.0);
     let mut constraints = if DAE {
-        Some(Box::new(solver::Constraints::new(model, desc, settings)?))
+        Some(Box::new(solver::Constraints::cached(
+            model,
+            desc,
+            settings,
+            scratch
+                .dae
+                .get_or_insert_with(Box::default)
+                .projection
+                .take(),
+        )?))
     } else {
         None
     };
@@ -1774,6 +1801,14 @@ fn run_model<const DAE: bool, H: delay::Mode>(
         cvode_counts = cvode_counts.add(projection_counts);
     }
     *stats = solver::stats(&problem.counts, &cvode_counts, probe_rhs);
+    if DAE {
+        let cache = scratch.dae.get_or_insert_with(Box::default);
+        cache.projection = constraints.map(|projection| (*projection).into_workspace());
+        cache.interpolation = problem
+            .interpolation
+            .take()
+            .map(|projection| (*projection).into_workspace());
+    }
     scratch.p = problem.p;
     scratch.jac_values = problem.jac_values;
     scratch.y = y0;
@@ -1826,6 +1861,76 @@ mod tests {
         assert!(engine.simulate_prepared(&plan, &[f64::NAN]).is_err());
         engine.simulate_prepared(&plan, &[2.0]).unwrap();
         assert_eq!(before, pointers(&engine.scratch));
+    }
+
+    #[test]
+    fn repeated_dae_runs_retain_initialization_and_projection_storage() {
+        let model = crate::model::EventModel {
+            states: vec![("x", 1.0), ("z", 0.0)],
+            parameters: vec![("k", 0.5)],
+            rhs: |_t, y, p, out| {
+                out[0] = -p[0] * y[0];
+                out[1] = y[1] - 2.0 * y[0] - 1.0;
+            },
+            events: vec![],
+            // Also exercise the separate interpolation projection workspace.
+            discontinuities: vec![|t, _, _| t - 0.5],
+        };
+        let mut desc = model.description();
+        desc.n_algebraic = 1;
+        desc.states[1].settable = false;
+        let mut engine = Engine::new(Box::new(model), desc).unwrap();
+        let req = SimulationRequest {
+            contract: SIMULATION_CONTRACT.into(),
+            start: 0.0,
+            end: 1.0,
+            output: Output::Uniform { steps: 4 },
+            preinit: vec![("k".into(), 0.5)],
+            changes: vec![],
+            steady_state: None,
+            steady_state_after: None,
+            before_events: false,
+            selections: vec!["time".into(), "x".into(), "z".into()],
+            settings: IntegratorSettings::default(),
+            seed: 0,
+            sensitivities: vec![],
+            local_errors: false,
+        };
+        let plan = engine.prepare(&req, &["k".into()]).unwrap();
+        let first = engine.simulate_prepared(&plan, &[0.5]).unwrap();
+        let first_stats = engine.stats();
+        let pointers = |scratch: &Scratch| {
+            let dae = scratch.dae.as_ref().unwrap();
+            (
+                dae.initialization.as_ref().unwrap().storage_identity(),
+                dae.projection.as_ref().unwrap().storage_identity(),
+                dae.interpolation.as_ref().unwrap().storage_identity(),
+            )
+        };
+        let before = pointers(&engine.scratch);
+        for k in [0.9, 0.25, 0.5] {
+            let result = engine.simulate_prepared(&plan, &[k]).unwrap();
+            for row in result.values.as_chunks::<3>().0 {
+                assert!((row[2] - 2.0 * row[1] - 1.0).abs() < 1e-10);
+                assert!((row[1] - (-k * row[0]).exp()).abs() < 1e-5);
+            }
+            assert_eq!(before, pointers(&engine.scratch));
+            if k == 0.5 {
+                assert_eq!(first.values, result.values);
+                assert_eq!(first_stats, engine.stats());
+            }
+        }
+        // Changing tolerances and linear solver must not reuse incompatible IDA state.
+        let mut changed = req.clone();
+        changed.settings.linear_solver = LinearSolver::Klu;
+        changed.settings.absolute_tolerance = Tolerance::PerState(vec![1e-11; 2]);
+        let changed_result = engine.simulate(&changed).unwrap();
+        for row in changed_result.values.as_chunks::<3>().0 {
+            assert!((row[2] - 2.0 * row[1] - 1.0).abs() < 1e-10);
+        }
+        let restored = engine.simulate(&req).unwrap();
+        assert_eq!(first.values, restored.values);
+        assert_eq!(first_stats, engine.stats());
     }
 
     /// A description of `n` states with a diagonal Jacobian pattern.

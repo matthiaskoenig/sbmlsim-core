@@ -44,6 +44,7 @@ def use(sbml: str, request: dict[str, Any], fit: dict[str, Any]) -> None:
 
     compiled: CompiledModel = sbmlsim_core.compile_sbml(sbml)
     sbmlsim_core.compile_sbml(sbml, optimize=False, jacobian="difference_quotient")
+    sbmlsim_core.compile_sbml(sbml, parameter_jacobian=False)
     wasm: bytes = compiled.wasm
     description: dict[str, Any] = compiled.description
 

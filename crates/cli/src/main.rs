@@ -59,6 +59,9 @@ enum Command {
         /// Without the optimizer (the same results, a larger and slower module).
         #[arg(long)]
         no_optimize: bool,
+        /// Omit analytic parameter derivatives and their cached constants.
+        #[arg(long)]
+        no_parameter_jacobian: bool,
     },
     /// Simulates a compiled model with a request and writes the result as CSV.
     Simulate {
@@ -107,7 +110,8 @@ fn main() -> ExitCode {
             model,
             output,
             no_optimize,
-        } => compile(&model, &output, !no_optimize).map(|()| true),
+            no_parameter_jacobian,
+        } => compile(&model, &output, !no_optimize, !no_parameter_jacobian).map(|()| true),
         Command::Simulate {
             model_dir,
             request,
@@ -142,11 +146,17 @@ fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> anyhow::Result<T> {
 }
 
 /// The command `compile`, with the optimizer when `optimize`.
-fn compile(model: &Path, output: &Path, optimize: bool) -> anyhow::Result<()> {
+fn compile(
+    model: &Path,
+    output: &Path,
+    optimize: bool,
+    parameter_jacobian: bool,
+) -> anyhow::Result<()> {
     let sbml =
         fs::read_to_string(model).with_context(|| format!("cannot read {}", model.display()))?;
     let options = CompileOptions {
         optimize,
+        parameter_jacobian,
         ..CompileOptions::default()
     };
     let compiled = sbmlsim_compiler::compile(&sbml, &options)

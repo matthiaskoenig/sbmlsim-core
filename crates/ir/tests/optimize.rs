@@ -397,6 +397,69 @@ fn entity(id: &str) -> Entity {
 }
 
 #[test]
+fn input_cache_is_bounded_and_keeps_lazy_inputs_in_their_branches() {
+    let model = Model {
+        n_algebraic: 0,
+        id: Some("inputs".into()),
+        states: (0..64).map(|i| entity(&format!("x{i}"))).collect(),
+        parameters: vec![],
+        assignment_rules: vec![],
+        initial: vec![],
+        rates: (0..64)
+            .map(|i| {
+                let state = Expr::Symbol(Symbol::State(i));
+                ap(
+                    Op::Plus,
+                    vec![
+                        state.clone(),
+                        ap(Op::Times, vec![state.clone(), t()]),
+                        ap(Op::Times, vec![state, ap(Op::Plus, vec![t(), n(1.0)])]),
+                    ],
+                )
+            })
+            .collect(),
+        events: vec![],
+        selections: vec![],
+    };
+    let optimized = plan(&model, &jacobian(&model), None, &[], true);
+    let cached_inputs = lets(&optimized.rhs)
+        .into_iter()
+        .filter(|(_, expression)| matches!(expression, Expr::Symbol(Symbol::State(_))))
+        .count();
+    assert_eq!(cached_inputs, 32);
+    // A writing program cannot retain a state value across stores to that state.
+    let writing = program(&[], &model.rates, true, &mut 0);
+    assert!(
+        lets(&writing)
+            .iter()
+            .all(|(_, e)| !matches!(e, Expr::Symbol(Symbol::State(_))))
+    );
+
+    let mut lazy = model;
+    lazy.states.truncate(2);
+    let state = Expr::Symbol(Symbol::State(1));
+    lazy.rates = vec![
+        Expr::Piecewise {
+            pieces: vec![(
+                ap(
+                    Op::Plus,
+                    vec![state.clone(), ap(Op::Times, vec![state.clone(), state])],
+                ),
+                ap(Op::Gt, vec![t(), n(0.0)]),
+            )],
+            otherwise: Some(Box::new(n(0.0))),
+        },
+        n(0.0),
+    ];
+    let lazy = plan(&lazy, &jacobian(&lazy), None, &[], true);
+    assert!(
+        lets(&lazy.rhs)
+            .iter()
+            .all(|(_, e)| !matches!(e, Expr::Symbol(Symbol::State(1))))
+    );
+}
+
+#[test]
 fn unread_rules_are_not_computed() {
     // a = 2 * x, b = a * a, c = exp(x) (read by nothing but the selections)
     let rules = vec![
