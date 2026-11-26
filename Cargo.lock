@@ -2424,7 +2424,7 @@ dependencies = [
 
 [[package]]
 name = "sbmlsim-abi"
-version = "0.31.0"
+version = "0.31.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -2433,7 +2433,7 @@ dependencies = [
 
 [[package]]
 name = "sbmlsim-batch"
-version = "0.31.0"
+version = "0.31.1"
 dependencies = [
  "anyhow",
  "rayon",
@@ -2447,7 +2447,7 @@ dependencies = [
 
 [[package]]
 name = "sbmlsim-c"
-version = "0.31.0"
+version = "0.31.1"
 dependencies = [
  "libloading",
  "sbmlsim-abi",
@@ -2465,14 +2465,14 @@ dependencies = [
 
 [[package]]
 name = "sbmlsim-chaos"
-version = "0.31.0"
+version = "0.31.1"
 dependencies = [
  "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "sbmlsim-cli"
-version = "0.31.0"
+version = "0.31.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -2491,7 +2491,7 @@ dependencies = [
 
 [[package]]
 name = "sbmlsim-codegen"
-version = "0.31.0"
+version = "0.31.1"
 dependencies = [
  "sbmlsim-abi",
  "sbmlsim-ir",
@@ -2503,7 +2503,7 @@ dependencies = [
 
 [[package]]
 name = "sbmlsim-compiler"
-version = "0.31.0"
+version = "0.31.1"
 dependencies = [
  "sbmlsim-abi",
  "sbmlsim-codegen",
@@ -2513,14 +2513,14 @@ dependencies = [
 
 [[package]]
 name = "sbmlsim-csolvers"
-version = "0.31.0"
+version = "0.31.1"
 dependencies = [
  "cc",
 ]
 
 [[package]]
 name = "sbmlsim-engine"
-version = "0.31.0"
+version = "0.31.1"
 dependencies = [
  "rand_pcg",
  "sbmlsim-abi",
@@ -2535,7 +2535,7 @@ dependencies = [
 
 [[package]]
 name = "sbmlsim-fit"
-version = "0.31.0"
+version = "0.31.1"
 dependencies = [
  "basin",
  "rayon",
@@ -2551,7 +2551,7 @@ dependencies = [
 
 [[package]]
 name = "sbmlsim-host"
-version = "0.31.0"
+version = "0.31.1"
 dependencies = [
  "anyhow",
  "sbmlsim-abi",
@@ -2566,7 +2566,7 @@ dependencies = [
 
 [[package]]
 name = "sbmlsim-ir"
-version = "0.31.0"
+version = "0.31.1"
 dependencies = [
  "sbmlsim-abi",
  "sbmlsim-mathlib",
@@ -2576,7 +2576,7 @@ dependencies = [
 
 [[package]]
 name = "sbmlsim-mathlib"
-version = "0.31.0"
+version = "0.31.1"
 dependencies = [
  "libm",
  "wasmparser 0.230.0",
@@ -2584,7 +2584,7 @@ dependencies = [
 
 [[package]]
 name = "sbmlsim-plot"
-version = "0.31.0"
+version = "0.31.1"
 dependencies = [
  "charton",
  "libm",
@@ -2597,7 +2597,7 @@ dependencies = [
 
 [[package]]
 name = "sbmlsim-plot-wasm"
-version = "0.31.0"
+version = "0.31.1"
 dependencies = [
  "sbmlsim-plot",
  "serde",
@@ -2606,7 +2606,7 @@ dependencies = [
 
 [[package]]
 name = "sbmlsim-python"
-version = "0.31.0"
+version = "0.31.1"
 dependencies = [
  "mimalloc",
  "numpy",
@@ -2624,7 +2624,7 @@ dependencies = [
 
 [[package]]
 name = "sbmlsim-sbml"
-version = "0.31.0"
+version = "0.31.1"
 dependencies = [
  "roxmltree 0.20.0",
  "thiserror 2.0.21",
@@ -2632,7 +2632,7 @@ dependencies = [
 
 [[package]]
 name = "sbmlsim-wasm"
-version = "0.31.0"
+version = "0.31.1"
 dependencies = [
  "sbmlsim-abi",
  "sbmlsim-compiler",

@@ -1,7 +1,7 @@
 //! The PNG of a figure: the SVG of the renderer, rasterized with resvg.
 //!
 //! The font database holds the bundled Inter (Regular and Bold, version 4.001, the font the
-//! layout measures text with) and, since 0.31.0, subsets of Noto Sans Mono Regular and Bold
+//! layout measures text with) and, since 0.31.1, subsets of Noto Sans Mono Regular and Bold
 //! (the monospace text of a text element, `monospace`) and of Noto Sans Math (the arrows and the mathematical
 //! operators Inter has not, such as the dot operator U+22C5 of a unit, which a text of Inter
 //! takes from it as its fallback, after Inter), and nothing else, so the image does not depend

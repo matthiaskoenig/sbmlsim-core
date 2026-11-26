@@ -137,7 +137,7 @@ pub(crate) fn color_scale(
 /// The width in pixels of a text at a font size in pixels, in Inter Regular or Bold: the measure
 /// the layout of the figures uses (since 0.28.0). The width of a text of several lines is the
 /// width of its widest line. `family` is `sans` (Inter) or `monospace`, a text element of that
-/// family, 0.6 of the size per character (since 0.31.0).
+/// family, 0.6 of the size per character (since 0.31.1).
 ///
 /// Raises `ValueError` for another family.
 #[pyfunction]

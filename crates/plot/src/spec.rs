@@ -101,7 +101,7 @@ impl FontWeight {
     }
 }
 
-/// The family of the font of a text element (since 0.31.0).
+/// The family of the font of a text element (since 0.31.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FontFamily {
@@ -345,7 +345,7 @@ pub struct Plot {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub legend_title: Option<String>,
     /// The columns of the legend of the plot, filled top down and then left to right
-    /// (since 0.31.0; matplotlib's `ncol`), 1 by default. A row legend takes the first of the
+    /// (since 0.31.1; matplotlib's `ncol`), 1 by default. A row legend takes the first of the
     /// plots of its row.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub legend_columns: Option<u32>,
@@ -695,7 +695,7 @@ impl<'de> Deserialize<'de> for Element {
         {
             return Err(in_element(&"scale.name", crate::colors::unknown_scale(n)));
         }
-        // the family of a text likewise (since 0.31.0)
+        // the family of a text likewise (since 0.31.1)
         if let Some(f) = map.get("family")
             && serde_json::from_value::<FontFamily>(f.clone()).is_err()
         {
@@ -933,7 +933,7 @@ pub enum ElementKind {
         /// Font weight, normal by default (since 0.30.0).
         #[serde(default, skip_serializing_if = "FontWeight::is_normal")]
         weight: FontWeight,
-        /// Font family, `sans` by default (since 0.31.0).
+        /// Font family, `sans` by default (since 0.31.1).
         #[serde(default, skip_serializing_if = "FontFamily::is_sans")]
         family: FontFamily,
     },

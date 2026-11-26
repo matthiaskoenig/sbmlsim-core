@@ -16,7 +16,7 @@
 //! ```
 //!
 //! which takes `head.unitsPerEm` and, for every character of the ranges, the
-//! advance of its glyph in `hmtx` through the best `cmap`. Since 0.31.0 the tables also have the
+//! advance of its glyph in `hmtx` through the best `cmap`. Since 0.31.1 the tables also have the
 //! arrows and the mathematical operators Inter has not (the dot operator U+22C5 of a unit) with
 //! the advances of the subset of Noto Sans Math, which the PNG draws them with, scaled to the
 //! units of Inter. Kerning is not applied; a character outside of the table takes the advance
@@ -313,12 +313,12 @@ pub fn text_width_weighted(text: &str, size: f64, weight: FontWeight) -> f64 {
     units as f64 * size / UNITS_PER_EM
 }
 
-/// The advance of every character of a monospace text in font sizes (since 0.31.0): Noto Sans
+/// The advance of every character of a monospace text in font sizes (since 0.31.1): Noto Sans
 /// Mono, which the PNG draws it with, SF Mono and Menlo have 0.6 (Consolas 0.55).
 pub const MONO_ADVANCE: f64 = 0.6;
 
 /// The width of a text in pixels at a font size in pixels, in a family and a weight (since
-/// 0.31.0): of Inter the width of [`text_width_weighted`], of a monospace font the characters
+/// 0.31.1): of Inter the width of [`text_width_weighted`], of a monospace font the characters
 /// of its widest line times [`MONO_ADVANCE`] of the size, whatever the weight.
 pub fn text_width_family(text: &str, size: f64, weight: FontWeight, family: FontFamily) -> f64 {
     match family {

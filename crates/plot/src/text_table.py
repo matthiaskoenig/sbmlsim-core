@@ -7,7 +7,7 @@ The tables are UNITS_PER_EM, ASCII and OTHER of the regular font and, since 0.28
 ASCII_BOLD and OTHER_BOLD of the bold one. The regular font is `assets/fonts/Inter-Regular.ttf`
 of Charton 0.9.1 (Inter 4.001, git 9221beed3), the bold one `crates/plot/fonts/Inter-Bold.ttf`
 of the same version. The advance of a character is the one of its glyph in `hmtx`, found
-through the best `cmap`. Since 0.31.0 the tables also have the arrows and the mathematical
+through the best `cmap`. Since 0.31.1 the tables also have the arrows and the mathematical
 operators Inter has not (the dot operator U+22C5 of a unit), with the advance of the font the PNG
 draws them with, the subset of Noto Sans Math of `crates/plot/fonts`, scaled to the units of
 Inter; the bold tables take them from the same font.

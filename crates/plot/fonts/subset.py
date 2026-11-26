@@ -1,4 +1,4 @@
-"""Writes the subsets of the Noto fonts the PNG embeds besides Inter (since 0.31.0).
+"""Writes the subsets of the Noto fonts the PNG embeds besides Inter (since 0.31.1).
 
     uv run --no-project --with fonttools python crates/plot/fonts/subset.py \
         NotoSansMono-Regular.ttf NotoSansMono-Bold.ttf NotoSansMath-Regular.ttf crates/plot/fonts

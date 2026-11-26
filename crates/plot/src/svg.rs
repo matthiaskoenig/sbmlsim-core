@@ -280,7 +280,7 @@ pub(crate) fn label_lines(
     }
 }
 
-/// The font family of a monospace text (since 0.31.0): the monospace fonts of the systems and
+/// The font family of a monospace text (since 0.31.1): the monospace fonts of the systems and
 /// Noto Sans Mono, which the PNG embeds.
 pub(crate) const MONO_FAMILY: &str =
     "ui-monospace, SFMono-Regular, Menlo, Consolas, Noto Sans Mono, monospace";

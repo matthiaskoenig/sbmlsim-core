@@ -1128,7 +1128,7 @@ The feature `png` of the crate `sbmlsim-plot` (native builds only, never in a wa
 
 The PNG is drawn with the font Inter 4.001, which the binary embeds: `crates/plot/fonts/Inter-Regular.ttf` is the copy of Inter 4.001 which the crate charton 0.9.1 ships (`assets/fonts/Inter-Regular.ttf`) and `crates/plot/fonts/Inter-Bold.ttf` is of the release v4.1 of https://github.com/rsms/inter (font version 4.001). Inter is under the SIL Open Font License 1.1, whose text is `crates/plot/fonts/LICENSE` and is copied below.
 
-Since 0.31.0 the binary also embeds subsets of Noto Sans Mono 2.006 (Regular and Bold, `crates/plot/fonts/NotoSansMono-Regular.ttf` and `NotoSansMono-Bold.ttf`, the monospace text of a figure) and of Noto Sans Math 2.001 (`crates/plot/fonts/NotoSansMath-Regular.ttf`, the arrows and the mathematical operators Inter has not), written by `crates/plot/fonts/subset.py` from the fonts of https://github.com/notofonts. They are under the SIL Open Font License 1.1 as well, with the notice `crates/plot/fonts/LICENSE-Noto`, copied below.
+Since 0.31.1 the binary also embeds subsets of Noto Sans Mono 2.006 (Regular and Bold, `crates/plot/fonts/NotoSansMono-Regular.ttf` and `NotoSansMono-Bold.ttf`, the monospace text of a figure) and of Noto Sans Math 2.001 (`crates/plot/fonts/NotoSansMath-Regular.ttf`, the arrows and the mathematical operators Inter has not), written by `crates/plot/fonts/subset.py` from the fonts of https://github.com/notofonts. They are under the SIL Open Font License 1.1 as well, with the notice `crates/plot/fonts/LICENSE-Noto`, copied below.
 
 ### Inter: `crates/plot/fonts/LICENSE`
 
