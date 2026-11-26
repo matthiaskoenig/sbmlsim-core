@@ -9,7 +9,8 @@ mod support;
 
 use roxmltree::{Document, Node};
 use sbmlsim_plot::{
-    ColorScale, ColorStop, Figure, check_stops, color_scale, geometry, parse, render_svg,
+    ColorScale, ColorStop, Figure, FontFamily, FontWeight, check_stops, color_scale, geometry,
+    parse, render_svg, text_width, text_width_family,
 };
 use support::{assert_golden, spec_text};
 
@@ -629,4 +630,96 @@ fn the_plot_titles_have_their_size() {
         .find(|n| n.has_tag_name("text") && n.text() == Some("panel"))
         .unwrap();
     assert_eq!(num(title, "font-size"), 17.0);
+}
+
+#[test]
+fn golden_v031_text() {
+    assert_golden("v031_text", &render_svg(&spec(&spec_text("v031_text"))));
+}
+
+#[test]
+fn a_legend_inside_fills_its_columns() {
+    let f = spec(&spec_text("v031_text"));
+    let g = geometry(&f);
+    let panel = &g.plots[0].rect;
+    let entries: Vec<_> = g
+        .legend_entries
+        .iter()
+        .filter(|e| e.owner == "units")
+        .collect();
+    assert_eq!(entries.len(), 6);
+    // two columns of three rows, filled top down, inside the panel
+    assert_eq!(entries[1].rect.x, entries[0].rect.x);
+    assert_eq!(entries[2].rect.x, entries[0].rect.x);
+    assert!(entries[3].rect.x > entries[0].rect.x + entries[0].rect.width);
+    assert_eq!(entries[3].rect.y, entries[0].rect.y);
+    for e in &entries {
+        assert!(e.rect.x >= panel.x && e.rect.x + e.rect.width <= panel.x + panel.width);
+    }
+    // a legend of one column is taller than of two
+    let one = spec(&spec_text("v031_text").replace(r#""legend_columns": 2,"#, ""));
+    let one = geometry(&one);
+    let last = |g: &sbmlsim_plot::Geometry| {
+        g.legend_entries
+            .iter()
+            .filter(|e| e.owner == "units")
+            .map(|e| e.rect.y)
+            .fold(0.0, f64::max)
+    };
+    assert!(last(&one) > last(&g));
+    let (path, _) = refused(&figure("{}", "{}", r#""legend_columns": 0,"#, CURVE));
+    assert_eq!(path, "plots[0].legend_columns");
+}
+
+#[test]
+fn a_monospace_text_has_its_family_and_measure() {
+    let element = r#"{"id": "t", "kind": "text", "x": 0.5, "y": 0.5, "text": "mg⋅l  1.0",
+        "family": "monospace"}"#;
+    let svg = render_svg(&spec(&figure("{}", "{}", "", element)));
+    let doc = Document::parse(&svg).unwrap();
+    let node = doc
+        .descendants()
+        .find(|n| n.attribute("data-element") == Some("t"))
+        .unwrap()
+        .descendants()
+        .find(|n| n.has_tag_name("text"))
+        .unwrap();
+    let family = node.attribute("font-family").unwrap();
+    assert!(family.starts_with("ui-monospace") && family.ends_with("monospace"));
+    // the dot operator as the middle dot of every monospace font
+    // nine characters of 0.6 of the size
+    assert_eq!(text(node), "mg\u{b7}l \u{a0}1.0");
+    assert_eq!(
+        text_width_family(
+            "mg\u{22c5}l  1.0",
+            10.0,
+            FontWeight::Normal,
+            FontFamily::Monospace
+        ),
+        9.0 * 0.6 * 10.0
+    );
+    let (path, _) = refused(&figure(
+        "{}",
+        "{}",
+        "",
+        &element.replace("monospace", "serif"),
+    ));
+    assert_eq!(path, "plots[0].elements[0].family");
+}
+
+#[test]
+fn the_signs_of_units_are_measured() {
+    // the dot operator of Noto Sans Math, which the PNG draws it with, and the signs of Inter
+    for sign in [
+        "\u{22c5}", "\u{b7}", "\u{d7}", "\u{2212}", "\u{b5}", "\u{b0}", "\u{b1}",
+    ]
+    .into_iter()
+    .chain([
+        "\u{2264}", "\u{2265}", "\u{b9}", "\u{b2}", "\u{b3}", "\u{2074}", "\u{207b}",
+    ]) {
+        let w = text_width(sign, 10.0);
+        // a sign outside of the table takes the advance of the digit zero
+        assert_ne!(w, text_width("0", 10.0), "{sign}");
+        assert!(w > 0.0, "{sign}");
+    }
 }

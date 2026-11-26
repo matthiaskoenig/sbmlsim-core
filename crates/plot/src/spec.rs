@@ -101,6 +101,25 @@ impl FontWeight {
     }
 }
 
+/// The family of the font of a text element (since 0.31.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FontFamily {
+    /// Inter, the font of every text of a figure.
+    #[default]
+    Sans,
+    /// A monospace font: every character 0.6 of the font size wide, as the layout measures it;
+    /// drawn with `ui-monospace, SFMono-Regular, Menlo, Consolas, Noto Sans Mono, monospace` in
+    /// the SVG and with Noto Sans Mono in the PNG, so the columns of a table of text align.
+    Monospace,
+}
+
+impl FontFamily {
+    fn is_sans(&self) -> bool {
+        *self == FontFamily::Sans
+    }
+}
+
 fn bold() -> FontWeight {
     FontWeight::Bold
 }
@@ -325,6 +344,11 @@ pub struct Plot {
     /// of its row.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub legend_title: Option<String>,
+    /// The columns of the legend of the plot, filled top down and then left to right
+    /// (since 0.31.1; matplotlib's `ncol`), 1 by default. A row legend takes the first of the
+    /// plots of its row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub legend_columns: Option<u32>,
     /// A color bar.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub colorbar: Option<ColorBar>,
@@ -575,7 +599,7 @@ fn kind_fields(kind: &str) -> Option<&'static [&'static str]> {
         "heatmap" => &[
             "rows", "columns", "values", "text", "scale", "x_edges", "y_edges",
         ],
-        "text" => &["x", "y", "text", "anchor", "size", "weight"],
+        "text" => &["x", "y", "text", "anchor", "size", "weight", "family"],
         "rule" => &["orientation", "value"],
         "polygon" => &["paths"],
         _ => return None,
@@ -670,6 +694,15 @@ impl<'de> Deserialize<'de> for Element {
             && ColorScaleName::from_name(n).is_none()
         {
             return Err(in_element(&"scale.name", crate::colors::unknown_scale(n)));
+        }
+        // the family of a text likewise (since 0.31.1)
+        if let Some(f) = map.get("family")
+            && serde_json::from_value::<FontFamily>(f.clone()).is_err()
+        {
+            return Err(in_element(
+                &"family",
+                format!("unknown font family {f}, expected `sans` or `monospace`"),
+            ));
         }
         // the weight of a text likewise (since 0.30.0)
         if let Some(w) = map.get("weight")
@@ -900,6 +933,9 @@ pub enum ElementKind {
         /// Font weight, normal by default (since 0.30.0).
         #[serde(default, skip_serializing_if = "FontWeight::is_normal")]
         weight: FontWeight,
+        /// Font family, `sans` by default (since 0.31.1).
+        #[serde(default, skip_serializing_if = "FontFamily::is_sans")]
+        family: FontFamily,
     },
     /// A horizontal or vertical line.
     Rule {
@@ -1958,6 +1994,9 @@ pub(crate) fn validate(f: &Figure) -> Result<(), SpecError> {
                     format!("row {} has a bar above it already, {first}", p.row),
                 );
             }
+        }
+        if p.legend_columns == Some(0) {
+            return err(format!("{pp}.legend_columns"), "must be at least 1");
         }
         if let Some(order) = &p.legend_order {
             let mut seen = HashSet::new();

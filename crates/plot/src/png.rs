@@ -1,8 +1,11 @@
 //! The PNG of a figure: the SVG of the renderer, rasterized with resvg.
 //!
 //! The font database holds the bundled Inter (Regular and Bold, version 4.001, the font the
-//! layout measures text with) and nothing else, so the image does not depend on the fonts of
-//! the machine, and every generic family of the SVG resolves to Inter.
+//! layout measures text with) and, since 0.31.1, subsets of Noto Sans Mono Regular and Bold
+//! (the monospace text of a text element, `monospace`) and of Noto Sans Math (the arrows and the mathematical
+//! operators Inter has not, such as the dot operator U+22C5 of a unit, which a text of Inter
+//! takes from it as its fallback, after Inter), and nothing else, so the image does not depend
+//! on the fonts of the machine; every generic family but `monospace` resolves to Inter.
 
 use crate::error::RenderError;
 use crate::interact::FigurePlan;
@@ -12,6 +15,9 @@ use std::sync::{Arc, OnceLock};
 
 const REGULAR: &[u8] = include_bytes!("../fonts/Inter-Regular.ttf");
 const BOLD: &[u8] = include_bytes!("../fonts/Inter-Bold.ttf");
+const MONO: &[u8] = include_bytes!("../fonts/NotoSansMono-Regular.ttf");
+const MONO_BOLD: &[u8] = include_bytes!("../fonts/NotoSansMono-Bold.ttf");
+const MATH: &[u8] = include_bytes!("../fonts/NotoSansMath-Regular.ttf");
 
 /// The largest number of pixels of an image, 64 Mpx (`64 * 1024 * 1024`), whose pixmap of four
 /// bytes per pixel is 256 MiB, so neither a dpi nor a figure grown by its legends can ask for
@@ -25,12 +31,17 @@ fn fonts() -> Arc<usvg::fontdb::Database> {
         let mut db = usvg::fontdb::Database::new();
         db.load_font_data(REGULAR.to_vec());
         db.load_font_data(BOLD.to_vec());
+        // the fallback of a character Inter has not is the first face which has it, in this
+        // order: the operators of Noto Sans Math before Noto Sans Mono
+        db.load_font_data(MATH.to_vec());
+        db.load_font_data(MONO.to_vec());
+        db.load_font_data(MONO_BOLD.to_vec());
         let family = "Inter";
         db.set_sans_serif_family(family);
         db.set_serif_family(family);
         db.set_cursive_family(family);
         db.set_fantasy_family(family);
-        db.set_monospace_family(family);
+        db.set_monospace_family("Noto Sans Mono");
         Arc::new(db)
     })
     .clone()
@@ -101,6 +112,17 @@ mod tests {
 
     #[test]
     fn the_database_holds_the_bundled_fonts_only() {
-        assert_eq!(fonts().len(), 2);
+        assert_eq!(fonts().len(), 5);
+        let families: Vec<String> = fonts().faces().map(|f| f.families[0].0.clone()).collect();
+        assert_eq!(
+            families,
+            [
+                "Inter",
+                "Inter",
+                "Noto Sans Math",
+                "Noto Sans Mono",
+                "Noto Sans Mono"
+            ]
+        );
     }
 }

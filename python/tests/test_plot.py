@@ -252,13 +252,26 @@ def test_color_scale_of_stops() -> None:
         sbmlsim_core.color_scale([(0.0, "#000000"), (0.9, "#ffffff")], 0.0, 1.0, [0.5])
 
 
+def test_text_width_of_a_family() -> None:
+    # a monospace text is 0.6 of the size per character, the dot operator of a unit is measured
+    assert sbmlsim_core.text_width(
+        "AUC  12.40", 10.0, family="monospace"
+    ) == pytest.approx(60.0)
+    assert sbmlsim_core.text_width("mg\u22c5l", 10.0) > sbmlsim_core.text_width(
+        "mgl", 10.0
+    )
+    with pytest.raises(ValueError, match="unknown font family"):
+        sbmlsim_core.text_width("x", 10.0, family="serif")
+
+
 def test_fields_of_0_31_render() -> None:
     # the specs of the renderer's fixtures of the fields since 0.31.0
-    for name in ["v031", "v031_legend"]:
+    for name in ["v031", "v031_legend", "v031_text"]:
         spec = (PLOT / "specs" / f"{name}.json").read_text(encoding="utf-8")
         svg = sbmlsim_core.render_svg(spec)
         assert svg == (PLOT / "golden" / f"{name}.svg").read_text(encoding="utf-8")
-    geometry = sbmlsim_core.figure_geometry(spec)
+    legend = (PLOT / "specs" / "v031_legend.json").read_text(encoding="utf-8")
+    geometry = sbmlsim_core.figure_geometry(legend)
     assert {e["owner"] for e in geometry["legend_entries"]} == {"figure"}
 
 

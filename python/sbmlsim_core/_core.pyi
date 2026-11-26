@@ -363,10 +363,14 @@ def figure_geometry(spec: str) -> dict[str, Any]:
 def pick(spec: str, x: float, y: float, radius: float = 8.0) -> dict[str, Any] | None:
     """The data point nearest to the pixel `(x, y)` within `radius` pixels, or `None`."""
 
-def text_width(text: str, size: float, bold: bool = False) -> float:
+def text_width(
+    text: str, size: float, bold: bool = False, family: str = "sans"
+) -> float:
     """The width in pixels of `text` at the font size `size` px in Inter, the figure layout measure.
 
     Since 0.28.0. The width of a text of several lines is the width of its widest line.
+    `family` (since 0.31.1) is `sans`, Inter, or `monospace`, the family of a text element
+    whose every character is 0.6 of the size wide; another raises `ValueError`.
     """
 
 def color_scale(

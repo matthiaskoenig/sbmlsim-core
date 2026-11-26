@@ -210,5 +210,6 @@ def the_figures(values: list[float]) -> None:
     sbmlsim_core.color_scale("viridis", 0.0, 1.0, values, end="1")  # ty: ignore[invalid-argument-type]
     names: list[str] = sbmlsim_core.COLOR_SCALES
     width: float = sbmlsim_core.text_width("Smith2001", 13.0, bold=True)
+    mono: float = sbmlsim_core.text_width("AUC", 12.0, family="monospace")
     sbmlsim_core.text_width("x")  # ty: ignore[missing-argument]
-    print(contract, svg, png, default_png, geometry, hit, colors, names, width)
+    print(contract, svg, png, default_png, geometry, hit, colors, names, width, mono)

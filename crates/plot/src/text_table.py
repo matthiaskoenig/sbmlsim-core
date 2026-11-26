@@ -1,12 +1,16 @@
 """Writes the advance tables of Inter of `text.rs` to stdout.
 
-    uv run --no-project --with fonttools python text_table.py Inter-Regular.ttf Inter-Bold.ttf
+    uv run --no-project --with fonttools python text_table.py Inter-Regular.ttf Inter-Bold.ttf \
+        NotoSansMath-Regular.ttf
 
 The tables are UNITS_PER_EM, ASCII and OTHER of the regular font and, since 0.28.0,
 ASCII_BOLD and OTHER_BOLD of the bold one. The regular font is `assets/fonts/Inter-Regular.ttf`
 of Charton 0.9.1 (Inter 4.001, git 9221beed3), the bold one `crates/plot/fonts/Inter-Bold.ttf`
 of the same version. The advance of a character is the one of its glyph in `hmtx`, found
-through the best `cmap`.
+through the best `cmap`. Since 0.31.1 the tables also have the arrows and the mathematical
+operators Inter has not (the dot operator U+22C5 of a unit), with the advance of the font the PNG
+draws them with, the subset of Noto Sans Math of `crates/plot/fonts`, scaled to the units of
+Inter; the bold tables take them from the same font.
 """
 
 import sys
@@ -32,22 +36,31 @@ OTHER = (
     ]
     + [0x2070, 0x2074, 0x2075, 0x2076, 0x2077, 0x2078, 0x2079, 0x207A, 0x207B]
     + list(range(0x2080, 0x208A))
-    + [0x2190, 0x2192, 0x2212, 0x221A, 0x221E, 0x2248, 0x2260, 0x2264, 0x2265]
+    + list(range(0x2190, 0x2300))
 )
 
 
-def tables(path: str, suffix: str) -> tuple[int, list[str]]:
-    """The units per em of the font at `path` and its advance tables as rust source."""
+def tables(path: str, fallback: str, suffix: str) -> tuple[int, list[str]]:
+    """The units per em of the font at `path` and its advance tables as rust source.
+
+    A character the font has not takes its advance in the font at `fallback`.
+    """
     font = TTFont(path)
     cmap = font.getBestCmap()
     hmtx = font["hmtx"]
     upem = font["head"].unitsPerEm
+    other = TTFont(fallback)
+    other_cmap = other.getBestCmap()
+    other_hmtx = other["hmtx"]
+    scale = upem / other["head"].unitsPerEm
 
     def advance(code: int) -> int:
-        return hmtx[cmap[code]][0]
+        if code in cmap:
+            return hmtx[cmap[code]][0]
+        return round(other_hmtx[other_cmap[code]][0] * scale)
 
     ascii_ = [advance(c) for c in range(0x20, 0x7F)]
-    others = [c for c in OTHER if c in cmap]
+    others = [c for c in OTHER if c in cmap or c in other_cmap]
     weight = " in the bold font" if suffix else ""
     out = [f"/// Advances of U+0020 to U+007E{weight} in font units.\n#[rustfmt::skip]"]
     out.append(f"pub(crate) const ASCII{suffix}: [u16; 95] = [")
@@ -69,10 +82,10 @@ def tables(path: str, suffix: str) -> tuple[int, list[str]]:
     return upem, out
 
 
-def main(regular: str, bold: str) -> None:
+def main(regular: str, bold: str, fallback: str) -> None:
     """Prints the glyph advance tables of the regular and the bold font as rust source."""
-    upem, out = tables(regular, "")
-    bold_upem, bold_out = tables(bold, "_BOLD")
+    upem, out = tables(regular, fallback, "")
+    bold_upem, bold_out = tables(bold, fallback, "_BOLD")
     if bold_upem != upem:
         raise SystemExit(f"units per em differ: {upem} and {bold_upem}")
     head = f"/// Font units per em of the table.\npub(crate) const UNITS_PER_EM: f64 = {upem}.0;\n"
@@ -80,4 +93,4 @@ def main(regular: str, bold: str) -> None:
 
 
 if __name__ == "__main__":
-    main(sys.argv[1], sys.argv[2])
+    main(sys.argv[1], sys.argv[2], sys.argv[3])
