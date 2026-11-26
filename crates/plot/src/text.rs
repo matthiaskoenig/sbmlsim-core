@@ -11,12 +11,17 @@
 //!
 //! ```text
 //! uv run --no-project --with fonttools python crates/plot/src/text_table.py \
-//!     crates/plot/fonts/Inter-Regular.ttf crates/plot/fonts/Inter-Bold.ttf
+//!     crates/plot/fonts/Inter-Regular.ttf crates/plot/fonts/Inter-Bold.ttf \
+//!     crates/plot/fonts/NotoSansMath-Regular.ttf
 //! ```
 //!
 //! which takes `head.unitsPerEm` and, for every character of the ranges, the
-//! advance of its glyph in `hmtx` through the best `cmap`. Kerning is not applied; a character
-//! outside of the table takes the advance of the digit zero.
+//! advance of its glyph in `hmtx` through the best `cmap`. Since 0.31.0 the tables also have the
+//! arrows and the mathematical operators Inter has not (the dot operator U+22C5 of a unit) with
+//! the advances of the subset of Noto Sans Math, which the PNG draws them with, scaled to the
+//! units of Inter. Kerning is not applied; a character outside of the table takes the advance
+//! of the digit zero. A text of the family `monospace` is [`MONO_ADVANCE`] font sizes per
+//! character ([`text_width_family`]).
 //!
 //! A text of several lines (since 0.28.0) is split at every `\n`: it is as wide as its widest
 //! line, and its lines are [`LINE_HEIGHT`] font sizes apart.
