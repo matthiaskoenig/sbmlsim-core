@@ -1021,9 +1021,6 @@ pub(crate) struct Integrator<const DAE: bool, H: crate::delay::Mode = crate::del
     /// The vectors the local error estimates and the error weights of the last step are read
     /// into ([`Integrator::local_errors`]), null until a run asks for them.
     local: [N_Vector; 2],
-    /// The first step of the next start in place of the one of the settings, once
-    /// ([`Integrator::set_initial_step`]).
-    initial_step: Option<f64>,
 }
 
 /// The bytes of the header of an allocation of `malloc` (glibc on a 64-bit target: the size
@@ -1204,7 +1201,6 @@ impl<const DAE: bool, H: crate::delay::Mode> Integrator<DAE, H> {
                 problem: ptr::null_mut(),
             }),
             local: [ptr::null_mut(); 2],
-            initial_step: None,
         };
         let n = config.n as sunindextype;
         // SAFETY: the objects are created in the context and owned by `cvode`, which frees them
@@ -1465,12 +1461,7 @@ impl<const DAE: bool, H: crate::delay::Mode> Integrator<DAE, H> {
             )?;
             // Delay overlap control changes these settings within a segment.
             // Restore the request at every restart even when stable settings match.
-            // 0.0 is CVODE's own default for both: no largest step, an estimated first step;
-            // the first step of a stepper replaces the one of the settings once
-            let initial_step = self
-                .initial_step
-                .take()
-                .unwrap_or(settings.initial_time_step);
+            // 0.0 is CVODE's own default for both: no largest step, an estimated first step
             self.flag(
                 backend!(
                     self,
@@ -1481,7 +1472,12 @@ impl<const DAE: bool, H: crate::delay::Mode> Integrator<DAE, H> {
                 t0,
             )?;
             self.flag(
-                backend!(self, CVodeSetInitStep, IDASetInitStep, initial_step),
+                backend!(
+                    self,
+                    CVodeSetInitStep,
+                    IDASetInitStep,
+                    settings.initial_time_step
+                ),
                 t0,
             )?;
             if self.settings.as_ref() != Some(settings) {
@@ -1752,12 +1748,6 @@ impl<const DAE: bool, H: crate::delay::Mode> Integrator<DAE, H> {
             weights.copy_from_slice(&values(ewt, n)[..weights.len()]);
         }
         Ok(())
-    }
-
-    /// Sets the first step of the next start (0 for the estimate of CVODE), which replaces the
-    /// initial step of its settings for that start only; `None` leaves it to the settings.
-    pub fn set_initial_step(&mut self, step: Option<f64>) {
-        self.initial_step = step;
     }
 
     /// An estimate of the memory of this integrator in bytes, from its configuration and from

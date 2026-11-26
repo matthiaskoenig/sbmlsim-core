@@ -63,9 +63,11 @@ struct Projections {
 /// An instance of a model which is advanced from a given state over one interval at a time,
 /// see the module documentation.
 ///
-/// Its step control is its own: the first step of an advance is the step the integrator ended
-/// the advance before with (the estimate of CVODE, or the initial step of the settings, in the
-/// first one), and nothing of it depends on another instance.
+/// Its step control is its own and depends on no other instance: every advance starts the
+/// integrator with the first step of a simulation, the estimate of CVODE (or IDA), or the
+/// initial step of the settings. (Starting with the step the advance before ended with was
+/// measured worse: a step of a higher order fails the error test of the first order, at which
+/// the integrator starts again, so it doubled the rejected steps and saved no time.)
 pub struct Stepper {
     model: Box<dyn ModelFns>,
     desc: Arc<ModelDescription>,
@@ -88,8 +90,6 @@ pub struct Stepper {
     /// No changes: the caller changes the state between two advances.
     changes: Changes,
     limits: EventLimits,
-    /// The first step of the next advance, `None` before the first one.
-    step: Option<f64>,
     failed: bool,
 }
 
@@ -164,7 +164,6 @@ impl Stepper {
             selections: Vec::new(),
             changes: no_changes,
             limits: EventLimits::default(),
-            step: None,
             failed: false,
             desc,
         })
@@ -186,8 +185,8 @@ impl Stepper {
     /// documentation); the state at `t1` is [`Stepper::state`] afterwards.
     ///
     /// The integrator starts again from `y` at `t0` (a projection on the algebraic equations
-    /// first, for a model of algebraic rules), with the step it ended the advance before
-    /// with as its first step. `t0` need not be where the advance before ended.
+    /// first, for a model of algebraic rules), with the first step of a simulation. `t0` need
+    /// not be where the advance before ended.
     ///
     /// A state of the wrong length or with a value which is not finite, and an interval which
     /// is not finite or ends before it starts, are refused ([`EngineError::Request`]) and change
@@ -285,7 +284,6 @@ impl Stepper {
             selections: &mut self.selections,
             changes: &self.changes,
             limits: self.limits,
-            step: &mut self.step,
         };
         let stats = match &mut self.solver {
             Solver::None => parts.advance::<false>(None, None, t0, t1)?,
@@ -311,7 +309,6 @@ struct Parts<'a> {
     selections: &'a mut Vec<f64>,
     changes: &'a Changes,
     limits: EventLimits,
-    step: &'a mut Option<f64>,
 }
 
 impl Parts<'_> {
@@ -338,7 +335,6 @@ impl Parts<'_> {
             selections,
             changes,
             limits,
-            step,
         } = self;
         let with_events = !desc.events.is_empty() || desc.n_roots > 0;
         let (pattern, difference, analytic) = match cvode.as_deref() {
@@ -346,10 +342,8 @@ impl Parts<'_> {
             None => (None, None, false),
         };
         if let Some(cvode) = cvode.as_deref_mut() {
-            // the counters of the memory start with this advance, its first step is the one the
-            // advance before ended with
+            // the counters of the memory start with this advance
             cvode.begin();
-            cvode.set_initial_step(*step);
         }
         jac_values.resize(pattern.map_or(0, |pattern| pattern.row_idx.len()), 0.0);
         let mut projections = projections.map(|projections| &mut **projections);
@@ -412,8 +406,6 @@ impl Parts<'_> {
                 };
                 let outcome = integrate();
                 constraints = events.constraints.take();
-                // a step of the advance before which no start took stays the next one's
-                cvode.set_initial_step(None);
                 (outcome, Some(cvode.counts()))
             }
             mut cvode => {
@@ -435,9 +427,6 @@ impl Parts<'_> {
                     )
                 };
                 let outcome = integrate();
-                if let Some(cvode) = cvode.as_deref_mut() {
-                    cvode.set_initial_step(None);
-                }
                 (outcome, cvode.as_deref().map(Integrator::counts))
             }
         };
@@ -455,11 +444,6 @@ impl Parts<'_> {
         let Some(counts) = counts else {
             return Ok(StepStats::default());
         };
-        // the step the integrator would take next, the first step of the next advance
-        let next = counts.state.current_time_step;
-        if counts.steps > 0 && next.is_finite() && next > 0.0 {
-            *step = Some(next);
-        }
         Ok(StepStats {
             steps: counts.steps,
             rejected: counts.error_test_failures + counts.nonlinear_convergence_failures,
