@@ -4,7 +4,9 @@
 //! The stepper advances the native model of the C target; the cell model with the 50 parameter
 //! sets and the cases of the suite are the ones of the tests of the C target
 //! (`crates/c/tests/common`). The tests over `testdata/cases` skip with a note when the
-//! directory is absent, unless `SBMLSIM_CORE_REQUIRE_CASES` is set.
+//! directory is absent, unless `SBMLSIM_CORE_REQUIRE_CASES` is set. They run natively only: the
+//! C target and the host are no crates of `wasm32`.
+#![cfg(not(target_arch = "wasm32"))]
 
 #[path = "../../c/tests/common/mod.rs"]
 mod common;
