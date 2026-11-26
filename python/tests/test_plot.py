@@ -45,19 +45,19 @@ def test_contract() -> None:
 
 
 def test_render_svg_fixture() -> None:
-    spec = (PLOT / "specs" / "benchmark.json").read_text()
-    golden = (PLOT / "golden" / "benchmark.svg").read_text()
+    spec = (PLOT / "specs" / "benchmark.json").read_text(encoding="utf-8")
+    golden = (PLOT / "golden" / "benchmark.svg").read_text(encoding="utf-8")
     assert sbmlsim_core.render_svg(spec) == golden
 
 
 def test_render_svg_colorbars_fixture() -> None:
-    spec = (PLOT / "specs" / "v028.json").read_text()
-    golden = (PLOT / "golden" / "v028.svg").read_text()
+    spec = (PLOT / "specs" / "v028.json").read_text(encoding="utf-8")
+    golden = (PLOT / "golden" / "v028.svg").read_text(encoding="utf-8")
     assert sbmlsim_core.render_svg(spec) == golden
 
 
 def test_invalid_spec_value_error() -> None:
-    spec = json.loads((PLOT / "specs" / "benchmark.json").read_text())
+    spec = json.loads((PLOT / "specs" / "benchmark.json").read_text(encoding="utf-8"))
     spec["plots"][0]["elements"][0]["y"] = spec["plots"][0]["elements"][0]["y"][:-1]
     with pytest.raises(ValueError, match=r"plots\[0\]\.elements\[0\]\.y"):
         sbmlsim_core.render_svg(json.dumps(spec))
