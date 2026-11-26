@@ -28,10 +28,13 @@
    The step control is the one of rodas.f without its memory across steps (the points carry
    only t and h): the error is the root mean square of the embedded estimate scaled by
    atol + rtol max(|y|, |y_new|); a step is accepted when it is at most 1 and every new state is
-   finite, and the next step is h / max(1/6, min(5, err^(1/4) / 0.9)). A singular matrix or an
-   error which is not finite halves (or divides by 5) the step. A step which reaches t1 within
-   1.0001 h is stretched or shortened to end exactly at t1. A point without a step (h <= 0 or not
-   finite) starts with the estimate of Hairer and Wanner (their HINIT, one explicit Euler step).
+   finite, and the next step is h / q, q = max(1/6, min(5, err^(1/4) / 0.9)). A singular matrix
+   halves the step, a state or an error which is not finite divides it by 5. A step which
+   reaches t1 within 1.0001 h is stretched or shortened to end exactly at t1; after it the next
+   step is the one before the shortening divided by q where q > 1 (h / q where that is larger),
+   so a short last step does not shrink the step of the next interval. A point without a step
+   (h <= 0 or not finite) starts with the estimate of Hairer and Wanner (their HINIT, one
+   explicit Euler step). The integrator reads neither INFINITY nor NAN.
 
    The control of a point is t, h, done and failed: an attempt is made where done and failed
    are 0; it sets done where t reaches t1, and failed where the step it would take next is
@@ -191,7 +194,9 @@ CEED_QFUNCTION_HELPER void sbmlsim_rosenbrock_attempt(const struct SbmlsimRosenb
     for (int k = 0; k < N; k++) e[r * N + k] = -e[r * N + k];
     e[r * N + r] += fac;
   }
-  double err = INFINITY;
+  /* err is valid where the matrix is not singular; finite where every new state is */
+  double err      = 0.0;
+  int    finite   = 0;
   int    singular = !sbmlsim_rosenbrock_lu(e, pivot);
   if (!singular) {
 #ifdef SBMLSIM_ROSENBROCK_DFDT
@@ -253,16 +258,16 @@ CEED_QFUNCTION_HELPER void sbmlsim_rosenbrock_attempt(const struct SbmlsimRosenb
     SBMLSIM_ROSENBROCK_RHS(t + h, ynew, p, dy);
     for (int k = 0; k < N; k++) k6[k] = dy[k] + (hc61 * k1[k] + hc62 * k2[k] + hc65 * k5[k] + hc64 * k4[k] + hc63 * k3[k]);
     sbmlsim_rosenbrock_solve(e, pivot, k6);
-    int finite = 1;
+    finite = 1;
     for (int k = 0; k < N; k++) {
       ynew[k] += k6[k];
       finite = finite && isfinite(ynew[k]);
     }
-    err = sbmlsim_rosenbrock_norm(k6, y, ynew, c->rtol, c->atol);
-    if (!finite) err = INFINITY;
+    err    = sbmlsim_rosenbrock_norm(k6, y, ynew, c->rtol, c->atol);
+    finite = finite && isfinite(err);
   }
 
-  if (err <= 1.0) {
+  if (!singular && finite && err <= 1.0) {
     /* accepted */
     const double q    = fmax(1.0 / 6.0, fmin(5.0, pow(err, 0.25) / 0.9));
     const double next = h / q;
@@ -271,8 +276,11 @@ CEED_QFUNCTION_HELPER void sbmlsim_rosenbrock_attempt(const struct SbmlsimRosenb
     if (last) {
       control[0] = c->t1;
       control[2] = 1.0;
-      /* the step before it was shortened, unless the error asks for a smaller one */
-      control[1] = next < h ? next : fmax(next, proposed);
+      /* the step before it was shortened (or stretched) to t1, scaled by the factor of the
+         error where that asks for a smaller one; the step of the error where it is larger. A
+         step from the shortened one alone could fall below h_min after a short last step and
+         fail the point at the start of the next interval. */
+      control[1] = fmax(next, fmin(proposed, proposed / q));
     } else {
       control[0] = t + h;
       control[1] = next;
@@ -280,7 +288,7 @@ CEED_QFUNCTION_HELPER void sbmlsim_rosenbrock_attempt(const struct SbmlsimRosenb
   } else {
     /* rejected: a singular matrix halves the step, an error which is not finite divides it
        by 5 */
-    const double next = singular ? 0.5 * h : (isfinite(err) ? h / fmin(5.0, pow(err, 0.25) / 0.9) : 0.2 * h);
+    const double next = singular ? 0.5 * h : (finite ? h / fmin(5.0, pow(err, 0.25) / 0.9) : 0.2 * h);
     counts[1] += 1.0;
     control[1] = next;
     if (next < c->h_min || !(t + next > t)) control[3] = 1.0;

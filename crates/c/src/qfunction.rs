@@ -76,6 +76,22 @@ const MAX_APPLICATIONS: u64 = 100_000_000;
 /// The integrator, pasted into every QFunction.
 const ROSENBROCK: &str = include_str!("../include/sbmlsim_rosenbrock.h");
 
+/// `<math.h>` outside the JIT pass of libCEED; inside it (where libCEED's loader drops the
+/// include, and NVRTC and HIPRTC define no `INFINITY` and `NAN`) the two constants the math of
+/// the model writes, as the builtins of GCC, Clang and the CUDA compilers.
+const MATH_H: &str = "#ifndef CEED_RUNNING_JIT_PASS
+#include <math.h>
+#else
+#ifndef INFINITY
+#define INFINITY __builtin_huge_val()
+#endif
+#ifndef NAN
+#define NAN __builtin_nan(\"\")
+#endif
+#endif
+
+";
+
 /// The include of libCEED's types, which [`QSource::host_code`] replaces.
 const CEED_TYPES: &str = "#include <ceed/types.h>\n";
 
@@ -213,8 +229,7 @@ pub fn generate_qfunction_model(model: &Model) -> Result<QSource, CError> {
     )
     .unwrap();
     unit.code.push_str(CEED_TYPES);
-    unit.code
-        .push_str("#ifndef CEED_RUNNING_JIT_PASS\n#include <math.h>\n#endif\n\n");
+    unit.code.push_str(MATH_H);
     unit.code.push_str(&emit::math("CEED_QFUNCTION_HELPER"));
     unit.code.push('\n');
 

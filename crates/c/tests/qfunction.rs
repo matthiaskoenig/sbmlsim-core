@@ -487,3 +487,140 @@ fn harness_refuses_what_does_not_fit() {
     // nothing above changed the points
     assert_eq!(points, Points::new(&q, &[1.0, 1.0], &[1.0, -1.0]).unwrap());
 }
+
+/// What a JIT backend of libCEED gives the source of a QFunction, after `cuda-jit.h`: its
+/// macros, the types, and the math functions of the device as functions, but no `<math.h>`
+/// (the source guards it, libCEED's loader drops it), so neither `INFINITY` nor `NAN`.
+const JIT_PASS: &str = r#"#define __device__
+#define CEED_QFUNCTION(name) inline __device__ int name
+#define CEED_QFUNCTION_HELPER inline __device__
+#define CeedPragmaSIMD
+#define CEED_Q_VLA 1
+typedef int int32_t;
+typedef int32_t CeedInt;
+typedef double CeedScalar;
+extern "C" {
+double fabs(double); double fmax(double, double); double fmin(double, double);
+double sqrt(double); double cbrt(double); double pow(double, double); double exp(double);
+double log(double); double log10(double); double log2(double); double sin(double);
+double cos(double); double tan(double); double asin(double); double acos(double);
+double atan(double); double atan2(double, double); double sinh(double); double cosh(double);
+double tanh(double); double asinh(double); double acosh(double); double atanh(double);
+double floor(double); double ceil(double); double trunc(double); double round(double);
+double fmod(double, double); double hypot(double, double); double copysign(double, double);
+}
+bool isfinite(double);
+bool isnan(double);
+bool isinf(double);
+"#;
+
+/// The source of a model as a JIT backend compiles it: C++17 (as NVRTC and HIPRTC read it)
+/// with `CEED_RUNNING_JIT_PASS`, the environment of [`JIT_PASS`] and no include of libCEED's
+/// types (which only repeats the definitions there). Skipped with a note without `c++`.
+#[test]
+fn sources_compile_in_the_jit_pass() {
+    let compiler = std::env::var("CXX").unwrap_or_else(|_| "c++".to_string());
+    let dir = tempfile::tempdir().unwrap();
+    for (name, sbml) in [
+        ("cell", cell_model()),
+        ("linear", linear()),
+        ("blow_up", blow_up()),
+    ] {
+        let q = generate_qfunction(&sbml).unwrap();
+        let code = q.code.replacen("#include <ceed/types.h>\n", "", 1);
+        let file = dir.path().join(format!("{name}.cpp"));
+        std::fs::write(&file, format!("{JIT_PASS}{code}")).unwrap();
+        let mut words = compiler.split_whitespace();
+        let output = match Command::new(words.next().unwrap())
+            .args(words)
+            .args([
+                "-x",
+                "c++",
+                "-std=c++17",
+                "-fsyntax-only",
+                "-nostdinc",
+                "-DCEED_RUNNING_JIT_PASS=1",
+            ])
+            .arg(&file)
+            .output()
+        {
+            Ok(output) => output,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                eprintln!("note: no C++ compiler `{compiler}`; the JIT pass is skipped");
+                return;
+            }
+            Err(e) => panic!("{compiler}: {e}"),
+        };
+        assert!(
+            output.status.success(),
+            "{name}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+/// A point whose last step of an interval is shortened to a small part of its step, with an
+/// error near 1 (so its factor shrinks the step), goes on in the next interval: the step it
+/// stores is the one before the shortening scaled by the factor, not the shortened one, which
+/// would fall below `h_min` and fail the point at the start of the next interval.
+#[test]
+fn a_short_last_step_keeps_the_step() {
+    let (q, library) = qfunction(&blow_up());
+    // y' = -y^2 from y = 1
+    let start = Points::new(&q, &[1.0], &[-1.0]).unwrap();
+    let rest = 0.1;
+    // the error of one step of `rest` from t = 0, with an absolute tolerance alone: err is the
+    // error at atol = 1 over atol, read from the step the point stores after an accepted step
+    // of the unclamped factor q = err^(1/4) / 0.9 in (1/6, 5)
+    let attempt = |atol: f64, h: f64, t1: f64, h_min: f64| {
+        let mut points = start.clone();
+        points.control[CONTROL_H] = h;
+        let context = RosenbrockContext {
+            t1,
+            rtol: 1e-300,
+            atol,
+            h_min,
+        };
+        apply_points(&library, &q, &context, &mut points, 1).unwrap();
+        points
+    };
+    let mut atol = 1.0;
+    let error_at_one = loop {
+        let points = attempt(atol, rest, 10.0, 1e-10);
+        assert_eq!(points.control[CONTROL_T], rest, "atol {atol}");
+        let factor = rest / points.control[CONTROL_H];
+        if factor <= 1.0 / 6.0 + 1e-12 {
+            atol /= 1e3;
+            continue;
+        }
+        assert!(factor < 5.0, "atol {atol}");
+        break (0.9 * factor).powi(4) * atol;
+    };
+    // the tolerance of an error of 0.95, q = 1.097: the last step from the shortened one would
+    // be 0.91 rest, below h_min
+    let atol = error_at_one / 0.95;
+    let h_min = 0.93 * rest;
+    let mut points = attempt(atol, 100.0 * rest, rest, h_min);
+    assert_eq!(points.counts, [1.0, 0.0]);
+    assert_eq!(points.control[CONTROL_DONE], 1.0);
+    assert_eq!(points.control[CONTROL_T], rest);
+    let stored = points.control[CONTROL_H];
+    assert!(stored >= h_min, "{stored} below h_min {h_min}");
+    // the next interval at loose tolerances, with the same h_min
+    points.start(rest);
+    let context = RosenbrockContext {
+        t1: rest + 1.0,
+        rtol: 1e-3,
+        atol: 1e-3,
+        h_min,
+    };
+    run_points(&library, &q, &context, &mut points, 1).unwrap();
+    assert_eq!(points.control[CONTROL_FAILED], 0.0, "{:?}", points.control);
+    assert_eq!(points.control[CONTROL_DONE], 1.0);
+    let exact = 1.0 / (1.0 + rest + 1.0);
+    assert!(
+        (points.state[0] - exact).abs() < 1e-2 * exact,
+        "{}",
+        points.state[0]
+    );
+}
