@@ -30,14 +30,25 @@
 //! Refused ([`CError::Unsupported`], naming the feature): a model which reads its history (a
 //! `delay`), and a model without an analytic Jacobian (a rate which reads `factorial` of a
 //! state).
+//!
+//! [`generate_qfunction`] is the second target: the model with a Rosenbrock integrator (RODAS4)
+//! as one libCEED QFunction which advances any number of points (the cells of a tissue) by one
+//! step attempt each per application, for libCEED's CPU backends and its JIT backends
+//! (`qfunction.rs`); [`run_points`] runs it as libCEED calls it, without libCEED.
 
 mod build;
 mod emit;
 mod model;
+mod qfunction;
 
 pub use build::{BuildOptions, FLAGS, Library};
 pub use emit::{CSource, MAX_NESTING, generate, generate_model, symbol_prefix};
 pub use model::CModel;
+pub use qfunction::{
+    CONTROL, CONTROL_DONE, CONTROL_FAILED, CONTROL_H, CONTROL_T, COUNTS, INPUTS, OUTPUTS, Points,
+    QSource, ROSENBROCK_ORDER, RosenbrockContext, apply_points, generate_qfunction,
+    generate_qfunction_model, run_points,
+};
 
 /// A failure of the C target.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -68,4 +79,8 @@ pub enum CError {
     /// A model the reader or the model representation refuses, or a library of another model.
     #[error("{0}")]
     Model(String),
+    /// An input of the harness of a QFunction ([`run_points`], [`apply_points`]) which does not
+    /// fit its model, or points which do not finish.
+    #[error("{0}")]
+    Invalid(String),
 }

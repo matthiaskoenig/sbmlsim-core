@@ -139,7 +139,7 @@ The pool is the one the [Python](python.md) bindings run `simulate_many` and `ba
 | `sbmlsim-abi` | the contracts `model/2` and `simulation/1` as Rust types |
 | `sbmlsim-compiler` | SBML to `model.wasm` and `model.json` (over `sbml`, `ir` and `codegen`) |
 | `sbmlsim-engine` | the integrator, compiled to `engine.wasm` (CVODE, KLU) |
-| `sbmlsim-c` | the C target: the model as native code for the engine, compiled with the C compiler of the machine |
+| `sbmlsim-c` | the C target: the model as native code for the engine, compiled with the C compiler of the machine; and the QFunction target: the model with a Rosenbrock integrator as a libCEED QFunction |
 | `sbmlsim-host` | the wasmtime host: `Runtime`, `LoadedModel`, `Instance` |
 | `sbmlsim-batch` | the pool of a batch of simulations: a thread per point, an instance per thread |
 | `sbmlsim-chaos` | the basis of a polynomial chaos expansion: its multi-indices, its design matrix and its surrogate |
@@ -176,7 +176,7 @@ Refused (`CError::Unsupported` with the feature): a model which reads its histor
 
 ## A stepper
 
-`sbmlsim_engine::Stepper` is an instance of a model which is advanced from a given state, one interval at a time, for a caller which couples the model to something else and changes its state between two intervals (operator splitting: the transport of species between many instances of a cell model). `Stepper::new` initializes the model as a simulation does, with `changes` as the pre-initialization values of a request (`S` the amount of a species, `[S]` its concentration, any other id its value), and creates its integrator memory once; the linear solver is the one of the settings (`Auto`: dense up to `KLU_THRESHOLD` states, KLU above). The description is an `Arc`, which the steppers of one model share.
+`sbmlsim_engine::Stepper` is an instance of a model which is advanced from a given state, one interval at a time, for a caller which couples the model to something else and changes its state between two intervals (operator splitting: the transport of species between many instances of a cell model). `Stepper::new` initializes the model as a simulation does, with `changes` as the pre-initialization values of a request (`S` the amount of a species, `[S]` its concentration, any other id its value), and creates its integrator memory once; the linear solver is the one of the settings (`Auto`: dense up to `KLU_THRESHOLD` states, KLU above). The description is an `Arc`, which the steppers of one model share. `state()` and `parameters()` (without the constants behind them) are the initial values after `new`, which a caller can also hand to the [QFunction target](#the-qfunction-target).
 
 ```rust
 use sbmlsim_engine::Stepper;
@@ -193,3 +193,47 @@ for k in 0..1440 {
 `advance(y, t0, t1)` starts the integrator again from `y` at `t0` and integrates to `t1` as a simulation does, with the events and the discontinuities of the interval: the triggers keep their values from one advance to the next, an execution of an event with a delay stays pending across the end of an interval, the parameters an event assigns stay assigned, and an event whose trigger the changed state makes true executes at the start of the interval. The state after an advance is `state()`, the state after the events at `t1`, as the last row of a simulation is. Its first step is the one of a simulation (the estimate of CVODE or IDA, or the initial step of the settings), its step control is its own and depends on no other instance; starting with the step the advance before ended with was measured worse (a step of a higher order fails the error test of the first order the integrator starts again with, which doubled the rejected steps and saved no time). `StepStats` counts the steps of the advance and the attempts of a step the integrator rejected. A refused call (a state of the wrong length or not finite, an interval which is not finite or ends before it starts) changes nothing; an advance which fails after that leaves the stepper failed, as its events and parameters may have changed on the way. A model with delays is refused.
 
 `memory_bytes` estimates the memory of an instance: for the cell model of `testdata/models` (7 states) 18.9 kB after the first advance, within 1% of the resident memory of 10000 steppers, most of it the objects of SUNDIALS (each of its vectors carries its own table of operations, 0.6 kB for 56 bytes of values). An advance of that model at the tolerances 1e-10 and 1e-12 takes 7.7 µs for 1 min (16.5 steps), 13.6 µs for 10 min and 30.5 µs for 60 min on one core, and a stepper 7 µs to create (`cargo test --release -p sbmlsim-engine --test stepper -- --ignored --nocapture`).
+
+## The QFunction target
+
+`sbmlsim_c::generate_qfunction` writes a model with a Rosenbrock integrator as one [libCEED](https://libceed.org) QFunction, which advances any number of points (the cells of a tissue, one per element of a mesh) by one step attempt each per application, on libCEED's CPU backends now and, as its source is plain C99 for its JIT, on its GPU backends later. Its source (`QSource::code`) includes `<ceed/types.h>` and `<math.h>` (the latter guarded by `CEED_RUNNING_JIT_PASS`, as libCEED asks), then the constants, the right hand side, the dense Jacobian and, for a model whose rates depend on the time, their derivative in the time, from the programs of the emitter of the C target as `CEED_QFUNCTION_HELPER` functions, then the integrator, written once for every model in `crates/c/include/sbmlsim_rosenbrock.h`, and the QFunction `QSource::function` (`sbmlsim_model_<id>_qfunction`) of libCEED's interior signature. No allocation, no call outside the model and `<math.h>`, no function pointer: every work array of a point has a size the model fixes at compile time.
+
+| | field | values per point |
+|---|---|---|
+| input | `state` | the states, `QSource::state_ids` |
+| input | `parameters` | the parameters, `QSource::parameter_ids` (the QFunction computes the constants behind them) |
+| input | `control` | `t`, `h`, `done`, `failed` (`CONTROL_T`, `CONTROL_H`, `CONTROL_DONE`, `CONTROL_FAILED`) |
+| input | `counts` | the accepted steps and the rejected attempts so far |
+| output | `state_out`, `control_out`, `counts_out` | as their inputs |
+
+The context is `struct SbmlsimRosenbrockContext { double t1; double rtol; double atol; double h_min; }` (`RosenbrockContext` in Rust), in the time unit of the model. An application makes one step attempt for every point which is neither done nor failed and copies the others, so the sequence of steps of a point depends on nothing but the point: not on the other points, how many a call gets or in which order, the backend or the number of processes. The caller applies the QFunction until every point is done or failed, the outputs becoming the inputs (`counts` is an input as well so that it can be cumulative, which an output of libCEED cannot be). A point is done when its `t` reaches `t1`, and failed when the step it would take next is below `h_min` (or no longer moves `t`); it keeps the state of its last accepted step. Its `h` carries over to the next interval; a point without one (`h <= 0`) starts with the estimate of Hairer and Wanner (`HINIT`, one explicit Euler step).
+
+The method is **RODAS4** (Hairer and Wanner, *Solving Ordinary Differential Equations II*, section VI.4, with the coefficients and the stage formulation of their `rodas.f`): order 4 with 6 stages and an embedded solution of order 3, both stiffly accurate and L-stable, so its error estimate stays sound on the stiff components a cell model has, and one LU decomposition with partial pivoting of `1/(h gamma) I - J` per step. ROS3P is not L-stable, and RODAS3 is of order 3 with an embedded solution of order 2, which take more steps at the tolerances of a tissue (1e-6); the order 4 of RODAS4 is measured (`order_of_the_method`: 4.00 on a linear equation with a rate of the time). Like other Rosenbrock methods of its kind it loses order on the Prothero-Robinson problem `y' = -k (y - g(t)) + g'(t)` of a large `k h`. The step control is the one of `rodas.f` without its memory across steps (a point carries only `t` and `h`): the error is the root mean square of the embedded estimate scaled by `atol + rtol max(|y|, |y_new|)`, a step is accepted at an error of at most 1 with every new state finite, the next step is `h / max(1/6, min(5, err^(1/4) / 0.9))`, a singular matrix halves it, and a step which reaches `t1` within `1.0001 h` ends exactly there.
+
+```rust
+use sbmlsim_c::{Library, Points, RosenbrockContext, generate_qfunction, run_points};
+
+let q = generate_qfunction(&sbml)?;
+let library = Library::build(&q.host_code())?;
+// states and parameters point by point, e.g. those of a Stepper::new per point
+let mut points = Points::new(&q, &states, &parameters)?;
+for k in 0..24 {
+    points.start(60.0 * k as f64);
+    let context = RosenbrockContext { t1: 60.0 * (k + 1) as f64, rtol: 1e-6, atol: 1e-9, h_min: 1e-10 };
+    run_points(&library, &q, &context, &mut points, 8)?;
+}
+```
+
+The source compiles under libCEED unchanged: a CPU backend calls the function the compiled library exports as `QSource::host_symbol()` (the `CEED_QFUNCTION` itself is static, as libCEED defines it), a JIT backend reads the source and the function `QSource::function`. `host_code()` is the source with the definitions of `<ceed/types.h>` it reads in place of the include (`CEED_QFUNCTION`, `CEED_QFUNCTION_HELPER`, `CeedInt`, `CeedScalar`, as libCEED v1.1.2 defines them), which `Library::build` compiles without libCEED, with the flags and the cache of the C target. `run_points` and `apply_points` call that library as libCEED calls a QFunction, every field `[size][Q]` for `Q` points per call (a block), until every point is done, or once. The source compiles under `-std=c99 -pedantic -Wall -Wextra -Werror` with both (`sources_compile_without_warnings`, with libCEED's own headers where `SBMLSIM_LIBCEED_INCLUDE` names them).
+
+On the cell model of `testdata/models` with its 50 parameter sets, 24 intervals of 60 min at 1e-6 and 1e-9, every state at the end of every interval is within `2e-6 |y| + 2e-9` of a stepper at 1e-12 and 1e-14 (the largest difference half of it), with 7.8 steps and 0.15 rejected attempts per point and interval; blocks of 1, 7 and 64 points, in order and shuffled, give bitwise the same states, controls and counts. One core of an Intel i7-12700 (`cargo run --release -p sbmlsim-c --example qfunction_performance`, 1000 points, a point-step being one interval of 60 min of one point, both paths at 1e-6 and 1e-9):
+
+| path | point-steps/s | µs/point-step | steps/point-step | rejected/point-step |
+|---|---:|---:|---:|---:|
+| QFunction, RODAS4, block 1 | 163387 | 6.12 | 7.76 | 0.152 |
+| QFunction, RODAS4, block 8 | 166813 | 5.99 | 7.76 | 0.152 |
+| Stepper, CVODE BDF, `CModel` | 88180 | 11.34 | 27.61 | 1.771 |
+
+A point is a few dozen numbers (its states, parameters, control and counts) against the 19 kB of a stepper. The arithmetic of a point is scalar: the pivoting and the step control of each point take their own branches, so the compiler does not vectorize across the points of a block.
+
+Refused (`CError::Unsupported`, naming the feature): events, delays, algebraic rules, a model without states and a model without an analytic Jacobian; the engine (a `Stepper` per point) integrates those. The discontinuities of the math (a `piecewise` of a state) need no root search: the step control steps across them, at the cost of rejected attempts there.

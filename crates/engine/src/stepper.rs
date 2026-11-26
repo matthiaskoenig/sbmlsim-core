@@ -180,6 +180,13 @@ impl Stepper {
         &self.y
     }
 
+    /// The parameters, in the order of the parameters of the description, without the
+    /// constants behind them: those of the initialization after [`Stepper::new`] (the defaults,
+    /// the changes and the initial assignments), then as the events of the advances leave them.
+    pub fn parameters(&self) -> &[f64] {
+        &self.p[..self.desc.parameters.len()]
+    }
+
     /// Integrates the model from the state `y` at `t0` to `t1`, with the events and the
     /// discontinuities of the interval as a simulation handles them (see the module
     /// documentation); the state at `t1` is [`Stepper::state`] afterwards.

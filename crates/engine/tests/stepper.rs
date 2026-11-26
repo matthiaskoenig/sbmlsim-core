@@ -308,6 +308,36 @@ fn refusals_leave_the_stepper_usable() {
     ));
 }
 
+/// The parameters of a stepper are those after the initialization: a change of one, and the
+/// initial assignment of another which reads it.
+#[test]
+fn parameters_after_initialization() {
+    let math = r#"xmlns="http://www.w3.org/1998/Math/MathML""#;
+    let sbml = format!(
+        r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2"><model id="initialized"><listOfParameters><parameter id="k" value="1" constant="true"/><parameter id="k2" constant="true"/><parameter id="x" value="1" constant="false"/></listOfParameters><listOfInitialAssignments><initialAssignment symbol="k2"><math {math}><apply><times/><cn>2</cn><ci>k</ci></apply></math></initialAssignment></listOfInitialAssignments><listOfRules><rateRule variable="x"><math {math}><apply><minus/><ci>k2</ci></apply></math></rateRule></listOfRules></model></sbml>"#
+    );
+    let (model, description) = native(&sbml);
+    let index = |id: &str| {
+        description
+            .parameters
+            .iter()
+            .position(|p| p.id == id)
+            .unwrap()
+    };
+    let (k, k2) = (index("k"), index("k2"));
+    let n = description.parameters.len();
+    let stepper = Stepper::new(
+        Box::new(model),
+        description,
+        settings(),
+        &[("k".into(), 3.0)],
+    )
+    .unwrap();
+    assert_eq!(stepper.parameters().len(), n);
+    assert_eq!(stepper.parameters()[k], 3.0);
+    assert_eq!(stepper.parameters()[k2], 6.0);
+}
+
 #[test]
 fn memory_bytes_counts_the_solver() {
     let (model, description) = native(&cell_model());

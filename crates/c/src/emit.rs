@@ -63,6 +63,14 @@ pub fn generate(sbml: &str) -> Result<CSource, CError> {
 
 /// The C of a model representation and its description (see [`generate`]).
 pub fn generate_model(model: &Model) -> Result<CSource, CError> {
+    let (plan, description) = prepare(model)?;
+    let code = source(model, &plan, &description);
+    Ok(CSource { code, description })
+}
+
+/// The programs of the optimizer of a model and its description; refuses a model which reads
+/// its history and a model without an analytic Jacobian.
+pub(crate) fn prepare(model: &Model) -> Result<(Plan, ModelDescription), CError> {
     let discontinuities = model
         .try_discontinuity_roots()
         .map_err(|e| CError::Model(e.to_string()))?;
@@ -87,8 +95,7 @@ pub fn generate_model(model: &Model) -> Result<CSource, CError> {
         0,
         None,
     );
-    let code = source(model, &plan, &description);
-    Ok(CSource { code, description })
+    Ok((plan, description))
 }
 
 /// The prefix of the C functions of the model of the id `id`: `sbmlsim_model_<id>_`, every
@@ -181,6 +188,16 @@ static inline double sbmlsim_math_arccsch(double x) {
 }
 #endif
 "#;
+
+/// The operators of [`MATH`] with the numbers of `sbmlsim_ir::eval`, each function declared
+/// `qualifier` (`static inline`, or `CEED_QFUNCTION_HELPER` in a QFunction).
+pub(crate) fn math(qualifier: &str) -> String {
+    MATH.replace("static inline", qualifier)
+        .replace("QUOTIENT_LOW", &number(QUOTIENT_LOW))
+        .replace("QUOTIENT_HIGH", &number(QUOTIENT_HIGH))
+        .replace("QUOTIENT_INVALID", &number(QUOTIENT_INVALID))
+        .replace("HALF_PI", &number(HALF_PI))
+}
 
 /// A double as a C literal of its bits: the shortest decimal which reads back as it (a
 /// negative one in parentheses), `NAN` and `INFINITY` of `<math.h>`.
@@ -328,7 +345,7 @@ impl Body {
 
     /// Evaluates the assignment rules into locals, which later expressions read for their
     /// targets; the locals of an earlier evaluation are forgotten.
-    fn assign_locals(&mut self, model: &Model) {
+    pub(crate) fn assign_locals(&mut self, model: &Model) {
         self.lets.clear();
         for a in &model.assignment_rules {
             self.let_(a.target, &a.expr);
@@ -641,16 +658,20 @@ fn is_leaf(e: &Expr) -> bool {
     matches!(e, Expr::Number(_) | Expr::Bool(_) | Expr::Symbol(_))
 }
 
-/// The translation unit being written.
-struct Unit {
-    code: String,
-    prefix: String,
-    n_params: u32,
+/// The translation unit being written: its code, the prefix of its functions, the number of
+/// parameters of the model and the qualifier of its functions (empty, or
+/// `CEED_QFUNCTION_HELPER ` in a QFunction).
+pub(crate) struct Unit {
+    pub code: String,
+    pub prefix: String,
+    pub n_params: u32,
+    pub qualifier: &'static str,
 }
 
 impl Unit {
-    /// Adds the function `<prefix><name><arguments>` of `result` whose body `body` writes.
-    fn function(
+    /// Adds the function `<qualifier><result> <prefix><name><arguments>` whose body `body`
+    /// writes.
+    pub(crate) fn function(
         &mut self,
         result: &str,
         name: &str,
@@ -659,8 +680,12 @@ impl Unit {
     ) {
         let mut b = Body::new(self.n_params, Access::vectors());
         body(&mut b);
-        let prefix = &self.prefix;
-        writeln!(self.code, "{result} {prefix}{name}({arguments}) {{").unwrap();
+        let (qualifier, prefix) = (self.qualifier, &self.prefix);
+        writeln!(
+            self.code,
+            "{qualifier}{result} {prefix}{name}({arguments}) {{"
+        )
+        .unwrap();
         self.code.push_str(&b.finish());
         self.code.push_str("}\n\n");
     }
@@ -678,6 +703,7 @@ fn source(model: &Model, plan: &Plan, description: &ModelDescription) -> String 
         code: String::new(),
         prefix: symbol_prefix(&description.id),
         n_params: model.parameters.len() as u32,
+        qualifier: "",
     };
     writeln!(
         unit.code,
@@ -689,12 +715,7 @@ fn source(model: &Model, plan: &Plan, description: &ModelDescription) -> String 
     .unwrap();
     unit.code
         .push_str("#include <math.h>\n#include <stdint.h>\n\n");
-    let math = MATH
-        .replace("QUOTIENT_LOW", &number(QUOTIENT_LOW))
-        .replace("QUOTIENT_HIGH", &number(QUOTIENT_HIGH))
-        .replace("QUOTIENT_INVALID", &number(QUOTIENT_INVALID))
-        .replace("HALF_PI", &number(HALF_PI));
-    unit.code.push_str(&math);
+    unit.code.push_str(&math("static inline"));
     unit.code.push('\n');
 
     // defaults(p, y): the default of every parameter and state
