@@ -564,16 +564,13 @@ pub(crate) fn integrate<const DAE: bool, H: crate::delay::Mode>(
                                 let at = at.to_vec();
                                 cvode.start_sensitivities(problem, &at)?;
                             }
-                            let mut previous = t;
+                            let mut advance = Advance::new(t);
                             loop {
                                 let (tret, flag) = cvode.integrate(problem, stop, CV_ONE_STEP)?;
                                 recorder.last_step(cvode)?;
-                                // a step which does not advance the time (CVODE's `t + h = t`)
-                                // never ends
-                                if flag != CV_TSTOP_RETURN && tret <= previous {
-                                    return Err(stalled(tret, previous));
+                                if flag != CV_TSTOP_RETURN {
+                                    advance.step(tret)?;
                                 }
-                                previous = tret;
                                 // CVODE returns the stop time exactly when it reaches it
                                 let tret = if flag == CV_TSTOP_RETURN { stop } else { tret };
                                 if let Some(states) = recorder.state_sensitivities() {
@@ -685,12 +682,58 @@ fn apply_change(
     Ok(())
 }
 
+/// The steps of the integrator in a row which may leave the time where it was.
+///
+/// A step whose size is below the resolution of the time (CVODE's warning `t + h = t`) leaves
+/// the time as it was; CVODE takes it nevertheless and grows the step again, so the steps after
+/// a change of the state at a late time (a dose on day 23, 33120 min, with tight tolerances)
+/// advance after a few of them, as they do in libroadrunner. A run of steps which does not get
+/// past a time is a stall (the steps of Zeno towards a right hand side which is not finite), an
+/// error and no loop without end.
+const STILL_STEPS: u32 = 100;
+
+/// Whether the steps of the integrator advance the time, see `STILL_STEPS`.
+struct Advance {
+    /// The last time a step advanced to.
+    previous: f64,
+    /// The steps in a row since then which did not advance it.
+    still: u32,
+}
+
+impl Advance {
+    /// Start at a time.
+    fn new(t: f64) -> Self {
+        Self {
+            previous: t,
+            still: 0,
+        }
+    }
+
+    /// Record the time a step returned, an error after `STILL_STEPS` steps in a row which did
+    /// not advance it.
+    fn step(&mut self, t: f64) -> Result<(), EngineError> {
+        if t > self.previous {
+            self.previous = t;
+            self.still = 0;
+            return Ok(());
+        }
+        self.still += 1;
+        if self.still > STILL_STEPS {
+            return Err(stalled(t, self.previous));
+        }
+        Ok(())
+    }
+}
+
 /// The error of a run of the integrator steps which does not advance the time.
 fn stalled(t: f64, previous: f64) -> EngineError {
     EngineError::Integration {
         flag: STALL_FLAG,
         time: t,
-        message: format!("the integrator stalled: a step did not advance the time past {previous}"),
+        message: format!(
+            "the integrator stalled: {STILL_STEPS} steps in a row did not advance the time past \
+             {previous}"
+        ),
     }
 }
 
@@ -1002,7 +1045,7 @@ pub(crate) fn integrate_events<const DAE: bool, H: crate::delay::Mode>(
 
     let mut started = false;
     let mut stop = end;
-    let mut previous = t;
+    let mut advance = Advance::new(t);
     let resolution = END_RTOL * time_scale(start, end);
     let mut guard = RootGuard::new(t, settings, !steps, cvode.steps(), resolution);
     loop {
@@ -1044,12 +1087,12 @@ pub(crate) fn integrate_events<const DAE: bool, H: crate::delay::Mode>(
             cvode.start(t, y, tstop, settings, n_roots)?;
             started = true;
             stop = tstop;
-            previous = t;
+            advance = Advance::new(t);
         } else if tstop != stop {
             if tstop < stop {
                 // CVODE may have stepped past the new stop: start again from `t`
                 cvode.start(t, y, tstop, settings, n_roots)?;
-                previous = t;
+                advance = Advance::new(t);
             } else {
                 cvode.set_stop(tstop)?;
             }
@@ -1071,11 +1114,8 @@ pub(crate) fn integrate_events<const DAE: bool, H: crate::delay::Mode>(
             let found = cvode.at_discontinuity(problem)?;
             guard.root(tret, found, cvode.steps())
         };
-        if steps && !root && flag != CV_TSTOP_RETURN && tret <= previous {
-            return Err(stalled(tret, previous));
-        }
-        if !root {
-            previous = tret;
+        if steps && !root && flag != CV_TSTOP_RETURN {
+            advance.step(tret)?;
         }
         // CVODE returns the stop time exactly when it reaches it
         t = if flag == CV_TSTOP_RETURN { tstop } else { tret };
@@ -1127,6 +1167,36 @@ mod tests {
     use super::*;
     use crate::model::Decay;
     use crate::solver::{Config, Jacobian, Linear, Method};
+
+    #[test]
+    fn a_step_which_leaves_the_time_is_no_stall() {
+        // the first step after a dose on day 23 of rapamycin in pkdb_models (Kelly1999)
+        // returned the time of the dose, 33120 min, and the next one advanced
+        let mut advance = Advance::new(33120.0);
+        advance.step(33120.0).unwrap();
+        advance.step(33120.000001).unwrap();
+        // the count starts again after a step which advances
+        for _ in 0..STILL_STEPS {
+            advance.step(33120.000001).unwrap();
+        }
+        advance.step(33121.0).unwrap();
+        for _ in 0..STILL_STEPS {
+            advance.step(33121.0).unwrap();
+        }
+        // one more step in a row which does not advance is a stall
+        match advance.step(33121.0) {
+            Err(EngineError::Integration {
+                flag,
+                time,
+                message,
+            }) => {
+                assert_eq!(flag, STALL_FLAG);
+                assert_eq!(time, 33121.0);
+                assert!(message.contains("stalled"), "{message}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
 
     #[test]
     fn steps_stop_at_the_output_limit() {
