@@ -21,6 +21,7 @@ use sbmlsim_abi::{
 };
 use sbmlsim_c::{CModel, Library, generate};
 use sbmlsim_compiler::{CompileOptions, CompiledModel, compile};
+use sbmlsim_engine::model::{EventModel, Fun, Target as TestTarget, TestEvent};
 use sbmlsim_engine::{EngineError, Stepper};
 use sbmlsim_host::Runtime;
 
@@ -49,7 +50,7 @@ fn wasm(sbml: &str) -> CompiledModel {
 /// The tolerances of the advances and the simulations of the cell model: a hundred times those
 /// of the tests of the C target. Every advance starts the integrator again, whose first steps
 /// at the first order each add an error at the tolerance, so the 1440 advances of 1 min at the
-/// tolerances of the C target (1e-10, 1e-12) move the toxic product by up to 1.6e-6 of itself
+/// tolerances of the C target (1e-10, 1e-12) move the toxic product by up to 1.1e-6 of itself
 /// from the simulation, beyond the `1e-6 |y| + 1e-9` of the comparison.
 fn settings() -> IntegratorSettings {
     IntegratorSettings {
@@ -405,4 +406,171 @@ fn report_memory_and_timing() {
             rejected as f64 / advances as f64,
         );
     }
+}
+
+/// `y' = 1` from 0 and a counter `n` of rate 0, which every event of the model increments.
+fn counter(events: Vec<TestEvent>) -> EventModel {
+    EventModel {
+        states: vec![("y", 0.0), ("n", 0.0)],
+        parameters: vec![],
+        rhs: |_, _, _, ydot| {
+            ydot[0] = 1.0;
+            ydot[1] = 0.0;
+        },
+        events,
+        discontinuities: vec![],
+    }
+}
+
+/// An event of the trigger and its root function which increments the counter, with the
+/// initial value of its trigger.
+fn count(trigger: fn(f64, &[f64], &[f64]) -> bool, root: Fun, initial_value: bool) -> TestEvent {
+    let mut event = TestEvent::new("count", trigger, vec![root]);
+    event.initial_value = initial_value;
+    event.assignments = vec![(TestTarget::State(1), |_, y, _| y[1] + 1.0)];
+    event
+}
+
+/// The stepper of a model of the test models, at tight tolerances.
+fn stepper_of(model: &EventModel) -> Stepper {
+    let settings = IntegratorSettings {
+        relative_tolerance: 1e-10,
+        absolute_tolerance: Tolerance::Scalar(1e-12),
+        ..IntegratorSettings::default()
+    };
+    Stepper::new(Box::new(model.clone()), model.description(), settings, &[]).unwrap()
+}
+
+/// Advances the stepper from its own state over the step ends `times` (from the first) and
+/// returns its state at each of them.
+fn advance_over(stepper: &mut Stepper, times: &[f64]) -> Vec<Vec<f64>> {
+    let mut states = vec![stepper.state().to_vec()];
+    for pair in times.windows(2) {
+        let y = stepper.state().to_vec();
+        stepper.advance(&y, pair[0], pair[1]).unwrap();
+        states.push(stepper.state().to_vec());
+    }
+    states
+}
+
+#[test]
+fn a_trigger_true_across_advances_fires_once() {
+    // true from the start, where its initial value false makes it fire once; a stepper whose
+    // triggers started from their initial values again would fire it at every advance
+    let model = counter(vec![count(|_, _, _| true, |_, _, _| 1.0, false)]);
+    let mut stepper = stepper_of(&model);
+    let times: Vec<f64> = (0..=10).map(f64::from).collect();
+    let states = advance_over(&mut stepper, &times);
+    // the event at the start executes in the first advance, the initial state is before it
+    assert_eq!(states[0][1], 0.0);
+    for (k, state) in states.iter().enumerate().skip(1) {
+        assert_eq!(state[1], 1.0, "after advance {k}: {state:?}");
+    }
+}
+
+#[test]
+fn a_change_of_the_state_fires_and_rearms_a_trigger() {
+    // `y >= 5`, initial value true: the trigger is false from the start up to 5
+    let model = counter(vec![count(
+        |_, y, _| y[0] >= 5.0,
+        |_, y, _| y[0] - 5.0,
+        true,
+    )]);
+    let mut stepper = stepper_of(&model);
+    stepper.advance(&[0.0, 0.0], 0.0, 1.0).unwrap();
+    assert!(
+        (stepper.state()[0] - 1.0).abs() < 1e-9,
+        "{:?}",
+        stepper.state()
+    );
+    assert_eq!(stepper.state()[1], 0.0);
+    // the caller's change makes the trigger true at the start of the advance: it fires there
+    // (a stepper whose triggers started from their initial value true would not see it rise)
+    stepper.advance(&[10.0, 0.0], 1.0, 2.0).unwrap();
+    assert_eq!(stepper.state()[1], 1.0);
+    // still true at the next start: no second execution
+    let y = stepper.state().to_vec();
+    stepper.advance(&y, 2.0, 3.0).unwrap();
+    assert_eq!(stepper.state()[1], 1.0);
+    // the change makes it false at the start, the integration true again at 4: it fires again
+    stepper.advance(&[4.0, 1.0], 3.0, 5.0).unwrap();
+    assert_eq!(stepper.state()[1], 2.0);
+    assert!(
+        (stepper.state()[0] - 6.0).abs() < 1e-9,
+        "{:?}",
+        stepper.state()
+    );
+    // the change makes it false and the next one true again at the start: it fires again
+    stepper.advance(&[0.0, 2.0], 5.0, 6.0).unwrap();
+    assert_eq!(stepper.state()[1], 2.0);
+    stepper.advance(&[10.0, 2.0], 6.0, 7.0).unwrap();
+    assert_eq!(stepper.state()[1], 3.0);
+}
+
+/// One simulation of a test model with the states at `times`.
+fn simulate_states(model: &EventModel, times: &[f64]) -> Vec<Vec<f64>> {
+    let req = SimulationRequest {
+        sensitivities: vec![],
+        local_errors: false,
+        contract: SIMULATION_CONTRACT.to_string(),
+        start: times[0],
+        end: *times.last().unwrap(),
+        output: Output::Times(times.to_vec()),
+        preinit: vec![],
+        changes: vec![],
+        steady_state: None,
+        steady_state_after: None,
+        before_events: false,
+        selections: vec!["time".into(), "y".into(), "n".into()],
+        settings: IntegratorSettings {
+            relative_tolerance: 1e-10,
+            absolute_tolerance: Tolerance::Scalar(1e-12),
+            ..IntegratorSettings::default()
+        },
+        seed: 1,
+    };
+    let result = sbmlsim_engine::simulate(model, &model.description(), &req).unwrap();
+    result
+        .values
+        .chunks(3)
+        .map(|row| row[1..].to_vec())
+        .collect()
+}
+
+#[test]
+fn an_event_at_the_end_of_an_advance() {
+    let times = [0.0, 1.0, 2.0, 3.0, 4.0];
+    // `y >= 2` at the end 2 of the second advance, initial value false (so a stepper which
+    // reset its triggers would fire it again at every advance after it): as the simulation
+    let at_least = counter(vec![count(
+        |_, y, _| y[0] >= 2.0,
+        |_, y, _| y[0] - 2.0,
+        false,
+    )]);
+    let states = advance_over(&mut stepper_of(&at_least), &times);
+    let expected = simulate_states(&at_least, &times);
+    for (k, (state, row)) in states.iter().zip(&expected).enumerate() {
+        assert!((state[0] - row[0]).abs() < 1e-9, "{k}: {state:?} {row:?}");
+        assert_eq!(state[1], row[1], "{k}: {state:?} {row:?}");
+    }
+    assert_eq!(states[2][1], 1.0);
+    assert_eq!(states[4][1], 1.0);
+
+    // `y > 2` is false at 2 and true right after it: the stepper executes it at the end of the
+    // advance, before it returns, where the row of the simulation at 2 is the state before it
+    // (the event executes after the row); before and after 2 the two agree, and it executes
+    // once, also though the next advance starts where the trigger is false
+    let above = counter(vec![count(
+        |_, y, _| y[0] > 2.0,
+        |_, y, _| y[0] - 2.0,
+        false,
+    )]);
+    let states = advance_over(&mut stepper_of(&above), &times);
+    let expected = simulate_states(&above, &times);
+    assert_eq!(expected[2][1], 0.0);
+    assert_eq!(states[2][1], 1.0);
+    for k in [0, 1, 3, 4] {
+        assert_eq!(states[k][1], expected[k][1], "{k}: {states:?} {expected:?}");
+    }
+    assert_eq!(states[4][1], 1.0);
 }
