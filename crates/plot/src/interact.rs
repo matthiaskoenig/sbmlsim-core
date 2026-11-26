@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::layout::{self, LegendOwner, Plan, Rect};
 use crate::render::axis::ResolvedAxis;
 use crate::render::heatmap::cell_span;
-use crate::render::stats_marks::{BAR_WIDTH, BOX_WIDTH, VIOLIN_WIDTH, base_of, box_body, spacing};
+use crate::render::stats_marks::{BAR_WIDTH, VIOLIN_WIDTH, base_of, box_body, spacing};
 use crate::spec::{AxisScale, ElementKind, Figure, LineType, Orientation, YAxisRef, heatmap_size};
 
 /// A figure laid out once: the plan the geometry and the pick read.
@@ -101,7 +101,8 @@ pub struct PlotGeometry {
 pub struct LegendEntryGeometry {
     /// The legend group of the entry.
     pub legend: String,
-    /// The id of the plot whose legend it is, or `row:<n>` for the legend of a row.
+    /// The id of the plot whose legend it is, `row:<n>` for the legend of a row, or `figure`
+    /// for the legend below the grid (since 0.31.0).
     pub owner: String,
     /// The rectangle of its swatch and label.
     pub rect: PixelRect,
@@ -175,6 +176,7 @@ pub fn geometry_of(plan: &FigurePlan) -> Geometry {
             let owner = match &lb.owner {
                 LegendOwner::Plot(id) => id.clone(),
                 LegendOwner::Row(r) => format!("row:{r}"),
+                LegendOwner::Figure => "figure".to_string(),
             };
             lb.entries.iter().map(move |e| LegendEntryGeometry {
                 legend: e.legend.clone(),
@@ -554,8 +556,12 @@ fn measure(kind: &ElementKind, lined: bool, m: &Map, best: &mut Best) {
                 });
             }
         }
-        ElementKind::Box { positions, stats } => {
-            let w = BOX_WIDTH * spacing(positions);
+        ElementKind::Box {
+            positions,
+            stats,
+            width,
+        } => {
+            let w = crate::render::stats_marks::box_width(positions, *width);
             for (i, (p, b)) in positions.iter().zip(stats).enumerate() {
                 let (q1, q3) = box_body(m.ya, b.q1, b.q3);
                 let (a, c) = (

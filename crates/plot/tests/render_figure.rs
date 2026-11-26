@@ -1433,18 +1433,29 @@ fn font_sizes(svg: &str) -> Vec<String> {
         .collect()
 }
 
-/// A category label or a cell text is one line in SVG, so a newline in it is measured as the
-/// space it renders as and not as a break which makes the label as wide as its widest line.
+/// A tick label of several lines (since 0.31.0) is as wide as its widest line, its lines are
+/// written as `<tspan>`s; a cell text is one line in SVG, so a newline in it is measured as the
+/// space it renders as.
 #[test]
-fn newline_in_a_tick_label_or_cell_text_is_one_line() {
+fn newline_in_a_tick_label_breaks_it_and_in_a_cell_text_is_one_line() {
     let long = "wide label here";
     let broken = render(&heatmap_figure(&long.replace(' ', "\\n"), "ww ww"));
     let spaced = render(&heatmap_figure(long, "ww ww"));
-    let (a, b) = (
+    let widest = render(&heatmap_figure("wide", "ww ww"));
+    let (a, b, c) = (
         Document::parse(&broken).unwrap(),
         Document::parse(&spaced).unwrap(),
+        Document::parse(&widest).unwrap(),
     );
-    assert_eq!(panel(&a, "p"), panel(&b, "p"));
+    // the left axis is as wide as the widest line
+    assert!(panel(&a, "p").x < panel(&b, "p").x);
+    assert_eq!(panel(&a, "p").x, panel(&c, "p").x);
+    let lines: Vec<&str> = a
+        .descendants()
+        .filter(|n| n.has_tag_name("tspan"))
+        .filter_map(|n| n.text())
+        .collect();
+    assert_eq!(lines, ["wide", "label", "here"]);
     // the cell text of one size whether its words are broken or not
     let cell = |c: &str| font_sizes(&render(&heatmap_figure("r", c)));
     assert_eq!(cell("wwwww\\nwwwww"), cell("wwwww wwwww"));
@@ -1464,10 +1475,10 @@ fn category_panel(label: &str) -> Rect {
 }
 
 #[test]
-fn newline_in_a_category_label_reserves_the_one_line_width() {
+fn newline_in_a_category_label_reserves_its_widest_line() {
     let broken = category_panel("a long label\\nshort");
-    assert_eq!(broken, category_panel("a long label short"));
-    assert!(broken.height < category_panel("a long label").height);
+    assert_eq!(broken, category_panel("a long label"));
+    assert!(broken.height > category_panel("a long label short").height);
 }
 
 /// A categorical colour bar with labels and no ticks has a tick at the middle of every band.

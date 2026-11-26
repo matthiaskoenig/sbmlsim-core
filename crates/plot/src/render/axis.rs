@@ -75,6 +75,8 @@ pub(crate) struct ResolvedAxis {
     pub high: f64,
     /// The ticks in data units with their labels.
     pub ticks: Vec<(f64, String)>,
+    /// The multiplier of the labels, `×10^{n}`, written at the end of the axis (since 0.31.0).
+    pub multiplier: Option<String>,
 }
 
 impl ResolvedAxis {
@@ -164,6 +166,7 @@ pub(crate) fn resolve(
                 low,
                 high,
                 ticks,
+                multiplier: None,
             }
         }
         AxisScale::Linear | AxisScale::Log => {
@@ -193,7 +196,17 @@ pub(crate) fn resolve(
             } else {
                 linear_ticks(low, high, count)
             };
-            let labels = tick_labels(&ticks);
+            // the given ticks with their labels (since 0.31.0), else the computed ones
+            let ticks = axis.ticks.clone().unwrap_or(ticks);
+            let (labels, multiplier) = match &axis.tick_labels {
+                Some(l) => (l.clone(), None),
+                None => axis_labels(&ticks, log, true),
+            };
+            let ticks = if axis.ticks.is_some() {
+                ticks.into_iter().zip(labels).collect()
+            } else {
+                distinct_ticks(ticks, labels)
+            };
             ResolvedAxis {
                 transform: if log {
                     Transform::Log
@@ -203,7 +216,8 @@ pub(crate) fn resolve(
                 reverse: axis.reverse,
                 low,
                 high,
-                ticks: distinct_ticks(ticks, labels),
+                ticks,
+                multiplier,
             }
         }
     }
@@ -499,7 +513,8 @@ fn log_ticks(low: f64, high: f64, count: usize) -> Vec<f64> {
     fitted.iter().copied().step_by(every).collect()
 }
 
-/// Whether the labels of the ticks are written in the exponential form.
+/// Whether the labels of the ticks of a log axis are written with powers of ten: a tick of
+/// 1e5 or more, or below 1e-3.
 fn exponential_ticks(ticks: &[f64]) -> bool {
     ticks.iter().any(|&v| {
         let m = v.abs();
@@ -533,21 +548,37 @@ fn tick_decimals(ticks: &[f64]) -> i32 {
     needed.clamp(0, MOST_DIGITS)
 }
 
-/// A number of a label without trailing zeros, `0` for zero in either form.
-pub(crate) fn format_number(value: f64, digits: i32, exponential: bool) -> String {
+/// The exponent of a power of ten as a label writes it, with the minus sign U+2212.
+fn exponent(n: i64) -> String {
+    if n < 0 {
+        format!("\u{2212}{}", -n)
+    } else {
+        n.to_string()
+    }
+}
+
+/// `10^{n}`, a power of ten with its exponent as a superscript (see `text::runs`).
+fn power(n: i64) -> String {
+    format!("10^{{{}}}", exponent(n))
+}
+
+/// A number of a label without trailing zeros, `0` for zero in either form: plain with
+/// `digits` decimals, or with `scientific` as `m×10^{n}` with `digits` decimals of the
+/// mantissa, `10^{n}` for a mantissa of 1 (matplotlib's `LogFormatterSciNotation`).
+pub(crate) fn format_number(value: f64, digits: i32, scientific: bool) -> String {
     if !value.is_finite() || value == 0.0 {
         return "0".into();
     }
     let digits = digits.clamp(0, MOST_DIGITS) as usize;
-    let text = if exponential {
+    let text = if scientific {
         let s = format!("{value:.digits$e}");
-        let (mantissa, exponent) = s.split_once('e').unwrap_or((&s, "0"));
-        let exponent = if exponent.starts_with('-') {
-            exponent.to_string()
-        } else {
-            format!("+{exponent}")
-        };
-        format!("{}e{exponent}", trim_zeros(mantissa))
+        let (mantissa, e) = s.split_once('e').unwrap_or((&s, "0"));
+        let n: i64 = e.parse().unwrap_or(0);
+        match trim_zeros(mantissa) {
+            "1" => power(n),
+            "-1" => format!("-{}", power(n)),
+            m => format!("{m}\u{d7}{}", power(n)),
+        }
     } else {
         trim_zeros(&format!("{value:.digits$}")).to_string()
     };
@@ -563,19 +594,13 @@ fn trim_zeros(s: &str) -> &str {
     }
 }
 
-/// The labels of the ticks of an axis, grown digit by digit until neighbours differ.
-pub(crate) fn tick_labels(ticks: &[f64]) -> Vec<String> {
-    let decimals = tick_decimals(ticks);
-    let exponential = exponential_ticks(ticks) || decimals > PLAIN_DECIMALS;
-    let mut digits = if exponential {
-        EXPONENTIAL_DIGITS
-    } else {
-        decimals
-    };
+/// The labels of ticks written with `digits` decimals and more, grown digit by digit until
+/// neighbours differ.
+fn grown(ticks: &[f64], mut digits: i32, scientific: bool) -> Vec<String> {
     let write = |d: i32| -> Vec<String> {
         ticks
             .iter()
-            .map(|v| format_number(*v, d, exponential))
+            .map(|v| format_number(*v, d, scientific))
             .collect()
     };
     let mut labels = write(digits);
@@ -591,6 +616,93 @@ pub(crate) fn tick_labels(ticks: &[f64]) -> Vec<String> {
     labels
 }
 
+/// The order of magnitude of the multiplier of the ticks of a linear axis, matplotlib's
+/// `ScalarFormatter` with its `axes.formatter.limits` of (-5, 6): of the largest tick, when it
+/// is at least 1e6 or below 1e-4.
+fn order_of_magnitude(ticks: &[f64]) -> Option<i64> {
+    let largest = ticks
+        .iter()
+        .filter(|v| v.is_finite())
+        .map(|v| v.abs())
+        .fold(0.0, f64::max);
+    if largest == 0.0 {
+        return None;
+    }
+    let oom = log10(largest).floor() as i64;
+    (oom >= 6 || oom <= -5).then_some(oom)
+}
+
+/// Whether a value is a power of ten, within a relative 1e-9.
+fn is_decade(v: f64) -> bool {
+    v > 0.0 && {
+        let e = log10(v);
+        (e - e.round()).abs() < 1e-9
+    }
+}
+
+/// The labels of the ticks of an axis and their multiplier (since 0.31.0).
+///
+/// - A log axis whose ticks are decades writes them `10^{n}`, as matplotlib's
+///   `LogFormatterSciNotation`; one of other ticks (the ladders 1-2-5 and 1-3) whose ticks
+///   reach 1e5 or below 1e-3 writes them `m×10^{n}` and its decades `10^{n}`, else plain.
+/// - A linear axis whose largest tick is at least 1e6 or below 1e-4 writes the ticks divided by
+///   the power of ten of that tick, and with `multiplier` that power as the multiplier
+///   `×10^{n}` of the axis, else every label with it (`m×10^{n}`), as matplotlib's
+///   `ScalarFormatter`; ticks which need more than 6 decimals are written `m×10^{n}`; the
+///   others plain.
+///
+/// The labels grow digit by digit until neighbours differ.
+pub(crate) fn axis_labels(
+    ticks: &[f64],
+    log: bool,
+    multiplier: bool,
+) -> (Vec<String>, Option<String>) {
+    let decimals = tick_decimals(ticks);
+    if log {
+        if !ticks.is_empty() && ticks.iter().all(|v| is_decade(*v)) {
+            let labels = ticks
+                .iter()
+                .map(|v| power(log10(*v).round() as i64))
+                .collect();
+            return (labels, None);
+        }
+        if exponential_ticks(ticks) || decimals > PLAIN_DECIMALS {
+            return (grown(ticks, 0, true), None);
+        }
+        return (grown(ticks, decimals, false), None);
+    }
+    if let Some(oom) = order_of_magnitude(ticks) {
+        let scale = pow10(oom as f64);
+        let scaled: Vec<f64> = ticks.iter().map(|v| v / scale).collect();
+        let labels = grown(&scaled, tick_decimals(&scaled), false);
+        let factor = power(oom);
+        if multiplier {
+            return (labels, Some(format!("\u{d7}{factor}")));
+        }
+        let labels = labels
+            .into_iter()
+            .map(|l| match l.as_str() {
+                "0" => l,
+                "1" => factor.clone(),
+                _ => format!("{l}\u{d7}{factor}"),
+            })
+            .collect();
+        return (labels, None);
+    }
+    if decimals > PLAIN_DECIMALS {
+        return (grown(ticks, EXPONENTIAL_DIGITS, true), None);
+    }
+    (grown(ticks, decimals, false), None)
+}
+
+/// The labels of ticks of a linear scale without a multiplier of the axis, each with its power
+/// of ten where the axis would have one (see [`axis_labels`]): the labels of the given ticks
+/// of a colour bar.
+#[cfg(test)]
+pub(crate) fn tick_labels(ticks: &[f64]) -> Vec<String> {
+    axis_labels(ticks, false, false).0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -598,9 +710,53 @@ mod tests {
     #[test]
     fn labels() {
         assert_eq!(tick_labels(&[0.0, 0.5, 1.0]), ["0", "0.5", "1"]);
-        assert_eq!(tick_labels(&[1e-4, 1e-3, 1e2]), ["1e-4", "1e-3", "1e+2"]);
-        assert_eq!(tick_labels(&[0.0, 2e5, 4e5]), ["0", "2e+5", "4e+5"]);
         assert_eq!(format_number(-0.0001, 2, false), "0");
+        // the decades of a log axis as powers of ten, the others plain or with their power
+        let (l, m) = axis_labels(&[1e-4, 1e-3, 1e-2, 1e-1], true, true);
+        assert_eq!(
+            l,
+            [
+                "10^{\u{2212}4}",
+                "10^{\u{2212}3}",
+                "10^{\u{2212}2}",
+                "10^{\u{2212}1}"
+            ]
+        );
+        assert_eq!(m, None);
+        assert_eq!(
+            axis_labels(&[0.001, 1.0], true, true).0,
+            ["10^{\u{2212}3}", "10^{0}"]
+        );
+        assert_eq!(
+            axis_labels(&[0.5, 1.0, 2.0, 5.0], true, true).0,
+            ["0.5", "1", "2", "5"]
+        );
+        assert_eq!(
+            axis_labels(&[1e-4, 2e-4, 5e-4, 1e-3], true, true).0,
+            [
+                "10^{\u{2212}4}",
+                "2\u{d7}10^{\u{2212}4}",
+                "5\u{d7}10^{\u{2212}4}",
+                "10^{\u{2212}3}"
+            ]
+        );
+        // a linear axis of large values: the mantissas and the multiplier
+        let (l, m) = axis_labels(&[0.0, 2e6, 4e6], false, true);
+        assert_eq!(l, ["0", "2", "4"]);
+        assert_eq!(m.as_deref(), Some("\u{d7}10^{6}"));
+        assert_eq!(
+            tick_labels(&[0.0, 2e6, 4e6]),
+            ["0", "2\u{d7}10^{6}", "4\u{d7}10^{6}"]
+        );
+        // below 1e6 and above 1e-5 plain, as matplotlib
+        assert_eq!(tick_labels(&[0.0, 2e5, 4e5]), ["0", "200000", "400000"]);
+        assert_eq!(
+            tick_labels(&[0.0, 0.0001, 0.0002]),
+            ["0", "0.0001", "0.0002"]
+        );
+        let (l, m) = axis_labels(&[0.0, 2e-5, 4e-5], false, true);
+        assert_eq!(l, ["0", "2", "4"]);
+        assert_eq!(m.as_deref(), Some("\u{d7}10^{\u{2212}5}"));
     }
 
     #[test]

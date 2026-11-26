@@ -199,9 +199,72 @@ pub(crate) fn text_width_one_line(text: &str, size: f64, weight: FontWeight) -> 
     text_width_weighted(&text.replace('\n', " "), size, weight)
 }
 
+/// The font size of a superscript of a tick label as a share of the size of its label
+/// (matplotlib's mathtext shrinks a superscript to 0.7).
+pub(crate) const SUP_SCALE: f64 = 0.7;
+/// How far a superscript of a tick label is raised, a share of the size of its label.
+pub(crate) const SUP_RISE: f64 = 0.4;
+
+/// The runs of a line of a tick label (since 0.31.0): its plain text and its superscripts,
+/// each written `^{...}` (`10^{−3}`), a superscript `true`. A `^` without a closing brace is
+/// plain text.
+pub(crate) fn runs(line: &str) -> Vec<(&str, bool)> {
+    let mut out = Vec::new();
+    let mut rest = line;
+    while let Some(start) = rest.find("^{") {
+        let Some(len) = rest[start + 2..].find('}') else {
+            break;
+        };
+        if start > 0 {
+            out.push((&rest[..start], false));
+        }
+        out.push((&rest[start + 2..start + 2 + len], true));
+        rest = &rest[start + 3 + len..];
+    }
+    if !rest.is_empty() || out.is_empty() {
+        out.push((rest, false));
+    }
+    out
+}
+
+/// The text of a line of a tick label without its markup: its runs joined.
+pub(crate) fn plain(line: &str) -> String {
+    runs(line).into_iter().map(|(t, _)| t).collect()
+}
+
+/// The width of a tick label at a font size (since 0.31.0): of its widest line, a superscript
+/// measured at [`SUP_SCALE`] of the size.
+pub(crate) fn label_width(text: &str, size: f64, weight: FontWeight) -> f64 {
+    lines(text)
+        .map(|line| {
+            runs(line)
+                .into_iter()
+                .map(|(t, sup)| {
+                    let s = if sup { size * SUP_SCALE } else { size };
+                    text_width_weighted(t, s, weight)
+                })
+                .sum::<f64>()
+        })
+        .fold(0.0, f64::max)
+}
+
+/// The height of the line box of a tick label at a font size: one font size per line and
+/// [`LINE_HEIGHT`] between lines.
+pub(crate) fn label_height(text: &str, size: f64) -> f64 {
+    size + extra_lines(text, size)
+}
+
+/// The widest line of a tick label without its markup, which Charton is given to measure.
+pub(crate) fn widest_line(text: &str, size: f64, weight: FontWeight) -> String {
+    lines(text)
+        .max_by(|a, b| label_width(a, size, weight).total_cmp(&label_width(b, size, weight)))
+        .map(plain)
+        .unwrap_or_default()
+}
+
 /// The extent across its axis of a tick label of a width, rotated by `angle` degrees: the side
-/// of its rotated line box (the line is one em, the font size) which the axis band reserves, as
-/// Charton computes it, with the sine and cosine of `libm`.
+/// of its rotated line box (one em, the font size, per line, see [`label_height`]) which the
+/// axis band reserves, as Charton computes it, with the sine and cosine of `libm`.
 pub(crate) fn label_extent(width: f64, size: f64, angle: f64, bottom: bool) -> f64 {
     let radians = angle * std::f64::consts::PI / 180.0;
     let (sin, cos) = if angle == 0.0 {
@@ -246,6 +309,23 @@ mod tests {
         assert!(OTHER.windows(2).all(|w| w[0].0 < w[1].0));
         assert!(OTHER_BOLD.windows(2).all(|w| w[0].0 < w[1].0));
         assert!(text_width("µ°²αβ", 10.0) > 0.0);
+    }
+
+    #[test]
+    fn superscripts() {
+        assert_eq!(runs("10^{−3}"), [("10", false), ("−3", true)]);
+        assert_eq!(
+            runs("2×10^{4} s"),
+            [("2×10", false), ("4", true), (" s", false)]
+        );
+        assert_eq!(runs("a^b"), [("a^b", false)]);
+        assert_eq!(runs(""), [("", false)]);
+        assert_eq!(plain("10^{−3}"), "10−3");
+        let w = label_width("10^{2}", 10.0, FontWeight::Normal);
+        let expected = text_width("10", 10.0) + text_width("2", 7.0);
+        assert!((w - expected).abs() < 1e-12);
+        assert_eq!(label_height("0\nfasted", 10.0), 22.0);
+        assert_eq!(label_height("1", 10.0), 10.0);
     }
 
     #[test]

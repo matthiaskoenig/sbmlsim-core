@@ -45,19 +45,19 @@ def test_contract() -> None:
 
 
 def test_render_svg_fixture() -> None:
-    spec = (PLOT / "specs" / "benchmark.json").read_text()
-    golden = (PLOT / "golden" / "benchmark.svg").read_text()
+    spec = (PLOT / "specs" / "benchmark.json").read_text(encoding="utf-8")
+    golden = (PLOT / "golden" / "benchmark.svg").read_text(encoding="utf-8")
     assert sbmlsim_core.render_svg(spec) == golden
 
 
 def test_render_svg_colorbars_fixture() -> None:
-    spec = (PLOT / "specs" / "v028.json").read_text()
-    golden = (PLOT / "golden" / "v028.svg").read_text()
+    spec = (PLOT / "specs" / "v028.json").read_text(encoding="utf-8")
+    golden = (PLOT / "golden" / "v028.svg").read_text(encoding="utf-8")
     assert sbmlsim_core.render_svg(spec) == golden
 
 
 def test_invalid_spec_value_error() -> None:
-    spec = json.loads((PLOT / "specs" / "benchmark.json").read_text())
+    spec = json.loads((PLOT / "specs" / "benchmark.json").read_text(encoding="utf-8"))
     spec["plots"][0]["elements"][0]["y"] = spec["plots"][0]["elements"][0]["y"][:-1]
     with pytest.raises(ValueError, match=r"plots\[0\]\.elements\[0\]\.y"):
         sbmlsim_core.render_svg(json.dumps(spec))
@@ -237,6 +237,29 @@ def test_fields_of_0_30_render() -> None:
     assert per_y == pytest.approx(per_x)
     space_time = next(p for p in geometry["plots"] if p["id"] == "space_time")
     assert space_time["x"]["kind"] == "linear"
+
+
+def test_color_scale_of_stops() -> None:
+    # matplotlib's LinearSegmentedColormap.from_list of the same stops
+    stops = [(0.0, "#006d77"), (0.3, "#2a9d4b"), (0.6, "#74c69d"), (1.0, "#d8f3dc")]
+    assert sbmlsim_core.color_scale(stops, 0.0, 1.0, [0.0, 0.1, 0.45, 1.0]) == [
+        "#006d77",
+        "#0e7d69",
+        "#4fb274",
+        "#d8f3dc",
+    ]
+    with pytest.raises(ValueError, match="stop 1: the last stop must be at 1"):
+        sbmlsim_core.color_scale([(0.0, "#000000"), (0.9, "#ffffff")], 0.0, 1.0, [0.5])
+
+
+def test_fields_of_0_31_render() -> None:
+    # the specs of the renderer's fixtures of the fields since 0.31.0
+    for name in ["v031", "v031_legend"]:
+        spec = (PLOT / "specs" / f"{name}.json").read_text(encoding="utf-8")
+        svg = sbmlsim_core.render_svg(spec)
+        assert svg == (PLOT / "golden" / f"{name}.svg").read_text(encoding="utf-8")
+    geometry = sbmlsim_core.figure_geometry(spec)
+    assert {e["owner"] for e in geometry["legend_entries"]} == {"figure"}
 
 
 @pytest.mark.skipif(

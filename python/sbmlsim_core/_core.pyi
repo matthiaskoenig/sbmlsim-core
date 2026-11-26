@@ -370,7 +370,7 @@ def text_width(text: str, size: float, bold: bool = False) -> float:
     """
 
 def color_scale(
-    name: str,
+    name: str | Sequence[tuple[float, str]],
     low: float,
     high: float,
     values: Sequence[float],
@@ -379,11 +379,16 @@ def color_scale(
     start: float = 0.0,
     end: float = 1.0,
 ) -> list[str]:
-    """The colours (`#rrggbb`) of `values` on a named colour scale.
+    """The colours (`#rrggbb`) of `values` on a colour scale.
+
+    `name` is a name of `COLOR_SCALES`, or (since 0.31.0) the colour map as stops
+    `[(0.0, "#rrggbb"), (0.3, "#rrggbb"), ..., (1.0, "#rrggbb")]`, matplotlib's
+    `LinearSegmentedColormap.from_list`: at least two, the first at 0 and the last at 1, the
+    positions not decreasing; its 256 colours interpolated linearly in sRGB between them.
 
     The values `low..high` take the part `start..end` of the colour map (since 0.28.0), e.g.
     `end=0.85` for the lines of a scan which leave out the lightest colours.
 
-    Raises `ValueError` for an unknown name and for a part which is not
-    `0 <= start < end <= 1`.
+    Raises `ValueError` for an unknown name, for stops which are no colour map and for a part
+    which is not `0 <= start < end <= 1`.
     """

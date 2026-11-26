@@ -22,12 +22,12 @@ use std::fmt::Write as _;
 use charton::prelude::*;
 
 use crate::layout::{self, LegendOwner, PAD, Rect};
-use crate::spec::{AxisScale, Element, Figure, Fonts, Plot, YAxisRef};
+use crate::spec::{AxisScale, ColorBarPlacement, Element, Figure, Fonts, Plot, YAxisRef};
 use crate::svg::{
-    self, AxisHooks, ElementTag, FONT_FAMILY, GridLines, ID_PLACEHOLDER, PanelProbe, PlotHooks,
-    PlotWriter, Stack, escape, text_lines, theme,
+    self, AxisHooks, ElementTag, FONT_FAMILY, GridLines, ID_PLACEHOLDER, MULTIPLIER_GAP,
+    PanelProbe, PlotHooks, PlotWriter, Stack, escape, text_lines, theme,
 };
-use crate::text::{extra_lines, label_extent, text_width_one_line};
+use crate::text::{extra_lines, label_extent, label_height, label_width, widest_line};
 use axis::{ResolvedAxis, X_TICK_ROOM, Y_TICK_ROOM, axis_title};
 use heatmap::ColorBarLayout;
 use right_axis::RightAxis;
@@ -130,6 +130,21 @@ fn tick_labels(a: &ResolvedAxis, visible: bool) -> TickLabels {
         .collect()
 }
 
+/// The room a multiplier of the tick labels of a y axis takes above the panel: its line and
+/// [`MULTIPLIER_GAP`].
+pub(crate) fn multiplier_room(fonts: &Fonts) -> f64 {
+    fonts.y_tick() + MULTIPLIER_GAP
+}
+
+/// The labels Charton is given for tick labels: the widest line of each without its
+/// superscripts, which it measures and places, with the label the writer writes.
+fn given_labels(labels: &[(f64, String)], size: f64, fonts: &Fonts) -> Vec<(String, String)> {
+    labels
+        .iter()
+        .map(|(_, l)| (widest_line(l, size, fonts.tick_weight), l.clone()))
+        .collect()
+}
+
 /// How one axis is laid out: its hooks for the writer and its depth.
 #[derive(Debug, Clone)]
 struct AxisLayout {
@@ -147,6 +162,7 @@ struct AxisLayout {
 fn axis_layout(
     axis: &crate::spec::Axis,
     labels: &[(f64, String)],
+    multiplier: Option<&str>,
     fonts: &Fonts,
     bottom: bool,
 ) -> AxisLayout {
@@ -156,8 +172,8 @@ fn axis_layout(
         .iter()
         .map(|(_, l)| {
             label_extent(
-                text_width_one_line(l, tick, fonts.tick_weight),
-                tick,
+                label_width(l, tick, fonts.tick_weight),
+                label_height(l, tick),
                 angle,
                 bottom,
             )
@@ -171,6 +187,15 @@ fn axis_layout(
     };
     let title_text = (axis.label_visible && !name.is_empty()).then_some(name);
     let labels_depth = TICK_LENGTH + TICK_LABEL_PADDING + inter;
+    // the multiplier of the bottom axis goes below its tick labels at its right end, beside
+    // the title (that of a left axis above the panel, see `prepare`)
+    let multiplier = multiplier
+        .filter(|_| axis.ticks_visible)
+        .map(str::to_string);
+    let title_room = match &multiplier {
+        Some(_) if bottom => title_room.max(TITLE_GAP + tick),
+        _ => title_room,
+    };
     AxisLayout {
         hooks: AxisHooks {
             labels_hidden: !axis.ticks_visible,
@@ -181,6 +206,8 @@ fn axis_layout(
             label_angle: -angle,
             title: title_text,
             labels_depth,
+            labels: given_labels(labels, tick, fonts),
+            multiplier,
         },
         depth: labels_depth + title_room,
     }
@@ -215,7 +242,10 @@ pub(crate) struct Prepared {
     xl: AxisLayout,
     yl: AxisLayout,
     right: Option<RightAxis>,
-    bars: Vec<ColorBarLayout>,
+    /// The colour bars laid out.
+    pub bars: Vec<ColorBarLayout>,
+    /// The room of the bar of the plot above its row, 0 without one (since 0.31.0).
+    pub top_bar: f64,
     grid: GridLines,
     /// The colour of every element.
     pub colors: Vec<String>,
@@ -251,7 +281,14 @@ pub(crate) fn prepare(figure: &Figure, plot: &Plot, panel: (f64, f64)) -> Prepar
     let bars: Vec<ColorBarLayout> = plot
         .color_bars()
         .iter()
-        .map(|b| heatmap::colorbar_layout(b, fonts, panel_height))
+        .map(|b| {
+            let along = match b.placement {
+                ColorBarPlacement::Right => panel_height,
+                ColorBarPlacement::Inset => panel_width,
+                ColorBarPlacement::Top => figure.width,
+            };
+            heatmap::colorbar_layout(b, fonts, along)
+        })
         .collect();
     let xa = axis::resolve(x_axis, &ext.xs, &ext.x_sticky, panel_width, X_TICK_ROOM);
     let ya = axis::resolve(y_axis, &ext.ys, &ext.y_sticky, panel_height, Y_TICK_ROOM);
@@ -271,12 +308,12 @@ pub(crate) fn prepare(figure: &Figure, plot: &Plot, panel: (f64, f64)) -> Prepar
         .map(|(a, r)| right_axis::layout(a, r, fonts));
     let x_labels = tick_labels(&xa, x_axis.ticks_visible);
     let y_labels = tick_labels(&ya, y_axis.ticks_visible);
-    let xl = axis_layout(x_axis, &x_labels, fonts, true);
-    let yl = axis_layout(y_axis, &y_labels, fonts, false);
+    let xl = axis_layout(x_axis, &x_labels, xa.multiplier.as_deref(), fonts, true);
+    let yl = axis_layout(y_axis, &y_labels, ya.multiplier.as_deref(), fonts, false);
     // the last tick label of an unrotated x axis reaches half its width past the panel
     let overhang = match x_labels.last() {
         Some((_, l)) if x_axis.tick_rotation == 0.0 => {
-            text_width_one_line(l, fonts.tick, fonts.tick_weight) / 2.0
+            label_width(l, fonts.tick, fonts.tick_weight) / 2.0
         }
         _ => 0.0,
     };
@@ -319,16 +356,34 @@ pub(crate) fn prepare(figure: &Figure, plot: &Plot, panel: (f64, f64)) -> Prepar
         }
         Err(_) => Sides::default(),
     };
-    let right_room =
-        right.as_ref().map_or(0.0, |r| r.depth) + bars.iter().map(|b| b.room).sum::<f64>();
+    let right_room = right.as_ref().map_or(0.0, |r| r.depth)
+        + bars
+            .iter()
+            .filter(|b| b.placement == ColorBarPlacement::Right)
+            .map(|b| b.room)
+            .sum::<f64>();
+    // a bar above the row takes room above the room of the plots of the row
+    let top_bar = bars
+        .iter()
+        .filter(|b| b.placement == ColorBarPlacement::Top)
+        .map(|b| b.room)
+        .fold(0.0, f64::max);
     // a plot title of several lines stacks its lines up from the line Charton places, into
     // room above the band Charton reserves for one line
     let title_lines = plot
         .title
         .as_deref()
-        .map_or(0.0, |t| extra_lines(t, fonts.label));
+        .map_or(0.0, |t| extra_lines(t, fonts.plot_title_size()));
+    // the multiplier of a y axis goes above the panel
+    let multiplied =
+        yl.hooks.multiplier.is_some() || right.as_ref().is_some_and(|r| r.multiplier.is_some());
+    let multiplier_top = if multiplied {
+        multiplier_room(fonts)
+    } else {
+        0.0
+    };
     let depth = Sides {
-        top: bands.top + title_lines,
+        top: bands.top + title_lines + multiplier_top,
         right: bands.right.max(overhang).max(right_room),
         bottom: bands.bottom.max(xl.depth),
         left: bands.left.max(yl.depth),
@@ -345,6 +400,7 @@ pub(crate) fn prepare(figure: &Figure, plot: &Plot, panel: (f64, f64)) -> Prepar
         yl,
         right,
         bars,
+        top_bar,
         grid,
         bands,
         depth,
@@ -462,19 +518,25 @@ pub(crate) fn render_plot(
         right_axis::draw(&mut body, y2, y2a, right, fonts, drawn);
         bar_from += right.depth;
     }
-    // the colour bars stacked right of the panel and the right axis, in their order
+    // the colour bars stacked right of the panel and the right axis in their order, and the
+    // insets in the panel; a bar above the row is drawn by the figure
     for (k, (b, layout)) in plot.color_bars().iter().zip(&prep.bars).enumerate() {
-        heatmap::draw_colorbar(
-            &mut body,
-            &mut defs,
-            &prefix,
-            k,
-            b,
-            layout,
-            fonts,
-            (drawn.x, drawn.y, bar_from, drawn.height),
-        );
-        bar_from += layout.room;
+        let at = match layout.placement {
+            ColorBarPlacement::Right => Rect {
+                x: drawn.x + bar_from,
+                y: drawn.y,
+                width: 0.0,
+                height: drawn.height,
+            },
+            ColorBarPlacement::Inset => {
+                heatmap::inset_bar(layout, layout.inset_rect(b, drawn, fonts), fonts)
+            }
+            ColorBarPlacement::Top => continue,
+        };
+        heatmap::draw_colorbar(&mut body, &mut defs, &prefix, k, b, layout, fonts, at);
+        if layout.placement == ColorBarPlacement::Right {
+            bar_from += layout.room;
+        }
     }
     if let Some(e) = failed {
         error_text(&mut body, canvas, &e.to_string());
@@ -613,7 +675,7 @@ fn frame(
     let (x0, x1) = xa.domain();
     let (y0, y1) = ya.domain();
     let (fg, soft) = (theme::FG, theme::FG_SOFT);
-    let (tick, label) = (fonts.tick, fonts.label);
+    let (tick, label, plot_title) = (fonts.tick, fonts.label, fonts.plot_title_size());
     let mut chart = chart
         .with_size(w as u32, h as u32)
         .with_margins(m.top / h, m.right / w, m.bottom / h, m.left / w)
@@ -621,8 +683,8 @@ fn frame(
         .with_x_expand(zero)
         .with_y_domain(y0, y1)
         .with_y_expand(zero)
-        .with_x_ticks(x_labels)
-        .with_y_ticks(y_labels)
+        .with_x_ticks(proxies(x_labels, fonts.tick, fonts))
+        .with_y_ticks(proxies(y_labels, fonts.y_tick(), fonts))
         .with_x_label("")
         .with_y_label("")
         .configure_theme(move |t| {
@@ -639,7 +701,7 @@ fn frame(
                 .with_tick_width(1.0)
                 .with_tick_length(TICK_LENGTH)
                 .with_tick_label_padding(TICK_LABEL_PADDING)
-                .with_title_size(label)
+                .with_title_size(plot_title)
                 .with_title_color(fg)
                 .with_x_tick_label_angle(0.0)
                 .with_y_tick_label_angle(0.0)
@@ -648,6 +710,14 @@ fn frame(
         chart = chart.with_title(t.clone());
     }
     chart
+}
+
+/// The tick labels as Charton is given them: the widest line of each without its superscripts.
+fn proxies(labels: TickLabels, size: f64, fonts: &Fonts) -> TickLabels {
+    labels
+        .into_iter()
+        .map(|(u, l)| (u, widest_line(&l, size, fonts.tick_weight)))
+        .collect()
 }
 
 /// FNV-1a of a text, for the id prefix of a figure.
@@ -704,8 +774,22 @@ pub(crate) fn render_planned(figure: &Figure, plan: &layout::Plan) -> String {
         plots.push_str(&p.body);
         plots.push_str("</svg>");
     }
+    // the colour bars above the rows (since 0.31.0)
+    for (i, k, at) in &plan.top_bars {
+        let plot = &figure.plots[*i];
+        heatmap::draw_colorbar(
+            &mut plots,
+            &mut defs,
+            &format!("{ID_PLACEHOLDER}-p{i}"),
+            *k,
+            &plot.color_bars()[*k],
+            &plan.prepared[*i].bars[*k],
+            fonts,
+            *at,
+        );
+    }
     let mut legends = String::new();
-    for (b, entries) in lay.legends.iter().zip(&plan.entries) {
+    for ((b, entries), shape) in lay.legends.iter().zip(&plan.entries).zip(&plan.shapes) {
         let row;
         let owner = match &b.owner {
             LegendOwner::Plot(id) => ("data-plot", id.as_str()),
@@ -713,8 +797,9 @@ pub(crate) fn render_planned(figure: &Figure, plan: &layout::Plan) -> String {
                 row = r.to_string();
                 ("data-row", row.as_str())
             }
+            LegendOwner::Figure => ("data-figure", "legend"),
         };
-        legend::draw(&mut legends, owner, b.rect, entries, fonts);
+        legend::draw(&mut legends, owner, b.rect, entries, shape, fonts);
     }
 
     let mut out = String::with_capacity(plots.len() + defs.len() + legends.len() + 1024);

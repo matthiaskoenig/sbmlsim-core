@@ -125,6 +125,9 @@ pub struct Fonts {
     /// 0.28.0).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tick_y: Option<f64>,
+    /// Font size of the plot titles, `label` when absent (since 0.31.0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plot_title: Option<f64>,
     /// Weight of the figure and plot titles, bold by default (since 0.28.0).
     #[serde(default = "bold", skip_serializing_if = "FontWeight::is_bold")]
     pub title_weight: FontWeight,
@@ -144,6 +147,11 @@ impl Fonts {
     pub fn y_tick(&self) -> f64 {
         self.tick_y.unwrap_or(self.tick)
     }
+
+    /// The font size of the plot titles: `plot_title`, else `label`.
+    pub fn plot_title_size(&self) -> f64 {
+        self.plot_title.unwrap_or(self.label)
+    }
 }
 fn d_title() -> f64 {
     16.0
@@ -162,6 +170,7 @@ impl Default for Fonts {
             tick: 11.0,
             legend: 11.0,
             tick_y: None,
+            plot_title: None,
             title_weight: FontWeight::Bold,
             label_weight: FontWeight::Normal,
             tick_weight: FontWeight::Normal,
@@ -206,6 +215,9 @@ pub enum LegendPosition {
     Inside,
     /// Right of the plot.
     Outside,
+    /// One legend of the figure below the grid, centred, its entries in columns (since
+    /// 0.31.0; matplotlib's `fig.legend(loc="lower center", ncol=n)`).
+    Bottom,
 }
 
 /// Where a legend inside a panel goes (since 0.30.0): the locations of matplotlib's `loc`.
@@ -254,7 +266,7 @@ impl LegendLoc {
 }
 
 /// Legend settings of a figure.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LegendSettings {
     /// Whether a legend is per plot or per row.
@@ -266,6 +278,13 @@ pub struct LegendSettings {
     /// Where a legend inside goes, `best` by default (since 0.30.0); a plot may set its own.
     #[serde(default)]
     pub loc: LegendLoc,
+    /// The columns of the entries of the legend below the grid (since 0.31.0); absent, as many
+    /// as fit into the width of the figure in one row, and the entries in rows of that many.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub columns: Option<u32>,
+    /// The title of the legend below the grid (since 0.31.0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
 }
 
 /// One plot of the grid.
@@ -301,6 +320,11 @@ pub struct Plot {
     /// the legend settings of the figure. A row legend inside takes the one of its host plot.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub legend_loc: Option<LegendLoc>,
+    /// The title of the legend of the plot, drawn above its entries (since 0.31.0;
+    /// matplotlib's `ax.legend(title=...)`). A row legend takes the first title of the plots
+    /// of its row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub legend_title: Option<String>,
     /// A color bar.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub colorbar: Option<ColorBar>,
@@ -455,6 +479,14 @@ pub struct Axis {
     /// Rotation of the tick labels in degrees.
     #[serde(default)]
     pub tick_rotation: f64,
+    /// The values of the ticks (since 0.31.0), instead of the ones the axis computes:
+    /// matplotlib's `set_xticks`. A tick outside of the limits is not drawn; the ticks do not
+    /// change the limits. Not on a category axis.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ticks: Option<Vec<f64>>,
+    /// The labels of the `ticks`, one per tick (since 0.31.0); their numbers without them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tick_labels: Option<Vec<String>>,
 }
 
 impl Axis {
@@ -525,11 +557,19 @@ const COMMON_KEYS: [&str; 5] = ["id", "label", "legend", "axis", "style"];
 /// The fields of the kinds of an element besides the common ones, `None` for an unknown kind.
 fn kind_fields(kind: &str) -> Option<&'static [&'static str]> {
     Some(match kind {
-        "curve" => &["x", "y", "xerr", "yerr", "error_cap"],
+        "curve" => &["x", "y", "xerr", "yerr", "error_cap", "error_width"],
         "band" => &["x", "low", "high", "median"],
         "area" => &["x", "from", "to"],
-        "bar" => &["x", "height", "err", "horizontal", "width", "error_cap"],
-        "box" => &["positions", "stats"],
+        "bar" => &[
+            "x",
+            "height",
+            "err",
+            "horizontal",
+            "width",
+            "error_cap",
+            "error_width",
+        ],
+        "box" => &["positions", "stats", "width"],
         "violin" => &["positions", "densities"],
         "histogram" => &["edges", "counts"],
         "heatmap" => &[
@@ -712,6 +752,10 @@ pub enum ElementKind {
         /// 0.30.0).
         #[serde(default, skip_serializing_if = "is_zero")]
         error_cap: f64,
+        /// The width of the lines of the error bars in pixels, 1 by default (since 0.31.0;
+        /// matplotlib's `elinewidth`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error_width: Option<f64>,
     },
     /// A band between two curves with an optional median.
     Band {
@@ -769,6 +813,10 @@ pub enum ElementKind {
         /// 0.30.0).
         #[serde(default, skip_serializing_if = "is_zero")]
         error_cap: f64,
+        /// The width of the lines of the error bars in pixels, 1 by default (since 0.31.0;
+        /// matplotlib's `elinewidth`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error_width: Option<f64>,
     },
     /// Box plots.
     Box {
@@ -777,6 +825,11 @@ pub enum ElementKind {
         positions: Vec<f64>,
         /// Statistics per position.
         stats: Vec<BoxStats>,
+        /// The width of a box in units of the x axis (since 0.31.0; a share of the slot of a
+        /// category on a category axis, whose categories are one unit apart): matplotlib's
+        /// `widths`. Absent, half of the spacing of the positions.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        width: Option<f64>,
     },
     /// Violins.
     Violin {
@@ -916,13 +969,27 @@ pub struct Density {
     pub density: Vec<f64>,
 }
 
-/// A color scale.
+/// A stop of a colour map built from colours at positions (since 0.31.0): a position in
+/// `0..=1` and its colour `#rrggbb`, written `[position, "#rrggbb"]`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ColorStop(pub f64, pub String);
+
+/// A color scale: a named colour map or a map of stops, and the values it spans.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ColorScale {
     /// Name of the color map: a sequential or diverging map of matplotlib in lower case, or
     /// its reversal `<name>_r` (since 0.30.0; viridis, magma, rdbu, coolwarm, greys before).
-    pub name: ColorScaleName,
+    /// Required before 0.31.0; since then a scale has either a name or `stops`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<ColorScaleName>,
+    /// The colour map as colours at positions (since 0.31.0), matplotlib's
+    /// `LinearSegmentedColormap.from_list(name, [(0.0, c0), (0.3, c1), ..., (1.0, cn)])`: at
+    /// least two stops, the first at 0 and the last at 1, the positions not decreasing (two
+    /// stops at one position are a step); the 256 colours of the map interpolated linearly in
+    /// sRGB between them, as matplotlib's. Refused together with `name`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stops: Option<Vec<ColorStop>>,
     /// Value of the low end.
     pub low: f64,
     /// Value of the high end.
@@ -962,6 +1029,64 @@ pub struct ColorBar {
     /// band (since 0.28.0).
     #[serde(default, skip_serializing_if = "is_false")]
     pub categorical: bool,
+    /// Lines across the bar at values of the scale (since 0.31.0), e.g. at the default of a
+    /// scan (matplotlib's `cbar.ax.axhline`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub marks: Option<Vec<ColorBarMark>>,
+    /// Where the bar goes (since 0.31.0), right of its panel by default.
+    #[serde(default, skip_serializing_if = "ColorBarPlacement::is_right")]
+    pub placement: ColorBarPlacement,
+    /// The location of an inset bar in its panel (since 0.31.0), one of the locations of a
+    /// legend but `best`, `upper_right` by default; only with the placement `inset`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loc: Option<LegendLoc>,
+    /// The length of the bar as a share of what it runs along (since 0.31.0), matplotlib's
+    /// `shrink`: of the height of its panel right of it (1 by default), of the width of the
+    /// panels of its row above them (1 by default), of the width of its panel inset (0.5 by
+    /// default); the bar centred on it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub length: Option<f64>,
+    /// The thickness of the bar in pixels (since 0.31.0), 12 by default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thickness: Option<f64>,
+}
+
+/// Where a colour bar goes (since 0.31.0).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ColorBarPlacement {
+    /// Vertical, right of the panel of its plot and the bars before it, its low end at the
+    /// bottom.
+    #[default]
+    Right,
+    /// Horizontal, above the panels of the row of its plot and centred over them, its ticks
+    /// and its label above it (matplotlib's `fig.colorbar(..., location="top")` over the axes
+    /// of a row); the row gets the room. One bar of a row goes above it.
+    Top,
+    /// Horizontal, inside the panel of its plot at `loc`, its ticks and its label below it
+    /// (matplotlib's `ax.inset_axes` with a horizontal colour bar); a legend at `best` avoids
+    /// it.
+    Inset,
+}
+
+impl ColorBarPlacement {
+    fn is_right(&self) -> bool {
+        *self == ColorBarPlacement::Right
+    }
+}
+
+/// A line across a colour bar at a value of its scale (since 0.31.0).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ColorBarMark {
+    /// The value, between the ends of the scale.
+    pub value: f64,
+    /// The colour `#rrggbb`, black by default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    /// The width of the line in pixels, 2 by default.
+    #[serde(default = "two")]
+    pub width: f64,
 }
 
 impl Plot {
@@ -1023,9 +1148,10 @@ pub enum MarkerType {
     Circle,
     /// Square.
     Square,
-    /// Triangle.
+    /// Triangle pointing up, matplotlib's `^`.
     Triangle,
-    /// Diamond.
+    /// Diamond, a square on its corner, matplotlib's `D` (as wide as high since 0.31.0, as
+    /// `thin_diamond` before).
     Diamond,
     /// Cross.
     Cross,
@@ -1033,6 +1159,54 @@ pub enum MarkerType {
     Plus,
     /// X.
     X,
+    /// Triangle pointing down, matplotlib's `v` (since 0.31.0).
+    TriangleDown,
+    /// Triangle pointing left, matplotlib's `<` (since 0.31.0).
+    TriangleLeft,
+    /// Triangle pointing right, matplotlib's `>` (since 0.31.0).
+    TriangleRight,
+    /// Star of five points, matplotlib's `*` (since 0.31.0).
+    Star,
+    /// Filled X, matplotlib's `X` (since 0.31.0).
+    XFilled,
+    /// Filled plus, matplotlib's `P` (since 0.31.0).
+    PlusFilled,
+    /// Pentagon, matplotlib's `p` (since 0.31.0).
+    Pentagon,
+    /// Hexagon with a corner at the top, matplotlib's `h` (since 0.31.0).
+    Hexagon,
+    /// Thin diamond, matplotlib's `d` (since 0.31.0).
+    ThinDiamond,
+}
+
+impl MarkerType {
+    /// Whether the marker is lines (cross, plus, x), which have no fill.
+    pub fn is_line(&self) -> bool {
+        matches!(self, MarkerType::Cross | MarkerType::Plus | MarkerType::X)
+    }
+}
+
+/// Which part of a marker its fill fills (since 0.31.0), matplotlib's `fillstyle`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FillStyle {
+    /// The whole marker.
+    #[default]
+    Full,
+    /// The left half; the right half takes `fill_alt`.
+    Left,
+    /// The right half; the left half takes `fill_alt`.
+    Right,
+    /// The bottom half; the top half takes `fill_alt`.
+    Bottom,
+    /// The top half; the bottom half takes `fill_alt`.
+    Top,
+}
+
+impl FillStyle {
+    fn is_full(&self) -> bool {
+        *self == FillStyle::Full
+    }
 }
 
 /// A marker style.
@@ -1055,6 +1229,15 @@ pub struct Marker {
     /// Edge width, 1 by default.
     #[serde(default = "one_f")]
     pub edge_width: f64,
+    /// Which half the fill fills (since 0.31.0), the whole marker by default; the edge goes
+    /// around both halves and between them, as matplotlib draws a half filled marker. A marker
+    /// of lines has no fill and ignores it.
+    #[serde(default, skip_serializing_if = "FillStyle::is_full")]
+    pub fill_style: FillStyle,
+    /// The fill of the other half of a half filled marker (since 0.31.0), `#rrggbb` or `none`,
+    /// the default (matplotlib's `markerfacecoloralt`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fill_alt: Option<String>,
 }
 impl Default for Marker {
     fn default() -> Self {
@@ -1064,6 +1247,8 @@ impl Default for Marker {
             fill: None,
             edge: None,
             edge_width: 1.0,
+            fill_style: FillStyle::Full,
+            fill_alt: None,
         }
     }
 }
@@ -1161,6 +1346,9 @@ fn check_style(path: &str, style: &Style) -> Result<(), SpecError> {
         check_color(format!("{path}.marker.fill"), &style.marker.fill)?;
     }
     check_color(format!("{path}.marker.edge"), &style.marker.edge)?;
+    if style.marker.fill_alt.as_deref() != Some("none") {
+        check_color(format!("{path}.marker.fill_alt"), &style.marker.fill_alt)?;
+    }
     if let Some(fill) = &style.fill {
         check_color(format!("{path}.fill.color"), &fill.color)?;
         if !(0.0..=1.0).contains(&fill.opacity) {
@@ -1171,6 +1359,25 @@ fn check_style(path: &str, style: &Style) -> Result<(), SpecError> {
 }
 
 fn check_scale(path: &str, s: &ColorScale) -> Result<(), SpecError> {
+    match (&s.name, &s.stops) {
+        (Some(_), Some(_)) => {
+            return err(
+                format!("{path}.stops"),
+                "refused together with name, a scale has either",
+            );
+        }
+        (None, None) => return err(format!("{path}.name"), "a scale needs a name or stops"),
+        (None, Some(stops)) => {
+            if let Err((k, message)) = crate::colors::check_stops(stops) {
+                let p = match k {
+                    Some(k) => format!("{path}.stops[{k}]"),
+                    None => format!("{path}.stops"),
+                };
+                return err(p, message);
+            }
+        }
+        (Some(_), None) => {}
+    }
     if !(s.low < s.high) {
         return err(format!("{path}.high"), "must be above low");
     }
@@ -1244,7 +1451,46 @@ fn check_colorbar(path: &str, b: &ColorBar) -> Result<(), SpecError> {
         (None, Some(_)) => err(format!("{path}.tick_labels"), "tick labels need ticks"),
         (Some(t), Some(l)) => same_len(path, "tick_labels", l.len(), "ticks", t.len()),
         _ => Ok(()),
+    }?;
+    for (k, m) in b.marks.iter().flatten().enumerate() {
+        let p = format!("{path}.marks[{k}]");
+        if !(m.value.is_finite() && (s.low..=s.high).contains(&m.value)) {
+            return err(
+                format!("{p}.value"),
+                format!("{} is not between low and high", m.value),
+            );
+        }
+        check_color(format!("{p}.color"), &m.color)?;
+        if !(m.width >= 0.0 && m.width.is_finite()) {
+            return err(
+                format!("{p}.width"),
+                "must be a number of pixels, not negative",
+            );
+        }
     }
+    match b.loc {
+        Some(_) if b.placement != ColorBarPlacement::Inset => {
+            return err(format!("{path}.loc"), "only an inset bar has a location");
+        }
+        Some(LegendLoc::Best) => {
+            return err(
+                format!("{path}.loc"),
+                "an inset bar takes a fixed location, not best",
+            );
+        }
+        _ => {}
+    }
+    if let Some(l) = b.length
+        && !(l > 0.0 && l <= 1.0)
+    {
+        return err(format!("{path}.length"), "must be above 0 and at most 1");
+    }
+    if let Some(t) = b.thickness
+        && !(t > 0.0 && t.is_finite())
+    {
+        return err(format!("{path}.thickness"), "must be positive");
+    }
+    Ok(())
 }
 
 fn check_axis(path: &str, a: &Axis) -> Result<(), SpecError> {
@@ -1287,6 +1533,39 @@ fn check_axis(path: &str, a: &Axis) -> Result<(), SpecError> {
     }
     if a.max_decades.is_some_and(|d| !(d > 0.0)) {
         return err(format!("{path}.max_decades"), "must be positive");
+    }
+    if let Some(ticks) = &a.ticks {
+        if a.scale == AxisScale::Category {
+            return err(
+                format!("{path}.ticks"),
+                "a category axis has its categories as ticks",
+            );
+        }
+        for (k, t) in ticks.iter().enumerate() {
+            if !t.is_finite() {
+                return err(format!("{path}.ticks[{k}]"), "must be a finite number");
+            }
+            if a.scale == AxisScale::Log && *t <= 0.0 {
+                return err(
+                    format!("{path}.ticks[{k}]"),
+                    "must be positive on a log axis",
+                );
+            }
+        }
+    }
+    match (&a.ticks, &a.tick_labels) {
+        (None, Some(_)) => err(format!("{path}.tick_labels"), "tick labels need ticks"),
+        (Some(t), Some(l)) => same_len(path, "tick_labels", l.len(), "ticks", t.len()),
+        _ => Ok(()),
+    }
+}
+
+fn check_error_width(p: &str, width: Option<f64>) -> Result<(), SpecError> {
+    if width.is_some_and(|w| !(w >= 0.0 && w.is_finite())) {
+        return err(
+            format!("{p}.error_width"),
+            "must be a number of pixels, not negative",
+        );
     }
     Ok(())
 }
@@ -1360,8 +1639,10 @@ fn check_kind(p: &str, kind: &ElementKind) -> Result<(), SpecError> {
             xerr,
             yerr,
             error_cap,
+            error_width,
         } => {
             check_cap(p, *error_cap)?;
+            check_error_width(p, *error_width)?;
             same_len(p, "y", y.len(), "x", x.len())?;
             if let Some(e) = xerr {
                 same_len(p, "xerr", e.len(), "x", x.len())?;
@@ -1392,9 +1673,11 @@ fn check_kind(p: &str, kind: &ElementKind) -> Result<(), SpecError> {
             err: e,
             width,
             error_cap,
+            error_width,
             ..
         } => {
             check_cap(p, *error_cap)?;
+            check_error_width(p, *error_width)?;
             same_len(p, "height", height.len(), "x", x.len())?;
             if let Some(e) = e {
                 same_len(p, "err", e.len(), "x", x.len())?;
@@ -1403,8 +1686,15 @@ fn check_kind(p: &str, kind: &ElementKind) -> Result<(), SpecError> {
                 return err(format!("{p}.width"), "must be positive");
             }
         }
-        Box { positions, stats } => {
+        Box {
+            positions,
+            stats,
+            width,
+        } => {
             same_len(p, "stats", stats.len(), "positions", positions.len())?;
+            if width.is_some_and(|w| !(w > 0.0 && w.is_finite())) {
+                return err(format!("{p}.width"), "must be positive");
+            }
             for (i, b) in stats.iter().enumerate() {
                 let order = [b.low_whisker, b.q1, b.median, b.q3, b.high_whisker];
                 if !order.windows(2).all(|w| w[0] <= w[1]) {
@@ -1560,6 +1850,7 @@ pub(crate) fn validate(f: &Figure) -> Result<(), SpecError> {
         ("tick", f.fonts.tick),
         ("legend", f.fonts.legend),
         ("tick_y", f.fonts.y_tick()),
+        ("plot_title", f.fonts.plot_title_size()),
     ] {
         if !(v > 0.0) {
             return err(format!("fonts.{name}"), "must be positive");
@@ -1579,6 +1870,11 @@ pub(crate) fn validate(f: &Figure) -> Result<(), SpecError> {
     if f.grid.hspace < 0.0 {
         return err("grid.hspace".into(), "must not be negative");
     }
+    if f.legend.columns == Some(0) {
+        return err("legend.columns".into(), "must be at least 1");
+    }
+    // one bar goes above a row
+    let mut top_rows: BTreeMap<u32, String> = BTreeMap::new();
     let mut plot_ids = HashSet::new();
     // the id of an element names its group in the drawing, so it is unique in the figure
     let mut ids = HashSet::new();
@@ -1645,6 +1941,22 @@ pub(crate) fn validate(f: &Figure) -> Result<(), SpecError> {
             }
             for (k, c) in bars.iter().enumerate() {
                 check_colorbar(&format!("{pp}.colorbars[{k}]"), c)?;
+            }
+        }
+        for (k, c) in p.color_bars().iter().enumerate() {
+            if c.placement != ColorBarPlacement::Top {
+                continue;
+            }
+            let here = if p.colorbar.is_some() {
+                format!("{pp}.colorbar.placement")
+            } else {
+                format!("{pp}.colorbars[{k}].placement")
+            };
+            if let Some(first) = top_rows.insert(p.row, here.clone()) {
+                return err(
+                    here,
+                    format!("row {} has a bar above it already, {first}", p.row),
+                );
             }
         }
         if let Some(order) = &p.legend_order {

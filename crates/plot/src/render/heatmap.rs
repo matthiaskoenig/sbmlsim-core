@@ -18,7 +18,10 @@
 //! The colour bars of a plot are drawn by the crate right of the panel inside the cell of the
 //! plot, side by side in their order: a gradient of the scale from its low end at the bottom of
 //! the panel to its high end at its top, or a band per integer of a categorical bar, with ticks
-//! and labels of the values of the scale (or the given ones) and the label of the bar.
+//! and labels of the values of the scale (or the given ones) and the label of the bar. Since
+//! 0.31.0 a bar may go above the panels of its row or into its panel as an inset, horizontal
+//! from its low end at the left, carry marks across it at values, and take a length and a
+//! thickness of its own.
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -27,16 +30,18 @@ use std::fmt::Write as _;
 use charton::error::ChartonError;
 use charton::prelude::*;
 
-use super::axis::{self, ResolvedAxis};
+use super::axis::{self, ResolvedAxis, X_TICK_ROOM};
 use super::marks::{Layers, dataset};
 use super::stats_marks::rings_layer;
 use crate::FontWeight;
 use crate::colors::{color_of, color_scale, dark_text_on};
+use crate::layout::Rect;
 use crate::spec::{
-    Axis, AxisScale, ColorBar, ColorScale, ElementKind, Fonts, Plot, Style, YAxisRef,
+    Axis, AxisScale, ColorBar, ColorBarPlacement, ColorScale, ElementKind, Fonts, LegendLoc, Plot,
+    Style, YAxisRef,
 };
 use crate::svg::{self, LayerInfo, theme};
-use crate::text::{extra_lines, text_width_one_line};
+use crate::text::{extra_lines, label_height, label_width, text_width_one_line};
 
 /// The share of the width of a cell its text may take.
 const CELL_TEXT_WIDTH: f64 = 0.9;
@@ -277,13 +282,24 @@ pub(crate) fn heatmap_layers(
     Ok(())
 }
 
-/// A colour bar laid out: its ticks and the room it takes right of the panel.
+/// A colour bar laid out: its ticks and the room it takes.
 pub(crate) struct ColorBarLayout {
-    /// The ticks as shares from the bottom of the bar with their labels.
+    /// The ticks as shares from the low end of the bar with their labels.
     ticks: Vec<(f64, String)>,
     /// The width of the widest tick label in pixels.
     labels_width: f64,
-    /// The pixels the bar takes right of the panel or of the bar before it.
+    /// The height of the tallest tick label in pixels (its lines).
+    labels_height: f64,
+    /// The pixels the label of the bar takes across the bar with its gap, 0 without one.
+    label_room: f64,
+    /// Where the bar goes.
+    pub placement: ColorBarPlacement,
+    /// The thickness of the bar in pixels.
+    thickness: f64,
+    /// The length of the bar as a share of what it runs along.
+    length: f64,
+    /// The pixels the bar takes: right of the panel (or the bar before it) for a bar right of
+    /// it, above the row for a bar above it, 0 for an inset.
     pub room: f64,
 }
 
@@ -292,14 +308,29 @@ fn bands(s: &ColorScale) -> f64 {
     s.high - s.low + 1.0
 }
 
-/// Lays out the colour bar of a plot whose panel is expected to be `length` pixels high.
+/// The length of a bar of a placement as a share of what it runs along when the spec gives
+/// none.
+fn default_length(placement: ColorBarPlacement) -> f64 {
+    match placement {
+        ColorBarPlacement::Right | ColorBarPlacement::Top => 1.0,
+        ColorBarPlacement::Inset => 0.5,
+    }
+}
+
+/// Lays out a colour bar whose side is expected to be `along` pixels long: the height of its
+/// panel for a bar right of it, the width of its panel for an inset, the width of the figure
+/// for a bar above a row.
 ///
 /// The ticks are the given ones, else the ones of an axis from the low to the high end of the
 /// scale, linear or logarithmic (the integers among them on a categorical bar); their labels
 /// are the given ones, else their numbers. The room is measured with the Inter widths of the
-/// labels.
-pub(crate) fn colorbar_layout(bar: &ColorBar, fonts: &Fonts, length: f64) -> ColorBarLayout {
+/// labels, of their lines and superscripts.
+pub(crate) fn colorbar_layout(bar: &ColorBar, fonts: &Fonts, along: f64) -> ColorBarLayout {
     let s = &bar.scale;
+    let placement = bar.placement;
+    let length = bar.length.unwrap_or(default_length(placement));
+    let thickness = bar.thickness.unwrap_or(COLORBAR_WIDTH);
+    let horizontal = placement != ColorBarPlacement::Right;
     let scale_axis = Axis {
         label: None,
         unit: None,
@@ -320,9 +351,16 @@ pub(crate) fn colorbar_layout(bar: &ColorBar, fonts: &Fonts, length: f64) -> Col
         tick_marks_visible: None,
         line_visible: true,
         tick_rotation: 0.0,
+        ticks: None,
+        tick_labels: None,
     };
-    let resolved = || axis::resolve(&scale_axis, &[], &[], length, COLORBAR_TICK_ROOM);
-    // the shares of the ticks from the bottom of the bar with their labels
+    let room = if horizontal {
+        X_TICK_ROOM
+    } else {
+        COLORBAR_TICK_ROOM
+    };
+    let resolved = || axis::resolve(&scale_axis, &[], &[], along * length, room);
+    // the shares of the ticks from the low end of the bar with their labels
     let n = bands(s);
     // a categorical bar with labels and no ticks has a tick per band
     let band_ticks: Option<Vec<f64>> = match (&bar.ticks, &bar.tick_labels) {
@@ -335,7 +373,7 @@ pub(crate) fn colorbar_layout(bar: &ColorBar, fonts: &Fonts, length: f64) -> Col
         Some(values) => {
             let labels = match &bar.tick_labels {
                 Some(l) => l.clone(),
-                None => axis::tick_labels(values),
+                None => axis::axis_labels(values, s.log, false).0,
             };
             values
                 .iter()
@@ -359,30 +397,77 @@ pub(crate) fn colorbar_layout(bar: &ColorBar, fonts: &Fonts, length: f64) -> Col
             .collect(),
         None => {
             let r = resolved();
+            let values: Vec<f64> = r.ticks.iter().map(|(v, _)| *v).collect();
+            // the labels of the bar carry their powers of ten, a bar has no multiplier
+            let (labels, _) = axis::axis_labels(&values, s.log, false);
+            let r = ResolvedAxis {
+                ticks: values.into_iter().zip(labels).collect(),
+                ..r
+            };
             r.tick_coordinates()
                 .into_iter()
                 .map(|(u, l)| (r.share(u), l))
                 .collect()
         }
     };
+    let size = fonts.y_tick();
     let labels_width = ticks
         .iter()
-        .map(|(_, l)| text_width_one_line(l, fonts.y_tick(), fonts.tick_weight))
+        .map(|(_, l)| label_width(l, size, fonts.tick_weight))
+        .fold(0.0, f64::max);
+    let labels_height = ticks
+        .iter()
+        .map(|(_, l)| label_height(l, size))
         .fold(0.0, f64::max);
     // a label of several lines stacks them outwards, away from the bar
-    let label = match bar.label.as_deref() {
+    let label_room = match bar.label.as_deref() {
         Some(l) if !l.is_empty() => COLORBAR_LABEL_GAP + fonts.label + extra_lines(l, fonts.label),
         _ => 0.0,
     };
+    let across = thickness + COLORBAR_TICK + COLORBAR_TICK_PADDING;
+    let room = match placement {
+        ColorBarPlacement::Right => COLORBAR_GAP + across + labels_width + label_room,
+        ColorBarPlacement::Top => COLORBAR_GAP + across + labels_height + label_room,
+        ColorBarPlacement::Inset => 0.0,
+    };
     ColorBarLayout {
-        room: COLORBAR_GAP
-            + COLORBAR_WIDTH
-            + COLORBAR_TICK
-            + COLORBAR_TICK_PADDING
-            + labels_width
-            + label,
         ticks,
         labels_width,
+        labels_height,
+        label_room,
+        placement,
+        thickness,
+        length,
+        room,
+    }
+}
+
+impl ColorBarLayout {
+    /// The half widths of the first and the last tick label of a horizontal bar beyond the
+    /// ends of the bar, at most, in pixels.
+    fn overhang(&self, fonts: &Fonts) -> f64 {
+        self.ticks
+            .iter()
+            .map(|(_, l)| label_width(l, fonts.y_tick(), fonts.tick_weight) / 2.0)
+            .fold(0.0, f64::max)
+    }
+
+    /// The pixels a horizontal bar takes across it: the bar, its ticks, tick labels and label.
+    fn depth(&self) -> f64 {
+        self.thickness
+            + COLORBAR_TICK
+            + COLORBAR_TICK_PADDING
+            + self.labels_height
+            + self.label_room
+    }
+
+    /// The rectangle of an inset bar with its ticks and labels in a panel (since 0.31.0): the
+    /// bar of its length of the width of the panel, the half of its widest tick label beside
+    /// each end, at its location [`LEGEND_INSET`](crate::layout) from the edges of the panel.
+    pub(crate) fn inset_rect(&self, bar: &ColorBar, panel: Rect, fonts: &Fonts) -> Rect {
+        let w = self.length * panel.width + 2.0 * self.overhang(fonts);
+        let loc = bar.loc.unwrap_or(LegendLoc::UpperRight);
+        crate::layout::loc_rect(panel, (w, self.depth()), loc)
     }
 }
 
@@ -415,10 +500,20 @@ fn attr(out: &mut String, name: &str, v: f64) {
     out.push('"');
 }
 
-/// Writes the gradient of a colour bar under `id`: the colours of the scale from its low end at
-/// the bottom to its high end at the top.
-fn gradient(defs: &mut String, id: &str, s: &ColorScale) {
-    // the gradient from the bottom up, its stops on a grid of the bar and at the centre
+/// The share of the bar of a scale where the map reads the share `p` of its table, for a scale
+/// without a centre: `None` outside of the part of the map the scale takes.
+fn bar_share_of_table(s: &ColorScale, p: f64) -> Option<f64> {
+    if s.center.is_some() || s.end <= s.start {
+        return None;
+    }
+    let t = (p - s.start) / (s.end - s.start);
+    (t > 0.0 && t < 1.0).then_some(t)
+}
+
+/// Writes the gradient of a colour bar under `id`: the colours of the scale from its low end
+/// to its high end, from the bottom up (vertical) or from the left to the right (horizontal).
+fn gradient(defs: &mut String, id: &str, s: &ColorScale, horizontal: bool) {
+    // the stops on a grid of the bar, at the centre and at the stops of a map of stops
     let mut stops: Vec<f64> = (0..=GRADIENT_STEPS)
         .map(|k| k as f64 / GRADIENT_STEPS as f64)
         .collect();
@@ -428,12 +523,24 @@ fn gradient(defs: &mut String, id: &str, s: &ColorScale) {
             stops.push(t);
         }
     }
+    for stop in s.stops.iter().flatten() {
+        if let Some(t) = bar_share_of_table(s, stop.0) {
+            stops.push(t);
+        }
+    }
     stops.sort_by(f64::total_cmp);
-    stops.dedup();
-    let _ = write!(
-        defs,
-        "<linearGradient id=\"{id}\" x1=\"0\" y1=\"1\" x2=\"0\" y2=\"0\">"
-    );
+    stops.dedup_by(|a, b| (*a - *b).abs() < 1e-6);
+    if horizontal {
+        let _ = write!(
+            defs,
+            "<linearGradient id=\"{id}\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"0\">"
+        );
+    } else {
+        let _ = write!(
+            defs,
+            "<linearGradient id=\"{id}\" x1=\"0\" y1=\"1\" x2=\"0\" y2=\"0\">"
+        );
+    }
     for t in stops {
         // the ends are the ends of the scale exactly, not the round trip through the value
         let v = if t == 0.0 {
@@ -453,10 +560,21 @@ fn gradient(defs: &mut String, id: &str, s: &ColorScale) {
     defs.push_str("</linearGradient>");
 }
 
-/// Draws the colour bar `index` of a plot right of `(x, y, width, height)`, its panel and the
-/// bars before it: the gradient into `defs` under the id `<prefix>-colorbar` (the first bar)
-/// or `<prefix>-colorbar-<index>`, the bar, its ticks, tick labels and label into `body`. A
-/// categorical bar is a band of one colour per integer and needs no gradient.
+/// The rectangle of a colour bar along one direction: `(start, length)` of the bar on a side
+/// of `(start, length)` pixels, its length a share of it and centred on it.
+fn centred((start, length): (f64, f64), share: f64) -> (f64, f64) {
+    let l = length * share;
+    (start + (length - l) / 2.0, l)
+}
+
+/// Draws the colour bar `index` of a plot: the gradient into `defs` under the id
+/// `<prefix>-colorbar` (the first bar) or `<prefix>-colorbar-<index>`, the bar, its marks, its
+/// ticks, tick labels and label into `body`. A categorical bar is a band of one colour per
+/// integer and needs no gradient.
+///
+/// `at` is where the bar goes: for a bar right of its panel `(x, y, _, height)` the left edge
+/// of its room and the top and the height of the panel, for a horizontal bar `(x, y, width, _)`
+/// the left edge, the top and the width of the bar itself.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_colorbar(
     body: &mut String,
@@ -466,22 +584,49 @@ pub(crate) fn draw_colorbar(
     bar: &ColorBar,
     layout: &ColorBarLayout,
     fonts: &Fonts,
-    (px, py, pw, ph): (f64, f64, f64, f64),
+    at: Rect,
 ) {
     let s = &bar.scale;
-    let x = px + pw + COLORBAR_GAP;
-    body.push_str("<g class=\"sbmlsim-colorbar\">");
+    let horizontal = layout.placement != ColorBarPlacement::Right;
+    let th = layout.thickness;
+    // the bar: x, y, width and height, and where a share of it lies
+    let (bx, by, bw, bh) = if horizontal {
+        (at.x, at.y, at.width, th)
+    } else {
+        let (y, h) = centred((at.y, at.height), layout.length);
+        (at.x + COLORBAR_GAP, y, th, h)
+    };
+    let along = |t: f64| {
+        if horizontal {
+            bx + bw * t
+        } else {
+            by + bh * (1.0 - t)
+        }
+    };
+    let class = match layout.placement {
+        ColorBarPlacement::Right => "sbmlsim-colorbar",
+        ColorBarPlacement::Top => "sbmlsim-colorbar sbmlsim-colorbar-top",
+        ColorBarPlacement::Inset => "sbmlsim-colorbar sbmlsim-colorbar-inset",
+    };
+    let _ = write!(body, "<g class=\"{class}\">");
+    let rect = |body: &mut String, (x, y, w, h): (f64, f64, f64, f64)| {
+        body.push_str("<rect");
+        attr(body, "x", x);
+        attr(body, "y", y);
+        attr(body, "width", w);
+        attr(body, "height", h);
+    };
     if bar.categorical {
-        // the bands from the bottom up, each from the edge of the one below it
+        // the bands from the low end, each from the edge of the one before it
         let n = bands(s) as usize;
-        let edge = |k: usize| py + ph * (1.0 - k as f64 / n as f64);
         for k in 0..n {
-            let (top, bottom) = (edge(k + 1), edge(k));
-            body.push_str("<rect");
-            attr(body, "x", x);
-            attr(body, "y", top);
-            attr(body, "width", COLORBAR_WIDTH);
-            attr(body, "height", bottom - top);
+            let (a, b) = (along(k as f64 / n as f64), along((k + 1) as f64 / n as f64));
+            let r = if horizontal {
+                (a, by, b - a, bh)
+            } else {
+                (bx, b, bw, a - b)
+            };
+            rect(body, r);
             let _ = write!(body, " fill=\"{}\"/>", color_of(s, s.low + k as f64));
         }
     } else {
@@ -490,80 +635,181 @@ pub(crate) fn draw_colorbar(
         } else {
             format!("{prefix}-colorbar-{index}")
         };
-        gradient(defs, &id, s);
-        body.push_str("<rect");
-        attr(body, "x", x);
-        attr(body, "y", py);
-        attr(body, "width", COLORBAR_WIDTH);
-        attr(body, "height", ph);
+        gradient(defs, &id, s, horizontal);
+        rect(body, (bx, by, bw, bh));
         let _ = write!(body, " fill=\"url(#{id})\"/>");
     }
-    body.push_str("<rect");
-    attr(body, "x", x);
-    attr(body, "y", py);
-    attr(body, "width", COLORBAR_WIDTH);
-    attr(body, "height", ph);
+    // the marks across the bar (since 0.31.0), under its outline
+    if let Some(marks) = bar.marks.as_ref().filter(|m| !m.is_empty()) {
+        body.push_str("<g class=\"sbmlsim-colorbar-marks\">");
+        for m in marks {
+            let t = if bar.categorical {
+                (m.value - s.low + 0.5) / bands(s)
+            } else {
+                share_of_bar(s, m.value)
+            };
+            let p = along(t);
+            body.push_str("<line");
+            if horizontal {
+                attr(body, "x1", p);
+                attr(body, "y1", by);
+                attr(body, "x2", p);
+                attr(body, "y2", by + bh);
+            } else {
+                attr(body, "x1", bx);
+                attr(body, "y1", p);
+                attr(body, "x2", bx + bw);
+                attr(body, "y2", p);
+            }
+            let color = m.color.as_deref().unwrap_or("#000000");
+            let _ = write!(body, " stroke=\"{color}\"");
+            attr(body, "stroke-width", m.width);
+            body.push_str("/>");
+        }
+        body.push_str("</g>");
+    }
+    rect(body, (bx, by, bw, bh));
     let _ = write!(
         body,
         " fill=\"none\" stroke=\"{}\" stroke-width=\"1\"/>",
         theme::FG_SOFT
     );
-    let right = x + COLORBAR_WIDTH;
+    // the side of the ticks: right of a vertical bar, above a bar above a row, below an inset
+    let up = layout.placement == ColorBarPlacement::Top;
+    let edge = if !horizontal {
+        bx + bw
+    } else if up {
+        by
+    } else {
+        by + bh
+    };
+    let out = if up { -1.0 } else { 1.0 };
     let _ = write!(
         body,
         "<g class=\"sbmlsim-colorbar-ticks\" stroke=\"{}\" stroke-width=\"1\">",
         theme::FG_SOFT
     );
     for (t, _) in &layout.ticks {
-        let y = py + ph * (1.0 - t);
+        let p = along(*t);
         body.push_str("<line");
-        attr(body, "x1", right);
-        attr(body, "y1", y);
-        attr(body, "x2", right + COLORBAR_TICK);
-        attr(body, "y2", y);
+        if horizontal {
+            attr(body, "x1", p);
+            attr(body, "y1", edge);
+            attr(body, "x2", p);
+            attr(body, "y2", edge + out * COLORBAR_TICK);
+        } else {
+            attr(body, "x1", edge);
+            attr(body, "y1", p);
+            attr(body, "x2", edge + COLORBAR_TICK);
+            attr(body, "y2", p);
+        }
         body.push_str("/>");
     }
     body.push_str("</g>");
+    let size = fonts.y_tick();
     let _ = write!(
         body,
         "<g class=\"sbmlsim-colorbar-tick-labels\" fill=\"{}\"",
         theme::FG_SOFT
     );
-    attr(body, "font-size", fonts.y_tick());
+    attr(body, "font-size", size);
     svg::attr_weight(body, fonts.tick_weight);
     body.push('>');
-    let lx = right + COLORBAR_TICK + COLORBAR_TICK_PADDING;
+    let gap = COLORBAR_TICK + COLORBAR_TICK_PADDING;
     for (t, label) in &layout.ticks {
+        let p = along(*t);
         body.push_str("<text");
-        attr(body, "x", lx);
-        attr(body, "y", py + ph * (1.0 - t));
-        body.push_str(" dominant-baseline=\"middle\">");
-        svg::text_node(body, label);
+        let (at, stack) = if !horizontal {
+            let at = (edge + gap, p);
+            attr(body, "x", at.0);
+            attr(body, "y", at.1);
+            body.push_str(" dominant-baseline=\"middle\">");
+            (at, svg::Stack::Centred)
+        } else if up {
+            // the last line ends at the padding above the ticks
+            let at = (p, edge - gap);
+            attr(body, "x", at.0);
+            attr(body, "y", at.1);
+            body.push_str(" text-anchor=\"middle\" dominant-baseline=\"text-after-edge\">");
+            (at, svg::Stack::Up)
+        } else {
+            let at = (p, edge + gap);
+            attr(body, "x", at.0);
+            attr(body, "y", at.1);
+            body.push_str(" text-anchor=\"middle\" dominant-baseline=\"hanging\">");
+            (at, svg::Stack::Down)
+        };
+        svg::label_lines(body, label, at, size, stack);
         body.push_str("</text>");
     }
     body.push_str("</g>");
     if let Some(label) = bar.label.as_deref().filter(|l| !l.is_empty()) {
-        let (tx, ty) = (
-            lx + layout.labels_width + COLORBAR_LABEL_GAP + fonts.label / 2.0,
-            py + ph / 2.0,
-        );
         body.push_str("<g class=\"sbmlsim-colorbar-label\"><text");
-        attr(body, "x", tx);
-        attr(body, "y", ty);
-        attr(body, "font-size", fonts.label);
-        svg::attr_weight(body, fonts.label_weight);
-        let _ = write!(
-            body,
-            " fill=\"{}\" text-anchor=\"middle\" dominant-baseline=\"middle\" transform=\"rotate(-90 ",
-            theme::FG
-        );
-        svg::num(body, tx);
-        body.push(' ');
-        svg::num(body, ty);
-        body.push_str(")\">");
-        // the lines stack outwards, right of the bar: down in the rotated text
-        svg::text_lines(body, label, (tx, ty), fonts.label, svg::Stack::Down);
+        if !horizontal {
+            let (tx, ty) = (
+                edge + gap + layout.labels_width + COLORBAR_LABEL_GAP + fonts.label / 2.0,
+                by + bh / 2.0,
+            );
+            attr(body, "x", tx);
+            attr(body, "y", ty);
+            attr(body, "font-size", fonts.label);
+            svg::attr_weight(body, fonts.label_weight);
+            let _ = write!(
+                body,
+                " fill=\"{}\" text-anchor=\"middle\" dominant-baseline=\"middle\" transform=\"rotate(-90 ",
+                theme::FG
+            );
+            svg::num(body, tx);
+            body.push(' ');
+            svg::num(body, ty);
+            body.push_str(")\">");
+            // the lines stack outwards, right of the bar: down in the rotated text
+            svg::text_lines(body, label, (tx, ty), fonts.label, svg::Stack::Down);
+        } else {
+            let tx = bx + bw / 2.0;
+            let reach = gap + layout.labels_height + COLORBAR_LABEL_GAP;
+            let (ty, baseline, stack) = if up {
+                (edge - reach, "text-after-edge", svg::Stack::Up)
+            } else {
+                (edge + reach, "hanging", svg::Stack::Down)
+            };
+            attr(body, "x", tx);
+            attr(body, "y", ty);
+            attr(body, "font-size", fonts.label);
+            svg::attr_weight(body, fonts.label_weight);
+            let _ = write!(
+                body,
+                " fill=\"{}\" text-anchor=\"middle\" dominant-baseline=\"{baseline}\">",
+                theme::FG
+            );
+            svg::text_lines(body, label, (tx, ty), fonts.label, stack);
+        }
         body.push_str("</text></g>");
     }
     body.push_str("</g>");
+}
+
+/// Where a horizontal bar of a layout goes in the rectangle `block` of its ticks and labels
+/// (an inset's, see [`ColorBarLayout::inset_rect`]): the rectangle of the bar itself.
+pub(crate) fn inset_bar(layout: &ColorBarLayout, block: Rect, fonts: &Fonts) -> Rect {
+    let o = layout.overhang(fonts);
+    Rect {
+        x: block.x + o,
+        y: block.y,
+        width: (block.width - 2.0 * o).max(0.0),
+        height: layout.thickness,
+    }
+}
+
+/// The rectangle of a bar above a row: its length of the span `(left, right)` of the panels of
+/// the row centred on it, its top above `top`, the top of the room of the row, by its label and
+/// tick labels.
+pub(crate) fn top_bar(layout: &ColorBarLayout, (left, right): (f64, f64), top: f64) -> Rect {
+    let (x, width) = centred((left, right - left), layout.length);
+    Rect {
+        x,
+        y: top + layout.label_room + layout.labels_height + COLORBAR_TICK_PADDING + COLORBAR_TICK,
+        width,
+        height: layout.thickness,
+    }
 }

@@ -15,7 +15,9 @@
 //! share `t`, held to `0..=1`, becomes `start + t (end - start)` before the table is read, so
 //! the values `low..high` take exactly the colours of that part and a value beyond an end the
 //! colour of that end. A value without a colour (NaN, or not positive on a log scale) takes
-//! [`NO_VALUE_COLOR`]. The tables are constant data and the logarithm is `libm`'s, so the native
+//! [`NO_VALUE_COLOR`]. A scale of stops (since 0.31.0) is a map of 256 colours interpolated
+//! between them as matplotlib's `LinearSegmentedColormap.from_list` ([`check_stops`]), read the
+//! same way. The tables are constant data and the logarithm is `libm`'s, so the native
 //! and the wasm build give the same colours.
 
 use std::fmt;
@@ -23,7 +25,7 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::spec::ColorScale;
+use crate::spec::{ColorScale, ColorStop};
 
 include!("colors_table.rs");
 
@@ -131,8 +133,85 @@ pub(crate) fn share(scale: &ColorScale, v: f64) -> f64 {
     }
 }
 
-/// The colour `#rrggbb` of a share of a scale, [`NO_VALUE_COLOR`] for NaN.
-pub(crate) fn color_at(name: ColorScaleName, t: f64) -> String {
+/// Whether a text is a colour `#rrggbb`.
+pub(crate) fn is_hex_color(c: &str) -> bool {
+    c.len() == 7 && c.starts_with('#') && c[1..].chars().all(|h| h.is_ascii_hexdigit())
+}
+
+/// The channels of a colour `#rrggbb` as shares of 255.
+fn channels(c: &str) -> [f64; 3] {
+    [1, 3, 5].map(|k| {
+        c.get(k..k + 2)
+            .and_then(|h| u8::from_str_radix(h, 16).ok())
+            .map_or(0.0, |b| f64::from(b) / 255.0)
+    })
+}
+
+/// Checks the stops of a colour map (since 0.31.0): at least two, the first at 0 and the last
+/// at 1, the positions finite and not decreasing, the colours `#rrggbb`. The error names the
+/// stop it is about, `None` for the stops as a whole.
+pub fn check_stops(stops: &[ColorStop]) -> Result<(), (Option<usize>, String)> {
+    if stops.len() < 2 {
+        return Err((
+            None,
+            format!("{} stops, a colour map needs at least 2", stops.len()),
+        ));
+    }
+    for (k, ColorStop(at, color)) in stops.iter().enumerate() {
+        if !(at.is_finite() && (0.0..=1.0).contains(at)) {
+            return Err((Some(k), format!("position {at} is not between 0 and 1")));
+        }
+        if k > 0 && *at < stops[k - 1].0 {
+            return Err((
+                Some(k),
+                format!(
+                    "position {at} is below the one before it, the positions must not decrease"
+                ),
+            ));
+        }
+        if !is_hex_color(color) {
+            return Err((
+                Some(k),
+                format!("color `{color}` is not of the form #rrggbb"),
+            ));
+        }
+    }
+    if stops[0].0 != 0.0 {
+        return Err((Some(0), "the first stop must be at 0".into()));
+    }
+    if stops[stops.len() - 1].0 != 1.0 {
+        return Err((Some(stops.len() - 1), "the last stop must be at 1".into()));
+    }
+    Ok(())
+}
+
+/// The entry `index` (0 to 255) of the map of stops, as matplotlib's `_create_lookup_table`
+/// computes the table of `LinearSegmentedColormap.from_list`: the colour at `index / 255`
+/// interpolated linearly between the stops around it (the first stop at or after it, and the
+/// one before), the first and the last entry the colours of the first and the last stop; each
+/// channel written as matplotlib's `to_hex` writes it, `round(255 c)` with ties to even.
+fn stop_entry(stops: &[ColorStop], index: usize) -> u32 {
+    let last = stops.len() - 1;
+    let rgb = if index == 0 {
+        channels(&stops[0].1)
+    } else if index >= 255 {
+        channels(&stops[last].1)
+    } else {
+        let x = index as f64 / 255.0;
+        // numpy's searchsorted on the left: the first stop at or after x, at least the second
+        let k = stops.iter().position(|s| s.0 >= x).unwrap_or(last).max(1);
+        let (a, b) = (&stops[k - 1], &stops[k]);
+        let (ca, cb) = (channels(&a.1), channels(&b.1));
+        let span = b.0 - a.0;
+        let d = if span > 0.0 { (x - a.0) / span } else { 1.0 };
+        [0, 1, 2].map(|c| (d * (cb[c] - ca[c]) + ca[c]).clamp(0.0, 1.0))
+    };
+    let byte = |v: f64| (v * 255.0).round_ties_even() as u32;
+    (byte(rgb[0]) << 16) | (byte(rgb[1]) << 8) | byte(rgb[2])
+}
+
+/// The colour `#rrggbb` of a share of the map of a scale, [`NO_VALUE_COLOR`] for NaN.
+pub(crate) fn color_at(scale: &ColorScale, t: f64) -> String {
     if t.is_nan() {
         return NO_VALUE_COLOR.to_string();
     }
@@ -144,7 +223,13 @@ pub(crate) fn color_at(name: ColorScaleName, t: f64) -> String {
     } else {
         ((t * n).floor() as usize).min(255)
     };
-    format!("#{:06x}", name.entry(index))
+    let entry = match (&scale.stops, scale.name) {
+        (Some(stops), _) if stops.len() >= 2 => stop_entry(stops, index),
+        (_, Some(name)) => name.entry(index),
+        // a scale of neither, which validation refuses, is grey
+        _ => 0x808080,
+    };
+    format!("#{entry:06x}")
 }
 
 /// The share of the table of a scale a share of the scale reads: `start + t (end - start)`
@@ -158,10 +243,12 @@ fn on_table(scale: &ColorScale, t: f64) -> f64 {
 
 /// The colour `#rrggbb` of a value on a scale, [`NO_VALUE_COLOR`] for a value without one.
 pub(crate) fn color_of(scale: &ColorScale, v: f64) -> String {
-    color_at(scale.name, on_table(scale, share(scale, v)))
+    color_at(scale, on_table(scale, share(scale, v)))
 }
 
 /// The colours `#rrggbb` of values on a colour scale, one per value.
+///
+/// The map is the named one or the one of the stops of the scale (since 0.31.0).
 ///
 /// The values `low..high` take the part `start..end` of the colour map. A value below `low` or
 /// above `high` takes the colour of that end; NaN, and a value which is not positive on a log
