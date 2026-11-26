@@ -39,7 +39,7 @@ pub(crate) mod theme {
     /// Text of titles and axis titles.
     pub const FG: &str = "#1b1f24";
     /// Axis lines, ticks and tick labels.
-    pub const FG_SOFT: &str = "#5b6472";
+    pub const FG_SOFT: &str = "#3b424d";
     /// Grid lines.
     pub const GRID: &str = "#e3e6ea";
     /// The canvas.

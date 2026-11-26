@@ -484,7 +484,7 @@ fn mixed_colour_group_has_a_neutral_swatch() {
     let svg = render(&spec);
     let doc = Document::parse(&svg).unwrap();
     let frozen = swatch_strokes(&doc, "frozen-1");
-    assert_eq!(frozen, ["#5b6472"], "the neutral colour");
+    assert_eq!(frozen, ["#3b424d"], "the neutral colour");
     // the dash of the run is kept
     let dashed = doc
         .descendants()

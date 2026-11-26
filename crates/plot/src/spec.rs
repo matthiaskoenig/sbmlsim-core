@@ -208,6 +208,51 @@ pub enum LegendPosition {
     Outside,
 }
 
+/// Where a legend inside a panel goes (since 0.30.0): the locations of matplotlib's `loc`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LegendLoc {
+    /// The location of the least data among the others, in their order on a tie
+    /// (matplotlib's `best`).
+    #[default]
+    Best,
+    /// The upper right corner.
+    UpperRight,
+    /// The upper left corner.
+    UpperLeft,
+    /// The lower left corner.
+    LowerLeft,
+    /// The lower right corner.
+    LowerRight,
+    /// The middle of the right side, as `center_right`.
+    Right,
+    /// The middle of the left side.
+    CenterLeft,
+    /// The middle of the right side.
+    CenterRight,
+    /// The middle of the bottom side.
+    LowerCenter,
+    /// The middle of the top side.
+    UpperCenter,
+    /// The center of the panel.
+    Center,
+}
+
+impl LegendLoc {
+    /// The locations `best` chooses from, in the order of matplotlib, which wins a tie.
+    pub const CANDIDATES: [LegendLoc; 9] = [
+        LegendLoc::UpperRight,
+        LegendLoc::UpperLeft,
+        LegendLoc::LowerLeft,
+        LegendLoc::LowerRight,
+        LegendLoc::CenterLeft,
+        LegendLoc::CenterRight,
+        LegendLoc::LowerCenter,
+        LegendLoc::UpperCenter,
+        LegendLoc::Center,
+    ];
+}
+
 /// Legend settings of a figure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -218,6 +263,9 @@ pub struct LegendSettings {
     /// Where the legend is placed.
     #[serde(default)]
     pub position: LegendPosition,
+    /// Where a legend inside goes, `best` by default (since 0.30.0); a plot may set its own.
+    #[serde(default)]
+    pub loc: LegendLoc,
 }
 
 /// One plot of the grid.
@@ -249,6 +297,10 @@ pub struct Plot {
     /// Whether the plot has a legend, true by default.
     #[serde(default = "yes")]
     pub legend: bool,
+    /// Where the legend of the plot goes inside its panel (since 0.30.0); absent, the `loc` of
+    /// the legend settings of the figure. A row legend inside takes the one of its host plot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub legend_loc: Option<LegendLoc>,
     /// A color bar.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub colorbar: Option<ColorBar>,
