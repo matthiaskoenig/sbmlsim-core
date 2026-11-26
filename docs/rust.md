@@ -196,7 +196,7 @@ for k in 0..1440 {
 
 ## The QFunction target
 
-`sbmlsim_c::generate_qfunction` writes a model with a Rosenbrock integrator as one [libCEED](https://libceed.org) QFunction, which advances any number of points (the cells of a tissue, one per element of a mesh) by one step attempt each per application, on libCEED's CPU backends now and, as its source is plain C99 for its JIT, on its GPU backends later. Its source (`QSource::code`) includes `<ceed/types.h>` and `<math.h>` (the latter guarded by `CEED_RUNNING_JIT_PASS`, as libCEED asks), then the constants, the right hand side, the dense Jacobian and, for a model whose rates depend on the time, their derivative in the time, from the programs of the emitter of the C target as `CEED_QFUNCTION_HELPER` functions, then the integrator, written once for every model in `crates/c/include/sbmlsim_rosenbrock.h`, and the QFunction `QSource::function` (`sbmlsim_model_<id>_qfunction`) of libCEED's interior signature. No allocation, no call outside the model and `<math.h>`, no function pointer: every work array of a point has a size the model fixes at compile time.
+`sbmlsim_c::generate_qfunction` writes a model with a Rosenbrock integrator as one [libCEED](https://libceed.org) QFunction, which advances any number of points (the cells of a tissue, one per element of a mesh), each by step attempts until it reaches the end of the interval or fails, at most a number of attempts per application, on libCEED's CPU backends now and, as its source is plain C99 for its JIT, on its GPU backends later. Its source (`QSource::code`) includes `<ceed/types.h>` and `<math.h>` (the latter guarded by `CEED_RUNNING_JIT_PASS`, as libCEED asks), then the constants, the right hand side, the dense Jacobian and, for a model whose rates depend on the time, their derivative in the time, from the programs of the emitter of the C target as `CEED_QFUNCTION_HELPER` functions, then the integrator, written once for every model in `crates/c/include/sbmlsim_rosenbrock.h`, and the QFunction `QSource::function` (`sbmlsim_model_<id>_qfunction`) of libCEED's interior signature. No allocation, no call outside the model and `<math.h>`, no function pointer: every work array of a point has a size the model fixes at compile time.
 
 | | field | values per point |
 |---|---|---|
@@ -219,7 +219,8 @@ let library = Library::build(&q.host_code())?;
 let mut points = Points::new(&q, &states, &parameters)?;
 for k in 0..24 {
     points.start(60.0 * k as f64);
-    let context = RosenbrockContext { t1: 60.0 * (k + 1) as f64, rtol: 1e-6, atol: 1e-9, h_min: 1e-10 };
+    // as many attempts per application as a point takes: one application per interval
+    let context = RosenbrockContext { t1: 60.0 * (k + 1) as f64, rtol: 1e-6, atol: 1e-9, h_min: 1e-10, attempts: 1e6 };
     run_points(&library, &q, &context, &mut points, 8)?;
 }
 ```
