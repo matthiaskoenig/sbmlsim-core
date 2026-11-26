@@ -20,7 +20,7 @@ use super::marks::{
     ERROR_WIDTH, Layers, Stroke, dash, dataset, error_runs, fill_of, group_name, path_layer,
     per_pixel,
 };
-use crate::spec::{BoxStats, Density, MarkerType, Style};
+use crate::spec::{BoxStats, Density, FillStyle, MarkerType, Style};
 use crate::svg::{LayerInfo, MarkerGlyph, theme};
 
 /// The width of a box, a share of the spacing of the positions (matplotlib's 0.5).
@@ -179,6 +179,8 @@ pub(crate) struct Bars<'a> {
     pub width: Option<f64>,
     /// The length of the caps of the error bars in pixels, 0 for none.
     pub error_cap: f64,
+    /// The width of the lines of the error bars in pixels.
+    pub error_width: f64,
     /// The width and the height of the panel in pixels.
     pub panel: (f64, f64),
 }
@@ -216,7 +218,7 @@ pub(crate) fn bar_layers(
         let centers: Vec<f64> = bars.x.iter().map(|x| along.u(*x)).collect();
         let stroke = Stroke {
             color: theme::FG.to_string(),
-            width: ERROR_WIDTH,
+            width: bars.error_width,
             dash: Vec::new(),
             opacity: style.opacity,
         };
@@ -243,17 +245,23 @@ fn info(index: usize) -> LayerInfo {
     }
 }
 
+/// The width of the boxes of positions: the given one, else [`BOX_WIDTH`] of the spacing of
+/// the positions.
+pub(crate) fn box_width(positions: &[f64], width: Option<f64>) -> f64 {
+    width.unwrap_or_else(|| BOX_WIDTH * spacing(positions))
+}
+
 /// The layers of box plots from their statistics: the box from the first to the third
 /// quartile, the whiskers with their caps, the median across the box and a marker per outlier.
 pub(crate) fn box_layers(
     layers: &mut Layers,
     index: usize,
-    (positions, stats): (&[f64], &[BoxStats]),
+    (positions, stats, width): (&[f64], &[BoxStats], Option<f64>),
     style: &Style,
     color: &str,
     (xa, ya): (&ResolvedAxis, &ResolvedAxis),
 ) -> Result<(), ChartonError> {
-    let w = BOX_WIDTH * spacing(positions);
+    let w = box_width(positions, width);
     let (mut rings, mut whiskers, mut medians) = (Vec::new(), Vec::new(), Vec::new());
     let (mut ox, mut oy) = (Vec::new(), Vec::new());
     for (p, b) in positions.iter().zip(stats) {
@@ -307,15 +315,13 @@ pub(crate) fn box_layers(
                 edge: color.to_string(),
                 edge_width: ERROR_WIDTH,
                 opacity: style.opacity,
+                fill_style: FillStyle::Full,
+                fill_alt: "none".to_string(),
             }
         } else {
             MarkerGlyph {
-                kind: m.kind,
-                size: m.size,
                 fill: m.fill.clone().unwrap_or_else(|| "none".to_string()),
-                edge: m.edge.clone().unwrap_or_else(|| color.to_string()),
-                edge_width: m.edge_width,
-                opacity: style.opacity,
+                ..MarkerGlyph::of(m, color, style.opacity)
             }
         };
         let ds = dataset(vec![("x", ox.into_column()), ("y", oy.into_column())])?;

@@ -239,6 +239,29 @@ def test_fields_of_0_30_render() -> None:
     assert space_time["x"]["kind"] == "linear"
 
 
+def test_color_scale_of_stops() -> None:
+    # matplotlib's LinearSegmentedColormap.from_list of the same stops
+    stops = [(0.0, "#006d77"), (0.3, "#2a9d4b"), (0.6, "#74c69d"), (1.0, "#d8f3dc")]
+    assert sbmlsim_core.color_scale(stops, 0.0, 1.0, [0.0, 0.1, 0.45, 1.0]) == [
+        "#006d77",
+        "#0e7d69",
+        "#4fb274",
+        "#d8f3dc",
+    ]
+    with pytest.raises(ValueError, match="stop 1: the last stop must be at 1"):
+        sbmlsim_core.color_scale([(0.0, "#000000"), (0.9, "#ffffff")], 0.0, 1.0, [0.5])
+
+
+def test_fields_of_0_31_render() -> None:
+    # the specs of the renderer's fixtures of the fields since 0.31.0
+    for name in ["v031", "v031_legend"]:
+        spec = (PLOT / "specs" / f"{name}.json").read_text(encoding="utf-8")
+        svg = sbmlsim_core.render_svg(spec)
+        assert svg == (PLOT / "golden" / f"{name}.svg").read_text(encoding="utf-8")
+    geometry = sbmlsim_core.figure_geometry(spec)
+    assert {e["owner"] for e in geometry["legend_entries"]} == {"figure"}
+
+
 @pytest.mark.skipif(
     bool(os.environ.get("CI")) and os.environ.get("SBMLSIM_CORE_BENCH") != "1",
     reason="timing on CI needs SBMLSIM_CORE_BENCH=1",

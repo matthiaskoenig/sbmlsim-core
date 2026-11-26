@@ -276,7 +276,8 @@ fn a_text_has_its_size_weight_and_spaces() {
 /// A scale of a name from 0 to 1.
 fn unit_scale(name: ColorScaleName) -> ColorScale {
     ColorScale {
-        name,
+        name: Some(name),
+        stops: None,
         low: 0.0,
         high: 1.0,
         center: None,

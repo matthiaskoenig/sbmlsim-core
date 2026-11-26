@@ -23,8 +23,8 @@ use charton::core::semantic::{AxisKind, Element as ChartonElement, Group, Role};
 use charton::error::ChartonError;
 use charton::prelude::SingleColor;
 
-use crate::spec::{FontWeight, MarkerType};
-use crate::text::{LINE_HEIGHT, line_count, lines};
+use crate::spec::{FillStyle, FontWeight, Marker, MarkerType};
+use crate::text::{LINE_HEIGHT, SUP_RISE, SUP_SCALE, line_count, lines, runs};
 
 /// The character which stands for the id prefix of the figure until the drawing is complete; it
 /// is no character of a text of the output, see [`escape`].
@@ -224,6 +224,65 @@ pub(crate) fn text_lines(
     }
 }
 
+/// Writes a line of a tick label: its plain runs as text, its superscripts as `<tspan>`s of
+/// [`SUP_SCALE`] of the size raised by [`SUP_RISE`] of it, the run after one lowered back.
+fn label_line(out: &mut String, line: &str, size: f64) {
+    let mut raised = false;
+    for (text, sup) in runs(line) {
+        if sup {
+            out.push_str("<tspan");
+            attr_num(out, "dy", -SUP_RISE * size);
+            attr_num(out, "font-size", SUP_SCALE * size);
+            out.push('>');
+            text_node(out, text);
+            out.push_str("</tspan>");
+            raised = true;
+        } else if raised {
+            out.push_str("<tspan");
+            attr_num(out, "dy", SUP_RISE * size);
+            out.push('>');
+            text_node(out, text);
+            out.push_str("</tspan>");
+            raised = false;
+        } else {
+            text_node(out, text);
+        }
+    }
+}
+
+/// Writes the content of the `<text>` of a tick label (since 0.31.0): as [`text_lines`] does,
+/// each line with its superscripts (see [`label_line`]).
+pub(crate) fn label_lines(
+    out: &mut String,
+    text: &str,
+    (x, y): (f64, f64),
+    size: f64,
+    stack: Stack,
+) {
+    let n = line_count(text);
+    if n == 1 {
+        label_line(out, text, size);
+        return;
+    }
+    let step = LINE_HEIGHT * size;
+    let before = match stack {
+        Stack::Down => 0.0,
+        Stack::Centred => (n - 1) as f64 / 2.0,
+        Stack::Up => (n - 1) as f64,
+    };
+    for (k, line) in lines(text).enumerate() {
+        out.push_str("<tspan");
+        attr_num(out, "x", x);
+        attr_num(out, "y", y + (k as f64 - before) * step);
+        out.push('>');
+        label_line(out, line, size);
+        out.push_str("</tspan>");
+    }
+}
+
+/// The gap between the end of an axis and the multiplier of its tick labels in pixels.
+pub(crate) const MULTIPLIER_GAP: f64 = 4.0;
+
 /// The marker an element draws at every point Charton places.
 #[derive(Debug, Clone)]
 pub(crate) struct MarkerGlyph {
@@ -239,6 +298,27 @@ pub(crate) struct MarkerGlyph {
     pub edge_width: f64,
     /// The opacity of the marker.
     pub opacity: f64,
+    /// Which half the fill fills (since 0.31.0).
+    pub fill_style: FillStyle,
+    /// The fill of the other half of a half filled marker, `#rrggbb` or `none`.
+    pub fill_alt: String,
+}
+
+impl MarkerGlyph {
+    /// The glyph of the marker of a style in the colour of its element: the fill and the edge
+    /// the marker gives, else that colour.
+    pub(crate) fn of(m: &Marker, color: &str, opacity: f64) -> Self {
+        MarkerGlyph {
+            kind: m.kind,
+            size: m.size,
+            fill: m.fill.clone().unwrap_or_else(|| color.to_string()),
+            edge: m.edge.clone().unwrap_or_else(|| color.to_string()),
+            edge_width: m.edge_width,
+            opacity,
+            fill_style: m.fill_style,
+            fill_alt: m.fill_alt.clone().unwrap_or_else(|| "none".to_string()),
+        }
+    }
 }
 
 /// What the writer knows of one layer of the Charton chart.
@@ -292,6 +372,14 @@ pub(crate) struct AxisHooks {
     pub title: Option<String>,
     /// The distance from the spine to the far side of the tick labels, measured in Inter.
     pub labels_depth: f64,
+    /// The tick labels in the order of the ticks (since 0.31.0), each with the line Charton is
+    /// given for it: Charton measures and places the widest line of a label without its
+    /// superscripts, the writer writes the label of several lines and superscripts.
+    pub labels: Vec<(String, String)>,
+    /// The multiplier of the tick labels, `×10^{n}` (since 0.31.0), written at the end of the
+    /// axis as matplotlib's offset text: right below the tick labels of the bottom axis, above
+    /// the top of the left axis.
+    pub multiplier: Option<String>,
 }
 
 /// The grid lines of one axis, as shares along the axis from the start of its domain.
@@ -366,6 +454,8 @@ pub(crate) struct PlotWriter<'a> {
     marker: Option<MarkerGlyph>,
     /// The panel of the plot, the clip of its plot group.
     pub panel: Option<Rect>,
+    /// The tick labels of the open axis written so far.
+    tick_labels: usize,
 }
 
 impl<'a> PlotWriter<'a> {
@@ -384,6 +474,7 @@ impl<'a> PlotWriter<'a> {
             axis: None,
             marker: None,
             panel: None,
+            tick_labels: 0,
         }
     }
 
@@ -436,6 +527,7 @@ impl<'a> PlotWriter<'a> {
     /// would write it: below the bottom axis hanging from its band, left of the left axis
     /// rotated and centred in its band.
     fn axis_title(&mut self) {
+        self.multiplier();
         let (Some(panel), Some(hooks)) = (self.panel, self.axis_hooks()) else {
             return;
         };
@@ -492,6 +584,42 @@ impl<'a> PlotWriter<'a> {
         b.push_str("</text></g>");
     }
 
+    /// Writes the multiplier of the tick labels of the open axis (since 0.31.0), as matplotlib
+    /// writes its offset text: right aligned at the right end of the bottom axis, hanging below
+    /// its tick labels; left aligned at the top of the left axis, above the panel.
+    fn multiplier(&mut self) {
+        let (Some(panel), Some(hooks)) = (self.panel, self.axis_hooks()) else {
+            return;
+        };
+        let Some(text) = hooks.multiplier.clone() else {
+            return;
+        };
+        let (size, weight, depth) = (hooks.tick_size, hooks.tick_weight, hooks.labels_depth);
+        let bottom = self.axis == Some(AxisKind::X);
+        let b = &mut self.body;
+        b.push_str("<g class=\"sbmlsim-axis-multiplier\"><text");
+        let at = if bottom {
+            (
+                panel.x + panel.width,
+                panel.y + panel.height + depth + self.hooks.title_gap,
+            )
+        } else {
+            (panel.x, panel.y - MULTIPLIER_GAP)
+        };
+        attr_num(b, "x", at.0);
+        attr_num(b, "y", at.1);
+        attr_num(b, "font-size", size);
+        attr_weight(b, weight);
+        let _ = write!(b, " fill=\"{}\"", theme::FG_SOFT);
+        b.push_str(if bottom {
+            " text-anchor=\"end\" dominant-baseline=\"hanging\">"
+        } else {
+            " text-anchor=\"start\">"
+        });
+        label_lines(b, &text, at, size, Stack::Down);
+        b.push_str("</text></g>");
+    }
+
     /// Draws every element group which is not written yet; for a plot Charton drew no plot
     /// group of.
     pub fn finish(&mut self) {
@@ -532,12 +660,213 @@ impl<'a> PlotWriter<'a> {
     }
 }
 
+/// The outline of a filled marker as matplotlib draws it, in units of the marker size with y
+/// up (the vertices of matplotlib's marker path and transform), and where matplotlib splits it
+/// for a half fill: the offset of the line between the halves from the centre, across x (left,
+/// right) and across y (top, bottom).
+struct Outline {
+    points: Vec<(f64, f64)>,
+    split: (f64, f64),
+}
+
+/// The vertices of matplotlib's regular polygon (`Path.unit_regular_polygon`) or star
+/// (`Path.unit_regular_star`) of `n` corners, a corner at the top, of radius 1/2.
+fn regular(n: usize, inner: Option<f64>) -> Vec<(f64, f64)> {
+    let corners = if inner.is_some() { 2 * n } else { n };
+    (0..corners)
+        .map(|k| {
+            let a = 2.0 * std::f64::consts::PI / corners as f64 * k as f64
+                + std::f64::consts::FRAC_PI_2;
+            let r = match inner {
+                Some(i) if k % 2 == 1 => 0.5 * i,
+                _ => 0.5,
+            };
+            (r * libm::cos(a), r * libm::sin(a))
+        })
+        .collect()
+}
+
+/// The outline of a filled marker other than the circle, `None` for a marker of lines.
+fn outline(kind: MarkerType) -> Option<Outline> {
+    let plain = |points: Vec<(f64, f64)>| Outline {
+        points,
+        split: (0.0, 0.0),
+    };
+    // matplotlib's `D`: a square of side 1 on its corner, and its `d` 0.6 as wide
+    let diamond = |w: f64| {
+        let h = std::f64::consts::FRAC_1_SQRT_2;
+        vec![(0.0, h), (-w * h, 0.0), (0.0, -h), (w * h, 0.0)]
+    };
+    Some(match kind {
+        MarkerType::None
+        | MarkerType::Circle
+        | MarkerType::Cross
+        | MarkerType::Plus
+        | MarkerType::X => {
+            return None;
+        }
+        MarkerType::Square => plain(vec![(-0.5, 0.5), (0.5, 0.5), (0.5, -0.5), (-0.5, -0.5)]),
+        MarkerType::Triangle => Outline {
+            points: vec![(0.0, 0.5), (-0.5, -0.5), (0.5, -0.5)],
+            split: (0.0, -0.1),
+        },
+        MarkerType::TriangleDown => Outline {
+            points: vec![(0.0, -0.5), (0.5, 0.5), (-0.5, 0.5)],
+            split: (0.0, 0.1),
+        },
+        MarkerType::TriangleLeft => Outline {
+            points: vec![(-0.5, 0.0), (0.5, -0.5), (0.5, 0.5)],
+            split: (0.1, 0.0),
+        },
+        MarkerType::TriangleRight => Outline {
+            points: vec![(0.5, 0.0), (-0.5, 0.5), (-0.5, -0.5)],
+            split: (-0.1, 0.0),
+        },
+        MarkerType::Diamond => plain(diamond(1.0)),
+        MarkerType::ThinDiamond => plain(diamond(0.6)),
+        MarkerType::Star => {
+            let points = regular(5, Some(0.381966));
+            // matplotlib splits the star at its inner corners beside the lower points
+            let split = points[3].1;
+            Outline {
+                points,
+                split: (0.0, split),
+            }
+        }
+        MarkerType::Pentagon => {
+            let points = regular(5, None);
+            // matplotlib splits the pentagon at its upper corners
+            let split = points[1].1;
+            Outline {
+                points,
+                split: (0.0, split),
+            }
+        }
+        MarkerType::Hexagon => plain(regular(6, None)),
+        MarkerType::XFilled => plain(
+            [
+                (-1.0, -2.0),
+                (0.0, -1.0),
+                (1.0, -2.0),
+                (2.0, -1.0),
+                (1.0, 0.0),
+                (2.0, 1.0),
+                (1.0, 2.0),
+                (0.0, 1.0),
+                (-1.0, 2.0),
+                (-2.0, 1.0),
+                (-1.0, 0.0),
+                (-2.0, -1.0),
+            ]
+            .map(|(x, y)| (x / 4.0, y / 4.0))
+            .to_vec(),
+        ),
+        MarkerType::PlusFilled => plain(
+            [
+                (-1.0, -3.0),
+                (1.0, -3.0),
+                (1.0, -1.0),
+                (3.0, -1.0),
+                (3.0, 1.0),
+                (1.0, 1.0),
+                (1.0, 3.0),
+                (-1.0, 3.0),
+                (-1.0, 1.0),
+                (-3.0, 1.0),
+                (-3.0, -1.0),
+                (-1.0, -1.0),
+            ]
+            .map(|(x, y)| (x / 6.0, y / 6.0))
+            .to_vec(),
+        ),
+    })
+}
+
+/// The part of a polygon on one side of a line (Sutherland and Hodgman): the points `p` with
+/// `inside(p) >= 0`, `inside` linear.
+fn clip(points: &[(f64, f64)], inside: impl Fn((f64, f64)) -> f64) -> Vec<(f64, f64)> {
+    let mut out = Vec::with_capacity(points.len() + 2);
+    for k in 0..points.len() {
+        let (a, b) = (points[k], points[(k + 1) % points.len()]);
+        let (da, db) = (inside(a), inside(b));
+        if da >= 0.0 {
+            out.push(a);
+        }
+        if (da >= 0.0) != (db >= 0.0) {
+            let t = da / (da - db);
+            out.push((a.0 + t * (b.0 - a.0), a.1 + t * (b.1 - a.1)));
+        }
+    }
+    out
+}
+
+/// The two halves of an outline for a fill style, the filled one first, in units of the
+/// marker with y up.
+type Halves = (Vec<(f64, f64)>, Vec<(f64, f64)>);
+
+/// The halves of an outline split for a half fill: the side `fill_style` names and the other.
+fn halves(o: &Outline, style: FillStyle) -> Halves {
+    let (sx, sy) = o.split;
+    // the signed distance to the line between the halves, positive on the filled side
+    let side = move |(x, y): (f64, f64)| match style {
+        FillStyle::Left => sx - x,
+        FillStyle::Right => x - sx,
+        FillStyle::Bottom => sy - y,
+        FillStyle::Top | FillStyle::Full => y - sy,
+    };
+    (clip(&o.points, side), clip(&o.points, move |p| -side(p)))
+}
+
+/// Writes the `d` of a closed polygon in units of a marker of `size` with y up, centred at a
+/// point of the drawing.
+fn polygon_d(b: &mut String, points: &[(f64, f64)], size: f64, (x, y): (f64, f64)) {
+    for (i, (dx, dy)) in points.iter().enumerate() {
+        b.push(if i == 0 { 'M' } else { 'L' });
+        num(b, x + dx * size);
+        b.push(' ');
+        num(b, y - dy * size);
+    }
+    b.push('Z');
+}
+
+/// Writes the `d` of a half of a circle of radius `r` at a point: the half on the side `style`
+/// names, or with `other` the opposite one.
+fn half_circle_d(b: &mut String, r: f64, (x, y): (f64, f64), style: FillStyle, other: bool) {
+    // the ends of the diameter between the halves, and the side the arc bulges to
+    let (from, to) = match style {
+        FillStyle::Left | FillStyle::Right => ((x, y - r), (x, y + r)),
+        FillStyle::Top | FillStyle::Bottom | FillStyle::Full => ((x - r, y), (x + r, y)),
+    };
+    // from the top (left) end the arc runs counter-clockwise on the screen through the left
+    // (bottom) half, clockwise through the right (top) half
+    let left_or_bottom = matches!(style, FillStyle::Left | FillStyle::Bottom) != other;
+    let sweep = if left_or_bottom { 0 } else { 1 };
+    b.push('M');
+    num(b, from.0);
+    b.push(' ');
+    num(b, from.1);
+    b.push('A');
+    num(b, r);
+    b.push(' ');
+    num(b, r);
+    let _ = write!(b, " 0 0 {sweep} ");
+    num(b, to.0);
+    b.push(' ');
+    num(b, to.1);
+    b.push('Z');
+}
+
 /// Writes a marker glyph centred at a point.
+///
+/// The filled markers have matplotlib's shapes for a marker size: the circle as wide as the
+/// size, the square of the side of the size, the triangles as wide and high as the size, the
+/// diamond a square of the side of the size on its corner (since 0.31.0); a half filled marker
+/// draws its filled half and its other half (of `fill_alt`) each with the edge, as matplotlib.
 pub(crate) fn glyph(b: &mut String, m: &MarkerGlyph, x: f64, y: f64) {
     let r = m.size / 2.0;
     // a filled glyph: its fill and, with an edge, its stroke
-    let paint = |b: &mut String| {
-        let _ = write!(b, " fill=\"{}\"", m.fill);
+    let paint = |b: &mut String, fill: &str| {
+        let _ = write!(b, " fill=\"{fill}\"");
         if m.edge_width > 0.0 {
             let _ = write!(b, " stroke=\"{}\"", m.edge);
             attr_num(b, "stroke-width", m.edge_width);
@@ -545,47 +874,37 @@ pub(crate) fn glyph(b: &mut String, m: &MarkerGlyph, x: f64, y: f64) {
         attr_opacity(b, "opacity", m.opacity);
         b.push_str("/>");
     };
+    let half = m.fill_style != FillStyle::Full;
     match m.kind {
         MarkerType::None => {}
+        MarkerType::Circle if half => {
+            for (other, fill) in [(false, m.fill.as_str()), (true, m.fill_alt.as_str())] {
+                b.push_str("<path d=\"");
+                half_circle_d(b, r, (x, y), m.fill_style, other);
+                b.push('"');
+                paint(b, fill);
+            }
+        }
         MarkerType::Circle => {
             b.push_str("<circle");
             attr_num(b, "cx", x);
             attr_num(b, "cy", y);
             attr_num(b, "r", r);
-            paint(b);
+            paint(b, &m.fill);
         }
-        MarkerType::Square => {
-            // a square of the area of the circle
-            let s = r * 0.886;
+        MarkerType::Square if !half => {
+            // matplotlib's square, of the side of the size (of the area of the circle before
+            // 0.31.0)
             b.push_str("<rect");
-            attr_num(b, "x", x - s);
-            attr_num(b, "y", y - s);
-            attr_num(b, "width", 2.0 * s);
-            attr_num(b, "height", 2.0 * s);
-            paint(b);
-        }
-        MarkerType::Triangle | MarkerType::Diamond => {
-            let points: &[(f64, f64)] = if m.kind == MarkerType::Triangle {
-                &[(0.0, -1.15), (1.0, 0.58), (-1.0, 0.58)]
-            } else {
-                &[(0.0, -1.0), (0.75, 0.0), (0.0, 1.0), (-0.75, 0.0)]
-            };
-            b.push_str("<path d=\"");
-            for (i, (dx, dy)) in points.iter().enumerate() {
-                b.push(if i == 0 { 'M' } else { 'L' });
-                num(b, x + dx * r);
-                b.push(' ');
-                num(b, y + dy * r);
-            }
-            b.push_str("Z\"");
-            paint(b);
+            attr_num(b, "x", x - r);
+            attr_num(b, "y", y - r);
+            attr_num(b, "width", 2.0 * r);
+            attr_num(b, "height", 2.0 * r);
+            paint(b, &m.fill);
         }
         MarkerType::Cross | MarkerType::X | MarkerType::Plus => {
-            let d = if m.kind == MarkerType::Plus {
-                r
-            } else {
-                r * std::f64::consts::FRAC_1_SQRT_2
-            };
+            // matplotlib's `+` and `x`: lines across the square of the size
+            let d = r;
             let segments: [(f64, f64, f64, f64); 2] = if m.kind == MarkerType::Plus {
                 [(-d, 0.0, d, 0.0), (0.0, -d, 0.0, d)]
             } else {
@@ -608,6 +927,28 @@ pub(crate) fn glyph(b: &mut String, m: &MarkerGlyph, x: f64, y: f64) {
             attr_num(b, "stroke-width", m.edge_width.max(1.0) * 1.5);
             attr_opacity(b, "opacity", m.opacity);
             b.push_str("/>");
+        }
+        kind => {
+            let Some(o) = outline(kind) else {
+                return;
+            };
+            if half {
+                let (filled, other) = halves(&o, m.fill_style);
+                for (points, fill) in [(filled, m.fill.as_str()), (other, m.fill_alt.as_str())] {
+                    if points.len() < 3 {
+                        continue;
+                    }
+                    b.push_str("<path d=\"");
+                    polygon_d(b, &points, m.size, (x, y));
+                    b.push('"');
+                    paint(b, fill);
+                }
+            } else {
+                b.push_str("<path d=\"");
+                polygon_d(b, &o.points, m.size, (x, y));
+                b.push('"');
+                paint(b, &m.fill);
+            }
         }
     }
 }
@@ -784,19 +1125,38 @@ impl RenderBackend for PlotWriter<'_> {
         }
         b.push('>');
         if tick_label {
-            // a tick label is one line (as the layout measures it and 0.27.0 wrote it), a
-            // newline in it written as it is
-            text_node(b, &c.text);
+            // the label Charton was given the widest line of (since 0.31.0): its lines stacked
+            // down from the bottom axis and centred on a tick of the left axis, with its
+            // superscripts
+            let k = self.tick_labels;
+            self.tick_labels += 1;
+            let full = self
+                .axis_hooks()
+                .and_then(|a| a.labels.get(k))
+                .filter(|(given, _)| *given == c.text)
+                .map_or_else(|| c.text.clone(), |(_, full)| full.clone());
+            let stack = if self.axis == Some(AxisKind::X) {
+                Stack::Down
+            } else {
+                Stack::Centred
+            };
+            label_lines(
+                &mut self.body,
+                &full,
+                (f64::from(c.x), f64::from(c.y)),
+                f64::from(c.font_size),
+                stack,
+            );
         } else {
             text_lines(
-                b,
+                &mut self.body,
                 &c.text,
                 (f64::from(c.x), f64::from(c.y)),
                 f64::from(c.font_size),
                 stack,
             );
         }
-        b.push_str("</text>");
+        self.body.push_str("</text>");
         Ok(())
     }
 
@@ -902,6 +1262,7 @@ impl RenderBackend for PlotWriter<'_> {
             Role::TickLabel => {
                 frame.suppress |= self.axis_hooks().is_some_and(|a| a.labels_hidden);
                 frame.tick_label = true;
+                self.tick_labels = 0;
             }
             // Charton gets no axis titles; the writer draws them, see `AxisHooks`
             Role::AxisTitle => frame.suppress = true,

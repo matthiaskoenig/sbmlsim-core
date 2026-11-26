@@ -4,8 +4,8 @@
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use sbmlsim_plot::{
-    ColorScale, ColorScaleName, Figure, FontWeight, SpecError, geometry, parse, pick as pick_of,
-    text_width_weighted,
+    ColorScale, ColorScaleName, ColorStop, Figure, FontWeight, SpecError, check_stops, geometry,
+    parse, pick as pick_of, text_width_weighted,
 };
 
 /// The error of a spec which does not parse: the path of the field and what is wrong.
@@ -76,16 +76,24 @@ pub(crate) fn pick<'py>(
     }
 }
 
-/// The colours (`#rrggbb`) of `values` on a named colour scale, the values `low..high` on the
-/// part `start..end` of the colour map.
+/// The colour map of [`color_scale`]: a name, or stops `(position, "#rrggbb")` (since 0.31.0).
+#[derive(FromPyObject)]
+pub(crate) enum ColorMap {
+    Name(String),
+    Stops(Vec<(f64, String)>),
+}
+
+/// The colours (`#rrggbb`) of `values` on a colour scale, the values `low..high` on the
+/// part `start..end` of the colour map: a named map, or a map of stops (since 0.31.0).
 ///
-/// Raises `ValueError` for an unknown name and for a part which is not `0 <= start < end <= 1`.
+/// Raises `ValueError` for an unknown name, for stops which are no colour map and for a part
+/// which is not `0 <= start < end <= 1`.
 #[pyfunction]
 #[pyo3(signature = (name, low, high, values, center=None, log=false, start=0.0, end=1.0))]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn color_scale(
     py: Python<'_>,
-    name: &str,
+    name: ColorMap,
     low: f64,
     high: f64,
     values: Vec<f64>,
@@ -99,9 +107,23 @@ pub(crate) fn color_scale(
             "start {start} and end {end} are no part of the colour map, expected 0 <= start < end <= 1"
         )));
     }
-    let name: ColorScaleName = name.parse().map_err(PyValueError::new_err)?;
+    let (name, stops) = match name {
+        ColorMap::Name(n) => (
+            Some(n.parse::<ColorScaleName>().map_err(PyValueError::new_err)?),
+            None,
+        ),
+        ColorMap::Stops(stops) => {
+            let stops: Vec<ColorStop> = stops.into_iter().map(|(p, c)| ColorStop(p, c)).collect();
+            if let Err((k, message)) = check_stops(&stops) {
+                let at = k.map_or(String::new(), |k| format!("stop {k}: "));
+                return Err(PyValueError::new_err(format!("{at}{message}")));
+            }
+            (None, Some(stops))
+        }
+    };
     let scale = ColorScale {
         name,
+        stops,
         low,
         high,
         center,

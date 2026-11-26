@@ -27,7 +27,8 @@ fn figure(x: &str, y: &str, extra: &str, elements: &str) -> String {
 /// A scale of a name between two values.
 fn scale(name: ColorScaleName, low: f64, high: f64) -> ColorScale {
     ColorScale {
-        name,
+        name: Some(name),
+        stops: None,
         low,
         high,
         center: None,

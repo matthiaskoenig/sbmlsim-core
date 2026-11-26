@@ -15,7 +15,7 @@ use crate::render::axis::ResolvedAxis;
 use crate::render::heatmap::cell_span;
 use crate::render::marks::ERROR_WIDTH;
 use crate::render::stats_marks::{
-    BAR_WIDTH, BOX_WIDTH, OUTLIER_SIZE, VIOLIN_WIDTH, base_of, box_body, spacing,
+    BAR_WIDTH, OUTLIER_SIZE, VIOLIN_WIDTH, base_of, box_body, box_width, spacing,
 };
 use crate::spec::{
     ElementKind, LineType, MarkerType, Orientation, Plot, Style, YAxisRef, heatmap_size,
@@ -237,7 +237,9 @@ impl Ink {
                 xerr,
                 yerr,
                 error_cap,
+                error_width,
             } => {
+                let ew = error_width.unwrap_or(ERROR_WIDTH);
                 self.polyline(x.iter().zip(y).map(|(a, b)| at(*a, *b)), line_width);
                 if marker.kind != MarkerType::None {
                     for (a, b) in x.iter().zip(y) {
@@ -257,10 +259,10 @@ impl Ink {
                         let (lo, hi) = ends(xa, *a, *e);
                         let yu = ya.u(*b);
                         let (p, q) = (pu(lo, yu), pu(hi, yu));
-                        self.segment(p, q, ERROR_WIDTH);
+                        self.segment(p, q, ew);
                         if half > 0.0 {
                             for (cx, cy) in [p, q] {
-                                self.segment((cx, cy - half), (cx, cy + half), ERROR_WIDTH);
+                                self.segment((cx, cy - half), (cx, cy + half), ew);
                             }
                         }
                     }
@@ -270,10 +272,10 @@ impl Ink {
                         let (lo, hi) = ends(ya, *b, *e);
                         let xu = xa.u(*a);
                         let (p, q) = (pu(xu, lo), pu(xu, hi));
-                        self.segment(p, q, ERROR_WIDTH);
+                        self.segment(p, q, ew);
                         if half > 0.0 {
                             for (cx, cy) in [p, q] {
-                                self.segment((cx - half, cy), (cx + half, cy), ERROR_WIDTH);
+                                self.segment((cx - half, cy), (cx + half, cy), ew);
                             }
                         }
                     }
@@ -298,7 +300,9 @@ impl Ink {
                 horizontal,
                 width,
                 error_cap,
+                error_width,
             } => {
+                let ew = error_width.unwrap_or(ERROR_WIDTH);
                 let (along, across) = if *horizontal { (ya, xa) } else { (xa, ya) };
                 let bw = width.unwrap_or(BAR_WIDTH * spacing(x));
                 let base = base_of(across);
@@ -311,7 +315,7 @@ impl Ink {
                         let (lo, hi) = (across.u(v - e.abs()), across.u(v + e.abs()));
                         let lo = if lo.is_finite() { lo } else { base };
                         let (p, q) = (point(c, lo), point(c, hi));
-                        self.segment(p, q, ERROR_WIDTH);
+                        self.segment(p, q, ew);
                         let half = error_cap / 2.0;
                         if half > 0.0 {
                             for (cx, cy) in [p, q] {
@@ -320,14 +324,18 @@ impl Ink {
                                 } else {
                                     ((cx - half, cy), (cx + half, cy))
                                 };
-                                self.segment(from, to, ERROR_WIDTH);
+                                self.segment(from, to, ew);
                             }
                         }
                     }
                 }
             }
-            ElementKind::Box { positions, stats } => {
-                let bw = BOX_WIDTH * spacing(positions);
+            ElementKind::Box {
+                positions,
+                stats,
+                width,
+            } => {
+                let bw = box_width(positions, *width);
                 let stroke = if lined { line.width } else { ERROR_WIDTH };
                 let size = if marker.kind != MarkerType::None {
                     marker.size
@@ -568,6 +576,7 @@ mod tests {
             low,
             high,
             ticks: Vec::new(),
+            multiplier: None,
         };
         // two by two cells from -0.5 to 1.5 on axes from -0.5 to 3.5: the lower left quarter
         let (xa, ya) = (axis(-0.5, 3.5), axis(-0.5, 3.5));

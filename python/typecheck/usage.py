@@ -200,6 +200,9 @@ def the_figures(values: list[float]) -> None:
     colors: list[str] = sbmlsim_core.color_scale(
         "viridis", 0.0, 1.0, values, center=0.5, log=False, start=0.0, end=0.85
     )
+    stop_colors: list[str] = sbmlsim_core.color_scale(
+        [(0.0, "#000000"), (1.0, "#ffffff")], 0.0, 1.0, values
+    )
     sbmlsim_core.render_png(spec, dpi="x")  # ty: ignore[invalid-argument-type]
     sbmlsim_core.render_svg(1)  # ty: ignore[invalid-argument-type]
     sbmlsim_core.pick(spec, 1.0)  # ty: ignore[missing-argument]

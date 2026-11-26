@@ -276,6 +276,8 @@ type CurveData<'a> = (&'a [f64], &'a [f64], Option<&'a [f64]>, Option<&'a [f64]>
 struct ErrorCaps {
     /// The length of a cap in pixels, 0 for none.
     cap: f64,
+    /// The width of the lines of the error bars in pixels.
+    width: f64,
     /// The width and the height of the panel in pixels.
     panel: (f64, f64),
 }
@@ -306,7 +308,7 @@ fn curve_layers(
     }
     let bar = Stroke {
         color: color.to_string(),
-        width: ERROR_WIDTH,
+        width: caps.width,
         dash: Vec::new(),
         opacity: style.opacity,
     };
@@ -346,14 +348,7 @@ fn curve_layers(
                 .mark_point()?
                 .configure_point(move |p| p.with_size(radius))
                 .encode((alt::x("x"), alt::y("y")))?;
-            let glyph = MarkerGlyph {
-                kind: m.kind,
-                size: m.size,
-                fill: m.fill.clone().unwrap_or_else(|| color.to_string()),
-                edge: m.edge.clone().unwrap_or_else(|| color.to_string()),
-                edge_width: m.edge_width,
-                opacity: style.opacity,
-            };
+            let glyph = MarkerGlyph::of(m, color, style.opacity);
             layers.push(
                 chart,
                 LayerInfo {
@@ -413,6 +408,7 @@ pub(crate) fn build(
                 xerr,
                 yerr,
                 error_cap,
+                error_width,
             } => {
                 curve_layers(
                     &mut layers,
@@ -420,6 +416,7 @@ pub(crate) fn build(
                     (x, y, xerr.as_deref(), yerr.as_deref()),
                     ErrorCaps {
                         cap: *error_cap,
+                        width: error_width.unwrap_or(ERROR_WIDTH),
                         panel,
                     },
                     style,
@@ -527,6 +524,7 @@ pub(crate) fn build(
                 horizontal,
                 width,
                 error_cap,
+                error_width,
             } => stats_marks::bar_layers(
                 &mut layers,
                 index,
@@ -537,16 +535,21 @@ pub(crate) fn build(
                     horizontal: *horizontal,
                     width: *width,
                     error_cap: *error_cap,
+                    error_width: error_width.unwrap_or(ERROR_WIDTH),
                     panel,
                 },
                 style,
                 color,
                 (xa, ya),
             )?,
-            ElementKind::Box { positions, stats } => stats_marks::box_layers(
+            ElementKind::Box {
+                positions,
+                stats,
+                width,
+            } => stats_marks::box_layers(
                 &mut layers,
                 index,
-                (positions, stats),
+                (positions, stats, *width),
                 style,
                 color,
                 (xa, ya),
@@ -691,8 +694,12 @@ pub(crate) fn extent(e: &Element, out: &mut Extent, ends: Option<(XEnds, bool)>)
             values.push(0.0);
             sticky.push(0.0);
         }
-        ElementKind::Box { positions, stats } => {
-            let half = stats_marks::BOX_WIDTH * stats_marks::spacing(positions) / 2.0;
+        ElementKind::Box {
+            positions,
+            stats,
+            width,
+        } => {
+            let half = stats_marks::box_width(positions, *width) / 2.0;
             for p in positions {
                 xs.push(p - half);
                 xs.push(p + half);

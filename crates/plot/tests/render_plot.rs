@@ -52,12 +52,37 @@ fn tick_values(doc: &Document, axis: &str) -> Vec<f64> {
             n.ancestors()
                 .any(|a| a.attribute("data-axis") == Some(axis))
         })
-        .map(|n| {
-            let t = n.text().unwrap_or_default();
-            t.parse::<f64>()
-                .unwrap_or_else(|e| panic!("tick label `{t}`: {e}"))
-        })
+        .map(|n| label_value(n))
         .collect()
+}
+
+/// The number a tick label writes: plain, `10` with a superscript exponent, or a mantissa
+/// times that (since 0.31.0), the minus sign U+2212.
+fn label_value(n: Node) -> f64 {
+    let base: String = n
+        .children()
+        .filter(|c| c.is_text())
+        .filter_map(|c| c.text())
+        .collect();
+    let sup: Option<String> = n
+        .children()
+        .find(|c| c.has_tag_name("tspan"))
+        .and_then(|c| c.text())
+        .map(|t| t.replace('\u{2212}', "-"));
+    let number = |t: &str| {
+        t.parse::<f64>()
+            .unwrap_or_else(|e| panic!("tick label `{t}`: {e}"))
+    };
+    match sup {
+        None => number(&base),
+        Some(e) => {
+            let power = 10f64.powf(number(&e));
+            match base.split_once('\u{d7}') {
+                Some((m, _)) => number(m) * power,
+                None => power,
+            }
+        }
+    }
 }
 
 /// Every number of every attribute of the drawing which carries coordinates.
@@ -774,16 +799,26 @@ fn multi_line_text_element() {
 }
 
 #[test]
-fn a_tick_label_with_a_newline_is_one_line() {
+fn a_tick_label_with_a_newline_is_lines() {
     let json = figure(
         r#"{"scale": "category", "categories": ["a\nb", "c"]}"#,
         "{}",
         r#"{"id": "e", "kind": "curve", "x": [0, 1], "y": [1, 2]}"#,
     );
     let svg = render(&json);
-    assert!(!svg.contains("<tspan"), "{svg}");
-    assert!(
-        svg.contains(">a\nb</text>"),
-        "tick label written as one line"
-    );
+    let doc = Document::parse(&svg).unwrap();
+    let lines: Vec<(&str, f64)> = doc
+        .descendants()
+        .filter(|n| n.has_tag_name("tspan"))
+        .map(|n| {
+            (
+                n.text().unwrap_or_default(),
+                n.attribute("y").unwrap().parse().unwrap(),
+            )
+        })
+        .collect();
+    // the lines of the label of the bottom axis down from its tick, a line height apart
+    assert_eq!(lines.len(), 2, "{svg}");
+    assert_eq!((lines[0].0, lines[1].0), ("a", "b"));
+    assert!((lines[1].1 - lines[0].1 - 13.2).abs() < 0.02);
 }

@@ -12,8 +12,10 @@ use super::axis::{ResolvedAxis, axis_title};
 use super::{TICK_LABEL_PADDING, TICK_LENGTH, TITLE_GAP};
 use crate::layout::Rect;
 use crate::spec::{Axis, Fonts};
-use crate::svg::{Stack, attr_num, attr_weight, num, text_lines, text_node, theme};
-use crate::text::{extra_lines, label_extent, text_width_one_line};
+use crate::svg::{
+    MULTIPLIER_GAP, Stack, attr_num, attr_weight, label_lines, num, text_lines, theme,
+};
+use crate::text::{extra_lines, label_extent, label_height, label_width};
 
 /// The right axis laid out over its ticks.
 #[derive(Debug, Clone)]
@@ -33,6 +35,9 @@ pub(crate) struct RightAxis {
     labels_depth: f64,
     /// The room the axis takes right of the panel.
     pub depth: f64,
+    /// The multiplier of the tick labels, written above the right end of the panel (since
+    /// 0.31.0).
+    pub multiplier: Option<String>,
 }
 
 /// Lays out the right axis `axis`, resolved as `resolved`.
@@ -48,8 +53,8 @@ pub(crate) fn layout(axis: &Axis, resolved: &ResolvedAxis, fonts: &Fonts) -> Rig
         .iter()
         .map(|(_, l)| {
             label_extent(
-                text_width_one_line(l, tick, fonts.tick_weight),
-                tick,
+                label_width(l, tick, fonts.tick_weight),
+                label_height(l, tick),
                 axis.tick_rotation,
                 false,
             )
@@ -75,6 +80,7 @@ pub(crate) fn layout(axis: &Axis, resolved: &ResolvedAxis, fonts: &Fonts) -> Rig
         title,
         labels_depth,
         depth,
+        multiplier: resolved.multiplier.clone().filter(|_| labels),
     }
 }
 
@@ -159,10 +165,22 @@ pub(crate) fn draw(
                 out.push_str(")\"");
             }
             out.push('>');
-            text_node(out, label);
+            label_lines(out, label, (lx, y), tick, Stack::Centred);
             out.push_str("</text>");
         }
         out.push_str("</g>");
+    }
+    if let Some(m) = &layout.multiplier {
+        // right aligned above the right end of the panel, as matplotlib's offset text
+        let (mx, my) = (x, panel.y - MULTIPLIER_GAP);
+        out.push_str("<g class=\"sbmlsim-axis-multiplier\"><text");
+        attr_num(out, "x", mx);
+        attr_num(out, "y", my);
+        attr_num(out, "font-size", fonts.y_tick());
+        attr_weight(out, fonts.tick_weight);
+        let _ = write!(out, " fill=\"{}\" text-anchor=\"end\">", theme::FG_SOFT);
+        label_lines(out, m, (mx, my), fonts.y_tick(), Stack::Down);
+        out.push_str("</text></g>");
     }
     if let Some(title) = &layout.title {
         let (tx, ty) = (

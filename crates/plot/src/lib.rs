@@ -14,7 +14,7 @@ mod spec;
 mod svg;
 mod text;
 
-pub use colors::{COLOR_SCALES, NO_VALUE_COLOR, color_scale};
+pub use colors::{COLOR_SCALES, NO_VALUE_COLOR, check_stops, color_scale};
 pub use error::{RenderError, SpecError};
 pub use interact::{
     FigurePlan, Geometry, LegendEntryGeometry, Pick, PixelRect, PlotGeometry, Scale, geometry,

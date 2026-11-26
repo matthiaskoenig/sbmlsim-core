@@ -38,9 +38,11 @@
 
 use crate::ink::Ink;
 use crate::render::axis::{ResolvedAxis, Transform};
-use crate::render::legend::{self, Entry};
-use crate::render::{self, Prepared, Sides};
-use crate::spec::{AxisScale, Figure, LegendLoc, LegendPosition, LegendScope, Plot};
+use crate::render::legend::{self, Entry, Shape};
+use crate::render::{self, Prepared, Sides, heatmap};
+use crate::spec::{
+    AxisScale, ColorBarPlacement, Figure, Fonts, LegendLoc, LegendPosition, LegendScope, Plot,
+};
 use crate::text::extra_lines;
 
 /// The padding at the edges of the figure and the least gap between the axes of two
@@ -132,6 +134,8 @@ pub(crate) enum LegendOwner {
     Plot(String),
     /// The legend of a row of the grid.
     Row(u32),
+    /// The legend of the figure below the grid (since 0.31.0).
+    Figure,
 }
 
 /// One entry of a legend.
@@ -171,8 +175,15 @@ pub(crate) struct Layout {
     pub title: Option<Rect>,
 }
 
+/// A colour bar above a row: the plot and the bar of it, and the rectangle of the bar itself.
+pub(crate) type TopBar = (usize, usize, Rect);
+
 /// A figure laid out, with what drawing it needs beyond the boxes.
 pub(crate) struct Plan {
+    /// The colour bars above the rows (since 0.31.0).
+    pub top_bars: Vec<TopBar>,
+    /// The title and the columns of every legend of the layout (since 0.31.0).
+    pub shapes: Vec<Shape>,
     /// The boxes.
     pub layout: Layout,
     /// Every plot prepared, in the order of the spec.
@@ -184,7 +195,7 @@ pub(crate) struct Plan {
 }
 
 /// A legend before it is placed: its owner, where it goes, its entries and the room it takes.
-type Pending = (LegendOwner, Place, Vec<Entry>, (f64, f64));
+type Pending = (LegendOwner, Place, Vec<Entry>, (f64, f64), Shape);
 
 /// Where a legend goes.
 #[derive(Debug, Clone, Copy)]
@@ -195,6 +206,8 @@ enum Place {
     RightOfPlot(usize),
     /// Right of the grid, at the top of this row.
     RightOfGrid(usize),
+    /// Below the grid, centred on the figure (since 0.31.0).
+    Below,
 }
 
 /// The extent of the panels along one direction of the grid.
@@ -296,8 +309,9 @@ struct Room {
     bottom: Vec<f64>,
 }
 
-/// The room of the columns and rows: the largest depth of the plots which start or end there.
-fn room(figure: &Figure, depths: &[Sides]) -> Room {
+/// The room of the columns and rows: the largest depth of the plots which start or end there,
+/// and above a row the room of the colour bar above it (since 0.31.0).
+fn room(figure: &Figure, depths: &[Sides], top_bars: &[f64]) -> Room {
     let (cols, rows) = (figure.grid.columns as usize, figure.grid.rows as usize);
     let mut r = Room {
         left: vec![0.0; cols],
@@ -316,6 +330,13 @@ fn room(figure: &Figure, depths: &[Sides]) -> Room {
         r.top[row] = r.top[row].max(d.top);
         r.bottom[r_end] = r.bottom[r_end].max(d.bottom);
     }
+    let mut bars = vec![0.0f64; rows];
+    for (p, b) in figure.plots.iter().zip(top_bars) {
+        bars[p.row as usize] = bars[p.row as usize].max(*b);
+    }
+    for (top, b) in r.top.iter_mut().zip(bars) {
+        *top += b;
+    }
     r
 }
 
@@ -330,9 +351,9 @@ fn title_band(figure: &Figure) -> f64 {
 
 /// The panels of the plots for the depths of their plots, with the room of the grid and the
 /// pixels the grid reaches beyond the width and the height of the figure.
-fn grid(figure: &Figure, depths: &[Sides]) -> (Vec<Rect>, Room, (f64, f64)) {
+fn grid(figure: &Figure, depths: &[Sides], top_bars: &[f64]) -> (Vec<Rect>, Room, (f64, f64)) {
     let band = title_band(figure);
-    let r = room(figure, depths);
+    let r = room(figure, depths, top_bars);
     let column_spans: Vec<u32> = figure.plots.iter().map(|p| p.column_span).collect();
     let row_spans: Vec<u32> = figure.plots.iter().map(|p| p.row_span).collect();
     let columns = track(
@@ -380,7 +401,10 @@ fn estimate(figure: &Figure) -> Vec<(f64, f64)> {
         .map(|p| {
             let right = if p.y2.is_some() { ESTIMATE_ROOM.0 } else { 0.0 };
             let top = match &p.title {
-                Some(t) => 2.0 * figure.fonts.label + extra_lines(t, figure.fonts.label),
+                Some(t) => {
+                    2.0 * figure.fonts.plot_title_size()
+                        + extra_lines(t, figure.fonts.plot_title_size())
+                }
                 None => 0.0,
             };
             (
@@ -410,11 +434,14 @@ pub(crate) fn plan(figure: &Figure) -> Plan {
     };
     let depths_of =
         |prepared: &[Prepared]| -> Vec<Sides> { prepared.iter().map(|p| p.depth).collect() };
+    let tops_of =
+        |prepared: &[Prepared]| -> Vec<f64> { prepared.iter().map(|p| p.top_bar).collect() };
     let first = prepare_all(&estimate(figure));
-    let (panels, _, _) = grid(figure, &depths_of(&first));
+    let (panels, _, _) = grid(figure, &depths_of(&first), &tops_of(&first));
     let sizes: Vec<(f64, f64)> = panels.iter().map(|r| (r.width, r.height)).collect();
     let mut prepared = prepare_all(&sizes);
-    let (mut panels, room, (grid_wider, grid_taller)) = grid(figure, &depths_of(&prepared));
+    let (mut panels, room, (grid_wider, grid_taller)) =
+        grid(figure, &depths_of(&prepared), &tops_of(&prepared));
 
     let plot_entries: Vec<Vec<Entry>> = figure
         .plots
@@ -434,6 +461,10 @@ pub(crate) fn plan(figure: &Figure) -> Plan {
         w + 2.0 * LEGEND_INSET <= panel.width && h + 2.0 * LEGEND_INSET <= panel.height
     };
     let inside = figure.legend.position == LegendPosition::Inside;
+    let plot_shape = |p: &Plot| Shape {
+        title: p.legend_title.clone(),
+        columns: 1,
+    };
     // the location of a legend inside the panel of the plot at `i`: the `legend_loc` of the
     // plot or the `loc` of the figure, `best` resolved by the data; none when it does not fit
     // into the panel
@@ -445,7 +476,7 @@ pub(crate) fn plan(figure: &Figure) -> Plan {
         match plot.legend_loc.unwrap_or(figure.legend.loc) {
             LegendLoc::Best => {
                 let panel = (panels[i].width, panels[i].height);
-                Some(best_loc(plot, &prepared[i], panel, size))
+                Some(best_loc(plot, &prepared[i], fonts, panel, size))
             }
             loc => Some(loc),
         }
@@ -454,10 +485,42 @@ pub(crate) fn plan(figure: &Figure) -> Plan {
     // show, `legend::room`); a legend inside which does not fit into its panel goes outside
     // instead
     let mut pending: Vec<Pending> = Vec::new();
+    let below = figure.legend.position == LegendPosition::Bottom;
     match figure.legend.scope {
+        // one legend of the figure below the grid, of the entries of all plots
+        _ if below => {
+            let orders: Vec<&[String]> = figure
+                .plots
+                .iter()
+                .filter_map(|p| p.legend_order.as_deref())
+                .collect();
+            let all_declared: Vec<&[String]> = figure.plots.iter().flat_map(declared).collect();
+            let list = legend::merge_ordered(plot_entries, &orders);
+            let title = figure.legend.title.clone();
+            // the columns given, else as many as fit into the width of the figure
+            let columns = match figure.legend.columns {
+                Some(c) => c as usize,
+                None => (1..=list.len().max(1))
+                    .rev()
+                    .find(|c| {
+                        let shape = Shape {
+                            title: title.clone(),
+                            columns: *c,
+                        };
+                        legend::size(&list, &shape, fonts).0 <= figure.width - 2.0 * PAD
+                    })
+                    .unwrap_or(1),
+            };
+            let shape = Shape { title, columns };
+            if let Some(size) = legend::room(&list, &all_declared, &shape, fonts) {
+                pending.push((LegendOwner::Figure, Place::Below, list, size, shape));
+            }
+        }
         LegendScope::Plot => {
             for (i, list) in plot_entries.into_iter().enumerate() {
-                let Some(size) = legend::room(&list, &declared(&figure.plots[i]), fonts) else {
+                let shape = plot_shape(&figure.plots[i]);
+                let Some(size) = legend::room(&list, &declared(&figure.plots[i]), &shape, fonts)
+                else {
                     continue;
                 };
                 let place = match loc_of(i, size) {
@@ -469,6 +532,7 @@ pub(crate) fn plan(figure: &Figure) -> Plan {
                     place,
                     list,
                     size,
+                    shape,
                 ));
             }
         }
@@ -488,7 +552,16 @@ pub(crate) fn plan(figure: &Figure) -> Plan {
                     .filter_map(|p| p.legend_order.as_deref())
                     .collect();
                 let list = legend::merge_ordered(lists, &orders);
-                let Some(size) = legend::room(&list, &declared_of_row[r], fonts) else {
+                // the first title of the plots of the row
+                let shape = Shape {
+                    title: figure
+                        .plots
+                        .iter()
+                        .filter(|p| p.row as usize == r)
+                        .find_map(|p| p.legend_title.clone()),
+                    columns: 1,
+                };
+                let Some(size) = legend::room(&list, &declared_of_row[r], &shape, fonts) else {
                     continue;
                 };
                 // the rightmost plot of the row with a legend holds a legend inside
@@ -503,7 +576,7 @@ pub(crate) fn plan(figure: &Figure) -> Plan {
                     Some((i, loc)) => Place::Inside(i, loc),
                     None => Place::RightOfGrid(r),
                 };
-                pending.push((LegendOwner::Row(r as u32), place, list, size));
+                pending.push((LegendOwner::Row(r as u32), place, list, size, shape));
             }
         }
     }
@@ -512,7 +585,7 @@ pub(crate) fn plan(figure: &Figure) -> Plan {
     // right of it move by it
     let columns = figure.grid.columns as usize;
     let mut extra = vec![0.0f64; columns];
-    for (_, place, _, size) in &pending {
+    for (_, place, _, size, _) in &pending {
         if let Place::RightOfPlot(i) = place {
             let c = end_column(&figure.plots[*i]);
             extra[c] = extra[c].max(LEGEND_GAP + size.0);
@@ -536,8 +609,8 @@ pub(crate) fn plan(figure: &Figure) -> Plan {
         .fold(0.0, f64::max);
     let widest = pending
         .iter()
-        .filter(|(_, place, _, _)| matches!(place, Place::RightOfGrid(_)))
-        .map(|(_, _, _, size)| size.0)
+        .filter(|(_, place, _, _, _)| matches!(place, Place::RightOfGrid(_)))
+        .map(|(_, _, _, size, _)| size.0)
         .fold(0.0, f64::max);
     if widest > 0.0 {
         width += LEGEND_GAP + widest;
@@ -546,10 +619,10 @@ pub(crate) fn plan(figure: &Figure) -> Plan {
     // reach down to
     let mut outside: Vec<Option<(Rect, usize, usize)>> = pending
         .iter()
-        .map(|(_, place, _, size)| {
+        .map(|(_, place, _, size, _)| {
             let (w, h) = *size;
             match place {
-                Place::Inside(..) => None,
+                Place::Inside(..) | Place::Below => None,
                 Place::RightOfPlot(i) => {
                     let p = &figure.plots[*i];
                     let rect = Rect {
@@ -607,22 +680,46 @@ pub(crate) fn plan(figure: &Figure) -> Plan {
         // a legend moves with the first row of its plot or row
         rect.y += down[*first];
     }
-    let height = figure.height + grid_taller + overflow.iter().sum::<f64>();
+    let mut height = figure.height + grid_taller + overflow.iter().sum::<f64>();
+    // the legend below the grid, centred on the figure: the figure grows by it (since 0.31.0)
+    let grid_bottom = figure
+        .plots
+        .iter()
+        .zip(&panels)
+        .map(|(p, r)| r.bottom() + room.bottom[end_row(p)])
+        .fold(0.0, f64::max);
+    let mut below_rect = None;
+    for (_, place, _, (w, h), _) in &pending {
+        if matches!(place, Place::Below) {
+            let rect = Rect {
+                x: ((width - w) / 2.0).max(0.0),
+                y: grid_bottom + LEGEND_GAP,
+                width: *w,
+                height: *h,
+            };
+            height = height.max(rect.bottom() + PAD);
+            below_rect = Some(rect);
+        }
+    }
     // the legends inside, in the panels where they end up
     let mut legends = Vec::with_capacity(pending.len());
     let mut entries = Vec::with_capacity(pending.len());
-    for ((owner, place, list, size), out) in pending.into_iter().zip(outside) {
+    for ((owner, place, list, size, shape), out) in pending.into_iter().zip(outside) {
         // the frame is the room of the legend, which holds the largest legend it may show, so
         // nothing moves when entries come and go; a legend which draws nothing now is no frame
         let rect = match (place, out) {
             (_, Some((rect, _, _))) => rect,
             (Place::Inside(i, loc), None) => loc_rect(panels[i], size, loc),
+            (Place::Below, None) => match below_rect {
+                Some(r) => r,
+                None => continue,
+            },
             (Place::RightOfPlot(_) | Place::RightOfGrid(_), None) => continue,
         };
         if list.is_empty() {
             continue;
         }
-        legends.push((owner, rect, list));
+        legends.push((owner, rect, list, shape));
     }
 
     // a plot with an aspect has the limits of the panel it ends up with: one whose panel is
@@ -681,8 +778,9 @@ pub(crate) fn plan(figure: &Figure) -> Plan {
         }
     });
     let mut boxes = Vec::with_capacity(legends.len());
-    for (owner, rect, list) in legends {
-        let rects = legend::entry_rects(rect, &list, fonts);
+    let mut shapes = Vec::with_capacity(legends.len());
+    for (owner, rect, list, shape) in legends {
+        let rects = legend::entry_rects(rect, &list, &shape, fonts);
         boxes.push(LegendBox {
             owner,
             rect,
@@ -697,8 +795,33 @@ pub(crate) fn plan(figure: &Figure) -> Plan {
                 .collect(),
         });
         entries.push(list);
+        shapes.push(shape);
+    }
+    // the bars above the rows, over the panels of their row (since 0.31.0)
+    let mut top_bars = Vec::new();
+    for (i, (p, prep)) in figure.plots.iter().zip(&prepared).enumerate() {
+        for (k, l) in prep.bars.iter().enumerate() {
+            if l.placement != ColorBarPlacement::Top {
+                continue;
+            }
+            let of_row = || {
+                figure
+                    .plots
+                    .iter()
+                    .zip(&panels)
+                    .filter(|(q, _)| q.row == p.row)
+                    .map(|(_, r)| r)
+            };
+            let left = of_row().map(|r| r.x).fold(f64::INFINITY, f64::min);
+            let right = of_row().map(Rect::right).fold(f64::NEG_INFINITY, f64::max);
+            let top =
+                of_row().map(|r| r.y).fold(f64::INFINITY, f64::min) - room.top[p.row as usize];
+            top_bars.push((i, k, heatmap::top_bar(l, (left, right), top)));
+        }
     }
     Plan {
+        shapes,
+        top_bars,
         layout: Layout {
             width,
             height,
@@ -722,28 +845,56 @@ fn declared(p: &Plot) -> Vec<&[String]> {
 
 /// The location `best` of a legend of `size` inside the panel of a plot of `panel` size: of
 /// matplotlib's locations the one whose frame covers the least ink of the data (`Ink`), the
-/// first in the order of [`LegendLoc::CANDIDATES`] on a tie, as matplotlib's `best`.
-fn best_loc(plot: &Plot, prep: &Prepared, panel: (f64, f64), size: (f64, f64)) -> LegendLoc {
+/// first in the order of [`LegendLoc::CANDIDATES`] on a tie, as matplotlib's `best`. A location
+/// whose frame overlaps an inset colour bar of the plot loses to every one which does not, the
+/// least overlap first (since 0.31.0).
+fn best_loc(
+    plot: &Plot,
+    prep: &Prepared,
+    fonts: &Fonts,
+    panel: (f64, f64),
+    size: (f64, f64),
+) -> LegendLoc {
     let ink = Ink::of_plot(plot, prep, panel);
     let origin = Rect {
         width: panel.0,
         height: panel.1,
         ..Rect::default()
     };
-    let mut best = (LegendLoc::UpperRight, f64::INFINITY);
+    let insets = inset_rects(plot, prep, fonts, origin);
+    let mut best = (LegendLoc::UpperRight, (f64::INFINITY, f64::INFINITY));
     for loc in LegendLoc::CANDIDATES {
         let r = loc_rect(origin, size, loc);
+        let covered: f64 = insets.iter().map(|i| overlap(&r, i)).sum();
         let share = ink.coverage((r.x, r.y, r.width, r.height));
-        if share < best.1 {
-            best = (loc, share);
+        if (covered, share) < best.1 {
+            best = (loc, (covered, share));
         }
     }
     best.0
 }
 
+/// The rectangles of the inset colour bars of a plot, with their ticks and labels, in its
+/// panel `panel`.
+pub(crate) fn inset_rects(plot: &Plot, prep: &Prepared, fonts: &Fonts, panel: Rect) -> Vec<Rect> {
+    plot.color_bars()
+        .iter()
+        .zip(&prep.bars)
+        .filter(|(_, l)| l.placement == ColorBarPlacement::Inset)
+        .map(|(b, l)| l.inset_rect(b, panel, fonts))
+        .collect()
+}
+
+/// The area two rectangles share.
+fn overlap(a: &Rect, b: &Rect) -> f64 {
+    let w = a.right().min(b.right()) - a.x.max(b.x);
+    let h = a.bottom().min(b.bottom()) - a.y.max(b.y);
+    if w > 0.0 && h > 0.0 { w * h } else { 0.0 }
+}
+
 /// The frame of a legend of `size` at a location of a panel, `LEGEND_INSET` from its edges;
 /// `best` is resolved before (see [`best_loc`]) and stands for the upper right here.
-fn loc_rect(panel: Rect, (w, h): (f64, f64), loc: LegendLoc) -> Rect {
+pub(crate) fn loc_rect(panel: Rect, (w, h): (f64, f64), loc: LegendLoc) -> Rect {
     let (left, right) = (panel.x + LEGEND_INSET, panel.right() - LEGEND_INSET - w);
     let (top, bottom) = (panel.y + LEGEND_INSET, panel.bottom() - LEGEND_INSET - h);
     let (center, middle) = (
