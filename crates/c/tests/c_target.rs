@@ -2,15 +2,17 @@
 //! and Jacobian up to the math library, the same simulations within the tolerances of the
 //! integration, and the cache of the compiled libraries.
 //!
-//! The tests over `testdata/cases` need `uv run scripts/prepare_testsuite.py` and skip with a
-//! note when the directory is absent, unless `SBMLSIM_CORE_REQUIRE_CASES` is set (the jobs of
-//! the suite in CI), where they fail.
+//! The tests over `testdata/cases` skip with a note when the directory is absent, see
+//! `common`.
+
+mod common;
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
+use common::{ALGEBRAIC_CASES, Case, EVENT_CASES, Random, cases, cell_model, cell_parameter_sets};
 use sbmlsim_abi::{
     IntegratorSettings, ModelDescription, Output, SIMULATION_CONTRACT, SimulationRequest,
     SimulationResult, Tolerance,
@@ -25,32 +27,6 @@ const MATH: &str = r#"xmlns="http://www.w3.org/1998/Math/MathML""#;
 fn runtime() -> &'static Runtime {
     static RUNTIME: OnceLock<Runtime> = OnceLock::new();
     RUNTIME.get_or_init(|| Runtime::embedded().unwrap())
-}
-
-fn testdata() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata")
-}
-
-fn spt() -> String {
-    fs::read_to_string(testdata().join("models/spt_liver_cell.xml")).unwrap()
-}
-
-/// SplitMix64, a seeded generator of uniform numbers in `[0, 1)`.
-struct Random(u64);
-
-impl Random {
-    fn uniform(&mut self) -> f64 {
-        self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
-        let mut z = self.0;
-        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-        z ^= z >> 31;
-        (z >> 11) as f64 / (1u64 << 53) as f64
-    }
-
-    fn between(&mut self, low: f64, high: f64) -> f64 {
-        low + (high - low) * self.uniform()
-    }
 }
 
 /// The C source, its library and the model of it.
@@ -103,7 +79,7 @@ fn request(
 
 #[test]
 fn spt_matches_wasm_model() {
-    let sbml = spt();
+    let sbml = cell_model();
     let (source, model) = native(&sbml);
     let compiled = wasm(&sbml);
     // the description is the one of the WebAssembly target, built by the same builder
@@ -116,14 +92,7 @@ fn spt_matches_wasm_model() {
     let states: Vec<String> = description.states.iter().map(|s| s.id.clone()).collect();
     assert_eq!(states.len(), 7);
 
-    let mut random = Random(7);
-    for set in 0..50 {
-        let preinit = vec![
-            ("pattern".to_string(), 7.0),
-            ("protein_ext".to_string(), random.uniform()),
-            ("position".to_string(), random.uniform()),
-            ("[S_ext]".to_string(), random.between(0.0, 5.0)),
-        ];
+    for (set, preinit) in cell_parameter_sets().into_iter().enumerate() {
         let req = request(0.0, 1440.0, 99, &states, preinit.clone(), (1e-10, 1e-12));
         let c = engine.simulate(&req).unwrap();
         let w = instance.simulate(&req).unwrap();
@@ -319,7 +288,7 @@ fn compare_functions(sbml: &str, state: impl Fn(&mut Random, f64) -> f64) {
 
 #[test]
 fn rhs_and_jacobian_match_wasm() {
-    compare_functions(&spt(), |random, initial| {
+    compare_functions(&cell_model(), |random, initial| {
         initial.abs().max(1e-3) * random.between(0.0, 2.0)
     });
     compare_functions(&operators(), |random, _| random.between(0.05, 0.95));
@@ -378,46 +347,18 @@ fn deep_expressions_stay_within_the_nesting_of_compilers() {
     compare_functions(&deep(), |random, _| random.between(0.0, 1.0));
 }
 
-/// The directory of the prepared cases, `None` (with a note) where it is absent.
-fn cases() -> Option<PathBuf> {
-    let dir = testdata().join("cases");
-    if dir.join("00001/case.json").is_file() {
-        return Some(dir);
-    }
-    assert!(
-        std::env::var_os("SBMLSIM_CORE_REQUIRE_CASES").is_none(),
-        "{} is absent and SBMLSIM_CORE_REQUIRE_CASES is set",
-        dir.display()
-    );
-    eprintln!(
-        "note: {} is absent, run `uv run scripts/prepare_testsuite.py`; skipped",
-        dir.display()
-    );
-    None
-}
-
 /// Simulates a case of the suite on the native engine with the C model, at the tolerance of
 /// the runner (1e-12), and compares every value but the time with its expected results by the
 /// rule of the suite.
 fn check_case(dir: &Path) {
-    let settings: serde_json::Value =
-        serde_json::from_slice(&fs::read(dir.join("case.json")).unwrap()).unwrap();
-    let number = |key: &str| settings[key].as_f64().unwrap();
-    let selections: Vec<String> = settings["selections"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|s| s.as_str().unwrap().to_string())
-        .collect();
-    let sbml = fs::read_to_string(dir.join("model.xml")).unwrap();
-    let (source, model) = native(&sbml);
+    let case = Case::read(dir);
+    let (source, model) = native(&case.sbml);
     let mut engine = Engine::new(Box::new(model), source.description).unwrap();
-    let start = number("start");
     let req = request(
-        start,
-        start + number("duration"),
-        settings["steps"].as_u64().unwrap() as u32,
-        &selections,
+        case.start,
+        case.start + case.duration,
+        case.steps,
+        &case.selections,
         vec![],
         (1e-12, 1e-12),
     );
@@ -430,8 +371,8 @@ fn check_case(dir: &Path) {
         .filter(|l| !l.trim().is_empty())
         .map(|l| l.split(',').map(|x| x.trim().parse().unwrap()).collect())
         .collect();
-    let (abs_tol, rel_tol) = (number("absolute_tolerance"), number("relative_tolerance"));
-    let n = selections.len();
+    let (abs_tol, rel_tol) = (case.absolute_tolerance, case.relative_tolerance);
+    let n = case.selections.len();
     assert_eq!(observed.n_rows, rows.len(), "{}", dir.display());
     for (r, row) in rows.iter().enumerate() {
         for (c, expected) in row.iter().enumerate().skip(1) {
@@ -440,7 +381,7 @@ fn check_case(dir: &Path) {
                 (expected - value).abs() <= abs_tol + rel_tol * expected.abs(),
                 "{}: {} at row {r}: {value}, expected {expected}",
                 dir.display(),
-                selections[c]
+                case.selections[c]
             );
         }
     }
@@ -449,9 +390,7 @@ fn check_case(dir: &Path) {
 #[test]
 fn event_model_matches_wasm() {
     let Some(cases) = cases() else { return };
-    // events: a delay (00071), priorities (00934), an event which assigns a compartment of a
-    // species of a concentration (01506); an algebraic rule (00039)
-    for case in ["00071", "00934", "01506", "00039"] {
+    for case in EVENT_CASES.iter().chain(&ALGEBRAIC_CASES) {
         check_case(&cases.join(case));
     }
 }

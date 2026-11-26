@@ -273,6 +273,17 @@ pub(crate) struct ConstraintWorkspace {
     jac_values: Vec<f64>,
 }
 
+impl ConstraintWorkspace {
+    /// An estimate of the bytes of the workspace: its IDA memory, its vectors and the struct.
+    pub(crate) fn memory_bytes(&self) -> usize {
+        std::mem::size_of::<Self>() - std::mem::size_of::<Integrator<true>>()
+            + self.solver.memory_bytes()
+            + self.difference.memory_bytes()
+            + (self.parameters.capacity() + self.probe.capacity() + self.jac_values.capacity())
+                * std::mem::size_of::<f64>()
+    }
+}
+
 #[cfg(test)]
 impl ConstraintWorkspace {
     pub(crate) fn storage_identity(&self) -> (usize, usize, usize) {

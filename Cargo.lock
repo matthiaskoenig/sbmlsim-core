@@ -2524,8 +2524,11 @@ version = "0.29.0"
 dependencies = [
  "rand_pcg",
  "sbmlsim-abi",
+ "sbmlsim-c",
+ "sbmlsim-compiler",
  "sbmlsim-csolvers",
  "sbmlsim-engine",
+ "sbmlsim-host",
  "serde",
  "serde_json",
 ]

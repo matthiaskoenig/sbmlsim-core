@@ -261,6 +261,9 @@ unsafe extern "C" {
         sparsetype: c_int,
         sunctx: SUNContext,
     ) -> SUNMatrix;
+    /// The bytes of a serial vector besides its values: the generic vector, its own table of
+    /// operations and the content of the serial implementation (`csrc/sizes.c`).
+    pub fn sbmlsim_nvector_serial_object_bytes() -> usize;
     /// A CSC matrix whose fixed pattern is preserved by zero and copy operations.
     /// Its clones share immutable pattern metadata; numeric storage remains private.
     pub fn sbmlsim_SUNSparseMatrix_Fixed(
@@ -406,6 +409,19 @@ unsafe extern "C" {
     /// The step size of the step being attempted (`cv_next_h`, which is `cv_h` while CVODE
     /// sets up the linear solver).
     pub fn CVodeGetCurrentStep(cvode_mem: *mut c_void, hcur: *mut sunrealtype) -> c_int;
+    /// The real and integer workspace of CVODE (its vectors among them), in values.
+    pub fn CVodeGetWorkSpace(
+        cvode_mem: *mut c_void,
+        lenrw: *mut c_long,
+        leniw: *mut c_long,
+    ) -> c_int;
+    /// The real and integer workspace of the linear solver interface of CVODE (its copy of the
+    /// Jacobian, allocated at the first step, among them) and of its linear solver, in values.
+    pub fn CVodeGetLinWorkSpace(
+        cvode_mem: *mut c_void,
+        lenrwLS: *mut c_long,
+        leniwLS: *mut c_long,
+    ) -> c_int;
     /// Copies the error weights `1 / (rtol |y_i| + atol_i)` into `eweight`.
     pub fn CVodeGetErrWeights(cvode_mem: *mut c_void, eweight: N_Vector) -> c_int;
     /// Copies the estimated local errors of the last step into `ele`.
@@ -518,6 +534,15 @@ unsafe extern "C" {
     /// Copies the estimated local errors of the last step into `ele`.
     pub fn IDAGetEstLocalErrors(ida_mem: *mut c_void, ele: N_Vector) -> c_int;
     pub fn IDAGetCurrentStep(ida_mem: *mut c_void, hcur: *mut sunrealtype) -> c_int;
+    /// The real and integer workspace of IDA (its vectors among them), in values.
+    pub fn IDAGetWorkSpace(ida_mem: *mut c_void, lenrw: *mut c_long, leniw: *mut c_long) -> c_int;
+    /// The real and integer workspace of the linear solver interface of IDA and of its linear
+    /// solver, in values.
+    pub fn IDAGetLinWorkSpace(
+        ida_mem: *mut c_void,
+        lenrwLS: *mut c_long,
+        leniwLS: *mut c_long,
+    ) -> c_int;
     pub fn IDAGetIntegratorStats(
         ida_mem: *mut c_void,
         nsteps: *mut c_long,

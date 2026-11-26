@@ -356,9 +356,12 @@ impl<'a> Recorder<'a> {
                 ),
             });
         }
-        self.model
-            .selections(t, y, p, &self.mask, &mut self.selections);
-        self.model.check_error()?;
+        // a recorder without columns (a stepper's) records no value of the model
+        if k > 0 {
+            self.model
+                .selections(t, y, p, &self.mask, &mut self.selections);
+            self.model.check_error()?;
+        }
         self.grow(k)?;
         for column in self.columns.iter() {
             self.values.push(match column {

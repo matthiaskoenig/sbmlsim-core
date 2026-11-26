@@ -35,7 +35,8 @@ use std::ffi::{CStr, c_char, c_int, c_long, c_void};
 use std::ptr;
 
 use sbmlsim_abi::{
-    IntegratorSettings, ParameterPattern, SimulationStats, SparsityPattern, Tolerance,
+    IntegratorSettings, ModelDescription, ParameterPattern, SimulationStats, SparsityPattern,
+    Tolerance,
 };
 use sbmlsim_csolvers::ffi::*;
 
@@ -135,6 +136,14 @@ impl Difference {
     /// The number of colors, the evaluations of the right hand side of one Jacobian.
     pub fn n_colors(&self) -> usize {
         self.starts.len() - 1
+    }
+
+    /// The bytes of the vectors of the difference quotient and of the struct.
+    pub fn memory_bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+            + (self.starts.capacity() + self.columns.capacity()) * std::mem::size_of::<usize>()
+            + (self.increments.capacity() + self.perturbed.capacity() + self.rates.capacity())
+                * std::mem::size_of::<f64>()
     }
 }
 
@@ -375,6 +384,41 @@ pub(crate) struct Problem<'a> {
     pub counts: Counts,
     /// The first native callback failure, returned after control leaves C.
     pub callback_error: Option<EngineError>,
+}
+
+impl<'a> Problem<'a> {
+    /// The problem of a model of the description for an integrator of `n` states (the states
+    /// of the model, or one for a model without states), with the parameters `p` and the
+    /// storage of the values of the Jacobian: without a Jacobian, forward sensitivities and a
+    /// projection of the interpolation, which the caller sets where its run has them.
+    pub fn new(
+        model: &'a dyn ModelFns,
+        desc: &'a ModelDescription,
+        n: usize,
+        p: Vec<f64>,
+        jac_values: Vec<f64>,
+    ) -> Self {
+        Problem {
+            n,
+            n_model: desc.states.len(),
+            n_algebraic: desc.n_algebraic as usize,
+            interpolation: None,
+            n_roots: desc.n_roots as usize,
+            n_discontinuity_roots: desc.n_discontinuity_roots as usize,
+            model,
+            p,
+            pattern: None,
+            jac_values,
+            jacobian_p: desc.jacobian_p.as_ref(),
+            analytic: false,
+            difference: None,
+            mem: ptr::null_mut(),
+            krylov: ptr::null_mut(),
+            sensitivity: None,
+            counts: Counts::default(),
+            callback_error: None,
+        }
+    }
 }
 
 /// The calls of the model during a simulation, counted where they are made (the counters of
@@ -977,7 +1021,22 @@ pub(crate) struct Integrator<const DAE: bool, H: crate::delay::Mode = crate::del
     /// The vectors the local error estimates and the error weights of the last step are read
     /// into ([`Integrator::local_errors`]), null until a run asks for them.
     local: [N_Vector; 2],
+    /// The first step of the next start in place of the one of the settings, once
+    /// ([`Integrator::set_initial_step`]).
+    initial_step: Option<f64>,
 }
+
+/// The bytes of the header of an allocation of `malloc` (glibc on a 64-bit target: the size
+/// and the alignment to 16 bytes), for the estimates of [`Integrator::memory_bytes`].
+const MALLOC_HEADER_BYTES: usize = 16;
+
+/// The bytes of the structs of an integrator besides its vectors and matrices: the memory of
+/// CVODE or IDA, the context, the interface of the linear solver, the linear and the
+/// nonlinear solver and the matrix with their tables of operations. Measured as what the
+/// resident memory of 3000 steppers of 7 and of 100 states, each advanced once, holds beyond
+/// the rest of [`Integrator::memory_bytes`]: 1.9 to 2.7 kB with CVODE Adams and BDF with the
+/// dense solver (and 5.5 kB with KLU, whose factors are not counted).
+const INTEGRATOR_OBJECT_BYTES: usize = 2560;
 
 /// The largest order of the BDF of CVODE and of IDA, `BDF_Q_MAX` and `MAXORD_DEFAULT`.
 const BDF_ORDER: u8 = 5;
@@ -1145,6 +1204,7 @@ impl<const DAE: bool, H: crate::delay::Mode> Integrator<DAE, H> {
                 problem: ptr::null_mut(),
             }),
             local: [ptr::null_mut(); 2],
+            initial_step: None,
         };
         let n = config.n as sunindextype;
         // SAFETY: the objects are created in the context and owned by `cvode`, which frees them
@@ -1405,7 +1465,12 @@ impl<const DAE: bool, H: crate::delay::Mode> Integrator<DAE, H> {
             )?;
             // Delay overlap control changes these settings within a segment.
             // Restore the request at every restart even when stable settings match.
-            // 0.0 is CVODE's own default for both: no largest step, an estimated first step
+            // 0.0 is CVODE's own default for both: no largest step, an estimated first step;
+            // the first step of a stepper replaces the one of the settings once
+            let initial_step = self
+                .initial_step
+                .take()
+                .unwrap_or(settings.initial_time_step);
             self.flag(
                 backend!(
                     self,
@@ -1416,12 +1481,7 @@ impl<const DAE: bool, H: crate::delay::Mode> Integrator<DAE, H> {
                 t0,
             )?;
             self.flag(
-                backend!(
-                    self,
-                    CVodeSetInitStep,
-                    IDASetInitStep,
-                    settings.initial_time_step
-                ),
+                backend!(self, CVodeSetInitStep, IDASetInitStep, initial_step),
                 t0,
             )?;
             if self.settings.as_ref() != Some(settings) {
@@ -1692,6 +1752,120 @@ impl<const DAE: bool, H: crate::delay::Mode> Integrator<DAE, H> {
             weights.copy_from_slice(&values(ewt, n)[..weights.len()]);
         }
         Ok(())
+    }
+
+    /// Sets the first step of the next start (0 for the estimate of CVODE), which replaces the
+    /// initial step of its settings for that start only; `None` leaves it to the settings.
+    pub fn set_initial_step(&mut self, step: Option<f64>) {
+        self.initial_step = step;
+    }
+
+    /// An estimate of the memory of this integrator in bytes, from its configuration and from
+    /// what CVODE (or IDA) reports of its workspace and of the one of its linear solver
+    /// (`CVodeGetWorkSpace`, `CVodeGetLinWorkSpace`), which count the values of their vectors
+    /// and matrices: the objects of SUNDIALS around them (a serial vector holds its own table
+    /// of operations, which outweighs the values of a small model), the vectors and the matrix
+    /// of this memory, and the structs of the memories, solvers and context
+    /// ([`INTEGRATOR_OBJECT_BYTES`]). CVODE allocates its vectors at the first start and its
+    /// copy of the Jacobian at the first step, so the estimate is complete after them. The
+    /// forward sensitivities and the factors of KLU are not counted.
+    pub fn memory_bytes(&self) -> usize {
+        let n = self.config.n;
+        let real = std::mem::size_of::<sunrealtype>();
+        let index = std::mem::size_of::<sunindextype>();
+        // an integer of the workspace of SUNDIALS is an `int`, a `long` or a `sunindextype`
+        let integer = std::mem::size_of::<c_long>();
+        // SAFETY: a function of the sizes of C structs, without arguments
+        let object = unsafe { sbmlsim_nvector_serial_object_bytes() } + 3 * MALLOC_HEADER_BYTES;
+        let vector = object + n * real + MALLOC_HEADER_BYTES;
+        let mut bytes = std::mem::size_of::<Self>()
+            + std::mem::size_of::<ErrorLog>()
+            + self.errors.message.capacity()
+            + std::mem::size_of::<SensData>()
+            + self.found.capacity() * std::mem::size_of::<c_int>()
+            + INTEGRATOR_OBJECT_BYTES;
+        // the vectors of this memory
+        let own = [
+            self.y,
+            self.abstol,
+            self.yp,
+            self.id,
+            self.local[0],
+            self.local[1],
+        ];
+        bytes += own.iter().filter(|v| !v.is_null()).count() * vector;
+        // the matrix of this memory and the vectors of the nonlinear solver (the fixed point
+        // iteration of Adams: `yprev`, `gy`, `delta`; Newton: `delta`)
+        bytes += match self.config.method {
+            Method::Adams => 3 * vector,
+            Method::Bdf(Linear::Dense { .. })
+            | Method::Ida {
+                linear: Linear::Dense { .. },
+                ..
+            } => vector + n * n * real + n * (index + std::mem::size_of::<*mut f64>()),
+            Method::Bdf(Linear::Klu { nnz, .. } | Linear::Gmres { nnz, .. })
+            | Method::Ida {
+                linear: Linear::Klu { nnz, .. } | Linear::Gmres { nnz, .. },
+                ..
+            } => vector + (nnz + n) * (real + index) + (n + 1) * index,
+        };
+        if self.initialized {
+            let (mut lenrw, mut leniw) = (0, 0);
+            // SAFETY: the memory is initialized; the out-pointers are locals
+            if unsafe {
+                backend!(
+                    self,
+                    CVodeGetWorkSpace,
+                    IDAGetWorkSpace,
+                    &mut lenrw,
+                    &mut leniw
+                )
+            } == 0
+            {
+                bytes += lenrw.max(0) as usize * real + leniw.max(0) as usize * integer;
+            }
+            // the objects of the vectors of the memory, whose values the workspace counts:
+            // the Nordsieck history (CVODE) or the differences (IDA, at least four) of the
+            // largest order and the vectors of `cvAllocVectors` and `idaAllocVectors`, and one
+            // for tolerances per state
+            let order = self.settings.as_ref().map_or(BDF_ORDER, |settings| {
+                let (given, default) = if DAE || settings.stiff {
+                    (settings.maximum_bdf_order, BDF_ORDER)
+                } else {
+                    (settings.maximum_adams_order, ADAMS_ORDER)
+                };
+                if given > 0 { given } else { default }
+            }) as usize;
+            let per_state = self.settings.as_ref().is_some_and(|settings| {
+                matches!(settings.absolute_tolerance, Tolerance::PerState(_))
+            });
+            let vectors = if DAE {
+                order.max(3) + 1 + 9
+            } else {
+                order + 1 + 7
+            };
+            bytes += (vectors + usize::from(per_state)) * object;
+        }
+        if self.attached && !matches!(self.config.method, Method::Adams) {
+            let (mut lenrw, mut leniw) = (0, 0);
+            // SAFETY: the linear solver is attached; the out-pointers are locals
+            if unsafe {
+                backend!(
+                    self,
+                    CVodeGetLinWorkSpace,
+                    IDAGetLinWorkSpace,
+                    &mut lenrw,
+                    &mut leniw
+                )
+            } == 0
+            {
+                bytes += lenrw.max(0) as usize * real + leniw.max(0) as usize * integer;
+            }
+            // the objects of the vectors of the interface of the linear solver (`ytemp`, `x`,
+            // and `yptemp` of IDA)
+            bytes += if DAE { 3 } else { 2 } * object;
+        }
+        bytes
     }
 
     /// Starts the counters of a simulation: the counters of the memory, which a simulation

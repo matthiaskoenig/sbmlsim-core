@@ -173,3 +173,23 @@ The compiler is `$CC`, else `cc`, with `-O3 -march=native -ffp-contract=off -fno
 The C reads the math functions of `<math.h>` and not those of mathlib, so its right hand side and Jacobian agree with those of `model.wasm` to the last bits of the math library (within `1e-13` relative in the tests) and a simulation within the tolerances of the integration, not bitwise. The cell model of `testdata/models` (7 states, 8 reactions) takes 0.23 ms a simulation of 1440 min on the native engine with its C, against 0.59 ms on `engine.wasm` in wasmtime; its C compiles in 0.12 s once, after which the cache loads it.
 
 Refused (`CError::Unsupported` with the feature): a model which reads its history (`delay`), and a model without an analytic Jacobian (`factorial` of a state), a known limitation: the engine would take the colored difference quotient of its right hand side, which needs no `jac`, but the C target asks for the analytic Jacobian of every model it compiles. Of the SBML Test Suite (`sbmlsim-core testsuite testdata/cases --model-code c`, [Test suite](testsuite.md)) every case of the baseline passes but the 53 delay models it refuses, pinned in `testdata/testsuite_refused_c.json`: 00937-00943, 00981-00985, 01142, 01173-01174, 01176, 01318-01320, 01400-01401, 01403-01404, 01406-01407, 01409-01419, 01454, 01480-01481, 01518-01524, 01534-01538 and 01592-01593. No model of the suite lacks an analytic Jacobian but those.
+
+## A stepper
+
+`sbmlsim_engine::Stepper` is an instance of a model which is advanced from a given state, one interval at a time, for a caller which couples the model to something else and changes its state between two intervals (operator splitting: the transport of species between many instances of a cell model). `Stepper::new` initializes the model as a simulation does, with `changes` as the pre-initialization values of a request (`S` the amount of a species, `[S]` its concentration, any other id its value), and creates its integrator memory once; the linear solver is the one of the settings (`Auto`: dense up to `KLU_THRESHOLD` states, KLU above). The description is an `Arc`, which the steppers of one model share.
+
+```rust
+use sbmlsim_engine::Stepper;
+
+let mut stepper = Stepper::new(Box::new(model), description, settings, &[("k".into(), 0.5)])?;
+let mut y = stepper.state().to_vec();
+for k in 0..1440 {
+    y[2] = 0.0; // what the caller changes
+    stepper.advance(&y, k as f64, (k + 1) as f64)?;
+    y.copy_from_slice(stepper.state());
+}
+```
+
+`advance(y, t0, t1)` starts the integrator again from `y` at `t0` and integrates to `t1` as a simulation does, with the events and the discontinuities of the interval: the triggers keep their values from one advance to the next, an execution of an event with a delay stays pending across the end of an interval, the parameters an event assigns stay assigned, and an event whose trigger the changed state makes true executes at the start of the interval. The state after an advance is `state()`, the state after the events at `t1`, as the last row of a simulation is. Its first step is the step the integrator ended the advance before with, its step control is its own and depends on no other instance. `StepStats` counts the steps of the advance and the attempts of a step the integrator rejected. A refused call (a state of the wrong length or not finite, an interval which is not finite or ends before it starts) changes nothing; an advance which fails after that leaves the stepper failed, as its events and parameters may have changed on the way. A model with delays is refused.
+
+`memory_bytes` estimates the memory of an instance: for the cell model of `testdata/models` (7 states) 19.0 kB after the first advance, within 1% of the resident memory of 10000 steppers, most of it the objects of SUNDIALS (each of its vectors carries its own table of operations, 0.6 kB for 56 bytes of values). An advance of that model at the tolerances 1e-10 and 1e-12 takes 10 to 13 µs for 1 min (17 steps), 15 to 21 µs for 10 min and 32 to 42 µs for 60 min on one core, and a stepper 8 to 11 µs to create (`cargo test --release -p sbmlsim-engine --test stepper -- --ignored --nocapture`).
