@@ -1,11 +1,11 @@
 {
   "files": {
     "compile.mjs": "59df8873abfce331a6528800137470bf4a23b3d014bd1b2b1e896aa9df53e4b5",
-    "compiler.wasm": "85783cf7adc144509d46dc90bb6da9ed2701c81fb505cacc963ccfd07f1bfd61",
-    "engine.wasm": "d8ccb517c5303ff5ee104e8791945a3d5c2208295e281533886e4bc6e5e01c08",
+    "compiler.wasm": "40aff8cc84a0f5a052b4af321d2fb9d7caf70a371204153947f723d65f192080",
+    "engine.wasm": "92f4c3d79c89eb3557a43fed5cbaa6526742e02354c6885f249145d2466843f1",
     "loader.mjs": "e5b29b0fd7954e28e37c83159b6967400b2836f2eda920b73d2f673de258369d",
-    "mathlib.wasm": "0a5fb2406e004850dde971071593083890567c21ee12050d55ebbfd235991a56",
+    "mathlib.wasm": "94a26ee6d239de5d71f7109547e342ff70692be642ba7a64993dd9fe5c2e5242",
     "repressilator.xml": "b6e05cc413d354597a4a0d2834cf7a27b72318c9a7af225058aa0c9151befdca"
   },
-  "npm_version": "0.29.0"
+  "npm_version": "0.29.1"
 }
