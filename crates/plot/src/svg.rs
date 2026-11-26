@@ -280,6 +280,11 @@ pub(crate) fn label_lines(
     }
 }
 
+/// The font family of a monospace text (since 0.31.0): the monospace fonts of the systems and
+/// Noto Sans Mono, which the PNG embeds.
+pub(crate) const MONO_FAMILY: &str =
+    "ui-monospace, SFMono-Regular, Menlo, Consolas, Noto Sans Mono, monospace";
+
 /// The gap between the end of an axis and the multiplier of its tick labels in pixels.
 pub(crate) const MULTIPLIER_GAP: f64 = 4.0;
 
@@ -1106,6 +1111,11 @@ impl RenderBackend for PlotWriter<'_> {
         if c.font_weight != "normal" && !c.font_weight.is_empty() {
             b.push_str(" font-weight=\"");
             escape(b, &c.font_weight);
+            b.push('"');
+        }
+        if c.font_family == MONO_FAMILY {
+            b.push_str(" font-family=\"");
+            escape(b, MONO_FAMILY);
             b.push('"');
         }
         if c.font_style != "normal" && !c.font_style.is_empty() {

@@ -463,7 +463,7 @@ pub(crate) fn plan(figure: &Figure) -> Plan {
     let inside = figure.legend.position == LegendPosition::Inside;
     let plot_shape = |p: &Plot| Shape {
         title: p.legend_title.clone(),
-        columns: 1,
+        columns: p.legend_columns.unwrap_or(1).max(1) as usize,
     };
     // the location of a legend inside the panel of the plot at `i`: the `legend_loc` of the
     // plot or the `loc` of the figure, `best` resolved by the data; none when it does not fit
@@ -552,14 +552,11 @@ pub(crate) fn plan(figure: &Figure) -> Plan {
                     .filter_map(|p| p.legend_order.as_deref())
                     .collect();
                 let list = legend::merge_ordered(lists, &orders);
-                // the first title of the plots of the row
+                // the first title and the first columns of the plots of the row
+                let of_row = || figure.plots.iter().filter(|p| p.row as usize == r);
                 let shape = Shape {
-                    title: figure
-                        .plots
-                        .iter()
-                        .filter(|p| p.row as usize == r)
-                        .find_map(|p| p.legend_title.clone()),
-                    columns: 1,
+                    title: of_row().find_map(|p| p.legend_title.clone()),
+                    columns: of_row().find_map(|p| p.legend_columns).unwrap_or(1).max(1) as usize,
                 };
                 let Some(size) = legend::room(&list, &declared_of_row[r], &shape, fonts) else {
                     continue;

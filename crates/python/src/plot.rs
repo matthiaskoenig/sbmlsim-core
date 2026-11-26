@@ -4,8 +4,8 @@
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use sbmlsim_plot::{
-    ColorScale, ColorScaleName, ColorStop, Figure, FontWeight, SpecError, check_stops, geometry,
-    parse, pick as pick_of, text_width_weighted,
+    ColorScale, ColorScaleName, ColorStop, Figure, FontFamily, FontWeight, SpecError, check_stops,
+    geometry, parse, pick as pick_of, text_width_family,
 };
 
 /// The error of a spec which does not parse: the path of the field and what is wrong.
@@ -136,14 +136,26 @@ pub(crate) fn color_scale(
 
 /// The width in pixels of a text at a font size in pixels, in Inter Regular or Bold: the measure
 /// the layout of the figures uses (since 0.28.0). The width of a text of several lines is the
-/// width of its widest line.
+/// width of its widest line. `family` is `sans` (Inter) or `monospace`, a text element of that
+/// family, 0.6 of the size per character (since 0.31.0).
+///
+/// Raises `ValueError` for another family.
 #[pyfunction]
-#[pyo3(signature = (text, size, bold=false))]
-pub(crate) fn text_width(text: &str, size: f64, bold: bool) -> f64 {
+#[pyo3(signature = (text, size, bold=false, family="sans"))]
+pub(crate) fn text_width(text: &str, size: f64, bold: bool, family: &str) -> PyResult<f64> {
     let weight = if bold {
         FontWeight::Bold
     } else {
         FontWeight::Normal
     };
-    text_width_weighted(text, size, weight)
+    let family = match family {
+        "sans" => FontFamily::Sans,
+        "monospace" => FontFamily::Monospace,
+        other => {
+            return Err(PyValueError::new_err(format!(
+                "unknown font family `{other}`, expected `sans` or `monospace`"
+            )));
+        }
+    };
+    Ok(text_width_family(text, size, weight, family))
 }
