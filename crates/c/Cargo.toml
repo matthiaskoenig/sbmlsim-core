@@ -1,0 +1,30 @@
+[package]
+name = "sbmlsim-c"
+version.workspace = true
+edition.workspace = true
+# not on crates.io yet, as the rest of the workspace
+publish = false
+# the license of sbmlsim-engine, whose `ModelFns` it implements
+license.workspace = true
+authors.workspace = true
+description = "The C target of sbmlsim-core: native model code for the engine"
+
+[dependencies]
+# the loader of the compiled library (dlopen, dlsym)
+libloading = "0.8"
+sbmlsim-abi = { path = "../abi" }
+# the description of a model, built as the WebAssembly target builds it
+sbmlsim-codegen = { path = "../codegen" }
+sbmlsim-engine = { path = "../engine" }
+sbmlsim-ir = { path = "../ir" }
+sbmlsim-sbml = { path = "../sbml" }
+# the key of the cache of the compiled libraries
+sha2 = "0.10"
+thiserror.workspace = true
+
+[dev-dependencies]
+# the WebAssembly model, which the tests compare the native one with
+sbmlsim-compiler = { path = "../compiler" }
+sbmlsim-host = { path = "../host" }
+serde_json.workspace = true
+tempfile = "3"

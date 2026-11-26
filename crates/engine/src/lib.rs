@@ -79,6 +79,7 @@ mod roots;
 mod segments;
 mod solver;
 mod steady;
+mod stepper;
 
 use sbmlsim_abi::{
     IntegratorSettings, JacobianChoice, JacobianKind, LinearSolver, MODEL_CONTRACT,
@@ -89,6 +90,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 pub use solver::KLU_THRESHOLD;
+pub use stepper::{StepStats, Stepper};
 
 /// The most `f64` values a result may hold (rows times columns, 512 MiB).
 ///
@@ -1106,37 +1108,13 @@ fn prepare(
         slots.push(slot);
     }
     let sensitivities = sensitivities_of(desc, metadata, req)?;
-    let with_events = !desc.events.is_empty() || desc.n_roots > 0;
-    let n_cvode = if with_events { n.max(1) } else { n };
-    let config = if n_cvode == 0 {
-        None
-    } else {
-        Some(Config {
-            n_sens: sensitivities.len(),
-            n: n_cvode,
-            method: if desc.n_algebraic > 0 {
-                Method::Ida {
-                    linear: linear_of(desc, &req.settings)?,
-                    n_algebraic: desc.n_algebraic as usize,
-                }
-            } else if req.settings.stiff {
-                Method::Bdf(if n == 0 {
-                    Linear::Dense {
-                        jacobian: Jacobian::Internal,
-                    }
-                } else {
-                    linear_of(desc, &req.settings)?
-                })
-            } else {
-                Method::Adams
-            },
-        })
-    };
-    let mut req = RunSettings {
+    let mut settings = req.settings.clone();
+    let config = configure(desc, &mut settings, sensitivities.len())?;
+    let req = RunSettings {
         start,
         end,
         steps: matches!(req.output, Output::IntegratorSteps),
-        settings: req.settings.clone(),
+        settings,
         steady_state: req
             .steady_state
             .as_ref()
@@ -1151,9 +1129,6 @@ fn prepare(
         seed: req.seed,
         local_errors: req.local_errors,
     };
-    if n_cvode > n && matches!(req.settings.absolute_tolerance, Tolerance::PerState(_)) {
-        req.settings.absolute_tolerance = Tolerance::Scalar(1.0);
-    }
     let n_selections = desc
         .selections
         .iter()
@@ -1178,6 +1153,98 @@ fn prepare(
         mask,
         sensitivities,
     })
+}
+
+/// The number of states the integrator integrates for a model: its states, and one state of the
+/// rate 0 for a model without states but with events or discontinuities, so CVODE locates the
+/// zeros of its root functions.
+fn n_integrated(desc: &ModelDescription) -> usize {
+    let n = desc.states.len();
+    let with_events = !desc.events.is_empty() || desc.n_roots > 0;
+    if with_events { n.max(1) } else { n }
+}
+
+/// The configuration of the integrator of a model with the settings and `n_sens` forward
+/// sensitivities (its method and linear solver), `None` for a model which integrates no state
+/// ([`n_integrated`]). The one state of a model without states holds no absolute tolerance of
+/// the settings, so a run of tolerances per state integrates it with the scalar tolerance 1.
+fn configure(
+    desc: &ModelDescription,
+    settings: &mut IntegratorSettings,
+    n_sens: usize,
+) -> Result<Option<Config>, EngineError> {
+    let n = desc.states.len();
+    let n_cvode = n_integrated(desc);
+    if n_cvode == 0 {
+        return Ok(None);
+    }
+    let config = Config {
+        n_sens,
+        n: n_cvode,
+        method: if desc.n_algebraic > 0 {
+            Method::Ida {
+                linear: linear_of(desc, settings)?,
+                n_algebraic: desc.n_algebraic as usize,
+            }
+        } else if settings.stiff {
+            Method::Bdf(if n == 0 {
+                Linear::Dense {
+                    jacobian: Jacobian::Internal,
+                }
+            } else {
+                linear_of(desc, settings)?
+            })
+        } else {
+            Method::Adams
+        },
+    };
+    if n_cvode > n && matches!(settings.absolute_tolerance, Tolerance::PerState(_)) {
+        settings.absolute_tolerance = Tolerance::Scalar(1.0);
+    }
+    Ok(Some(config))
+}
+
+/// The Jacobian of the problem of an integration of a configuration: the pattern of the
+/// description, the sparse difference quotient (made once, in `difference`) and whether the
+/// Jacobian is the analytic one of the model. A stiff method has them for a model with
+/// states, the non-stiff one only for its forward sensitivities (`sensitivities`), whose right
+/// hand side applies `df/dy` to them, which it asks for nowhere else.
+fn jacobian_of<'a>(
+    desc: &'a ModelDescription,
+    config: &Config,
+    settings: &IntegratorSettings,
+    sensitivities: bool,
+    difference: &'a mut Option<Difference>,
+) -> (
+    Option<&'a SparsityPattern>,
+    Option<&'a mut Difference>,
+    bool,
+) {
+    let n = desc.states.len();
+    if n == 0 {
+        return (None, None, false);
+    }
+    let analytic = match config.method {
+        Method::Adams if sensitivities => {
+            matches!(desc.jacobian, JacobianKind::Analytic(_))
+                && settings.jacobian != JacobianChoice::DifferenceQuotient
+        }
+        Method::Adams => return (None, None, false),
+        Method::Bdf(linear) | Method::Ida { linear, .. } => matches!(
+            linear,
+            Linear::Dense {
+                jacobian: Jacobian::Analytic
+            } | Linear::Klu {
+                jacobian: Jacobian::Analytic,
+                ..
+            } | Linear::Gmres {
+                jacobian: Jacobian::Analytic,
+                ..
+            }
+        ),
+    };
+    let difference = difference.get_or_insert_with(|| difference_of(desc));
+    (Some(pattern_of(desc)), Some(difference), analytic)
 }
 
 /// The targets of the forward sensitivities of a request, resolved, and what a run which
@@ -1457,7 +1524,6 @@ fn run_model<const DAE: bool, H: delay::Mode>(
     *stats = SimulationStats::default();
     let req = &plan.req;
     let (start, end) = (req.start, req.end);
-    let n = desc.states.len();
     let (names, columns, times, changes) = (&plan.names, &plan.columns, &plan.times, &plan.changes);
     scratch.preinit.clone_from(&plan.preinit);
     for (&slot, &value) in plan.varying.iter().zip(values) {
@@ -1508,7 +1574,7 @@ fn run_model<const DAE: bool, H: delay::Mode>(
 
     // a model without states but with events integrates one state of the rate 0, so CVODE
     // locates the zeros of its root functions
-    let n_cvode = if with_events { n.max(1) } else { n };
+    let n_cvode = n_integrated(desc);
     let mut pattern = None;
     let mut difference = None;
     let mut analytic = false;
@@ -1516,40 +1582,13 @@ fn run_model<const DAE: bool, H: delay::Mode>(
         None
     } else {
         let config = plan.config.expect("nonempty integration");
-        if sensitivities.is_some() && n > 0 && matches!(config.method, Method::Adams) {
-            // the right hand side of the sensitivities applies `df/dy` to them, which the
-            // non-stiff method asks for nowhere else
-            pattern = Some(pattern_of(desc));
-            difference = Some(
-                metadata
-                    .difference
-                    .get_or_insert_with(|| difference_of(desc)),
-            );
-            analytic = matches!(desc.jacobian, JacobianKind::Analytic(_))
-                && req.settings.jacobian != JacobianChoice::DifferenceQuotient;
-        }
-        if let Method::Bdf(linear) | Method::Ida { linear, .. } = config.method
-            && n > 0
-        {
-            pattern = Some(pattern_of(desc));
-            difference = Some(
-                metadata
-                    .difference
-                    .get_or_insert_with(|| difference_of(desc)),
-            );
-            analytic = matches!(
-                linear,
-                Linear::Dense {
-                    jacobian: Jacobian::Analytic
-                } | Linear::Klu {
-                    jacobian: Jacobian::Analytic,
-                    ..
-                } | Linear::Gmres {
-                    jacobian: Jacobian::Analytic,
-                    ..
-                }
-            );
-        }
+        (pattern, difference, analytic) = jacobian_of(
+            desc,
+            &config,
+            &req.settings,
+            sensitivities.is_some(),
+            &mut metadata.difference,
+        );
         if cache.as_ref().map(Integrator::config) != Some(config) {
             *cache = None;
             *cache = Some(Integrator::new(config)?);
@@ -1591,38 +1630,34 @@ fn run_model<const DAE: bool, H: delay::Mode>(
         .jac_values
         .resize(pattern.map_or(0, |p| p.row_idx.len()), 0.0);
     let mut y0 = std::mem::take(&mut scratch.y);
+    let interpolation = if DAE && desc.n_discontinuity_roots > 0 {
+        Some(Box::new(solver::Constraints::cached(
+            model,
+            desc,
+            settings,
+            scratch
+                .dae
+                .get_or_insert_with(Box::default)
+                .interpolation
+                .take(),
+        )?))
+    } else {
+        None
+    };
     let mut problem = Problem {
-        n: n_cvode,
-        n_model: n,
-        n_algebraic: desc.n_algebraic as usize,
-        interpolation: if DAE && desc.n_discontinuity_roots > 0 {
-            Some(Box::new(solver::Constraints::cached(
-                model,
-                desc,
-                settings,
-                scratch
-                    .dae
-                    .get_or_insert_with(Box::default)
-                    .interpolation
-                    .take(),
-            )?))
-        } else {
-            None
-        },
-        n_roots: desc.n_roots as usize,
-        n_discontinuity_roots: desc.n_discontinuity_roots as usize,
-        model,
-        p: std::mem::take(&mut scratch.p),
+        interpolation,
         pattern,
-        jac_values: std::mem::take(&mut scratch.jac_values),
-        jacobian_p: desc.jacobian_p.as_ref(),
         analytic,
         difference,
-        mem: std::ptr::null_mut(),
-        krylov: std::ptr::null_mut(),
         sensitivity,
         counts: init_callbacks,
-        callback_error: None,
+        ..Problem::new(
+            model,
+            desc,
+            n_cvode,
+            std::mem::take(&mut scratch.p),
+            std::mem::take(&mut scratch.jac_values),
+        )
     };
     let output = if req.steps {
         SegmentOutput::Steps

@@ -30,3 +30,11 @@ serde_json = { workspace = true, optional = true }
 [dev-dependencies]
 # the integration tests use the test models
 sbmlsim-engine = { path = ".", features = ["test-models"] }
+
+# the stepper's tests (`tests/stepper.rs`, native only): the native model of the C target, which
+# they advance, and the WebAssembly model through the host, which they compare it with
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+sbmlsim-c = { path = "../c" }
+sbmlsim-compiler = { path = "../compiler" }
+sbmlsim-host = { path = "../host" }
+serde_json.workspace = true

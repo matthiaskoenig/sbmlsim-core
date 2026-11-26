@@ -135,7 +135,15 @@ pub(crate) struct BeforeEvent {
     pub p: Vec<f64>,
 }
 
-/// Reusable event storage. Every execution resets logical state before use.
+impl BeforeEvent {
+    /// The bytes of its vectors.
+    pub fn memory_bytes(&self) -> usize {
+        (self.y.capacity() + self.p.capacity()) * std::mem::size_of::<f64>()
+    }
+}
+
+/// Reusable event storage. [`Events::with_scratch`] resets the logical state before use;
+/// [`Events::resume`] continues the one the integration before left in it.
 #[derive(Default)]
 pub(crate) struct Scratch {
     armed: Vec<bool>,
@@ -145,6 +153,29 @@ pub(crate) struct Scratch {
     current: Vec<bool>,
     y_probe: Vec<f64>,
     ydot: Vec<f64>,
+    /// The logical state which [`Events::resume`] continues: the values of the pending
+    /// executions, the time of the counts of `executions`, and the generator of the order of
+    /// ties, `None` before the first integration.
+    pending_values: usize,
+    executions_at: f64,
+    rng: Option<Pcg64>,
+}
+
+impl Scratch {
+    /// The bytes of its vectors and of the values of the pending executions.
+    pub fn memory_bytes(&self) -> usize {
+        let f = std::mem::size_of::<f64>();
+        (self.armed.capacity() + self.current.capacity()) * std::mem::size_of::<bool>()
+            + (self.probed_until.capacity() + self.y_probe.capacity() + self.ydot.capacity()) * f
+            + self.executions.capacity() * std::mem::size_of::<u32>()
+            + self.pending.capacity() * std::mem::size_of::<Pending>()
+            + self
+                .pending
+                .iter()
+                .filter_map(|e| e.values.as_ref())
+                .map(|values| values.capacity() * f)
+                .sum::<usize>()
+    }
 }
 
 /// The events of a simulation: the last values of the triggers and the pending executions.
@@ -178,6 +209,9 @@ pub(crate) struct Events<'a, const DAE: bool> {
     ydot: Vec<f64>,
     /// The calls of the right hand side by the probes.
     probe_rhs: u64,
+    /// Whether the logical state stays in the scratch for the next integration
+    /// ([`Events::resume`]).
+    carried: bool,
 }
 
 /// The values of the triggers at a time: at the time itself, or right after it (a trigger which
@@ -201,7 +235,13 @@ pub(crate) enum Probe {
 impl<const DAE: bool> Drop for Events<'_, DAE> {
     fn drop(&mut self) {
         let scratch = &mut self.scratch;
-        self.pending.clear();
+        if self.carried {
+            scratch.pending_values = self.pending_values;
+            scratch.executions_at = self.executions_at;
+            scratch.rng = Some(self.rng.clone());
+        } else {
+            self.pending.clear();
+        }
         scratch.armed = std::mem::take(&mut self.armed);
         scratch.probed_until = std::mem::take(&mut self.probed_until);
         scratch.pending = std::mem::take(&mut self.pending);
@@ -234,6 +274,7 @@ impl<'a, const DAE: bool> Events<'a, DAE> {
             mut current,
             mut y_probe,
             mut ydot,
+            ..
         } = storage;
         armed.clear();
         armed.extend(desc.events.iter().map(|e| e.initial_value));
@@ -272,6 +313,58 @@ impl<'a, const DAE: bool> Events<'a, DAE> {
             y_probe,
             ydot,
             probe_rhs: 0,
+            carried: false,
+        };
+        events.set_window(start, end);
+        events
+    }
+
+    /// The events of a model for an integration from `start` to `end` which continues the
+    /// integration before it on the same scratch: the triggers keep the values it left them
+    /// with, its pending executions stay pending (at their times), the counts of executions at
+    /// one time go on, and the order of ties continues the sequence of the generator. The first
+    /// integration on a scratch starts as [`Events::with_scratch`] does, with `seed`; the
+    /// scratch keeps the logical state for the next one.
+    pub fn resume(
+        model: &'a dyn ModelFns,
+        desc: &'a ModelDescription,
+        seed: u64,
+        start: f64,
+        end: f64,
+        limits: EventLimits,
+        scratch: &'a mut Scratch,
+    ) -> Self {
+        let Some(rng) = scratch.rng.take() else {
+            let mut events = Self::with_scratch(model, desc, seed, start, end, limits, scratch);
+            events.carried = true;
+            return events;
+        };
+        let storage = std::mem::take(scratch);
+        let mut events = Events {
+            scratch,
+            constraints: None,
+            differential: if DAE {
+                desc.states.len() - desc.n_algebraic as usize
+            } else {
+                0
+            },
+            model,
+            info: &desc.events,
+            armed: storage.armed,
+            probed_until: storage.probed_until,
+            pending: storage.pending,
+            pending_values: storage.pending_values,
+            limits,
+            rng,
+            probe: 0.0,
+            end_probe: 0.0,
+            executions: storage.executions,
+            executions_at: storage.executions_at,
+            current: storage.current,
+            y_probe: storage.y_probe,
+            ydot: storage.ydot,
+            probe_rhs: 0,
+            carried: true,
         };
         events.set_window(start, end);
         events

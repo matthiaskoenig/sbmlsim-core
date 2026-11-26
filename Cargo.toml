@@ -9,6 +9,7 @@ members = [
     "crates/compiler",
     "crates/csolvers",
     "crates/engine",
+    "crates/c",
     "crates/host",
     "crates/batch",
     "crates/fit",
@@ -21,7 +22,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.29.1"
+version = "0.30.0"
 edition = "2024"
 license = "MIT"
 authors = ["Matthias König"]

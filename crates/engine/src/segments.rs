@@ -356,9 +356,12 @@ impl<'a> Recorder<'a> {
                 ),
             });
         }
-        self.model
-            .selections(t, y, p, &self.mask, &mut self.selections);
-        self.model.check_error()?;
+        // a recorder without columns (a stepper's) records no value of the model
+        if k > 0 {
+            self.model
+                .selections(t, y, p, &self.mask, &mut self.selections);
+            self.model.check_error()?;
+        }
         self.grow(k)?;
         for column in self.columns.iter() {
             self.values.push(match column {
@@ -445,7 +448,8 @@ pub(crate) fn too_close(t0: f64, t: f64) -> bool {
 ///
 /// `cvode` is `None` for a model without states, whose rows are the selections at the times
 /// of the output. The stop time of CVODE is the end of the segment, so the integration never
-/// passes it; with [`SegmentOutput::Times`] it ends at the last time of the output.
+/// passes it; with [`SegmentOutput::Times`] it ends at the last time of the output. `y0` is
+/// the state the integration ended in.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn integrate<const DAE: bool, H: crate::delay::Mode>(
     mut cvode: Option<&mut Integrator<DAE, H>>,
@@ -517,6 +521,10 @@ pub(crate) fn integrate<const DAE: bool, H: crate::delay::Mode>(
                 }
                 // nothing after the last output time is seen
                 let Some(c) = change.filter(|_| next < times.len()) else {
+                    // the state the output ended in, which the caller continues from
+                    if started && let Some(cvode) = cvode.as_deref() {
+                        y.copy_from_slice(cvode.state());
+                    }
                     return Ok(());
                 };
                 if let Some(cvode) = cvode.as_deref_mut()

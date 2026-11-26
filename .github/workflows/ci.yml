@@ -169,6 +169,43 @@ jobs:
         run: target/release/sbmlsim-core testsuite testdata/cases --jacobian difference
       - name: testsuite parity (without the optimizer)
         run: target/release/sbmlsim-core testsuite testdata/cases --no-optimize
+  testsuite-c-target:
+    # the whole SBML Test Suite on the native engine with the model code of the C target, against
+    # the baseline of model.wasm: every case of it passes but those the C target refuses (the
+    # delays), which must be the refusals pinned in testdata/testsuite_refused_c.json
+    runs-on: ubuntu-latest
+    env:
+      SBMLSIM_CORE_REQUIRE_CASES: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Install the toolchain of rust-toolchain.toml
+        run: rustup show active-toolchain || rustup toolchain install
+      - name: Install wasi-sdk
+        run: |
+          mkdir -p "$HOME/tools" && cd "$HOME/tools"
+          sdk="wasi-sdk-${WASI_SDK_VERSION}-x86_64-linux"
+          curl -sSLO "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-${WASI_SDK_VERSION%%.*}/${sdk}.tar.gz"
+          echo "${WASI_SDK_SHA256}  ${sdk}.tar.gz" | sha256sum -c -
+          tar xzf "${sdk}.tar.gz"
+          echo "WASI_SDK_PATH=$HOME/tools/${sdk}" >> "$GITHUB_ENV"
+      - uses: Swatinem/rust-cache@v2
+      - uses: astral-sh/setup-uv@v5
+      - name: Cache the prepared cases
+        uses: actions/cache@v4
+        with:
+          path: testdata/cases
+          key: testsuite-cases-${{ hashFiles('scripts/prepare_testsuite.py', 'testdata/testsuite_baseline.json') }}
+      - name: Prepare the cases
+        run: test -f testdata/cases/SUITE_COMMIT || uv run scripts/prepare_testsuite.py --out testdata/cases
+      - name: The prepared cases are present
+        run: test -f testdata/cases/00001/case.json
+      - run: cargo build --release -p sbmlsim-cli --features native
+      - name: testsuite with the model code of the C target
+        run: target/release/sbmlsim-core testsuite testdata/cases --model-code c
+        env:
+          SBMLSIM_C_CACHE: ${{ runner.temp }}/sbmlsim-c
   testsuite-cases:
     # the prepared cases of the SBML Test Suite and the tests of the runner which read them
     runs-on: ubuntu-latest
@@ -200,8 +237,9 @@ jobs:
         run: test -f testdata/cases/SUITE_COMMIT || uv run scripts/prepare_testsuite.py --out testdata/cases
       - name: The prepared cases are present
         run: test -f testdata/cases/00001/case.json
-      # the tests of the runner and of the reader, the IR and the compiler over the cases
-      - run: cargo test -p sbmlsim-cli -p sbmlsim-sbml -p sbmlsim-ir
+      # the tests of the runner (of both model codes), of the reader, the IR and the compiler,
+      # and of the C target over the cases
+      - run: cargo test -p sbmlsim-cli -p sbmlsim-sbml -p sbmlsim-ir -p sbmlsim-c --features sbmlsim-cli/native
   python-bindings:
     # the python package sbmlsim_core (crates/python, built with maturin): the lint, the tests and
     # the type check of its stub on an editable install; the wheels of every platform are built

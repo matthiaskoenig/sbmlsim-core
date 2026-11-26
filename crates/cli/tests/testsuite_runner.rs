@@ -9,8 +9,9 @@ use std::process::Command;
 
 use sbmlsim_abi::SimulationResult;
 use sbmlsim_cli::testsuite::{
-    Baseline, CaseResult, CaseSettings, Expected, Status, Table, case_request, case_request_of,
-    check_columns, check_commits, compare, differences, repeat_check, repeat_difference, run_case,
+    Baseline, CaseResult, CaseSettings, Expected, Refusals, Status, Table, case_request,
+    case_request_of, check_columns, check_commits, compare, differences, differences_with,
+    repeat_check, repeat_difference, run_case,
 };
 
 fn result(columns: &[&str], rows: &[&[f64]]) -> SimulationResult {
@@ -250,6 +251,70 @@ fn baseline_both_directions() {
     assert!(differences(&results, &absent, false).is_empty());
 }
 
+fn refusals(pinned: &[&str]) -> Refusals {
+    Refusals {
+        suite_commit: "c".to_string(),
+        n_refused: pinned.len(),
+        refused: pinned
+            .iter()
+            .map(|cid| (cid.to_string(), "message".to_string()))
+            .collect(),
+    }
+}
+
+#[test]
+fn refusals_of_the_c_target_are_pinned() {
+    let results = vec![
+        outcome("00001", Status::Pass),
+        outcome("00002", Status::Refused),
+    ];
+    // a pinned refusal is no difference, also where the baseline lists the case
+    let pinned = refusals(&["00002"]);
+    assert!(differences_with(&results, &baseline(&[]), Some(&pinned), true).is_empty());
+    let listed = baseline(&[("00002", "tolerance")]);
+    assert!(differences_with(&results, &listed, Some(&pinned), true).is_empty());
+    // an unexpected refusal is a regression, without a pinned set and outside it
+    for pinned in [None, Some(refusals(&[]))] {
+        let found = differences_with(&results, &baseline(&[]), pinned.as_ref(), true);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].cid, "00002");
+        assert_eq!(found[0].expected, "pass");
+        assert_eq!(found[0].observed, "refused");
+    }
+    assert_eq!(differences(&results, &baseline(&[]), true).len(), 1);
+    // a pinned case which is no longer refused
+    let found = differences_with(
+        &results,
+        &baseline(&[]),
+        Some(&refusals(&["00001", "00002"])),
+        true,
+    );
+    assert_eq!(found.len(), 1);
+    assert_eq!(
+        (found[0].expected.as_str(), found[0].observed.as_str()),
+        ("refused", "pass")
+    );
+    // a refusal of another feature than the pinned one
+    let mut other = refusals(&["00002"]);
+    other
+        .refused
+        .insert("00002".to_string(), "another".to_string());
+    let found = differences_with(&results, &baseline(&[]), Some(&other), true);
+    assert_eq!(found.len(), 1);
+    assert!(
+        found[0].reason.contains("pinned with 'another'"),
+        "{}",
+        found[0].reason
+    );
+    // a pinned case which was not run is a difference of a full run only
+    let absent = refusals(&["00002", "00009"]);
+    let found = differences_with(&results, &baseline(&[]), Some(&absent), true);
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].observed, "not run");
+    assert!(differences_with(&results, &baseline(&[]), Some(&absent), false).is_empty());
+    assert_eq!(Status::Refused.as_str(), "refused");
+}
+
 fn cases_dir() -> Option<PathBuf> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/cases");
     if dir.join("00001/case.json").exists() {
@@ -395,6 +460,67 @@ fn runner_on_case_00001() {
     let runtime = sbmlsim_host::Runtime::embedded().unwrap();
     let result = run_case(&runtime, &dir.join("00001"));
     assert_eq!(result.status, Status::Pass, "{}", result.message);
+}
+
+/// The C target on the native engine: a case passes with its repeat checks, a delay is refused
+/// with its feature, and the command compares with the baseline of `model.wasm`.
+#[cfg(feature = "native")]
+#[test]
+fn runner_of_the_c_target() {
+    let Some(dir) = cases_dir() else { return };
+    let result = sbmlsim_cli::testsuite::run_case_c(&dir.join("00001"));
+    assert_eq!(result.status, Status::Pass, "{}", result.message);
+    assert_eq!(result.jacobian.as_deref(), Some("analytic"));
+    let delay = sbmlsim_cli::testsuite::run_case_c(&dir.join("00937"));
+    assert_eq!(delay.status, Status::Refused, "{}", delay.message);
+    assert!(delay.message.contains("delay"), "{}", delay.message);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sbmlsim-core"))
+        .args(["testsuite"])
+        .arg(&dir)
+        .arg("--baseline")
+        .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/testsuite_baseline.json"))
+        .args([
+            "--cases",
+            "00001-00003,00937",
+            "--model-code",
+            "c",
+            "--refused",
+        ])
+        .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/testsuite_refused_c.json"))
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(output.status.code(), Some(0), "{stdout}");
+    assert!(stdout.contains("pass             3"), "{stdout}");
+    assert!(stdout.contains("refused          1"), "{stdout}");
+    assert!(
+        stdout.contains("00937: the C target does not support"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("no difference to the baseline"), "{stdout}");
+
+    // a refusal which is not pinned fails the run
+    let testdata = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata");
+    let mut pinned: Refusals =
+        serde_json::from_slice(&std::fs::read(testdata.join("testsuite_refused_c.json")).unwrap())
+            .unwrap();
+    assert!(pinned.refused.remove("00937").is_some());
+    let refused = std::env::temp_dir().join(format!("sbmlsim-refused-{}.json", std::process::id()));
+    std::fs::write(&refused, serde_json::to_vec(&pinned).unwrap()).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_sbmlsim-core"))
+        .args(["testsuite"])
+        .arg(&dir)
+        .arg("--baseline")
+        .arg(testdata.join("testsuite_baseline.json"))
+        .args(["--cases", "00001,00937", "--model-code", "c", "--refused"])
+        .arg(&refused)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&refused);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(output.status.code(), Some(1), "{stdout}");
+    assert!(stdout.contains("00937: 'pass' -> 'refused'"), "{stdout}");
 }
 
 #[test]
