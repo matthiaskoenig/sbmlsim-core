@@ -70,12 +70,14 @@ fn cell_points(q: &QSource, steppers: &[Stepper]) -> Points {
     Points::new(q, &states, &parameters).unwrap()
 }
 
+/// The context of the tests to `t1`, with as many attempts per application as a point takes.
 fn context(t1: f64) -> RosenbrockContext {
     RosenbrockContext {
         t1,
         rtol: 1e-6,
         atol: 1e-9,
         h_min: 1e-10,
+        attempts: 1e6,
     }
 }
 
@@ -148,6 +150,7 @@ fn order_of_the_method() {
         rtol: 1e30,
         atol: 1e30,
         h_min: 1e-12,
+        attempts: 1.0,
     };
     let exact = [
         (-1.0f64).exp(),
@@ -181,13 +184,15 @@ fn order_of_the_method() {
     );
 }
 
-/// Runs the points over 24 intervals of 60 min in blocks of `block`, in the order `order`.
+/// Runs the points over 24 intervals of 60 min in blocks of `block`, in the order `order`, with
+/// `attempts` per application.
 fn run_blocked(
     q: &QSource,
     library: &Library,
     initial: &Points,
     order: &[usize],
     block: usize,
+    attempts: f64,
 ) -> Points {
     let n = q.state_ids.len();
     let m = q.parameter_ids.len();
@@ -201,14 +206,11 @@ fn run_blocked(
         Points::new(q, &pick(&initial.state, n), &pick(&initial.parameters, m)).unwrap();
     for k in 0..24 {
         points.start(60.0 * k as f64);
-        run_points(
-            library,
-            q,
-            &context(60.0 * (k + 1) as f64),
-            &mut points,
-            block,
-        )
-        .unwrap();
+        let context = RosenbrockContext {
+            attempts,
+            ..context(60.0 * (k + 1) as f64)
+        };
+        run_points(library, q, &context, &mut points, block).unwrap();
     }
     // back in the order of `initial`
     let mut sorted = Points::new(q, &initial.state, &initial.parameters).unwrap();
@@ -239,20 +241,21 @@ fn independent_of_blocking() {
         let j = (random.uniform() * (i + 1) as f64) as usize;
         shuffled.swap(i, j);
     }
-    let reference = run_blocked(&q, &library, &initial, &identity, 1);
+    // one attempt per application, as the most applications
+    let reference = run_blocked(&q, &library, &initial, &identity, 1, 1.0);
     assert!(
         reference
             .control
             .chunks(CONTROL)
             .all(|c| c[CONTROL_DONE] == 1.0)
     );
-    for (order, block) in [
-        (&identity, 7),
-        (&identity, 64),
-        (&shuffled, 7),
-        (&shuffled, 64),
+    for (order, block, attempts) in [
+        (&identity, 7, 1.0),
+        (&identity, 64, 3.0),
+        (&shuffled, 7, 1e6),
+        (&shuffled, 64, 1e6),
     ] {
-        let other = run_blocked(&q, &library, &initial, order, block);
+        let other = run_blocked(&q, &library, &initial, order, block, attempts);
         let bits = |v: &[f64]| v.iter().map(|x| x.to_bits()).collect::<Vec<u64>>();
         assert_eq!(bits(&other.state), bits(&reference.state), "block {block}");
         assert_eq!(
@@ -327,6 +330,7 @@ fn step_size_underflow_flags_failed() {
         rtol: 1e-6,
         atol: 1e-9,
         h_min: 1e-8,
+        attempts: 1.0,
     };
     points.start(0.0);
     let mut failed_at = None;
@@ -448,6 +452,7 @@ fn harness_refuses_what_does_not_fit() {
         rtol: 1e-6,
         atol: 1e-9,
         h_min: 1e-10,
+        attempts: 1.0,
     };
     for context in [
         RosenbrockContext {
@@ -461,6 +466,18 @@ fn harness_refuses_what_does_not_fit() {
         },
         RosenbrockContext {
             h_min: -1.0,
+            ..good
+        },
+        RosenbrockContext {
+            attempts: 0.0,
+            ..good
+        },
+        RosenbrockContext {
+            attempts: 2.5,
+            ..good
+        },
+        RosenbrockContext {
+            attempts: f64::INFINITY,
             ..good
         },
     ] {
@@ -580,6 +597,7 @@ fn a_short_last_step_keeps_the_step() {
             rtol: 1e-300,
             atol,
             h_min,
+            attempts: 1.0,
         };
         apply_points(&library, &q, &context, &mut points, 1).unwrap();
         points
@@ -613,6 +631,7 @@ fn a_short_last_step_keeps_the_step() {
         rtol: 1e-3,
         atol: 1e-3,
         h_min,
+        attempts: 1e6,
     };
     run_points(&library, &q, &context, &mut points, 1).unwrap();
     assert_eq!(points.control[CONTROL_FAILED], 0.0, "{:?}", points.control);

@@ -1,6 +1,6 @@
 //! The QFunction target: a model with a Rosenbrock integrator as one libCEED QFunction, which
-//! advances every point (a cell of a tissue, an element of a mesh) by one step attempt per
-//! application.
+//! advances every point (a cell of a tissue, an element of a mesh) by up to a number of step
+//! attempts per application.
 //!
 //! [`generate_qfunction`] writes one C source: `<ceed/types.h>` and `<math.h>` (guarded by
 //! `CEED_RUNNING_JIT_PASS`, as libCEED asks of the source of its JIT backends), the constants,
@@ -18,10 +18,13 @@
 //! - the context [`RosenbrockContext`] (`struct SbmlsimRosenbrockContext`), in the time unit of
 //!   the model.
 //!
-//! An application makes one step attempt for every point which is neither done nor failed and
-//! copies the others, so the sequence of steps of a point depends on nothing but the point: not
-//! on the other points, the number of points per call, their order or the backend. The caller
-//! applies it until every point is done or failed, feeding the outputs back as the inputs. A
+//! An application makes step attempts for every point which is neither done nor failed, until it
+//! is done or failed but at most [`RosenbrockContext::attempts`], and copies the others, so the
+//! sequence of steps of a point depends on nothing but the point: not on the other points, the
+//! number of points per call, their order, the backend or the attempts per application. The
+//! caller applies it until every point is done or failed, feeding the outputs back as the inputs:
+//! with many attempts per application (as on a CPU) usually once, with one attempt (where a call
+//! should do bounded work) as often as the point which takes the most attempts. A
 //! point is done when its `t` reaches `t1`, failed when its next step would be smaller than
 //! `h_min`; it keeps the state of its last accepted step. The step `h` of a point carries over
 //! to the next interval (`Points::start` keeps it); a point without one (`h <= 0`) starts with an
@@ -143,6 +146,8 @@ pub struct RosenbrockContext {
     pub atol: f64,
     /// The smallest step: a point which needs a smaller one fails.
     pub h_min: f64,
+    /// The most step attempts of a point in one application: at least 1, a whole number.
+    pub attempts: f64,
 }
 
 /// The QFunction of a model: its C, the name of its QFunction, the ids of its states and
@@ -223,7 +228,7 @@ pub fn generate_qfunction_model(model: &Model) -> Result<QSource, CError> {
     writeln!(
         unit.code,
         "/* The QFunction `{function}` of the model `{}` of sbmlsim-core (sbmlsim-c {}): the model \
-         with the Rosenbrock integrator RODAS4, one step attempt per point. */",
+         with the Rosenbrock integrator RODAS4, step attempts per point. */",
         description.id.replace("*/", "* /"),
         env!("CARGO_PKG_VERSION"),
     )
@@ -507,11 +512,16 @@ impl Harness {
             rtol,
             atol,
             h_min,
+            attempts,
         } = *context;
         let positive = |x: f64| x.is_finite() && x > 0.0;
-        if !t1.is_finite() || ![rtol, atol, h_min].into_iter().all(positive) {
+        if !t1.is_finite()
+            || ![rtol, atol, h_min].into_iter().all(positive)
+            || !(attempts >= 1.0 && attempts.is_finite() && attempts.fract() == 0.0)
+        {
             return Err(CError::Invalid(format!(
-                "the context {context:?} needs a finite t1 and finite positive tolerances and h_min"
+                "the context {context:?} needs a finite t1, finite positive tolerances and h_min, \
+                 and a whole number of attempts of at least 1"
             )));
         }
         if block == 0 {
@@ -581,9 +591,9 @@ impl Harness {
 }
 
 /// One application of the QFunction `q` of `library` (the library of [`QSource::host_code`]) to
-/// every point, in calls of `block` points (the last one fewer) as libCEED makes them: one step
-/// attempt for every point which is neither done nor failed. The outputs are the points
-/// afterwards.
+/// every point, in calls of `block` points (the last one fewer) as libCEED makes them: step
+/// attempts for every point which is neither done nor failed, until it is, at most
+/// `context.attempts`. The outputs are the points afterwards.
 pub fn apply_points(
     library: &Library,
     q: &QSource,
