@@ -661,6 +661,27 @@ fn a_steady_state_after_the_end_of_a_model_without_events_continues_from_the_end
 }
 
 #[test]
+fn a_steady_state_after_the_end_of_a_model_without_events_starts_from_the_state_of_the_end() {
+    // `x' = exp(-t)`: the steady state integrates from its `from` 0 again, so it is the state
+    // of the end plus 1, `(1 - exp(-1)) + 1`; one which started from the initial state would
+    // be 1
+    let model = EventModel {
+        states: vec![("x", 0.0)],
+        parameters: vec![],
+        rhs: |t, _, _, ydot| ydot[0] = (-t).exp(),
+        events: vec![],
+        discontinuities: vec![],
+    };
+    let mut req = request(0.0, 1.0, Output::Times(vec![0.0, 1.0]), 1);
+    req.selections = vec!["time".into(), "x".into()];
+    req.steady_state_after = Some(after_the_end());
+    let x = column(&run(&model, &req), "x");
+    let end = 1.0 - (-1.0f64).exp();
+    assert!((x[1] - end).abs() < 1e-9, "{x:?}");
+    assert!((x[2] - (end + 1.0)).abs() < 1e-6, "{x:?}");
+}
+
+#[test]
 fn a_steady_state_after_the_end_which_is_not_reached_is_an_error() {
     let model = EventModel {
         states: vec![("x", 0.0)],
