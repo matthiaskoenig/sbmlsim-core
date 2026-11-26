@@ -484,15 +484,24 @@ pub(crate) fn build(
                 anchor,
                 size,
                 weight,
+                family,
             } => {
                 let (u, v) = (xa.u(*x), ya.u(*y));
                 if !(u.is_finite() && v.is_finite()) {
                     continue;
                 }
+                let monospace = *family == crate::spec::FontFamily::Monospace;
+                // a dot operator of a monospace text is the middle dot, which every monospace
+                // font has, so the columns of its lines stay aligned
+                let text = if monospace {
+                    text.replace('\u{22c5}', "\u{b7}")
+                } else {
+                    text.clone()
+                };
                 let ds = dataset(vec![
                     ("x", vec![u].into_column()),
                     ("y", vec![v].into_column()),
-                    ("t", vec![text.clone()].into_column()),
+                    ("t", vec![text].into_column()),
                 ])?;
                 let anchor = match anchor {
                     crate::spec::Anchor::Start => "start",
@@ -508,11 +517,17 @@ pub(crate) fn build(
                 let chart = Chart::build(&ds)?
                     .mark_text()?
                     .configure_text(move |t| {
-                        t.with_color(c.as_str())
+                        let t = t
+                            .with_color(c.as_str())
                             .with_size(size)
                             .with_weight(weight)
                             .with_anchor(anchor)
-                            .with_opacity(opacity)
+                            .with_opacity(opacity);
+                        if monospace {
+                            t.with_font_family(crate::svg::MONO_FAMILY)
+                        } else {
+                            t
+                        }
                     })
                     .encode((alt::x("x"), alt::y("y"), alt::text("t")))?;
                 layers.push(chart, info());

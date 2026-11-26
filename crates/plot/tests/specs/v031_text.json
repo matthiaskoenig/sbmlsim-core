@@ -1,0 +1,303 @@
+{
+  "contract": "figure/1",
+  "width": 900,
+  "height": 340,
+  "grid": {
+    "rows": 1,
+    "columns": 2,
+    "wspace": 0.25
+  },
+  "plots": [
+    {
+      "id": "units",
+      "row": 0,
+      "column": 0,
+      "title": "symbols of units, legend columns",
+      "x": {
+        "label": "dose",
+        "unit": "mg⋅kg⁻¹",
+        "min": 0,
+        "max": 10
+      },
+      "y": {
+        "label": "CL ± SD ≤ 2°",
+        "unit": "µmol·min⁻¹ × 10³",
+        "min": 0,
+        "max": 3
+      },
+      "legend_columns": 2,
+      "legend_title": "studies",
+      "elements": [
+        {
+          "id": "s0",
+          "kind": "curve",
+          "label": "Davidson1997",
+          "x": [
+            1,
+            2,
+            4,
+            8
+          ],
+          "y": [
+            0.327,
+            0.268,
+            0.18,
+            0.081
+          ],
+          "style": {
+            "color": "#006d77",
+            "line": {
+              "type": "none"
+            },
+            "marker": {
+              "type": "circle",
+              "size": 8,
+              "edge": "#000000"
+            }
+          }
+        },
+        {
+          "id": "s1",
+          "kind": "curve",
+          "label": "Keech1994",
+          "x": [
+            1,
+            2,
+            4,
+            8
+          ],
+          "y": [
+            0.655,
+            0.536,
+            0.359,
+            0.162
+          ],
+          "style": {
+            "color": "#1c8d5a",
+            "line": {
+              "type": "none"
+            },
+            "marker": {
+              "type": "square",
+              "size": 8,
+              "edge": "#000000"
+            }
+          }
+        },
+        {
+          "id": "s2",
+          "kind": "curve",
+          "label": "Jones1998a",
+          "x": [
+            1,
+            2,
+            4,
+            8
+          ],
+          "y": [
+            0.982,
+            0.804,
+            0.539,
+            0.242
+          ],
+          "style": {
+            "color": "#43ab66",
+            "line": {
+              "type": "none"
+            },
+            "marker": {
+              "type": "triangle",
+              "size": 8,
+              "edge": "#000000"
+            }
+          }
+        },
+        {
+          "id": "s3",
+          "kind": "curve",
+          "label": "Walker1990",
+          "x": [
+            1,
+            2,
+            4,
+            8
+          ],
+          "y": [
+            1.31,
+            1.073,
+            0.719,
+            0.323
+          ],
+          "style": {
+            "color": "#74c69d",
+            "line": {
+              "type": "none"
+            },
+            "marker": {
+              "type": "diamond",
+              "size": 8,
+              "edge": "#000000"
+            }
+          }
+        },
+        {
+          "id": "s4",
+          "kind": "curve",
+          "label": "Tuomilehto1995",
+          "x": [
+            1,
+            2,
+            4,
+            8
+          ],
+          "y": [
+            1.637,
+            1.341,
+            0.899,
+            0.404
+          ],
+          "style": {
+            "color": "#a6dcbc",
+            "line": {
+              "type": "none"
+            },
+            "marker": {
+              "type": "triangle_down",
+              "size": 8,
+              "edge": "#000000"
+            }
+          }
+        },
+        {
+          "id": "s5",
+          "kind": "curve",
+          "label": "Isaacsohn2003",
+          "x": [
+            1,
+            2,
+            4,
+            8
+          ],
+          "y": [
+            1.965,
+            1.609,
+            1.078,
+            0.485
+          ],
+          "style": {
+            "color": "#d8f3dc",
+            "line": {
+              "type": "none"
+            },
+            "marker": {
+              "type": "star",
+              "size": 8,
+              "edge": "#000000"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "table",
+      "row": 0,
+      "column": 1,
+      "title": "PK parameters",
+      "x": {
+        "min": 0,
+        "max": 1,
+        "label_visible": false,
+        "ticks_visible": false,
+        "line_visible": false
+      },
+      "y": {
+        "min": 0,
+        "max": 1,
+        "label_visible": false,
+        "ticks_visible": false,
+        "line_visible": false
+      },
+      "legend": false,
+      "elements": [
+        {
+          "id": "t0",
+          "kind": "text",
+          "x": 0.04,
+          "y": 0.9,
+          "text": "parameter  unit     value     ±",
+          "family": "monospace",
+          "size": 12,
+          "weight": "bold",
+          "style": {
+            "color": "#1b1f24"
+          }
+        },
+        {
+          "id": "t1",
+          "kind": "text",
+          "x": 0.04,
+          "y": 0.76,
+          "text": "AUC        mg⋅hr/l  12.40  1.30",
+          "family": "monospace",
+          "size": 12,
+          "weight": "normal",
+          "style": {
+            "color": "#1b1f24"
+          }
+        },
+        {
+          "id": "t2",
+          "kind": "text",
+          "x": 0.04,
+          "y": 0.62,
+          "text": "Cmax       µmol/l    0.93  0.12",
+          "family": "monospace",
+          "size": 12,
+          "weight": "normal",
+          "style": {
+            "color": "#1b1f24"
+          }
+        },
+        {
+          "id": "t3",
+          "kind": "text",
+          "x": 0.04,
+          "y": 0.48,
+          "text": "tmax       hr        1.50  0.50",
+          "family": "monospace",
+          "size": 12,
+          "weight": "normal",
+          "style": {
+            "color": "#1b1f24"
+          }
+        },
+        {
+          "id": "t4",
+          "kind": "text",
+          "x": 0.04,
+          "y": 0.34,
+          "text": "kel        1/hr      0.12  0.02",
+          "family": "monospace",
+          "size": 12,
+          "weight": "normal",
+          "style": {
+            "color": "#1b1f24"
+          }
+        },
+        {
+          "id": "t5",
+          "kind": "text",
+          "x": 0.04,
+          "y": 0.2,
+          "text": "CL/F       ml/min   480.0  55.0",
+          "family": "monospace",
+          "size": 12,
+          "weight": "normal",
+          "style": {
+            "color": "#1b1f24"
+          }
+        }
+      ]
+    }
+  ]
+}
