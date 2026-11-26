@@ -25,8 +25,11 @@
 //! (`sbmlsim_c`, a build with the feature `native`) instead of `engine.wasm` with `model.wasm`:
 //! the same comparison, repeat checks and baseline, the steady state of a fresh instance being
 //! a fresh engine. A model the C target refuses (a delay, no analytic Jacobian) is
-//! [`Status::Refused`] with the feature, listed in the summary and no difference to the
-//! baseline.
+//! [`Status::Refused`] with the feature. The cases it refuses are pinned with their features
+//! in `testdata/testsuite_refused_c.json` ([`Refusals`], `--refused`): a pinned refusal is no
+//! difference, a case refused which is not pinned (or for another feature) and a pinned case
+//! which is no longer refused are, so the set changes only deliberately (`--write-baseline
+//! --model-code c` writes it from a run of every case).
 //!
 //! `--export DIR` writes every case which passes as the inputs and the outputs of the wasmtime
 //! host, which `js/test/same_bits.test.mjs` runs in Node and compares byte for byte:
@@ -937,14 +940,64 @@ pub struct Difference {
     pub reason: String,
 }
 
-/// The cases which do not have the outcome the baseline records; a case the C target refuses
-/// ([`Status::Refused`]) is none.
+/// The cases the C target refuses (`--model-code c`), with the features it names, as a run of
+/// every case writes them (`testdata/testsuite_refused_c.json`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Refusals {
+    /// The commit of the suite.
+    pub suite_commit: String,
+    /// The number of cases refused.
+    pub n_refused: usize,
+    /// The message of every case refused, by identifier.
+    pub refused: BTreeMap<String, String>,
+}
+
+/// The refusals of a full run.
+pub fn refusals_of(results: &[CaseResult], suite_commit: &str) -> Refusals {
+    let refused: BTreeMap<String, String> = results
+        .iter()
+        .filter(|r| r.status == Status::Refused)
+        .map(|r| (r.cid.clone(), r.message.clone()))
+        .collect();
+    Refusals {
+        suite_commit: suite_commit.to_string(),
+        n_refused: refused.len(),
+        refused,
+    }
+}
+
+/// The cases which do not have the outcome the baseline records.
 ///
 /// `full` is a run of every case: a listed case which was not run is a difference then.
 pub fn differences(results: &[CaseResult], baseline: &Baseline, full: bool) -> Vec<Difference> {
+    differences_with(results, baseline, None, full)
+}
+
+/// [`differences`] of a run of the C target, whose pinned refusals are `refusals`: a case
+/// pinned is expected `refused` with its message, before what the baseline says of it; any
+/// other refusal is a difference as any other failure.
+pub fn differences_with(
+    results: &[CaseResult],
+    baseline: &Baseline,
+    refusals: Option<&Refusals>,
+    full: bool,
+) -> Vec<Difference> {
+    let pinned = |cid: &str| refusals.and_then(|r| r.refused.get(cid));
     let mut found = Vec::new();
     for result in results {
-        if result.status == Status::Refused {
+        if let Some(reason) = pinned(&result.cid) {
+            if result.status != Status::Refused || &result.message != reason {
+                found.push(Difference {
+                    cid: result.cid.clone(),
+                    expected: Status::Refused.as_str().to_string(),
+                    observed: result.status.as_str().to_string(),
+                    reason: if result.status == Status::Refused {
+                        format!("refused with '{}', pinned with '{reason}'", result.message)
+                    } else {
+                        reason.clone()
+                    },
+                });
+            }
             continue;
         }
         let recorded = baseline.expected_failures.get(&result.cid);
@@ -959,7 +1012,20 @@ pub fn differences(results: &[CaseResult], baseline: &Baseline, full: bool) -> V
         }
     }
     if full {
+        for (cid, reason) in refusals.iter().flat_map(|r| &r.refused) {
+            if !results.iter().any(|r| &r.cid == cid) {
+                found.push(Difference {
+                    cid: cid.clone(),
+                    expected: Status::Refused.as_str().to_string(),
+                    observed: "not run".to_string(),
+                    reason: reason.clone(),
+                });
+            }
+        }
         for (cid, recorded) in &baseline.expected_failures {
+            if pinned(cid).is_some() {
+                continue;
+            }
             if !results.iter().any(|r| &r.cid == cid) {
                 found.push(Difference {
                     cid: cid.clone(),
@@ -1056,6 +1122,10 @@ pub struct TestsuiteArgs {
     /// (a build with the feature `native`).
     #[arg(long, value_enum, default_value_t = ModelCode::Wasm)]
     pub model_code: ModelCode,
+    /// The cases the C target refuses (`--model-code c`), which `--write-baseline` writes
+    /// with it instead of the baseline.
+    #[arg(long, default_value = "testdata/testsuite_refused_c.json")]
+    pub refused: PathBuf,
 }
 
 /// The values of `--model-code`.
@@ -1124,8 +1194,8 @@ pub fn run(args: &TestsuiteArgs) -> anyhow::Result<bool> {
             "--model-code c requires a build with --features native"
         );
         anyhow::ensure!(
-            !args.write_baseline && args.export.is_none(),
-            "--write-baseline and --export are of model.wasm, not of --model-code c"
+            args.export.is_none(),
+            "--export is of model.wasm, not of --model-code c"
         );
         anyhow::ensure!(
             args.jacobian == JacobianArg::Auto && !args.no_optimize,
@@ -1149,6 +1219,16 @@ pub fn run(args: &TestsuiteArgs) -> anyhow::Result<bool> {
             .with_context(|| format!("cannot read the baseline {}", args.baseline.display()))?;
         check_commits(&dirs, &baseline.suite_commit)?;
         Some(baseline)
+    };
+    let refusals: Option<Refusals> = if args.write_baseline || args.model_code == ModelCode::Wasm {
+        None
+    } else {
+        let what = || format!("cannot read the refusals {}", args.refused.display());
+        let refusals: Refusals =
+            serde_json::from_slice(&fs::read(&args.refused).with_context(what)?)
+                .with_context(what)?;
+        check_commits(&dirs, &refusals.suite_commit)?;
+        Some(refusals)
     };
     let runtime = match args.model_code {
         ModelCode::Wasm => Some(Runtime::embedded()?),
@@ -1206,11 +1286,7 @@ pub fn run(args: &TestsuiteArgs) -> anyhow::Result<bool> {
         .filter(|r| r.status == Status::Refused)
         .collect();
     if !refused.is_empty() {
-        writeln!(
-            summary,
-            "refused by the C target (no difference to the baseline): {}",
-            refused.len()
-        )?;
+        writeln!(summary, "refused by the C target: {}", refused.len())?;
         for r in &refused {
             writeln!(summary, "  {}: {}", r.cid, r.message)?;
         }
@@ -1227,6 +1303,22 @@ pub fn run(args: &TestsuiteArgs) -> anyhow::Result<bool> {
             .map(|s| s.suite_commit)
             .unwrap_or_default();
         check_commits(&dirs, &first)?;
+        if args.model_code == ModelCode::C {
+            let refusals = refusals_of(&results, &first);
+            fs::write(
+                &args.refused,
+                serde_json::to_string_pretty(&refusals)? + "\n",
+            )
+            .with_context(|| format!("cannot write {}", args.refused.display()))?;
+            println!(
+                "refusals written to {}: {} of {} cases refused",
+                args.refused.display(),
+                refusals.n_refused,
+                results.len()
+            );
+            write_json(args, &first, &results, &[])?;
+            return Ok(true);
+        }
         let baseline = baseline_of(&results, &first);
         fs::write(
             &args.baseline,
@@ -1244,7 +1336,7 @@ pub fn run(args: &TestsuiteArgs) -> anyhow::Result<bool> {
     }
 
     let baseline = baseline.expect("read above");
-    let found = differences(&results, &baseline, selection.is_none());
+    let found = differences_with(&results, &baseline, refusals.as_ref(), selection.is_none());
     report_differences(&found);
     write_json(args, &baseline.suite_commit, &results, &found)?;
     Ok(found.is_empty())

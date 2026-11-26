@@ -172,7 +172,7 @@ jobs:
   testsuite-c-target:
     # the whole SBML Test Suite on the native engine with the model code of the C target, against
     # the baseline of model.wasm: every case of it passes but those the C target refuses (the
-    # delays), which the summary lists
+    # delays), which must be the refusals pinned in testdata/testsuite_refused_c.json
     runs-on: ubuntu-latest
     env:
       SBMLSIM_CORE_REQUIRE_CASES: "1"
