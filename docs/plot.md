@@ -200,7 +200,7 @@ png = sbmlsim_core.render_png(spec, dpi=144.0)  # bytes, 72 dpi is the drawn siz
 geometry = sbmlsim_core.figure_geometry(spec)  # width, height, plots, legend_entries
 hit = sbmlsim_core.pick(spec, 120.0, 80.0, 8.0)  # dict or None
 colors = sbmlsim_core.color_scale("viridis", 0.0, 1.0, [0.0, 0.5, 1.0])
-names = sbmlsim_core.COLOR_SCALES  # "viridis", "viridis_r", ..., "blues", "blues_r", ...
+names = sbmlsim_core.COLOR_SCALES  # viridis, viridis_r, ..., blues, blues_r
 width = sbmlsim_core.text_width("Smith2001", 13.0, bold=True)  # 68.08 px
 ```
 

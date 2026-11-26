@@ -226,9 +226,10 @@ def test_color_scales_of_matplotlib() -> None:
 
 def test_fields_of_0_30_render() -> None:
     # the spec of the renderer's fixture of the fields since 0.30.0
-    spec = (PLOT / "specs" / "v030.json").read_text()
+    spec = (PLOT / "specs" / "v030.json").read_text(encoding="utf-8")
     svg = sbmlsim_core.render_svg(spec)
-    assert svg == (PLOT / "golden" / "v030.svg").read_text()
+    # the golden has no-break spaces, which a locale encoding of windows misreads
+    assert svg == (PLOT / "golden" / "v030.svg").read_text(encoding="utf-8")
     geometry = sbmlsim_core.figure_geometry(spec)
     lobule = next(p for p in geometry["plots"] if p["id"] == "lobule")
     per_x = lobule["rect"]["width"] / (lobule["x"]["high"] - lobule["x"]["low"])
