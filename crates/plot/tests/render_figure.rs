@@ -482,8 +482,9 @@ fn legend_avoids_dense_curves() {
 }
 
 #[test]
-fn crowded_panel_moves_legend_outside() {
-    // lines every tenth of the height cross every corner
+fn crowded_panel_keeps_legend_inside() {
+    // lines every tenth of the height cross every location; the legend stays inside at the
+    // location of the least data, as matplotlib's `best` does (before 0.30.0 it went outside)
     let mut elements: Vec<String> = (0..=10)
         .map(|k| {
             let v = f64::from(k);
@@ -502,11 +503,116 @@ fn crowded_panel_moves_legend_outside() {
     let doc = Document::parse(&svg).unwrap();
     let p = panel(&doc, "p");
     let frame = legends(&doc)[0].frame;
-    let (w, _) = figure_size(&doc);
+    assert!(p.holds(&frame), "{frame:?} not in {p:?}");
+    assert_eq!(figure_size(&doc).0, 500.0);
+}
+
+#[test]
+fn legend_too_large_for_its_panel_goes_outside() {
+    let elements: Vec<String> = (0..40)
+        .map(|k| {
+            curve(
+                &format!("c{k}"),
+                &format!(r#""label": "dose {k}","#),
+                "[0, 1]",
+                "[0, 1]",
+            )
+        })
+        .collect();
+    let svg = render(&one_plot(r#"{"position": "inside"}"#, &elements));
+    let doc = Document::parse(&svg).unwrap();
+    let p = panel(&doc, "p");
+    let frame = legends(&doc)[0].frame;
     assert!(frame.x > p.right(), "{frame:?} not right of {p:?}");
+}
+
+/// The frame of the legend of a plot of a rising line, the legend at `loc` of the figure and
+/// the plot setting `extra`, with its panel.
+fn located(loc: &str, extra: &str) -> (Rect, Rect) {
+    let elements = [curve(
+        "rise",
+        r#""label": "rising line","#,
+        "[0, 1]",
+        "[0, 1]",
+    )];
+    let svg = render(&figure(
+        500.0,
+        400.0,
+        &format!(r#""legend": {{"position": "inside", "loc": "{loc}"}},"#),
+        1,
+        1,
+        &[plot("p", 0, 0, extra, &elements)],
+    ));
+    let doc = Document::parse(&svg).unwrap();
+    (legends(&doc)[0].frame, panel(&doc, "p"))
+}
+
+#[test]
+fn legend_loc_is_respected() {
+    // every location of matplotlib puts the legend there, data under it or not
+    let close = |a: f64, b: f64| (a - b).abs() < 1.0;
+    for loc in [
+        "upper_right",
+        "upper_left",
+        "lower_left",
+        "lower_right",
+        "right",
+        "center_left",
+        "center_right",
+        "lower_center",
+        "upper_center",
+        "center",
+    ] {
+        let (f, p) = located(loc, "");
+        assert!(p.holds(&f), "{loc}: {f:?} not in {p:?}");
+        let (cx, cy) = (f.x + f.width / 2.0, f.y + f.height / 2.0);
+        let (px, py) = (p.x + p.width / 2.0, p.y + p.height / 2.0);
+        let horizontal = if loc.ends_with("left") {
+            f.x < px - f.width / 2.0 - 1.0
+        } else if loc.ends_with("right") {
+            f.right() > px + f.width / 2.0 + 1.0
+        } else {
+            close(cx, px)
+        };
+        let vertical = if loc.starts_with("upper") {
+            f.bottom() < py
+        } else if loc.starts_with("lower") {
+            f.y > py
+        } else {
+            close(cy, py)
+        };
+        assert!(horizontal && vertical, "{loc}: {f:?} in {p:?}");
+    }
+    // the rising line runs through the lower left and the upper right corner: an explicit
+    // location keeps the legend on the data
+    let (f, p) = located("lower_left", "");
     assert!(
-        w > 500.0 && frame.right() <= w,
-        "{frame:?} in a figure of width {w}"
+        f.x < p.x + 10.0 && f.bottom() > p.bottom() - 10.0,
+        "{f:?} in {p:?}"
+    );
+}
+
+#[test]
+fn plot_legend_loc_overrides_the_figure() {
+    let (f, p) = located("upper_right", r#""legend_loc": "lower_center","#);
+    assert!(f.y > p.y + p.height / 2.0, "{f:?} in {p:?}");
+    assert!(
+        ((f.x + f.width / 2.0) - (p.x + p.width / 2.0)).abs() < 1.0,
+        "{f:?} in {p:?}"
+    );
+}
+
+#[test]
+fn best_takes_the_order_of_matplotlib_on_a_tie() {
+    // a line through the middle: the four corners are free, and the upper right one is the
+    // first location of matplotlib
+    let elements = [curve("flat", r#""label": "flat","#, "[0, 1]", "[0.5, 0.5]")];
+    let svg = render(&one_plot(r#"{"position": "inside"}"#, &elements));
+    let doc = Document::parse(&svg).unwrap();
+    let (f, p) = (legends(&doc)[0].frame, panel(&doc, "p"));
+    assert!(
+        f.right() > p.right() - 10.0 && f.y < p.y + 10.0,
+        "{f:?} in {p:?}"
     );
 }
 
@@ -1080,7 +1186,7 @@ fn legend_swatches() {
         (path, marker)
     };
     let neutral = swatch_paint(&one_plot(r#"{"position": "outside"}"#, &lines));
-    assert_eq!(neutral.0.unwrap().0, "#5b6472");
+    assert_eq!(neutral.0.unwrap().0, "#3b424d");
     let styled = figure(
         500.0,
         400.0,

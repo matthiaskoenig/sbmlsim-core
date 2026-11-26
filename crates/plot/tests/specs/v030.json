@@ -1,0 +1,420 @@
+{
+  "contract": "figure/1",
+  "width": 760,
+  "height": 520,
+  "title": "figure/1 since 0.30.0",
+  "grid": {
+    "rows": 3,
+    "columns": 3,
+    "wspace": 0.4,
+    "hspace": 0.5
+  },
+  "plots": [
+    {
+      "id": "lobule",
+      "row": 0,
+      "column": 0,
+      "title": "equal aspect",
+      "x": {
+        "label_visible": false,
+        "ticks_visible": false,
+        "line_visible": false
+      },
+      "y": {
+        "label_visible": false,
+        "ticks_visible": false,
+        "line_visible": false
+      },
+      "aspect": "equal",
+      "legend": false,
+      "elements": [
+        {
+          "id": "zone1",
+          "kind": "polygon",
+          "paths": [
+            [
+              [
+                1.0,
+                0.0
+              ],
+              [
+                0.5,
+                0.866025
+              ],
+              [
+                -0.5,
+                0.866025
+              ],
+              [
+                -1.0,
+                0.0
+              ],
+              [
+                -0.5,
+                -0.866025
+              ],
+              [
+                0.5,
+                -0.866025
+              ]
+            ]
+          ],
+          "style": {
+            "color": "#fdae61",
+            "fill": {
+              "opacity": 1
+            },
+            "line": {
+              "width": 1
+            }
+          }
+        },
+        {
+          "id": "zone3",
+          "kind": "polygon",
+          "paths": [
+            [
+              [
+                0.5,
+                0.0
+              ],
+              [
+                0.25,
+                0.433013
+              ],
+              [
+                -0.25,
+                0.433013
+              ],
+              [
+                -0.5,
+                0.0
+              ],
+              [
+                -0.25,
+                -0.433013
+              ],
+              [
+                0.25,
+                -0.433013
+              ]
+            ]
+          ],
+          "style": {
+            "color": "#d7191c",
+            "fill": {
+              "opacity": 1
+            },
+            "line": {
+              "width": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "errors",
+      "row": 0,
+      "column": 1,
+      "title": "error caps",
+      "x": {
+        "label": "time",
+        "unit": "h"
+      },
+      "y": {
+        "label": "C",
+        "unit": "mM"
+      },
+      "elements": [
+        {
+          "id": "data",
+          "kind": "curve",
+          "label": "data",
+          "x": [
+            1,
+            2,
+            4,
+            8
+          ],
+          "y": [
+            2.0,
+            3.1,
+            2.2,
+            1.0
+          ],
+          "yerr": [
+            0.4,
+            0.1,
+            0.5,
+            0.3
+          ],
+          "error_cap": 12,
+          "style": {
+            "line": {
+              "type": "none"
+            },
+            "marker": {
+              "type": "circle",
+              "size": 8
+            }
+          }
+        },
+        {
+          "id": "bars",
+          "kind": "bar",
+          "label": "bars",
+          "x": [
+            3,
+            6
+          ],
+          "height": [
+            1.5,
+            2.5
+          ],
+          "err": [
+            0.3,
+            0.2
+          ],
+          "error_cap": 8,
+          "style": {
+            "color": "#9ecae1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "schematic",
+      "row": 0,
+      "column": 2,
+      "x": {
+        "label_visible": false,
+        "ticks_visible": false,
+        "line_visible": false,
+        "min": 0,
+        "max": 1
+      },
+      "y": {
+        "label_visible": false,
+        "ticks_visible": false,
+        "line_visible": false,
+        "min": 0,
+        "max": 1
+      },
+      "legend": false,
+      "elements": [
+        {
+          "id": "heading",
+          "kind": "text",
+          "x": 0.05,
+          "y": 0.8,
+          "text": "A  Circuit",
+          "size": 16,
+          "weight": "bold"
+        },
+        {
+          "id": "plain",
+          "kind": "text",
+          "x": 0.05,
+          "y": 0.55,
+          "text": "pump  ->  liver"
+        },
+        {
+          "id": "small",
+          "kind": "text",
+          "x": 0.05,
+          "y": 0.3,
+          "text": "small text",
+          "size": 8
+        }
+      ]
+    },
+    {
+      "id": "space_time",
+      "row": 1,
+      "column": 0,
+      "column_span": 2,
+      "x": {
+        "min": 0,
+        "max": 10,
+        "ticks_visible": false
+      },
+      "y": {
+        "label": "position",
+        "min": 0,
+        "max": 1
+      },
+      "colorbar": {
+        "scale": {
+          "name": "purd",
+          "low": 0,
+          "high": 1
+        },
+        "label": "signal"
+      },
+      "legend": false,
+      "elements": [
+        {
+          "id": "cells",
+          "kind": "heatmap",
+          "x_edges": [
+            0,
+            1,
+            2,
+            4,
+            6,
+            10
+          ],
+          "y_edges": [
+            0,
+            0.25,
+            0.5,
+            0.75,
+            1.0
+          ],
+          "values": [
+            [
+              0.969,
+              0.755,
+              0.325,
+              0.044,
+              0.0
+            ],
+            [
+              0.992,
+              0.932,
+              0.531,
+              0.105,
+              0.001
+            ],
+            [
+              0.882,
+              1.0,
+              0.755,
+              0.216,
+              0.005
+            ],
+            [
+              0.682,
+              0.932,
+              0.932,
+              0.389,
+              0.016
+            ]
+          ],
+          "scale": {
+            "name": "purd",
+            "low": 0,
+            "high": 1
+          }
+        }
+      ]
+    },
+    {
+      "id": "outflow",
+      "row": 2,
+      "column": 0,
+      "column_span": 2,
+      "x": {
+        "label": "time",
+        "unit": "h",
+        "min": 0,
+        "max": 10
+      },
+      "y": {
+        "label": "outflow"
+      },
+      "legend": false,
+      "elements": [
+        {
+          "id": "flow",
+          "kind": "curve",
+          "x": [
+            0,
+            1,
+            2,
+            4,
+            6,
+            10
+          ],
+          "y": [
+            0,
+            0.4,
+            0.7,
+            0.9,
+            0.6,
+            0.2
+          ]
+        }
+      ]
+    },
+    {
+      "id": "zones",
+      "row": 1,
+      "column": 2,
+      "row_span": 2,
+      "x": {
+        "label": "zone"
+      },
+      "y": {
+        "label": "lobule"
+      },
+      "colorbars": [
+        {
+          "scale": {
+            "name": "ylorrd",
+            "low": 1,
+            "high": 3
+          },
+          "categorical": true,
+          "tick_labels": [
+            "1",
+            "2",
+            "3"
+          ],
+          "label": "zone"
+        },
+        {
+          "scale": {
+            "name": "blues_r",
+            "low": 0,
+            "high": 1
+          },
+          "label": "pO2"
+        }
+      ],
+      "legend": false,
+      "elements": [
+        {
+          "id": "zone_cells",
+          "kind": "heatmap",
+          "rows": [
+            "a",
+            "b"
+          ],
+          "columns": [
+            "1",
+            "2",
+            "3"
+          ],
+          "values": [
+            [
+              1,
+              2,
+              3
+            ],
+            [
+              3,
+              2,
+              1
+            ]
+          ],
+          "scale": {
+            "name": "ylorrd",
+            "low": 1,
+            "high": 3
+          }
+        }
+      ]
+    }
+  ]
+}

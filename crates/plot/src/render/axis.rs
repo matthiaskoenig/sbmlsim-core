@@ -209,6 +209,63 @@ pub(crate) fn resolve(
     }
 }
 
+/// The axes of a panel of `(width, height)` pixels with an aspect (since 0.30.0): the limits of
+/// one of them widened about their middle until one unit of the coordinate of y is `ratio`
+/// times as long as one unit of x, and its ticks resolved again for the new limits.
+///
+/// The axis whose units are the longer ones is widened, so the data keeps its room on both
+/// (matplotlib's `adjustable="datalim"`); on a log axis a unit of the coordinate is a decade.
+/// `x_axis` and `y_axis` are the axes of the spec the resolved ones were resolved from.
+pub(crate) fn with_aspect(
+    (x_axis, y_axis): (&Axis, &Axis),
+    (xa, ya): (ResolvedAxis, ResolvedAxis),
+    ratio: f64,
+    (width, height): (f64, f64),
+) -> (ResolvedAxis, ResolvedAxis) {
+    let (x0, x1) = xa.domain();
+    let (y0, y1) = ya.domain();
+    let (dx, dy) = (x1 - x0, y1 - y0);
+    if !(dx > 0.0 && dy > 0.0 && width > 0.0 && height > 0.0 && ratio > 0.0) {
+        return (xa, ya);
+    }
+    // the span of y which gives the aspect with the span of x, and the other way round
+    let dy_wanted = height * dx / (ratio * width);
+    if dy_wanted > dy {
+        let ya = widened(y_axis, &ya, dy_wanted, height, Y_TICK_ROOM);
+        (xa, ya)
+    } else {
+        let dx_wanted = ratio * width * dy / height;
+        let xa = widened(x_axis, &xa, dx_wanted, width, X_TICK_ROOM);
+        (xa, ya)
+    }
+}
+
+/// An axis resolved again with its limits widened about their middle to a span `wanted` of
+/// its coordinate (without a reversal: the value, or its `log10` on a log axis).
+fn widened(
+    axis: &Axis,
+    resolved: &ResolvedAxis,
+    wanted: f64,
+    length: f64,
+    room: f64,
+) -> ResolvedAxis {
+    let log = resolved.transform == Transform::Log;
+    let to = |v: f64| if log { log10(v) } else { v };
+    let from = |t: f64| if log { pow10(t) } else { t };
+    let middle = (to(resolved.low) + to(resolved.high)) / 2.0;
+    let (low, high) = (from(middle - wanted / 2.0), from(middle + wanted / 2.0));
+    if !(low.is_finite() && high.is_finite() && low < high) {
+        return resolved.clone();
+    }
+    let ends = Axis {
+        min: Some(low),
+        max: Some(high),
+        frame: None,
+        ..axis.clone()
+    };
+    resolve(&ends, &[], &[], length, room)
+}
+
 /// The ticks with their labels, a tick whose label is the one of the tick before dropped: at a
 /// resolution near the precision of a double neighbouring ticks round onto one value or one
 /// label, which would be written twice.

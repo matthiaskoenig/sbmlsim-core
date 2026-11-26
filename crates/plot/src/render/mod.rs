@@ -175,6 +175,7 @@ fn axis_layout(
         hooks: AxisHooks {
             labels_hidden: !axis.ticks_visible,
             marks_hidden: !axis.marks_visible(),
+            line_hidden: !axis.line_visible,
             tick_size: tick,
             tick_weight: fonts.tick_weight,
             label_angle: -angle,
@@ -201,6 +202,8 @@ pub(crate) struct Sides {
 /// A plot before it is placed: its axes resolved over its data, and the room everything
 /// around its panel takes.
 pub(crate) struct Prepared {
+    /// The panel size (width, height) the plot was prepared for.
+    pub panel: (f64, f64),
     /// The x axis.
     pub xa: ResolvedAxis,
     /// The left y axis.
@@ -252,6 +255,11 @@ pub(crate) fn prepare(figure: &Figure, plot: &Plot, panel: (f64, f64)) -> Prepar
         .collect();
     let xa = axis::resolve(x_axis, &ext.xs, &ext.x_sticky, panel_width, X_TICK_ROOM);
     let ya = axis::resolve(y_axis, &ext.ys, &ext.y_sticky, panel_height, Y_TICK_ROOM);
+    // an aspect widens the limits of one axis for this panel
+    let (xa, ya) = match plot.aspect {
+        Some(aspect) => axis::with_aspect((x_axis, y_axis), (xa, ya), aspect.ratio(), panel),
+        None => (xa, ya),
+    };
     let y2a = plot
         .y2
         .as_ref()
@@ -326,6 +334,7 @@ pub(crate) fn prepare(figure: &Figure, plot: &Plot, panel: (f64, f64)) -> Prepar
         left: bands.left.max(yl.depth),
     };
     Prepared {
+        panel,
         colors: element_colors(&plot.elements),
         xa,
         ya,

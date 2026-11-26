@@ -16,11 +16,13 @@
 //! `legend::room`), so a page which draws other entries in another state keeps its plot and
 //! figure; its frame is that room, the entries drawn now from its top.
 //!
-//! The legends follow the legend settings of the figure. Inside, a legend is placed in the
-//! corner of the panel of its plot (of a row: of its rightmost plot) whose frame covers the
-//! least ink of the data (`crate::ink`), the upper right one on a tie; a legend which does not
-//! fit into that panel, or which covers more than [`INSIDE_LIMIT`] of its frame with ink even
-//! in its best corner, goes outside instead. Outside, the legend of a plot is right of its
+//! The legends follow the legend settings of the figure. Inside, a legend is placed at the
+//! location of its plot (of a row: of its rightmost plot with a legend), its `legend_loc` or
+//! the `loc` of the figure: a fixed location of matplotlib, or `best`, the one of matplotlib's
+//! locations whose frame covers the least ink of the data (`crate::ink`), the first in their
+//! order on a tie; a legend which does not fit into that panel goes outside instead, one which
+//! fits stays inside however much data it covers, as in matplotlib. Outside, the legend of a
+//! plot is right of its
 //! panel and its right axis, and the column gets the room of its widest legend; the legend of
 //! a row is right of the grid at the top of the panels of its row. The panels keep their size
 //! and the figure grows by the room of the legends: right by their width, and down by the part
@@ -38,7 +40,7 @@ use crate::ink::Ink;
 use crate::render::axis::{ResolvedAxis, Transform};
 use crate::render::legend::{self, Entry};
 use crate::render::{self, Prepared, Sides};
-use crate::spec::{AxisScale, Figure, LegendPosition, LegendScope, Plot};
+use crate::spec::{AxisScale, Figure, LegendLoc, LegendPosition, LegendScope, Plot};
 use crate::text::extra_lines;
 
 /// The padding at the edges of the figure and the least gap between the axes of two
@@ -48,10 +50,8 @@ pub(crate) const PAD: f64 = 8.0;
 const LEGEND_GAP: f64 = 10.0;
 /// The gap between a legend inside and the edges of its panel, in pixels.
 const LEGEND_INSET: f64 = 6.0;
-/// The largest share of its frame a legend inside may cover with the ink of the data in its
-/// best corner; a legend which would cover more goes outside, right of its plot (or row).
-pub(crate) const INSIDE_LIMIT: f64 = 0.05;
-/// The least width and height of a panel, in pixels.
+/// The least width and height of the panel of a plot, in pixels: of the span of the plot, not
+/// of every column and row it spans (since 0.30.0).
 const MIN_PANEL: f64 = 20.0;
 /// The room an estimate of the panels gives the axes (left and right, top and bottom).
 const ESTIMATE_ROOM: (f64, f64) = (80.0, 60.0);
@@ -189,8 +189,8 @@ type Pending = (LegendOwner, Place, Vec<Entry>, (f64, f64));
 /// Where a legend goes.
 #[derive(Debug, Clone, Copy)]
 enum Place {
-    /// Inside the panel of the plot at this position, in this corner (see [`corner_rect`]).
-    Inside(usize, usize),
+    /// Inside the panel of the plot at this position, at this location (see [`loc_rect`]).
+    Inside(usize, LegendLoc),
     /// Right of the plot at this position.
     RightOfPlot(usize),
     /// Right of the grid, at the top of this row.
@@ -203,6 +203,9 @@ struct Track {
     size: f64,
     /// Where the panel of every column (row) starts.
     starts: Vec<f64>,
+    /// The pixels the grid reaches beyond the stretch it fills, which the figure grows by: 0
+    /// unless the panels of the plots need more than the stretch holds (see [`track`]).
+    overflow: f64,
 }
 
 impl Track {
@@ -215,13 +218,26 @@ impl Track {
 
 /// Lays out one direction of the grid: `before` and `after` are the room of every column
 /// (row) before and after its panel, `start` and `length` the stretch of the figure the grid
-/// fills and `space` the space between two panels as a share of a panel.
+/// fills, `space` the space between two panels as a share of a panel and `spans` the columns
+/// (rows) every plot spans.
 ///
 /// The gap between two neighbouring panels is the larger of `space` times a panel and the room
 /// of the axes between them with [`PAD`]; the size of a panel is the one which fills the
 /// stretch. The stretch as a function of the size is increasing and piecewise linear, so the
 /// size is found on the piece where the gaps which `space` decides are the ones below it.
-fn track(start: f64, length: f64, before: &[f64], after: &[f64], space: f64) -> Track {
+///
+/// The panel of every plot is at least [`MIN_PANEL`] long over its span, its cells and the
+/// gaps between them: a grid of many thin cells fits its stretch as long as the plots span
+/// enough of them. Only a grid whose plots cannot have that least panel in the stretch reaches
+/// beyond it, by its `overflow`, which the figure grows by, so no plot is cut off.
+fn track(
+    start: f64,
+    length: f64,
+    before: &[f64],
+    after: &[f64],
+    space: f64,
+    spans: &[u32],
+) -> Track {
     let n = before.len();
     let needs: Vec<f64> = (0..n.saturating_sub(1))
         .map(|c| after[c] + before[c + 1] + PAD)
@@ -243,9 +259,15 @@ fn track(start: f64, length: f64, before: &[f64], after: &[f64], space: f64) -> 
         }
     }
     let total: f64 = sorted.iter().sum();
-    let size = size
-        .unwrap_or((available - total) / n as f64)
-        .max(MIN_PANEL);
+    // a span of k cells is k cells and k - 1 gaps of at least `space` cells long
+    let least = spans
+        .iter()
+        .map(|k| {
+            let k = f64::from((*k).max(1));
+            MIN_PANEL / (k + (k - 1.0) * space)
+        })
+        .fold(0.0, f64::max);
+    let size = size.unwrap_or((available - total) / n as f64).max(least);
     let mut starts = Vec::with_capacity(n);
     let mut at = start + before[0];
     starts.push(at);
@@ -253,7 +275,13 @@ fn track(start: f64, length: f64, before: &[f64], after: &[f64], space: f64) -> 
         at += size + (space * size).max(*need);
         starts.push(at);
     }
-    Track { size, starts }
+    // beyond the stretch by more than the rounding of the sums
+    let beyond = at + size + after[n - 1] - start - length;
+    Track {
+        size,
+        starts,
+        overflow: if beyond > 1e-6 { beyond } else { 0.0 },
+    }
 }
 
 /// The room of every column and row of the grid around its panels.
@@ -300,16 +328,20 @@ fn title_band(figure: &Figure) -> f64 {
     }
 }
 
-/// The panels of the plots for the depths of their plots, with the room of the grid.
-fn grid(figure: &Figure, depths: &[Sides]) -> (Vec<Rect>, Room) {
+/// The panels of the plots for the depths of their plots, with the room of the grid and the
+/// pixels the grid reaches beyond the width and the height of the figure.
+fn grid(figure: &Figure, depths: &[Sides]) -> (Vec<Rect>, Room, (f64, f64)) {
     let band = title_band(figure);
     let r = room(figure, depths);
+    let column_spans: Vec<u32> = figure.plots.iter().map(|p| p.column_span).collect();
+    let row_spans: Vec<u32> = figure.plots.iter().map(|p| p.row_span).collect();
     let columns = track(
         PAD,
         figure.width - 2.0 * PAD,
         &r.left,
         &r.right,
         figure.grid.wspace,
+        &column_spans,
     );
     let rows = track(
         band + PAD,
@@ -317,6 +349,7 @@ fn grid(figure: &Figure, depths: &[Sides]) -> (Vec<Rect>, Room) {
         &r.top,
         &r.bottom,
         figure.grid.hspace,
+        &row_spans,
     );
     let panels = figure
         .plots
@@ -332,7 +365,7 @@ fn grid(figure: &Figure, depths: &[Sides]) -> (Vec<Rect>, Room) {
             }
         })
         .collect();
-    (panels, r)
+    (panels, r, (columns.overflow, rows.overflow))
 }
 
 /// The panels of a plain division of the figure into its grid, for the first resolution of the
@@ -378,10 +411,10 @@ pub(crate) fn plan(figure: &Figure) -> Plan {
     let depths_of =
         |prepared: &[Prepared]| -> Vec<Sides> { prepared.iter().map(|p| p.depth).collect() };
     let first = prepare_all(&estimate(figure));
-    let (panels, _) = grid(figure, &depths_of(&first));
+    let (panels, _, _) = grid(figure, &depths_of(&first));
     let sizes: Vec<(f64, f64)> = panels.iter().map(|r| (r.width, r.height)).collect();
-    let prepared = prepare_all(&sizes);
-    let (mut panels, room) = grid(figure, &depths_of(&prepared));
+    let mut prepared = prepare_all(&sizes);
+    let (mut panels, room, (grid_wider, grid_taller)) = grid(figure, &depths_of(&prepared));
 
     let plot_entries: Vec<Vec<Entry>> = figure
         .plots
@@ -401,20 +434,25 @@ pub(crate) fn plan(figure: &Figure) -> Plan {
         w + 2.0 * LEGEND_INSET <= panel.width && h + 2.0 * LEGEND_INSET <= panel.height
     };
     let inside = figure.legend.position == LegendPosition::Inside;
-    // the corner of a legend inside the panel of the plot at `i`: none when it does not fit
-    // into the panel or when even its best corner covers more than `INSIDE_LIMIT` of its frame
-    // with data
-    let corner_of = |i: usize, size: (f64, f64)| -> Option<usize> {
+    // the location of a legend inside the panel of the plot at `i`: the `legend_loc` of the
+    // plot or the `loc` of the figure, `best` resolved by the data; none when it does not fit
+    // into the panel
+    let loc_of = |i: usize, size: (f64, f64)| -> Option<LegendLoc> {
         if !(inside && fits(&panels[i], size)) {
             return None;
         }
-        let panel = (panels[i].width, panels[i].height);
-        let (k, share) = best_corner(&figure.plots[i], &prepared[i], panel, size);
-        (share <= INSIDE_LIMIT).then_some(k)
+        let plot = &figure.plots[i];
+        match plot.legend_loc.unwrap_or(figure.legend.loc) {
+            LegendLoc::Best => {
+                let panel = (panels[i].width, panels[i].height);
+                Some(best_loc(plot, &prepared[i], panel, size))
+            }
+            loc => Some(loc),
+        }
     };
     // every legend with where it goes and the room it takes (the largest of the legends it may
-    // show, `legend::room`); a legend inside which does not fit into its panel, or whose every
-    // corner covers too much data, goes outside instead
+    // show, `legend::room`); a legend inside which does not fit into its panel goes outside
+    // instead
     let mut pending: Vec<Pending> = Vec::new();
     match figure.legend.scope {
         LegendScope::Plot => {
@@ -422,8 +460,8 @@ pub(crate) fn plan(figure: &Figure) -> Plan {
                 let Some(size) = legend::room(&list, &declared(&figure.plots[i]), fonts) else {
                     continue;
                 };
-                let place = match corner_of(i, size) {
-                    Some(k) => Place::Inside(i, k),
+                let place = match loc_of(i, size) {
+                    Some(loc) => Place::Inside(i, loc),
                     None => Place::RightOfPlot(i),
                 };
                 pending.push((
@@ -461,8 +499,8 @@ pub(crate) fn plan(figure: &Figure) -> Plan {
                     .filter(|(_, p)| p.row as usize == r && p.legend)
                     .max_by_key(|(i, p)| (p.column + p.column_span, usize::MAX - i))
                     .map(|(i, _)| i);
-                let place = match host.and_then(|i| Some((i, corner_of(i, size)?))) {
-                    Some((i, k)) => Place::Inside(i, k),
+                let place = match host.and_then(|i| Some((i, loc_of(i, size)?))) {
+                    Some((i, loc)) => Place::Inside(i, loc),
                     None => Place::RightOfGrid(r),
                 };
                 pending.push((LegendOwner::Row(r as u32), place, list, size));
@@ -488,7 +526,7 @@ pub(crate) fn plan(figure: &Figure) -> Plan {
         r.x += a;
         r.width += b - a;
     }
-    let mut width = figure.width + extra.iter().sum::<f64>();
+    let mut width = figure.width + grid_wider + extra.iter().sum::<f64>();
     // the legends right of the grid
     let grid_right = figure
         .plots
@@ -569,7 +607,7 @@ pub(crate) fn plan(figure: &Figure) -> Plan {
         // a legend moves with the first row of its plot or row
         rect.y += down[*first];
     }
-    let height = figure.height + overflow.iter().sum::<f64>();
+    let height = figure.height + grid_taller + overflow.iter().sum::<f64>();
     // the legends inside, in the panels where they end up
     let mut legends = Vec::with_capacity(pending.len());
     let mut entries = Vec::with_capacity(pending.len());
@@ -578,7 +616,7 @@ pub(crate) fn plan(figure: &Figure) -> Plan {
         // nothing moves when entries come and go; a legend which draws nothing now is no frame
         let rect = match (place, out) {
             (_, Some((rect, _, _))) => rect,
-            (Place::Inside(i, k), None) => corner_rect(panels[i], size, k),
+            (Place::Inside(i, loc), None) => loc_rect(panels[i], size, loc),
             (Place::RightOfPlot(_) | Place::RightOfGrid(_), None) => continue,
         };
         if list.is_empty() {
@@ -587,6 +625,16 @@ pub(crate) fn plan(figure: &Figure) -> Plan {
         legends.push((owner, rect, list));
     }
 
+    // a plot with an aspect has the limits of the panel it ends up with: one whose panel is
+    // not the one it was prepared for (the room of the axes changed after the first
+    // preparation, or a legend outside widened a column of its span) is prepared again for its
+    // panel, in the room the layout gave it
+    for ((p, r), prep) in figure.plots.iter().zip(&panels).zip(prepared.iter_mut()) {
+        let (w, h) = prep.panel;
+        if p.aspect.is_some() && ((r.width - w).abs() > 1e-6 || (r.height - h).abs() > 1e-6) {
+            *prep = render::prepare(figure, p, (r.width, r.height));
+        }
+    }
     let canvases: Vec<Rect> = figure
         .plots
         .iter()
@@ -672,34 +720,47 @@ fn declared(p: &Plot) -> Vec<&[String]> {
     }
 }
 
-/// The corner of a legend of `size` inside the panel of a plot of `panel` size and the share
-/// of its frame the data covers there: the corner whose frame covers the least ink of the
-/// data (`Ink`), the upper right, the upper left, the lower right and the lower left in this
-/// order on a tie.
-fn best_corner(plot: &Plot, prep: &Prepared, panel: (f64, f64), size: (f64, f64)) -> (usize, f64) {
+/// The location `best` of a legend of `size` inside the panel of a plot of `panel` size: of
+/// matplotlib's locations the one whose frame covers the least ink of the data (`Ink`), the
+/// first in the order of [`LegendLoc::CANDIDATES`] on a tie, as matplotlib's `best`.
+fn best_loc(plot: &Plot, prep: &Prepared, panel: (f64, f64), size: (f64, f64)) -> LegendLoc {
     let ink = Ink::of_plot(plot, prep, panel);
     let origin = Rect {
         width: panel.0,
         height: panel.1,
         ..Rect::default()
     };
-    let mut best = (0, f64::INFINITY);
-    for k in 0..4 {
-        let r = corner_rect(origin, size, k);
+    let mut best = (LegendLoc::UpperRight, f64::INFINITY);
+    for loc in LegendLoc::CANDIDATES {
+        let r = loc_rect(origin, size, loc);
         let share = ink.coverage((r.x, r.y, r.width, r.height));
         if share < best.1 {
-            best = (k, share);
+            best = (loc, share);
         }
     }
-    best
+    best.0
 }
 
-/// The frame of a legend of `size` in the corner `k` of a panel: the upper right, the upper
-/// left, the lower right and the lower left.
-fn corner_rect(panel: Rect, (w, h): (f64, f64), k: usize) -> Rect {
+/// The frame of a legend of `size` at a location of a panel, `LEGEND_INSET` from its edges;
+/// `best` is resolved before (see [`best_loc`]) and stands for the upper right here.
+fn loc_rect(panel: Rect, (w, h): (f64, f64), loc: LegendLoc) -> Rect {
     let (left, right) = (panel.x + LEGEND_INSET, panel.right() - LEGEND_INSET - w);
     let (top, bottom) = (panel.y + LEGEND_INSET, panel.bottom() - LEGEND_INSET - h);
-    let (x, y) = [(right, top), (left, top), (right, bottom), (left, bottom)][k];
+    let (center, middle) = (
+        panel.x + (panel.width - w) / 2.0,
+        panel.y + (panel.height - h) / 2.0,
+    );
+    let (x, y) = match loc {
+        LegendLoc::Best | LegendLoc::UpperRight => (right, top),
+        LegendLoc::UpperLeft => (left, top),
+        LegendLoc::LowerLeft => (left, bottom),
+        LegendLoc::LowerRight => (right, bottom),
+        LegendLoc::Right | LegendLoc::CenterRight => (right, middle),
+        LegendLoc::CenterLeft => (left, middle),
+        LegendLoc::LowerCenter => (center, bottom),
+        LegendLoc::UpperCenter => (center, top),
+        LegendLoc::Center => (center, middle),
+    };
     Rect {
         x: x.max(panel.x),
         y: y.max(panel.y),
@@ -793,15 +854,83 @@ mod tests {
     #[test]
     fn a_track_fills_its_stretch() {
         // two panels with room 30 left and 20 right of each and a space of 0.3 of a panel
-        let t = track(10.0, 500.0, &[30.0, 30.0], &[20.0, 20.0], 0.3);
+        let t = track(10.0, 500.0, &[30.0, 30.0], &[20.0, 20.0], 0.3, &[1, 1]);
         let gap = (0.3 * t.size).max(20.0 + 30.0 + PAD);
         assert!((30.0 + 2.0 * t.size + gap + 20.0 - 500.0).abs() < 1e-9);
         assert_eq!(t.starts[0], 40.0);
         assert!((t.starts[1] - (40.0 + t.size + gap)).abs() < 1e-9);
         // a wide space decides the gap, a narrow one leaves it to the axes
-        let wide = track(0.0, 1000.0, &[10.0, 10.0], &[10.0, 10.0], 1.0);
+        let wide = track(0.0, 1000.0, &[10.0, 10.0], &[10.0, 10.0], 1.0, &[1]);
         assert!((wide.starts[1] - wide.starts[0] - 2.0 * wide.size).abs() < 1e-9);
-        let narrow = track(0.0, 1000.0, &[10.0, 10.0], &[10.0, 10.0], 0.0);
+        let narrow = track(0.0, 1000.0, &[10.0, 10.0], &[10.0, 10.0], 0.0, &[1]);
         assert!((narrow.starts[1] - narrow.starts[0] - narrow.size - 28.0).abs() < 1e-9);
+        assert_eq!(t.overflow + wide.overflow + narrow.overflow, 0.0);
+    }
+
+    /// The end of the last panel of a track and the room after it.
+    fn track_end(t: &Track, after: f64) -> f64 {
+        t.starts[t.starts.len() - 1] + t.size + after
+    }
+
+    #[test]
+    fn thin_cells_fit_when_the_plots_span_enough_of_them() {
+        // 32 columns of a space of 1.2 in 1209 pixels: a cell is 17.5 pixels, below the least
+        // panel, but the plots span 8 columns each, so the grid fills its stretch
+        let (before, after) = (vec![0.0; 32], vec![0.0; 32]);
+        let t = track(8.0, 1209.0, &before, &after, 1.2, &[8, 8, 8, 8]);
+        assert!(t.size < MIN_PANEL);
+        assert_eq!(t.overflow, 0.0);
+        assert!((track_end(&t, 0.0) - (8.0 + 1209.0)).abs() < 1e-9);
+        // a plot of one cell needs the least panel: the grid reaches beyond its stretch and
+        // says by how much
+        let one = track(8.0, 1209.0, &before, &after, 1.2, &[1, 8]);
+        assert_eq!(one.size, MIN_PANEL);
+        assert!((track_end(&one, 0.0) - (8.0 + 1209.0) - one.overflow).abs() < 1e-9);
+        assert!(one.overflow > 0.0);
+    }
+
+    #[test]
+    fn a_wide_grid_fits_the_figure() {
+        let mut plots = Vec::new();
+        for k in 0..4 {
+            plots.push(format!(
+                r#"{{"id": "p{k}", "row": 0, "column": {c}, "column_span": 8,
+                    "x": {{}}, "y": {{}}, "elements": [{{"id": "c{k}", "kind": "curve",
+                    "x": [0, 1], "y": [0, 1]}}]}}"#,
+                c = 8 * k
+            ));
+        }
+        let spec = format!(
+            r#"{{"contract": "figure/1", "width": 1225, "height": 300,
+                "grid": {{"rows": 1, "columns": 32, "wspace": 1.2}}, "plots": [{}]}}"#,
+            plots.join(",")
+        );
+        let figure = crate::parse(&spec).unwrap();
+        let lay = plan(&figure).layout;
+        assert_eq!(lay.width, 1225.0);
+        for b in &lay.plots {
+            assert!(b.rect.right() <= 1225.0 - PAD + 1e-9, "{b:?}");
+        }
+    }
+
+    #[test]
+    fn a_span_of_thin_rows_keeps_its_plot_in_the_figure() {
+        // a heatmap over 3 of 5 thin rows and a panel over 2 of them, as a 3:2 split
+        let spec = r#"{"contract": "figure/1", "width": 400, "height": 200,
+            "grid": {"rows": 5, "columns": 1},
+            "plots": [
+                {"id": "a", "row": 0, "column": 0, "row_span": 3, "x": {"label": "t"},
+                 "y": {"label": "z"}, "elements": []},
+                {"id": "b", "row": 3, "column": 0, "row_span": 2, "x": {"label": "t"},
+                 "y": {"label": "f"}, "elements": []}]}"#;
+        let figure = crate::parse(spec).unwrap();
+        let plan = plan(&figure);
+        assert_eq!(plan.layout.height, 200.0);
+        for c in &plan.canvases {
+            assert!(c.bottom() <= 200.0 + 1e-9, "{c:?}");
+        }
+        // the rows are thinner than the least panel, the spans are not
+        let a = plan.layout.plots[0].rect;
+        assert!(a.height >= MIN_PANEL, "{a:?}");
     }
 }

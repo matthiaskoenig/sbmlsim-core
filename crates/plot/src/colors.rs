@@ -1,6 +1,11 @@
 //! The colour scales of the figures: matplotlib's colour maps as tables of 256 colours, and the
 //! map from values to their colours ([`color_scale`]).
 //!
+//! The maps are the sequential and the diverging maps of matplotlib (since 0.30.0; viridis,
+//! magma, rdbu, coolwarm and greys before), each named in lower case (`blues`, `purd`,
+//! `ylorrd`) and with a reversed variant `<name>_r` whose colours are those of matplotlib's
+//! `<name>_r` ([`ColorScaleName`], [`COLOR_SCALES`]).
+//!
 //! A value becomes its share `t` of the scale, `(v - low) / (high - low)`, or of the decades
 //! with `log`; with a `center` the values from `low` to `center` take the lower half of the
 //! table and the values from `center` to `high` the upper half (matplotlib's `TwoSlopeNorm`).
@@ -13,27 +18,74 @@
 //! [`NO_VALUE_COLOR`]. The tables are constant data and the logarithm is `libm`'s, so the native
 //! and the wasm build give the same colours.
 
-use crate::spec::{ColorScale, ColorScaleName};
+use std::fmt;
+use std::str::FromStr;
+
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+use crate::spec::ColorScale;
 
 include!("colors_table.rs");
 
-/// The names of the colour scales, the values of `name` of a scale of the spec.
-pub const COLOR_SCALES: &[&str] = &["viridis", "magma", "rdbu", "coolwarm", "greys"];
+impl ColorScaleName {
+    /// The scale of a name of the spec, `None` for a name which is none.
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|s| s.name() == name)
+    }
+
+    /// The colour `0xrrggbb` at the entry `index` (0 to 255) of the scale.
+    fn entry(self, index: usize) -> u32 {
+        let (table, reversed) = self.table();
+        table[if reversed { 255 - index } else { index }]
+    }
+}
+
+/// The message of a name which is no colour scale, with the name in lower case when that is one
+/// (matplotlib writes `Blues`, the spec `blues`).
+pub(crate) fn unknown_scale(name: &str) -> String {
+    let lower = name.to_lowercase();
+    let hint = if ColorScaleName::from_name(&lower).is_some() {
+        format!(", did you mean `{lower}`?")
+    } else {
+        String::new()
+    };
+    format!(
+        "unknown color scale `{name}`, expected a sequential or diverging colour map of \
+         matplotlib in lower case, or its reversal `<name>_r`, e.g. viridis, blues, rdbu or \
+         purd_r{hint}"
+    )
+}
+
+impl fmt::Display for ColorScaleName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
+impl FromStr for ColorScaleName {
+    type Err = String;
+
+    fn from_str(name: &str) -> Result<Self, Self::Err> {
+        Self::from_name(name).ok_or_else(|| unknown_scale(name))
+    }
+}
+
+impl Serialize for ColorScaleName {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(self.name())
+    }
+}
+
+impl<'de> Deserialize<'de> for ColorScaleName {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let name = String::deserialize(d)?;
+        name.parse().map_err(serde::de::Error::custom)
+    }
+}
 
 /// The colour of a value which has none: NaN, or a value which is not positive on a log scale
 /// (matplotlib's `lightgrey`, the colour of an undefined cell of the heatmaps of sbmlsim).
 pub const NO_VALUE_COLOR: &str = "#d3d3d3";
-
-/// The table of a colour scale.
-fn table(name: ColorScaleName) -> &'static [u32; 256] {
-    match name {
-        ColorScaleName::Viridis => &VIRIDIS,
-        ColorScaleName::Magma => &MAGMA,
-        ColorScaleName::Rdbu => &RDBU,
-        ColorScaleName::Coolwarm => &COOLWARM,
-        ColorScaleName::Greys => &GREYS,
-    }
-}
 
 /// The coordinate of a value on a scale: the value, or its `log10` on a log scale; NaN for a
 /// value the scale cannot show.
@@ -92,7 +144,7 @@ pub(crate) fn color_at(name: ColorScaleName, t: f64) -> String {
     } else {
         ((t * n).floor() as usize).min(255)
     };
-    format!("#{:06x}", table(name)[index])
+    format!("#{:06x}", name.entry(index))
 }
 
 /// The share of the table of a scale a share of the scale reads: `start + t (end - start)`
@@ -137,16 +189,34 @@ mod tests {
 
     #[test]
     fn every_name_has_a_table() {
-        for (name, text) in [
-            (ColorScaleName::Viridis, "viridis"),
-            (ColorScaleName::Magma, "magma"),
-            (ColorScaleName::Rdbu, "rdbu"),
-            (ColorScaleName::Coolwarm, "coolwarm"),
-            (ColorScaleName::Greys, "greys"),
-        ] {
-            assert!(COLOR_SCALES.contains(&text));
-            assert_eq!(table(name).len(), 256);
+        assert_eq!(COLOR_SCALES.len(), ColorScaleName::ALL.len());
+        for (name, text) in ColorScaleName::ALL.into_iter().zip(COLOR_SCALES) {
+            assert_eq!(name.name(), *text);
+            assert_eq!(ColorScaleName::from_name(text), Some(name));
+            assert_eq!(name.table().0.len(), 256);
         }
+        // the names of 0.29 keep their scales
+        for text in ["viridis", "magma", "rdbu", "coolwarm", "greys"] {
+            assert!(COLOR_SCALES.contains(&text), "{text}");
+        }
+    }
+
+    #[test]
+    fn a_reversed_scale_reads_its_map_from_the_high_end() {
+        let (blues, blues_r) = (ColorScaleName::Blues, ColorScaleName::BluesR);
+        assert_eq!(blues.entry(0), blues_r.entry(255));
+        assert_eq!(blues.entry(255), blues_r.entry(0));
+        // matplotlib's `Blues` from white to dark blue
+        assert_eq!(blues.entry(0), 0xf7fbff);
+        assert_eq!(blues.entry(255), 0x08306b);
+    }
+
+    #[test]
+    fn names_in_the_case_of_matplotlib_are_refused_with_a_hint() {
+        let e = "Blues".parse::<ColorScaleName>().unwrap_err();
+        assert!(e.contains("did you mean `blues`"), "{e}");
+        let e = "jet".parse::<ColorScaleName>().unwrap_err();
+        assert!(!e.contains("did you mean"), "{e}");
     }
 
     #[test]

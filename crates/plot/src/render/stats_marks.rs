@@ -18,6 +18,7 @@ use charton::prelude::*;
 use super::axis::ResolvedAxis;
 use super::marks::{
     ERROR_WIDTH, Layers, Stroke, dash, dataset, error_runs, fill_of, group_name, path_layer,
+    per_pixel,
 };
 use crate::spec::{BoxStats, Density, MarkerType, Style};
 use crate::svg::{LayerInfo, MarkerGlyph, theme};
@@ -176,6 +177,10 @@ pub(crate) struct Bars<'a> {
     pub horizontal: bool,
     /// Width in units of the axis of the positions.
     pub width: Option<f64>,
+    /// The length of the caps of the error bars in pixels, 0 for none.
+    pub error_cap: f64,
+    /// The width and the height of the panel in pixels.
+    pub panel: (f64, f64),
 }
 
 /// The layers of bars: one ring per bar from 0 to its height, outlined by the line the style
@@ -215,7 +220,14 @@ pub(crate) fn bar_layers(
             dash: Vec::new(),
             opacity: style.opacity,
         };
-        let runs = error_runs(bars.height, err, &centers, across, bars.horizontal);
+        // a cap runs along the axis of the positions
+        let pixels = if bars.horizontal {
+            bars.panel.1
+        } else {
+            bars.panel.0
+        };
+        let cap = bars.error_cap * per_pixel(along, pixels);
+        let runs = error_runs(bars.height, err, &centers, across, bars.horizontal, cap);
         if let Some(l) = path_layer(&runs, &stroke, true)? {
             layers.push(l, info(index));
         }

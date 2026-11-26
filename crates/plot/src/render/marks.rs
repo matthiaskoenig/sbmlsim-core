@@ -6,7 +6,8 @@
 //! (`ResolvedAxis::u`), a value the axis cannot show splits a line, a band or an area into
 //! runs (one path or polygon per run, never a NaN), a band and an area are closed polygons
 //! (Charton's area has no lower edge), error bars are open paths of one subpath per point (no
-//! caps, matplotlib's default), and a rule is a line from end to end of the other axis. Every
+//! caps by default, as matplotlib; with `error_cap` a cap of that length in pixels across each
+//! end, since 0.30.0), and a rule is a line from end to end of the other axis. Every
 //! layer is recorded with the element it draws, so the writer groups the layers of one element.
 //!
 //! The marker of a curve is drawn by the writer at every point Charton places, so every shape of
@@ -207,36 +208,58 @@ pub(crate) fn fill_of(style: &Style, color: &str) -> (String, f64) {
     }
 }
 
-/// The error bars of a curve along one axis: a segment per point from `v - e` to `v + e`.
+/// The error bars of a curve along one axis: a segment per point from `v - e` to `v + e`, and
+/// with a `cap` a segment across each end which the axis shows, `cap` coordinates of the other
+/// axis long (0 for none).
 ///
 /// `along` is the axis of the error, `across` the coordinates of the other axis; an end the axis
-/// cannot show (below 0 on a logarithmic axis) is the lower end of the axis.
+/// cannot show (below 0 on a logarithmic axis) is the lower end of the axis, and has no cap.
 pub(crate) fn error_runs(
     values: &[f64],
     errors: &[f64],
     across: &[f64],
     along: &ResolvedAxis,
     horizontal: bool,
+    cap: f64,
 ) -> Vec<(Vec<f64>, Vec<f64>)> {
     let start = along.u(along.low);
     let mut out = Vec::new();
+    let mut segment = |a: (f64, f64), b: (f64, f64)| {
+        if horizontal {
+            out.push((vec![a.0, b.0], vec![a.1, b.1]));
+        } else {
+            out.push((vec![a.1, b.1], vec![a.0, b.0]));
+        }
+    };
     for i in 0..values.len() {
         let (v, e, c) = (values[i], errors[i], across[i]);
         if !(v.is_finite() && e.is_finite() && c.is_finite() && along.u(v).is_finite()) {
             continue;
         }
-        let end = |w: f64| {
-            let u = along.u(w);
-            if u.is_finite() { u } else { start }
-        };
+        let end = |w: f64| along.u(w);
         let (a, b) = (end(v - e.abs()), end(v + e.abs()));
-        if horizontal {
-            out.push((vec![a, b], vec![c, c]));
-        } else {
-            out.push((vec![c, c], vec![a, b]));
+        segment(
+            (if a.is_finite() { a } else { start }, c),
+            (if b.is_finite() { b } else { start }, c),
+        );
+        if cap > 0.0 && e != 0.0 {
+            let half = cap / 2.0;
+            for u in [a, b].into_iter().filter(|u| u.is_finite()) {
+                segment((u, c - half), (u, c + half));
+            }
         }
     }
     out
+}
+
+/// The coordinates of the axis of `along` one pixel of a panel of `pixels` along it spans.
+pub(crate) fn per_pixel(along: &ResolvedAxis, pixels: f64) -> f64 {
+    let (lo, hi) = along.domain();
+    if pixels > 0.0 {
+        (hi - lo) / pixels
+    } else {
+        0.0
+    }
 }
 
 /// The x domain of a plot as the interval its series are cut to: nothing of a curve, a band or
@@ -249,11 +272,20 @@ fn domain_span(xa: &ResolvedAxis) -> Span {
 /// The data of a curve: x, y and the errors of x and of y.
 type CurveData<'a> = (&'a [f64], &'a [f64], Option<&'a [f64]>, Option<&'a [f64]>);
 
+/// The error bars of a curve: the length of their caps in pixels and the panel in pixels.
+struct ErrorCaps {
+    /// The length of a cap in pixels, 0 for none.
+    cap: f64,
+    /// The width and the height of the panel in pixels.
+    panel: (f64, f64),
+}
+
 /// The layers of a curve: its line, its error bars and its markers.
 fn curve_layers(
     layers: &mut Layers,
     index: usize,
     data: CurveData<'_>,
+    caps: ErrorCaps,
     style: &Style,
     color: &str,
     axes: (&ResolvedAxis, &ResolvedAxis),
@@ -286,13 +318,16 @@ fn curve_layers(
             .map(|(i, a)| if inside(i) { *a } else { f64::NAN })
             .collect()
     };
+    // a cap across an error of x runs along y and one across an error of y along x
+    let (w, h) = caps.panel;
+    let (x_cap, y_cap) = (caps.cap * per_pixel(ya, h), caps.cap * per_pixel(xa, w));
     if let Some(e) = xerr
-        && let Some(l) = path_layer(&error_runs(x, &kept(e), &yu, xa, true), &bar, true)?
+        && let Some(l) = path_layer(&error_runs(x, &kept(e), &yu, xa, true, x_cap), &bar, true)?
     {
         layers.push(l, info());
     }
     if let Some(e) = yerr
-        && let Some(l) = path_layer(&error_runs(y, &kept(e), &xu, ya, false), &bar, true)?
+        && let Some(l) = path_layer(&error_runs(y, &kept(e), &xu, ya, false, y_cap), &bar, true)?
     {
         layers.push(l, info());
     }
@@ -372,11 +407,21 @@ pub(crate) fn build(
             marker: None,
         };
         match &e.kind {
-            ElementKind::Curve { x, y, xerr, yerr } => {
+            ElementKind::Curve {
+                x,
+                y,
+                xerr,
+                yerr,
+                error_cap,
+            } => {
                 curve_layers(
                     &mut layers,
                     index,
                     (x, y, xerr.as_deref(), yerr.as_deref()),
+                    ErrorCaps {
+                        cap: *error_cap,
+                        panel,
+                    },
                     style,
                     color,
                     (xa, ya),
@@ -435,7 +480,14 @@ pub(crate) fn build(
                     layers.push(l, info());
                 }
             }
-            ElementKind::Text { x, y, text, anchor } => {
+            ElementKind::Text {
+                x,
+                y,
+                text,
+                anchor,
+                size,
+                weight,
+            } => {
                 let (u, v) = (xa.u(*x), ya.u(*y));
                 if !(u.is_finite() && v.is_finite()) {
                     continue;
@@ -450,12 +502,18 @@ pub(crate) fn build(
                     crate::spec::Anchor::Middle => "middle",
                     crate::spec::Anchor::End => "end",
                 };
-                let (c, size, opacity) = (color.to_string(), fonts.tick, style.opacity);
+                let (c, opacity) = (color.to_string(), style.opacity);
+                let size = size.unwrap_or(fonts.tick);
+                let weight = match weight {
+                    crate::spec::FontWeight::Normal => "normal",
+                    crate::spec::FontWeight::Bold => "bold",
+                };
                 let chart = Chart::build(&ds)?
                     .mark_text()?
                     .configure_text(move |t| {
                         t.with_color(c.as_str())
                             .with_size(size)
+                            .with_weight(weight)
                             .with_anchor(anchor)
                             .with_opacity(opacity)
                     })
@@ -468,6 +526,7 @@ pub(crate) fn build(
                 err,
                 horizontal,
                 width,
+                error_cap,
             } => stats_marks::bar_layers(
                 &mut layers,
                 index,
@@ -477,6 +536,8 @@ pub(crate) fn build(
                     err: err.as_deref(),
                     horizontal: *horizontal,
                     width: *width,
+                    error_cap: *error_cap,
+                    panel,
                 },
                 style,
                 color,
@@ -518,16 +579,18 @@ pub(crate) fn build(
                 values,
                 text,
                 scale,
+                x_edges,
+                y_edges,
             } => heatmap::heatmap_layers(
                 &mut layers,
                 index,
-                heatmap::Cells {
-                    rows: rows.len(),
-                    columns: columns.len(),
+                heatmap::Cells::of(
+                    (rows, columns),
                     values,
-                    text: text.as_deref(),
+                    text.as_deref(),
                     scale,
-                },
+                    (x_edges.as_deref(), y_edges.as_deref()),
+                ),
                 style,
                 fonts,
                 (xa, ya),
@@ -574,7 +637,9 @@ pub(crate) fn extent(e: &Element, out: &mut Extent, ends: Option<(XEnds, bool)>)
     };
     let (xs, ys) = (&mut out.xs, &mut out.ys);
     match &e.kind {
-        ElementKind::Curve { x, y, xerr, yerr } => {
+        ElementKind::Curve {
+            x, y, xerr, yerr, ..
+        } => {
             with_errors(xs, x, xerr.as_deref());
             with_errors(ys, y, yerr.as_deref());
         }
@@ -610,6 +675,7 @@ pub(crate) fn extent(e: &Element, out: &mut Extent, ends: Option<(XEnds, bool)>)
             err,
             horizontal,
             width,
+            ..
         } => {
             let w = width.unwrap_or(stats_marks::BAR_WIDTH * stats_marks::spacing(x));
             let (positions, values, sticky) = if *horizontal {
@@ -655,9 +721,29 @@ pub(crate) fn extent(e: &Element, out: &mut Extent, ends: Option<(XEnds, bool)>)
             ys.push(0.0);
             out.y_sticky.push(0.0);
         }
-        ElementKind::Heatmap { rows, columns, .. } => {
-            xs.extend([-0.5, columns.len() as f64 - 0.5]);
-            ys.extend([-0.5, rows.len() as f64 - 0.5]);
+        ElementKind::Heatmap {
+            rows,
+            columns,
+            x_edges,
+            y_edges,
+            ..
+        } => {
+            // the cells along an axis with edges span them, and the axis sticks to them as
+            // matplotlib's `pcolormesh` does; along a category axis they span its categories
+            match x_edges {
+                Some(e) => {
+                    xs.extend_from_slice(e);
+                    out.x_sticky.extend_from_slice(e);
+                }
+                None => xs.extend([-0.5, columns.len() as f64 - 0.5]),
+            }
+            match y_edges {
+                Some(e) => {
+                    ys.extend_from_slice(e);
+                    out.y_sticky.extend_from_slice(e);
+                }
+                None => ys.extend([-0.5, rows.len() as f64 - 0.5]),
+            }
         }
         ElementKind::Polygon { paths } => {
             for [x, y] in paths.iter().flatten() {
@@ -685,7 +771,9 @@ fn cut_extent(e: &Element, out: &mut Extent, ends: XEnds, log_y: bool) -> bool {
         }
     };
     match &e.kind {
-        ElementKind::Curve { x, y, xerr, yerr } => {
+        ElementKind::Curve {
+            x, y, xerr, yerr, ..
+        } => {
             let xs = inside(x, x);
             out.xs.extend_from_slice(&xs);
             if let Some(err) = xerr {
@@ -727,6 +815,7 @@ fn cut_extent(e: &Element, out: &mut Extent, ends: XEnds, log_y: bool) -> bool {
             err,
             horizontal: false,
             width,
+            ..
         } => {
             let w = width.unwrap_or(stats_marks::BAR_WIDTH * stats_marks::spacing(x));
             for (k, p) in x.iter().enumerate() {

@@ -543,6 +543,49 @@ test("category_axes_are_pinned_in_the_filtered_figure", () => {
   shown.dispose();
 });
 
+test("readout of a heatmap over the edges of its cells", () => {
+  // a space-time heatmap: its cells over a numeric time axis, the cell read out by its spans
+  const spec = {
+    contract: "figure/1",
+    width: 400,
+    height: 300,
+    grid: { rows: 1, columns: 1 },
+    plots: [
+      {
+        id: "h",
+        row: 0,
+        column: 0,
+        x: { label: "time", unit: "h" },
+        y: { label: "position" },
+        colorbar: { scale: { name: "purd", low: 0, high: 6 }, label: "signal" },
+        elements: [
+          {
+            id: "map",
+            kind: "heatmap",
+            label: "cells",
+            x_edges: [0, 1, 3, 10],
+            y_edges: [0, 0.5, 1],
+            values: [
+              [1, 2, 3],
+              [4, 5, 6],
+            ],
+            scale: { name: "purd", low: 0, high: 6 },
+          },
+        ],
+      },
+    ],
+  };
+  const { window, container } = page();
+  const figure = attachFigure(container, plot, spec);
+  fire(window, svgOf(container), "pointermove", pixelOf(spec, "h", 5, 0.75));
+  assert.equal(tooltip(container).textContent, "cellstime: 3 to 10 hposition: 0.5 to 1signal: 6");
+  // the axis of the edges is no category axis of the filtered figure of a selection
+  fire(window, svgOf(container), "click", pixelOf(spec, "h", 5, 0.75));
+  fire(window, svgOf(container), "pointermove", pixelOf(spec, "h", 0.5, 0.25));
+  assert.equal(tooltip(container).textContent, "cellstime: 0 to 1 hposition: 0 to 0.5signal: 1");
+  figure.dispose();
+});
+
 test("a_hit_of_a_panel_moved_by_a_legend_is_kept", () => {
   // legends outside the plots move the right panel; the filtered figure has no legends, so its
   // panels lie elsewhere, and a hit is searched in the panel under the pointer

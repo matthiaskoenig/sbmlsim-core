@@ -12,7 +12,7 @@ use super::axis::{ResolvedAxis, axis_title};
 use super::{TICK_LABEL_PADDING, TICK_LENGTH, TITLE_GAP};
 use crate::layout::Rect;
 use crate::spec::{Axis, Fonts};
-use crate::svg::{Stack, attr_num, attr_weight, escape, num, text_lines, theme};
+use crate::svg::{Stack, attr_num, attr_weight, num, text_lines, text_node, theme};
 use crate::text::{extra_lines, label_extent, text_width_one_line};
 
 /// The right axis laid out over its ticks.
@@ -25,6 +25,8 @@ pub(crate) struct RightAxis {
     marks: bool,
     /// Whether the tick labels are shown.
     labels: bool,
+    /// Whether the line of the axis is shown.
+    line: bool,
     /// The title, `None` when it is hidden or empty.
     title: Option<String>,
     /// The distance from the spine to the far side of the tick labels.
@@ -69,6 +71,7 @@ pub(crate) fn layout(axis: &Axis, resolved: &ResolvedAxis, fonts: &Fonts) -> Rig
         ticks,
         marks,
         labels,
+        line: axis.line_visible,
         title,
         labels_depth,
         depth,
@@ -87,19 +90,21 @@ pub(crate) fn draw(
     let x = panel.x + panel.width;
     let y_of = |u: f64| panel.y + panel.height * (1.0 - resolved.share(u));
     out.push_str("<g class=\"charton-axis charton-axis-y2\" data-axis=\"y2\">");
-    out.push_str("<g class=\"charton-axis-line\"><path d=\"M");
-    num(out, x);
-    out.push(' ');
-    num(out, panel.y);
-    out.push('L');
-    num(out, x);
-    out.push(' ');
-    num(out, panel.y + panel.height);
-    let _ = write!(
-        out,
-        "\" fill=\"none\" stroke=\"{}\" stroke-width=\"1\"/></g>",
-        theme::FG_SOFT
-    );
+    if layout.line {
+        out.push_str("<g class=\"charton-axis-line\"><path d=\"M");
+        num(out, x);
+        out.push(' ');
+        num(out, panel.y);
+        out.push('L');
+        num(out, x);
+        out.push(' ');
+        num(out, panel.y + panel.height);
+        let _ = write!(
+            out,
+            "\" fill=\"none\" stroke=\"{}\" stroke-width=\"1\"/></g>",
+            theme::FG_SOFT
+        );
+    }
     if layout.marks && !layout.ticks.is_empty() {
         out.push_str("<g class=\"charton-tick\">");
         for (u, _) in &layout.ticks {
@@ -154,7 +159,7 @@ pub(crate) fn draw(
                 out.push_str(")\"");
             }
             out.push('>');
-            escape(out, label);
+            text_node(out, label);
             out.push_str("</text>");
         }
         out.push_str("</g>");

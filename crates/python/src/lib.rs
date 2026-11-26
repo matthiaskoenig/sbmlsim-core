@@ -101,6 +101,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("SIMULATION_CONTRACT", SIMULATION_CONTRACT)?;
     m.add("FIT_CONTRACT", sbmlsim_fit::FIT_CONTRACT)?;
     m.add("FIGURE_CONTRACT", sbmlsim_plot::FIGURE_CONTRACT)?;
+    m.add("COLOR_SCALES", sbmlsim_plot::COLOR_SCALES.to_vec())?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     // the allocator this build routes its allocations through, which is not the same on
     // every platform: see `mod allocator`

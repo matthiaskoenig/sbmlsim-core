@@ -12,11 +12,14 @@
 
 use crate::render::Prepared;
 use crate::render::axis::ResolvedAxis;
+use crate::render::heatmap::cell_span;
 use crate::render::marks::ERROR_WIDTH;
 use crate::render::stats_marks::{
     BAR_WIDTH, BOX_WIDTH, OUTLIER_SIZE, VIOLIN_WIDTH, base_of, box_body, spacing,
 };
-use crate::spec::{ElementKind, LineType, MarkerType, Orientation, Plot, Style, YAxisRef};
+use crate::spec::{
+    ElementKind, LineType, MarkerType, Orientation, Plot, Style, YAxisRef, heatmap_size,
+};
 
 /// The side of a cell of the grid, in pixels.
 const CELL: f64 = 4.0;
@@ -228,7 +231,13 @@ impl Ink {
         let line_width = if lined { line.width } else { 0.0 };
         let marker = &style.marker;
         match kind {
-            ElementKind::Curve { x, y, xerr, yerr } => {
+            ElementKind::Curve {
+                x,
+                y,
+                xerr,
+                yerr,
+                error_cap,
+            } => {
                 self.polyline(x.iter().zip(y).map(|(a, b)| at(*a, *b)), line_width);
                 if marker.kind != MarkerType::None {
                     for (a, b) in x.iter().zip(y) {
@@ -242,18 +251,31 @@ impl Ink {
                     };
                     (end(v - e.abs()), end(v + e.abs()))
                 };
+                let half = error_cap / 2.0;
                 if let Some(err) = xerr {
                     for ((a, b), e) in x.iter().zip(y).zip(err) {
                         let (lo, hi) = ends(xa, *a, *e);
                         let yu = ya.u(*b);
-                        self.segment(pu(lo, yu), pu(hi, yu), ERROR_WIDTH);
+                        let (p, q) = (pu(lo, yu), pu(hi, yu));
+                        self.segment(p, q, ERROR_WIDTH);
+                        if half > 0.0 {
+                            for (cx, cy) in [p, q] {
+                                self.segment((cx, cy - half), (cx, cy + half), ERROR_WIDTH);
+                            }
+                        }
                     }
                 }
                 if let Some(err) = yerr {
                     for ((a, b), e) in x.iter().zip(y).zip(err) {
                         let (lo, hi) = ends(ya, *b, *e);
                         let xu = xa.u(*a);
-                        self.segment(pu(xu, lo), pu(xu, hi), ERROR_WIDTH);
+                        let (p, q) = (pu(xu, lo), pu(xu, hi));
+                        self.segment(p, q, ERROR_WIDTH);
+                        if half > 0.0 {
+                            for (cx, cy) in [p, q] {
+                                self.segment((cx - half, cy), (cx + half, cy), ERROR_WIDTH);
+                            }
+                        }
                     }
                 }
             }
@@ -275,6 +297,7 @@ impl Ink {
                 err,
                 horizontal,
                 width,
+                error_cap,
             } => {
                 let (along, across) = if *horizontal { (ya, xa) } else { (xa, ya) };
                 let bw = width.unwrap_or(BAR_WIDTH * spacing(x));
@@ -287,7 +310,19 @@ impl Ink {
                         let c = along.u(*p);
                         let (lo, hi) = (across.u(v - e.abs()), across.u(v + e.abs()));
                         let lo = if lo.is_finite() { lo } else { base };
-                        self.segment(point(c, lo), point(c, hi), ERROR_WIDTH);
+                        let (p, q) = (point(c, lo), point(c, hi));
+                        self.segment(p, q, ERROR_WIDTH);
+                        let half = error_cap / 2.0;
+                        if half > 0.0 {
+                            for (cx, cy) in [p, q] {
+                                let (from, to) = if *horizontal {
+                                    ((cx, cy - half), (cx, cy + half))
+                                } else {
+                                    ((cx - half, cy), (cx + half, cy))
+                                };
+                                self.segment(from, to, ERROR_WIDTH);
+                            }
+                        }
                     }
                 }
             }
@@ -344,13 +379,21 @@ impl Ink {
                     }
                 }
             }
-            ElementKind::Heatmap { rows, columns, .. } => {
+            ElementKind::Heatmap {
+                rows,
+                columns,
+                x_edges,
+                y_edges,
+                ..
+            } => {
                 // the cells as the renderer draws them, a value without a colour included
-                for i in 0..rows.len() {
-                    for j in 0..columns.len() {
-                        let (r, c) = (i as f64, j as f64);
-                        let (x0, x1) = (xa.u(c - 0.5), xa.u(c + 0.5));
-                        let (y0, y1) = (ya.u(r - 0.5), ya.u(r + 0.5));
+                let (x_edges, y_edges) = (x_edges.as_deref(), y_edges.as_deref());
+                let (n_rows, n_columns) = heatmap_size(rows, columns, x_edges, y_edges);
+                for i in 0..n_rows {
+                    for j in 0..n_columns {
+                        let ((a, b), (c, d)) = (cell_span(x_edges, j), cell_span(y_edges, i));
+                        let (x0, x1) = (xa.u(a), xa.u(b));
+                        let (y0, y1) = (ya.u(c), ya.u(d));
                         self.rect(pu(x0, y0), pu(x1, y1));
                     }
                 }
@@ -534,6 +577,8 @@ mod tests {
             values: vec![vec![1.0, 2.0], vec![3.0, f64::NAN]],
             text: None,
             scale: serde_json::from_str(r#"{"name": "viridis", "low": 0, "high": 4}"#).unwrap(),
+            x_edges: None,
+            y_edges: None,
         };
         let mut ink = Ink::new(100.0, 100.0);
         ink.element(&kind, &Style::default(), (&xa, &ya));

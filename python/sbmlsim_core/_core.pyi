@@ -8,6 +8,11 @@ from typing import Any
 import numpy
 import numpy.typing
 
+COLOR_SCALES: list[str]
+"""The names of the colour scales of the figures, every map followed by its reversal `<name>_r`.
+
+Since 0.30.0: the sequential and the diverging colour maps of matplotlib in lower case.
+"""
 FIGURE_CONTRACT: str
 FIT_CONTRACT: str
 MODEL_CONTRACT: str
