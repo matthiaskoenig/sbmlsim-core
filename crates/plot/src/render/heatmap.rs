@@ -4,7 +4,10 @@
 //! `i - 0.5..i + 0.5` on the y axis, the positions of the categories of a category axis. An
 //! axis of the plot which is linear and has no categories of its own becomes the category axis
 //! of the names of the first heatmap of the plot ([`plot_axes`]): its columns along x and its
-//! rows along y, row 0 at the bottom unless the axis is reversed.
+//! rows along y, row 0 at the bottom unless the axis is reversed. Since 0.30.0 a heatmap may
+//! give the edges of its cells along an axis instead (`x_edges`, `y_edges`): its column `j`
+//! spans `x_edges[j]..x_edges[j + 1]` of a numeric x axis (its row `i` likewise on y), which
+//! stays a numeric axis another plot may share, e.g. the time of a space-time heatmap.
 //!
 //! The crate computes the colour of every cell with [`color_scale`] and draws the cells as
 //! rings with that fill, one Charton layer per colour, so no colour depends on the order in
@@ -32,7 +35,7 @@ use crate::colors::{color_of, color_scale, dark_text_on};
 use crate::spec::{
     Axis, AxisScale, ColorBar, ColorScale, ElementKind, Fonts, Plot, Style, YAxisRef,
 };
-use crate::svg::{self, LayerInfo, escape, theme};
+use crate::svg::{self, LayerInfo, theme};
 use crate::text::{extra_lines, text_width_one_line};
 
 /// The share of the width of a cell its text may take.
@@ -62,15 +65,24 @@ const GRADIENT_STEPS: usize = 64;
 /// has no categories becomes the category axis of the columns (x) or rows (y) of the heatmap.
 pub(crate) fn plot_axes(plot: &Plot) -> (Cow<'_, Axis>, Cow<'_, Axis>) {
     let first = plot.elements.iter().find_map(|e| match &e.kind {
-        ElementKind::Heatmap { rows, columns, .. } if e.axis == YAxisRef::Y => {
-            Some((rows, columns))
-        }
+        ElementKind::Heatmap {
+            rows,
+            columns,
+            x_edges,
+            y_edges,
+            ..
+        } if e.axis == YAxisRef::Y => Some((
+            y_edges.is_none().then_some(rows),
+            x_edges.is_none().then_some(columns),
+        )),
         _ => None,
     });
     let Some((rows, columns)) = first else {
         return (Cow::Borrowed(&plot.x), Cow::Borrowed(&plot.y));
     };
-    let categorize = |axis: &Axis, names: &[String]| -> Option<Axis> {
+    // an axis along which the heatmap gives edges stays numeric
+    let categorize = |axis: &Axis, names: Option<&Vec<String>>| -> Option<Axis> {
+        let names = names?;
         (axis.scale == AxisScale::Linear && axis.categories.is_none()).then(|| Axis {
             scale: AxisScale::Category,
             categories: Some(names.to_vec()),
@@ -95,6 +107,51 @@ pub(crate) struct Cells<'a> {
     pub text: Option<&'a [Vec<String>]>,
     /// The colour scale of the values.
     pub scale: &'a ColorScale,
+    /// The edges of the columns along x, `None` for the categories of x.
+    pub x_edges: Option<&'a [f64]>,
+    /// The edges of the rows along y, `None` for the categories of y.
+    pub y_edges: Option<&'a [f64]>,
+}
+
+impl<'a> Cells<'a> {
+    /// The cells of a heatmap of the spec.
+    pub(crate) fn of(
+        (rows, columns): (&'a [String], &'a [String]),
+        values: &'a [Vec<f64>],
+        text: Option<&'a [Vec<String>]>,
+        scale: &'a ColorScale,
+        (x_edges, y_edges): (Option<&'a [f64]>, Option<&'a [f64]>),
+    ) -> Self {
+        let (rows, columns) = crate::spec::heatmap_size(rows, columns, x_edges, y_edges);
+        Cells {
+            rows,
+            columns,
+            values,
+            text,
+            scale,
+            x_edges,
+            y_edges,
+        }
+    }
+
+    /// The span of the column `j` on the x axis in its values.
+    pub(crate) fn x_span(&self, j: usize) -> (f64, f64) {
+        cell_span(self.x_edges, j)
+    }
+
+    /// The span of the row `i` on the y axis in its values.
+    pub(crate) fn y_span(&self, i: usize) -> (f64, f64) {
+        cell_span(self.y_edges, i)
+    }
+}
+
+/// The span of the cell `k` along an axis of a heatmap in the values of the axis: between its
+/// edges, or around the position `k` of its category without edges.
+pub(crate) fn cell_span(edges: Option<&[f64]>, k: usize) -> (f64, f64) {
+    match edges {
+        Some(e) => (e[k], e[k + 1]),
+        None => (k as f64 - 0.5, k as f64 + 0.5),
+    }
 }
 
 /// The layers of a heatmap: a ring per cell in the colour of its value, a layer per colour,
@@ -132,9 +189,9 @@ pub(crate) fn heatmap_layers(
     let mut centers = Vec::new();
     for i in 0..cells.rows {
         for j in 0..cells.columns {
-            let (r, c) = (i as f64, j as f64);
-            let (x0, x1) = (xa.u(c - 0.5), xa.u(c + 0.5));
-            let (y0, y1) = (ya.u(r - 0.5), ya.u(r + 0.5));
+            let ((a, b), (c, d)) = (cells.x_span(j), cells.y_span(i));
+            let (x0, x1) = (xa.u(a), xa.u(b));
+            let (y0, y1) = (ya.u(c), ya.u(d));
             if ![x0, x1, y0, y1].iter().all(|v| v.is_finite()) {
                 continue;
             }
@@ -155,10 +212,22 @@ pub(crate) fn heatmap_layers(
         return Ok(());
     };
     // one size for every cell: the size of the ticks, smaller where the widest text needs it
+    // in the narrowest cell (every cell of a category axis is one unit wide)
     let (x0, x1) = xa.domain();
     let (y0, y1) = ya.domain();
-    let cell_w = width / (x1 - x0).max(f64::MIN_POSITIVE);
-    let cell_h = height / (y1 - y0).max(f64::MIN_POSITIVE);
+    let narrowest = |n: usize, span: &dyn Fn(usize) -> (f64, f64), axis: &ResolvedAxis| {
+        (0..n)
+            .map(|k| {
+                let (a, b) = span(k);
+                (axis.u(b) - axis.u(a)).abs()
+            })
+            .filter(|d| d.is_finite())
+            .fold(f64::INFINITY, f64::min)
+    };
+    let cell_w = width * narrowest(cells.columns, &|j| cells.x_span(j), xa)
+        / (x1 - x0).max(f64::MIN_POSITIVE);
+    let cell_h =
+        height * narrowest(cells.rows, &|i| cells.y_span(i), ya) / (y1 - y0).max(f64::MIN_POSITIVE);
     let widest = text
         .iter()
         .flatten()
@@ -249,6 +318,7 @@ pub(crate) fn colorbar_layout(bar: &ColorBar, fonts: &Fonts, length: f64) -> Col
         label_visible: true,
         ticks_visible: true,
         tick_marks_visible: None,
+        line_visible: true,
         tick_rotation: 0.0,
     };
     let resolved = || axis::resolve(&scale_axis, &[], &[], length, COLORBAR_TICK_ROOM);
@@ -468,7 +538,7 @@ pub(crate) fn draw_colorbar(
         attr(body, "x", lx);
         attr(body, "y", py + ph * (1.0 - t));
         body.push_str(" dominant-baseline=\"middle\">");
-        escape(body, label);
+        svg::text_node(body, label);
         body.push_str("</text>");
     }
     body.push_str("</g>");

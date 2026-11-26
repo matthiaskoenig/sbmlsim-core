@@ -199,6 +199,43 @@ def test_plot_wasm_magic() -> None:
 def test_color_scale_unknown_name() -> None:
     with pytest.raises(ValueError, match="viridis"):
         sbmlsim_core.color_scale("jet", 0.0, 1.0, [0.5])
+    # the name of matplotlib in its case is refused with the name of the spec
+    with pytest.raises(ValueError, match="did you mean `blues`"):
+        sbmlsim_core.color_scale("Blues", 0.0, 1.0, [0.5])
+
+
+def test_color_scales_of_matplotlib() -> None:
+    names = sbmlsim_core.COLOR_SCALES
+    assert len(names) == 108
+    for name in ["viridis", "magma", "rdbu", "coolwarm", "greys", "blues", "purd_r"]:
+        assert name in names
+    # the ends of matplotlib's maps, and of their reversals
+    assert sbmlsim_core.color_scale("blues", 0.0, 1.0, [0.0, 1.0]) == [
+        "#f7fbff",
+        "#08306b",
+    ]
+    assert sbmlsim_core.color_scale("blues_r", 0.0, 1.0, [0.0, 1.0]) == [
+        "#08306b",
+        "#f7fbff",
+    ]
+    assert sbmlsim_core.color_scale("ylorrd", 0.0, 1.0, [0.0, 1.0]) == [
+        "#ffffcc",
+        "#800026",
+    ]
+
+
+def test_fields_of_0_30_render() -> None:
+    # the spec of the renderer's fixture of the fields since 0.30.0
+    spec = (PLOT / "specs" / "v030.json").read_text()
+    svg = sbmlsim_core.render_svg(spec)
+    assert svg == (PLOT / "golden" / "v030.svg").read_text()
+    geometry = sbmlsim_core.figure_geometry(spec)
+    lobule = next(p for p in geometry["plots"] if p["id"] == "lobule")
+    per_x = lobule["rect"]["width"] / (lobule["x"]["high"] - lobule["x"]["low"])
+    per_y = lobule["rect"]["height"] / (lobule["y"]["high"] - lobule["y"]["low"])
+    assert per_y == pytest.approx(per_x)
+    space_time = next(p for p in geometry["plots"] if p["id"] == "space_time")
+    assert space_time["x"]["kind"] == "linear"
 
 
 @pytest.mark.skipif(

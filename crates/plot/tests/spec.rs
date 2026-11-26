@@ -1,4 +1,4 @@
-use sbmlsim_plot::{ElementKind, FIGURE_CONTRACT, FontWeight, parse};
+use sbmlsim_plot::{Aspect, ElementKind, FIGURE_CONTRACT, FontWeight, parse};
 
 fn base(plot: &str) -> String {
     format!(
@@ -382,4 +382,108 @@ fn colorbar_ticks_validated() {
     };
     bar(255).unwrap();
     assert_eq!(bar(256).unwrap_err().path, "plots[0].colorbar.scale.high");
+}
+
+#[test]
+fn fields_of_0_30_are_checked() {
+    // every field is optional and absent from the JSON of a spec which does not give it
+    let f = parse(&base(&plot("", CURVE))).unwrap();
+    assert!(f.plots[0].x.line_visible && f.plots[0].aspect.is_none());
+    let json = serde_json::to_string(&f).unwrap();
+    for field in ["line_visible", "aspect", "error_cap", "x_edges", "weight"] {
+        assert!(!json.contains(field), "{field} in {json}");
+    }
+    let ok = |extra: &str, elements: &str| parse(&base(&plot(extra, elements)));
+    let path = |extra: &str, elements: &str| ok(extra, elements).unwrap_err().path;
+    // the aspect: equal or a positive number
+    assert_eq!(
+        ok(r#""aspect":"equal","#, CURVE).unwrap().plots[0].aspect,
+        Some(Aspect::Equal)
+    );
+    assert_eq!(
+        ok(r#""aspect":0.5,"#, CURVE).unwrap().plots[0].aspect,
+        Some(Aspect::Ratio(0.5))
+    );
+    for wrong in [r#""auto""#, "0", "-1", "true"] {
+        assert_eq!(
+            path(&format!(r#""aspect":{wrong},"#), CURVE),
+            "plots[0].aspect",
+            "{wrong}"
+        );
+    }
+    // caps of error bars are not negative
+    let capped = r#"{"id":"a","kind":"curve","x":[1],"y":[2],"yerr":[1],"error_cap":-1}"#;
+    assert_eq!(path("", capped), "plots[0].elements[0].error_cap");
+    let bar = r#"{"id":"a","kind":"bar","x":[1],"height":[2],"err":[1],"error_cap":4}"#;
+    assert!(ok("", bar).is_ok());
+    // the size of a text is positive, its weight normal or bold
+    let text =
+        |fields: &str| format!(r#"{{"id":"t","kind":"text","x":0,"y":0,"text":"a",{fields}}}"#);
+    assert!(ok("", &text(r#""size":14,"weight":"bold""#)).is_ok());
+    assert_eq!(path("", &text(r#""size":0"#)), "plots[0].elements[0].size");
+    assert_eq!(
+        path("", &text(r#""weight":"heavy""#)),
+        "plots[0].elements[0].weight"
+    );
+}
+
+#[test]
+fn heatmap_edges_are_checked() {
+    let heatmap = |fields: &str| {
+        format!(
+            r#"{{"id":"h","kind":"heatmap","scale":{{"name":"viridis","low":0,"high":1}},{fields}}}"#
+        )
+    };
+    let check = |fields: &str| parse(&base(&plot("", &heatmap(fields))));
+    // edges stand for the names of their axis, or come with as many names as cells
+    assert!(check(r#""x_edges":[0,1,3],"y_edges":[0,1],"values":[[1,2]]"#).is_ok());
+    assert!(check(r#""x_edges":[3,1,0],"rows":["a"],"values":[[1,2]]"#).is_ok());
+    assert!(
+        check(r#""x_edges":[0,1,3],"columns":["a","b"],"rows":["r"],"values":[[1,2]]"#).is_ok()
+    );
+    for (fields, at, says) in [
+        (
+            r#""x_edges":[0,1,3],"rows":["r"],"values":[[1]]"#,
+            "values[0]",
+            "x_edges gives 2",
+        ),
+        (
+            r#""y_edges":[0,1,2],"columns":["c"],"values":[[1]]"#,
+            "values",
+            "y_edges gives 2",
+        ),
+        (
+            r#""x_edges":[0,1],"columns":["a","b"],"rows":["r"],"values":[[1,2]]"#,
+            "x_edges",
+            "needs 3",
+        ),
+        (
+            r#""x_edges":[0,2,1],"rows":["r"],"values":[[1,2]]"#,
+            "x_edges",
+            "strictly",
+        ),
+        (
+            r#""x_edges":[0,null,1],"rows":["r"],"values":[[1,2]]"#,
+            "x_edges[1]",
+            "finite",
+        ),
+        (
+            r#""x_edges":[0],"rows":["r"],"values":[[]]"#,
+            "x_edges",
+            "at least 2",
+        ),
+        (
+            r#""y_edges":[0,1],"columns":["c"],"values":[[1]],"text":[["a"],["b"]]"#,
+            "text",
+            "y_edges gives 1",
+        ),
+    ] {
+        let e = check(fields).unwrap_err();
+        assert_eq!(
+            e.path,
+            format!("plots[0].elements[0].{at}"),
+            "{fields}: {e}"
+        );
+        assert!(e.message.contains(says), "{fields}: {e}");
+    }
 }

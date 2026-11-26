@@ -15,6 +15,7 @@ use serde::ser::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::FIGURE_CONTRACT;
+pub use crate::colors::ColorScaleName;
 // SUB_PATH is the U+0001 marker of the path inside an element, see `in_element`
 use crate::error::{SUB_PATH, SpecError};
 
@@ -32,6 +33,9 @@ fn is_one(v: &f64) -> bool {
 }
 fn is_false(v: &bool) -> bool {
     !*v
+}
+fn is_true(v: &bool) -> bool {
+    *v
 }
 fn one_f() -> f64 {
     1.0
@@ -270,8 +274,60 @@ pub struct Plot {
     /// colour takes the colour the swatch would have. Every key is a legend group of the plot.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub legend_swatches: Option<BTreeMap<String, Style>>,
+    /// The aspect of the panel (since 0.30.0): `equal`, one unit of the coordinate of y as
+    /// long as one of x, or a positive number, one unit of y that many times as long as one of x
+    /// (matplotlib's `set_aspect` with `adjustable="datalim"`). The layout keeps the panel and
+    /// widens the limits of one axis about their middle until the units have that ratio, so the
+    /// data keeps its room; absent, the axes take their limits independently.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aspect: Option<Aspect>,
     /// The elements drawn in the plot.
     pub elements: Vec<Element>,
+}
+
+/// The aspect of a panel: the length of one unit of y as a multiple of the length of one unit
+/// of x, on the coordinates of the axes (the value, its `log10` on a log axis, the position of
+/// a category).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Aspect {
+    /// One unit of y is as long as one unit of x, written `"equal"`.
+    Equal,
+    /// One unit of y is this many times as long as one unit of x, a positive number.
+    Ratio(f64),
+}
+
+impl Aspect {
+    /// The ratio of the aspect: 1 for `equal`.
+    pub fn ratio(&self) -> f64 {
+        match self {
+            Aspect::Equal => 1.0,
+            Aspect::Ratio(r) => *r,
+        }
+    }
+}
+
+impl Serialize for Aspect {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Aspect::Equal => s.serialize_str("equal"),
+            Aspect::Ratio(r) => s.serialize_f64(*r),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Aspect {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        match serde_json::Value::deserialize(d)? {
+            serde_json::Value::String(t) if t == "equal" => Ok(Aspect::Equal),
+            serde_json::Value::Number(n) => match n.as_f64() {
+                Some(r) => Ok(Aspect::Ratio(r)),
+                None => Err(D::Error::custom("expected `equal` or a positive number")),
+            },
+            other => Err(D::Error::custom(format!(
+                "expected `equal` or a positive number, got {other}"
+            ))),
+        }
+    }
 }
 
 /// The scale of an axis.
@@ -341,6 +397,9 @@ pub struct Axis {
     /// Whether the tick marks are shown (since 0.28.0); absent, they follow `ticks_visible`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tick_marks_visible: Option<bool>,
+    /// Whether the line of the axis is shown, true by default (since 0.30.0).
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    pub line_visible: bool,
     /// Rotation of the tick labels in degrees.
     #[serde(default)]
     pub tick_rotation: f64,
@@ -414,15 +473,17 @@ const COMMON_KEYS: [&str; 5] = ["id", "label", "legend", "axis", "style"];
 /// The fields of the kinds of an element besides the common ones, `None` for an unknown kind.
 fn kind_fields(kind: &str) -> Option<&'static [&'static str]> {
     Some(match kind {
-        "curve" => &["x", "y", "xerr", "yerr"],
+        "curve" => &["x", "y", "xerr", "yerr", "error_cap"],
         "band" => &["x", "low", "high", "median"],
         "area" => &["x", "from", "to"],
-        "bar" => &["x", "height", "err", "horizontal", "width"],
+        "bar" => &["x", "height", "err", "horizontal", "width", "error_cap"],
         "box" => &["positions", "stats"],
         "violin" => &["positions", "densities"],
         "histogram" => &["edges", "counts"],
-        "heatmap" => &["rows", "columns", "values", "text", "scale"],
-        "text" => &["x", "y", "text", "anchor"],
+        "heatmap" => &[
+            "rows", "columns", "values", "text", "scale", "x_edges", "y_edges",
+        ],
+        "text" => &["x", "y", "text", "anchor", "size", "weight"],
         "rule" => &["orientation", "value"],
         "polygon" => &["paths"],
         _ => return None,
@@ -514,13 +575,17 @@ impl<'de> Deserialize<'de> for Element {
             .get("scale")
             .and_then(|c| c.get("name"))
             .and_then(|n| n.as_str())
-            && serde_json::from_value::<ColorScaleName>(n.into()).is_err()
+            && ColorScaleName::from_name(n).is_none()
+        {
+            return Err(in_element(&"scale.name", crate::colors::unknown_scale(n)));
+        }
+        // the weight of a text likewise (since 0.30.0)
+        if let Some(w) = map.get("weight")
+            && serde_json::from_value::<FontWeight>(w.clone()).is_err()
         {
             return Err(in_element(
-                &"scale.name",
-                format!(
-                    "unknown color scale `{n}`, expected one of viridis, magma, rdbu, coolwarm, greys"
-                ),
+                &"weight",
+                format!("unknown font weight {w}, expected `normal` or `bold`"),
             ));
         }
         let mut common = serde_json::Map::new();
@@ -591,6 +656,10 @@ pub enum ElementKind {
             with = "nums::opt_vec"
         )]
         yerr: Option<Vec<f64>>,
+        /// The length of the caps of the error bars in pixels, 0 (no caps) by default (since
+        /// 0.30.0).
+        #[serde(default, skip_serializing_if = "is_zero")]
+        error_cap: f64,
     },
     /// A band between two curves with an optional median.
     Band {
@@ -644,6 +713,10 @@ pub enum ElementKind {
         /// Width of a bar in axis units.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         width: Option<f64>,
+        /// The length of the caps of the error bars in pixels, 0 (no caps) by default (since
+        /// 0.30.0).
+        #[serde(default, skip_serializing_if = "is_zero")]
+        error_cap: f64,
     },
     /// Box plots.
     Box {
@@ -672,9 +745,11 @@ pub enum ElementKind {
     },
     /// A heat map.
     Heatmap {
-        /// Row names.
+        /// Row names; may be absent with `y_edges` (since 0.30.0).
+        #[serde(default)]
         rows: Vec<String>,
-        /// Column names.
+        /// Column names; may be absent with `x_edges` (since 0.30.0).
+        #[serde(default)]
         columns: Vec<String>,
         /// Values, per row.
         #[serde(with = "nums::rows")]
@@ -684,6 +759,24 @@ pub enum ElementKind {
         text: Option<Vec<Vec<String>>>,
         /// Color scale.
         scale: ColorScale,
+        /// The edges of the columns on the x axis, one more than columns, strictly monotonic
+        /// (since 0.30.0): column `j` spans `x_edges[j]..x_edges[j + 1]` of a numeric x axis;
+        /// absent, the columns are the categories of the x axis.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            with = "nums::opt_vec"
+        )]
+        x_edges: Option<Vec<f64>>,
+        /// The edges of the rows on the y axis, one more than rows, strictly monotonic (since
+        /// 0.30.0): row `i` spans `y_edges[i]..y_edges[i + 1]` of a numeric y axis; absent, the
+        /// rows are the categories of the y axis.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            with = "nums::opt_vec"
+        )]
+        y_edges: Option<Vec<f64>>,
     },
     /// A text.
     Text {
@@ -696,6 +789,12 @@ pub enum ElementKind {
         /// Anchor, start by default.
         #[serde(default)]
         anchor: Anchor,
+        /// Font size, the `tick` size of the fonts by default (since 0.30.0).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        size: Option<f64>,
+        /// Font weight, normal by default (since 0.30.0).
+        #[serde(default, skip_serializing_if = "FontWeight::is_normal")]
+        weight: FontWeight,
     },
     /// A horizontal or vertical line.
     Rule {
@@ -765,27 +864,12 @@ pub struct Density {
     pub density: Vec<f64>,
 }
 
-/// The name of a color map.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ColorScaleName {
-    /// Viridis.
-    Viridis,
-    /// Magma.
-    Magma,
-    /// Red to blue, diverging.
-    Rdbu,
-    /// Cool to warm, diverging.
-    Coolwarm,
-    /// Greys.
-    Greys,
-}
-
 /// A color scale.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ColorScale {
-    /// Name of the color map.
+    /// Name of the color map: a sequential or diverging map of matplotlib in lower case, or
+    /// its reversal `<name>_r` (since 0.30.0; viridis, magma, rdbu, coolwarm, greys before).
     pub name: ColorScaleName,
     /// Value of the low end.
     pub low: f64,
@@ -1155,10 +1239,77 @@ fn check_axis(path: &str, a: &Axis) -> Result<(), SpecError> {
     Ok(())
 }
 
+fn check_cap(p: &str, cap: f64) -> Result<(), SpecError> {
+    if !(cap >= 0.0 && cap.is_finite()) {
+        return err(
+            format!("{p}.error_cap"),
+            "must be a number of pixels, not negative",
+        );
+    }
+    Ok(())
+}
+
+/// The edges of the cells of a heatmap along one axis: at least two finite values, strictly
+/// increasing or strictly decreasing, as many as the names of that axis and one, when it has
+/// names.
+fn check_edges(
+    p: &str,
+    name: &str,
+    edges: &[f64],
+    names: &[String],
+    names_field: &str,
+) -> Result<(), SpecError> {
+    let path = format!("{p}.{name}");
+    if edges.len() < 2 {
+        return err(path, "needs at least 2 values, the edges of one cell");
+    }
+    if let Some(k) = edges.iter().position(|e| !e.is_finite()) {
+        return err(format!("{path}[{k}]"), "an edge must be a finite number");
+    }
+    let rising = edges.windows(2).all(|w| w[0] < w[1]);
+    let falling = edges.windows(2).all(|w| w[0] > w[1]);
+    if !(rising || falling) {
+        return err(path, "must be strictly increasing or strictly decreasing");
+    }
+    if !names.is_empty() && names.len() + 1 != edges.len() {
+        return err(
+            path,
+            format!(
+                "{} values, {names_field} has {} so {name} needs {}",
+                edges.len(),
+                names.len(),
+                names.len() + 1
+            ),
+        );
+    }
+    Ok(())
+}
+
+/// The rows and the columns of a heatmap: the edges less one along an axis with edges, else
+/// the names.
+pub(crate) fn heatmap_size(
+    rows: &[String],
+    columns: &[String],
+    x_edges: Option<&[f64]>,
+    y_edges: Option<&[f64]>,
+) -> (usize, usize) {
+    (
+        y_edges.map_or(rows.len(), |e| e.len().saturating_sub(1)),
+        x_edges.map_or(columns.len(), |e| e.len().saturating_sub(1)),
+    )
+}
+
 fn check_kind(p: &str, kind: &ElementKind) -> Result<(), SpecError> {
     use ElementKind::*;
     match kind {
-        Curve { x, y, xerr, yerr } => {
+        Curve {
+            x,
+            y,
+            xerr,
+            yerr,
+            error_cap,
+        } => {
+            check_cap(p, *error_cap)?;
             same_len(p, "y", y.len(), "x", x.len())?;
             if let Some(e) = xerr {
                 same_len(p, "xerr", e.len(), "x", x.len())?;
@@ -1188,8 +1339,10 @@ fn check_kind(p: &str, kind: &ElementKind) -> Result<(), SpecError> {
             height,
             err: e,
             width,
+            error_cap,
             ..
         } => {
+            check_cap(p, *error_cap)?;
             same_len(p, "height", height.len(), "x", x.len())?;
             if let Some(e) = e {
                 same_len(p, "err", e.len(), "x", x.len())?;
@@ -1253,25 +1406,54 @@ fn check_kind(p: &str, kind: &ElementKind) -> Result<(), SpecError> {
             values,
             text,
             scale,
+            x_edges,
+            y_edges,
         } => {
-            same_len(p, "values", values.len(), "rows", rows.len())?;
+            if let Some(e) = x_edges {
+                check_edges(p, "x_edges", e, columns, "columns")?;
+            }
+            if let Some(e) = y_edges {
+                check_edges(p, "y_edges", e, rows, "rows")?;
+            }
+            let (n_rows, n_columns) =
+                heatmap_size(rows, columns, x_edges.as_deref(), y_edges.as_deref());
+            // the counts are named by what gives them: the names, or the edges without names
+            let rows_by = if y_edges.is_some() && rows.is_empty() {
+                "y_edges gives"
+            } else {
+                "rows has"
+            };
+            let columns_by = if x_edges.is_some() && columns.is_empty() {
+                "x_edges gives"
+            } else {
+                "columns has"
+            };
+            if values.len() != n_rows {
+                return err(
+                    format!("{p}.values"),
+                    format!("{} values, {rows_by} {n_rows}", values.len()),
+                );
+            }
             for (i, r) in values.iter().enumerate() {
-                same_len(
-                    &format!("{p}.values[{i}]"),
-                    "",
-                    r.len(),
-                    "columns",
-                    columns.len(),
-                )
-                .map_err(|e| SpecError::new(format!("{p}.values[{i}]"), e.message))?;
+                if r.len() != n_columns {
+                    return err(
+                        format!("{p}.values[{i}]"),
+                        format!("{} values, {columns_by} {n_columns}", r.len()),
+                    );
+                }
             }
             if let Some(t) = text {
-                same_len(p, "text", t.len(), "rows", rows.len())?;
+                if t.len() != n_rows {
+                    return err(
+                        format!("{p}.text"),
+                        format!("{} values, {rows_by} {n_rows}", t.len()),
+                    );
+                }
                 for (i, r) in t.iter().enumerate() {
-                    if r.len() != columns.len() {
+                    if r.len() != n_columns {
                         return err(
                             format!("{p}.text[{i}]"),
-                            format!("{} values, columns has {}", r.len(), columns.len()),
+                            format!("{} values, {columns_by} {n_columns}", r.len()),
                         );
                     }
                 }
@@ -1291,7 +1473,12 @@ fn check_kind(p: &str, kind: &ElementKind) -> Result<(), SpecError> {
                 }
             }
         }
-        Text { .. } | Rule { .. } => {}
+        Text { size, .. } => {
+            if size.is_some_and(|v| !(v > 0.0 && v.is_finite())) {
+                return err(format!("{p}.size"), "must be positive");
+            }
+        }
+        Rule { .. } => {}
     }
     Ok(())
 }
@@ -1379,6 +1566,14 @@ pub(crate) fn validate(f: &Figure) -> Result<(), SpecError> {
                     "span {} from column {} leaves the grid of {} columns",
                     p.column_span, p.column, f.grid.columns
                 ),
+            );
+        }
+        if let Some(Aspect::Ratio(r)) = p.aspect
+            && !(r > 0.0 && r.is_finite())
+        {
+            return err(
+                format!("{pp}.aspect"),
+                "must be `equal` or a positive number",
             );
         }
         check_axis(&format!("{pp}.x"), &p.x)?;

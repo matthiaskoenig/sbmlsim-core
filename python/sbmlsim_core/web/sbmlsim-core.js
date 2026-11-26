@@ -2198,9 +2198,11 @@ var sbmlsimCore = (() => {
     return a.kind === b.kind && a.reverse === b.reverse && close(a.low, b.low) && close(a.high, b.high);
   }
   function implicitCategories(plot, name) {
-    const heatmap = plot.elements.find((element) => element.kind === "heatmap");
+    const heatmap = plot.elements.find((element) => element.kind === "heatmap" && element.axis !== "y2");
     if (!heatmap) return null;
-    return name === "x" ? heatmap.columns : name === "y" ? heatmap.rows : null;
+    if (name === "x") return heatmap.x_edges ? null : heatmap.columns;
+    if (name === "y") return heatmap.y_edges ? null : heatmap.rows;
+    return null;
   }
   function filteredSpec(spec, geometry, keep, only) {
     const scales = new Map(geometry.plots.map((plot) => [plot.id, plot]));
@@ -2299,6 +2301,8 @@ var sbmlsimCore = (() => {
         break;
       case "heatmap":
         {
+          if (has("x_low")) lines.push([name(xAxis, "x"), `${format(values.x_low)} to ${format(values.x_high, xAxis.unit)}`]);
+          if (has("y_low")) lines.push([name(yAxis, "y"), `${format(values.y_low)} to ${format(values.y_high, yAxis.unit)}`]);
           const bar = plot.colorbar ?? plot.colorbars?.[0];
           const label = bar?.label ? oneLine(bar.label) : "value";
           lines.push([label, format(values.value)]);

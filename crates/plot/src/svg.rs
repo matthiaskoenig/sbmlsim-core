@@ -64,6 +64,23 @@ pub(crate) fn escape(out: &mut String, text: &str) {
     }
 }
 
+/// Writes a text node escaped (see [`escape`]) with every space kept (since 0.30.0): SVG
+/// collapses a run of spaces into one and drops the spaces at the ends of a text, so a space
+/// after another one and a space at an end are written as no-break spaces (U+00A0), which no
+/// renderer collapses and which are as wide as a space in Inter. The text is drawn as wide as
+/// the layout measures it, every space counted.
+pub(crate) fn text_node(out: &mut String, text: &str) {
+    let last = text.chars().count().saturating_sub(1);
+    let mut previous = None;
+    let mut kept = String::with_capacity(text.len());
+    for (k, c) in text.chars().enumerate() {
+        let collapsed = c == ' ' && (k == 0 || k == last || previous == Some(' '));
+        kept.push(if collapsed { '\u{a0}' } else { c });
+        previous = Some(c);
+    }
+    escape(out, &kept);
+}
+
 /// Writes a coordinate: two decimals at most, no trailing zeros, never `-0`.
 pub(crate) fn num(out: &mut String, v: f64) {
     let r = (v * 100.0).round();
@@ -188,7 +205,7 @@ pub(crate) fn text_lines(
 ) {
     let n = line_count(text);
     if n == 1 {
-        escape(out, text);
+        text_node(out, text);
         return;
     }
     let step = LINE_HEIGHT * size;
@@ -202,7 +219,7 @@ pub(crate) fn text_lines(
         attr_num(out, "x", x);
         attr_num(out, "y", y + (k as f64 - before) * step);
         out.push('>');
-        escape(out, line);
+        text_node(out, line);
         out.push_str("</tspan>");
     }
 }
@@ -263,6 +280,8 @@ pub(crate) struct AxisHooks {
     pub labels_hidden: bool,
     /// Whether the tick marks are hidden.
     pub marks_hidden: bool,
+    /// Whether the line of the axis is hidden.
+    pub line_hidden: bool,
     /// The font size of the tick labels.
     pub tick_size: f64,
     /// The weight of the tick labels.
@@ -767,7 +786,7 @@ impl RenderBackend for PlotWriter<'_> {
         if tick_label {
             // a tick label is one line (as the layout measures it and 0.27.0 wrote it), a
             // newline in it written as it is
-            escape(b, &c.text);
+            text_node(b, &c.text);
         } else {
             text_lines(
                 b,
@@ -876,6 +895,9 @@ impl RenderBackend for PlotWriter<'_> {
             }
             Role::Tick => {
                 frame.suppress |= self.axis_hooks().is_some_and(|a| a.marks_hidden);
+            }
+            Role::AxisLine => {
+                frame.suppress |= self.axis_hooks().is_some_and(|a| a.line_hidden);
             }
             Role::TickLabel => {
                 frame.suppress |= self.axis_hooks().is_some_and(|a| a.labels_hidden);
@@ -989,6 +1011,16 @@ mod tests {
             s.push(' ');
         }
         assert_eq!(s, "0 0 1 1.5 1.25 -2.02 12.35 1000000 ");
+    }
+
+    #[test]
+    fn spaces_are_kept() {
+        let mut s = String::new();
+        text_node(&mut s, " A  Circuit ");
+        assert_eq!(s, "\u{a0}A \u{a0}Circuit\u{a0}");
+        let mut s = String::new();
+        text_node(&mut s, "a b & c");
+        assert_eq!(s, "a b &amp; c");
     }
 
     #[test]

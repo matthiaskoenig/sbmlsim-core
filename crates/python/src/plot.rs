@@ -4,8 +4,8 @@
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use sbmlsim_plot::{
-    COLOR_SCALES, ColorScale, ColorScaleName, Figure, FontWeight, SpecError, geometry, parse,
-    pick as pick_of, text_width_weighted,
+    ColorScale, ColorScaleName, Figure, FontWeight, SpecError, geometry, parse, pick as pick_of,
+    text_width_weighted,
 };
 
 /// The error of a spec which does not parse: the path of the field and what is wrong.
@@ -99,19 +99,7 @@ pub(crate) fn color_scale(
             "start {start} and end {end} are no part of the colour map, expected 0 <= start < end <= 1"
         )));
     }
-    let name = match name {
-        "viridis" => ColorScaleName::Viridis,
-        "magma" => ColorScaleName::Magma,
-        "rdbu" => ColorScaleName::Rdbu,
-        "coolwarm" => ColorScaleName::Coolwarm,
-        "greys" => ColorScaleName::Greys,
-        _ => {
-            return Err(PyValueError::new_err(format!(
-                "unknown color scale `{name}`, expected one of {}",
-                COLOR_SCALES.join(", ")
-            )));
-        }
-    };
+    let name: ColorScaleName = name.parse().map_err(PyValueError::new_err)?;
     let scale = ColorScale {
         name,
         low,

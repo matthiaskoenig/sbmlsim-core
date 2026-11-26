@@ -14,8 +14,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::layout::{self, LegendOwner, Plan, Rect};
 use crate::render::axis::ResolvedAxis;
+use crate::render::heatmap::cell_span;
 use crate::render::stats_marks::{BAR_WIDTH, BOX_WIDTH, VIOLIN_WIDTH, base_of, box_body, spacing};
-use crate::spec::{AxisScale, ElementKind, Figure, LineType, Orientation, YAxisRef};
+use crate::spec::{AxisScale, ElementKind, Figure, LineType, Orientation, YAxisRef, heatmap_size};
 
 /// A figure laid out once: the plan the geometry and the pick read.
 pub struct FigurePlan(Plan);
@@ -112,11 +113,12 @@ pub struct LegendEntryGeometry {
 pub struct Geometry {
     /// The width of the figure as drawn, the `width` of its SVG (to its two decimals): the
     /// `width` of the spec, grown by the legends right of the plots and of the rows, which an
-    /// inside legend too large for its panel becomes as well. The PNG is `width * dpi / 72`
-    /// pixels wide.
+    /// inside legend too large for its panel becomes as well, and by a grid whose plots cannot
+    /// have their least panel in it (since 0.30.0). The PNG is `width * dpi / 72` pixels wide.
     pub width: f64,
     /// The height of the figure as drawn, the `height` of its SVG (to its two decimals): the
-    /// `height` of the spec, grown by a legend outside which is taller than its row.
+    /// `height` of the spec, grown by a legend outside which is taller than its row, and by a
+    /// grid whose plots cannot have their least panel in it (since 0.30.0).
     pub height: f64,
     /// The plots, in the order of the spec.
     pub plots: Vec<PlotGeometry>,
@@ -139,9 +141,11 @@ pub struct Pick {
     /// The data at the point: `x`, `y`, `xerr`, `yerr` of a curve, `x`, `low`, `high` (and
     /// `median`) of a band, `x`, `from`, `to` of an area, `x`, `height`, `err` of a bar, `x`
     /// and the five numbers of a box, `x` of a violin, `low`, `high`, `count` of a histogram
-    /// bin, `value` of a heatmap cell, `x`, `y` of a text, `value` of a rule.
+    /// bin, `value` of a heatmap cell (with `x_low`, `x_high` along `x_edges` and `y_low`,
+    /// `y_high` along `y_edges`, since 0.30.0), `x`, `y` of a text, `value` of a rule.
     pub values: BTreeMap<String, f64>,
-    /// The label of the element; `row / column` for a heatmap cell.
+    /// The label of the element; `row / column` for a heatmap cell, the name it has along an
+    /// axis of names alone for a heatmap with edges, none without names (since 0.30.0).
     pub label: Option<String>,
 }
 
@@ -441,7 +445,9 @@ fn measure(kind: &ElementKind, lined: bool, m: &Map, best: &mut Best) {
             .unwrap_or(f64::NAN)
     };
     match kind {
-        ElementKind::Curve { x, y, xerr, yerr } => {
+        ElementKind::Curve {
+            x, y, xerr, yerr, ..
+        } => {
             for (i, (xv, yv)) in x.iter().zip(y).enumerate() {
                 let px = m.px(m.xa.u(*xv));
                 if !near(px, at.0, best.limit) {
@@ -522,6 +528,7 @@ fn measure(kind: &ElementKind, lined: bool, m: &Map, best: &mut Best) {
             err: errs,
             horizontal,
             width,
+            ..
         } => {
             // the bars run along the axis of their positions and across the axis of heights
             let (along, across) = if *horizontal {
@@ -618,20 +625,37 @@ fn measure(kind: &ElementKind, lined: bool, m: &Map, best: &mut Best) {
             rows,
             columns,
             values: cells,
+            x_edges,
+            y_edges,
             ..
         } => {
-            for (i, row) in cells.iter().enumerate().take(rows.len()) {
-                for (j, v) in row.iter().enumerate().take(columns.len()) {
+            let (x_edges, y_edges) = (x_edges.as_deref(), y_edges.as_deref());
+            let (n_rows, n_columns) = heatmap_size(rows, columns, x_edges, y_edges);
+            for (i, row) in cells.iter().enumerate().take(n_rows) {
+                for (j, v) in row.iter().enumerate().take(n_columns) {
                     if !v.is_finite() {
                         continue;
                     }
-                    let (r, c) = (i as f64, j as f64);
-                    let Some(d) = area(c - 0.5, r - 0.5, c + 0.5, r + 0.5) else {
+                    let ((x0, x1), (y0, y1)) = (cell_span(x_edges, j), cell_span(y_edges, i));
+                    let Some(d) = area(x0, y0, x1, y1) else {
                         continue;
                     };
-                    best.offer(d, i * columns.len() + j, || {
-                        let label = format!("{} / {}", rows[i], columns[j]);
-                        (values(&[("value", *v)]), Some(label))
+                    best.offer(d, i * n_columns + j, || {
+                        // the names of the cell, and the edges along an axis with edges
+                        let names: Vec<&str> = [rows.get(i), columns.get(j)]
+                            .into_iter()
+                            .flatten()
+                            .map(String::as_str)
+                            .collect();
+                        let label = (!names.is_empty()).then(|| names.join(" / "));
+                        let mut pairs = vec![("value", *v)];
+                        if x_edges.is_some() {
+                            pairs.extend([("x_low", x0), ("x_high", x1)]);
+                        }
+                        if y_edges.is_some() {
+                            pairs.extend([("y_low", y0), ("y_high", y1)]);
+                        }
+                        (values(&pairs), label)
                     });
                 }
             }
