@@ -21,6 +21,13 @@
 //! case with another status and, in a run of all cases, a listed case which was not run are
 //! differences as well. The command exits with 0 only without differences.
 //!
+//! `--model-code c` simulates every case on the native engine with the model code of the C target
+//! (`sbmlsim_c`, a build with the feature `native`) instead of `engine.wasm` with `model.wasm`:
+//! the same comparison, repeat checks and baseline, the steady state of a fresh instance being
+//! a fresh engine. A model the C target refuses (a delay, no analytic Jacobian) is
+//! [`Status::Refused`] with the feature, listed in the summary and no difference to the
+//! baseline.
+//!
 //! `--export DIR` writes every case which passes as the inputs and the outputs of the wasmtime
 //! host, which `js/test/same_bits.test.mjs` runs in Node and compares byte for byte:
 //! `DIR/engine.wasm` and `DIR/mathlib.wasm` (the ones of the run), and per case
@@ -81,17 +88,20 @@ pub enum Status {
     MissingVariable,
     /// A repeated simulation does not equal the first (see [`repeat_check`]).
     Repeat,
+    /// The C target refuses the model (`--model-code c`), the message names the feature.
+    Refused,
 }
 
 impl Status {
     /// Every status, in the order of the report.
-    pub const ALL: [Status; 6] = [
+    pub const ALL: [Status; 7] = [
         Status::Pass,
         Status::Tolerance,
         Status::NotCompiled,
         Status::SimulationError,
         Status::MissingVariable,
         Status::Repeat,
+        Status::Refused,
     ];
 
     /// The name of the status in the baseline and in the JSON.
@@ -103,6 +113,7 @@ impl Status {
             Status::SimulationError => "simulation_error",
             Status::MissingVariable => "missing_variable",
             Status::Repeat => "repeat",
+            Status::Refused => "refused",
         }
     }
 }
@@ -437,14 +448,51 @@ pub fn repeat_check(
     expected: &Table,
     first: &SimulationResult,
 ) -> Option<String> {
+    let fresh = || -> Result<Box<dyn Simulator>, String> {
+        let instance = runtime
+            .instantiate(&compiled.wasm, &compiled.description)
+            .map_err(|e| format!("{e:#}"))?;
+        Ok(Box::new(instance))
+    };
+    repeat_check_with(instance, settings, expected, first, &fresh)
+}
+
+/// What simulates the requests of a case: an [`Instance`] of the wasmtime host, or the native
+/// engine with the model of the C target (`--model-code c`).
+pub trait Simulator {
+    /// The result of a request, or the message of its failure.
+    fn simulate_case(&mut self, req: &SimulationRequest) -> Result<SimulationResult, String>;
+}
+
+impl Simulator for Instance {
+    fn simulate_case(&mut self, req: &SimulationRequest) -> Result<SimulationResult, String> {
+        self.simulate(req).map_err(|e| e.to_string())
+    }
+}
+
+#[cfg(feature = "native")]
+impl Simulator for sbmlsim_engine::Engine {
+    fn simulate_case(&mut self, req: &SimulationRequest) -> Result<SimulationResult, String> {
+        self.simulate(req).map_err(|e| e.to_string())
+    }
+}
+
+/// [`repeat_check`] of any [`Simulator`]; `fresh` makes a fresh one of the same model.
+pub fn repeat_check_with(
+    instance: &mut dyn Simulator,
+    settings: &CaseSettings,
+    expected: &Table,
+    first: &SimulationResult,
+    fresh: &dyn Fn() -> Result<Box<dyn Simulator>, String>,
+) -> Option<String> {
     let random = settings
         .test_tags
         .iter()
         .any(|t| t == RANDOM_EVENT_EXECUTION);
     let request = case_request(settings);
-    let simulate = |instance: &mut Instance, req: &SimulationRequest, what: &str| {
+    let simulate = |instance: &mut dyn Simulator, req: &SimulationRequest, what: &str| {
         instance
-            .simulate(req)
+            .simulate_case(req)
             .map_err(|e| format!("{what} failed: {e}"))
     };
 
@@ -481,11 +529,11 @@ pub fn repeat_check(
 
     let steady = case_request_of(settings, 1.0, true);
     let what = "a steady state after the simulations of the instance";
-    let reference = match runtime.instantiate(&compiled.wasm, &compiled.description) {
-        Ok(mut fresh) => fresh.simulate(&steady).map_err(|e| e.to_string()),
-        Err(error) => return Some(format!("a fresh instance failed: {error:#}")),
+    let reference = match fresh() {
+        Ok(mut fresh) => fresh.simulate_case(&steady),
+        Err(error) => return Some(format!("a fresh instance failed: {error}")),
     };
-    let observed = instance.simulate(&steady).map_err(|e| e.to_string());
+    let observed = instance.simulate_case(&steady);
     match (reference, observed) {
         (Ok(reference), Ok(observed)) => {
             let difference = repeat_difference(&reference, &observed, what)?;
@@ -552,13 +600,25 @@ pub fn run_case_exported(
     options: &CompileOptions,
     export: Option<&Path>,
 ) -> CaseResult {
+    guarded(dir, |cid| {
+        run_case_inner(runtime, dir, cid, options, export)
+    })
+}
+
+/// Runs the case in a directory on the native engine with the model of the C target
+/// (`--model-code c`); a model the C target refuses is [`Status::Refused`].
+#[cfg(feature = "native")]
+pub fn run_case_c(dir: &Path) -> CaseResult {
+    guarded(dir, |cid| run_c(dir, cid))
+}
+
+/// `run` of the case in `dir` with its identifier; a panic is a simulation error.
+fn guarded(dir: &Path, run: impl FnOnce(&str) -> CaseResult) -> CaseResult {
     let cid = dir
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    match catch_unwind(AssertUnwindSafe(|| {
-        run_case_inner(runtime, dir, &cid, options, export)
-    })) {
+    match catch_unwind(AssertUnwindSafe(|| run(&cid))) {
         Ok(result) => result,
         Err(panic) => {
             let message = panic
@@ -600,27 +660,9 @@ fn run_compiled(
     cell: &OnceCell<CompiledModel>,
     export: Option<&Path>,
 ) -> CaseResult {
-    let settings: CaseSettings = match fs::read(dir.join("case.json"))
-        .map_err(anyhow::Error::from)
-        .and_then(|b| serde_json::from_slice(&b).map_err(anyhow::Error::from))
-    {
-        Ok(settings) => settings,
-        Err(error) => {
-            return CaseResult::new(cid, Status::SimulationError, format!("case.json: {error}"));
-        }
-    };
-    if let Some(message) = &settings.not_converted {
-        return CaseResult::new(
-            cid,
-            Status::NotCompiled,
-            format!("not converted: {message}"),
-        );
-    }
-    let sbml = match fs::read_to_string(dir.join("model.xml")) {
-        Ok(sbml) => sbml,
-        Err(error) => {
-            return CaseResult::new(cid, Status::SimulationError, format!("model.xml: {error}"));
-        }
+    let (settings, sbml) = match read_case(dir, cid) {
+        Ok(case) => case,
+        Err(result) => return result,
     };
     let compiled = match compile(&sbml, options) {
         Ok(compiled) => cell.get_or_init(|| compiled),
@@ -632,9 +674,112 @@ fn run_compiled(
             return CaseResult::new(cid, Status::SimulationError, format!("{error:#}"));
         }
     };
-    let observed = match instance.simulate(&case_request(&settings)) {
-        Ok(observed) => observed,
+    let fresh = || -> Result<Box<dyn Simulator>, String> {
+        let instance = runtime
+            .instantiate(&compiled.wasm, &compiled.description)
+            .map_err(|e| format!("{e:#}"))?;
+        Ok(Box::new(instance))
+    };
+    simulate_case(
+        dir,
+        cid,
+        &settings,
+        &mut instance,
+        &fresh,
+        |observed| match export {
+            Some(out) => export_case(runtime, compiled, &settings, observed, out, cid),
+            None => Ok(()),
+        },
+    )
+}
+
+/// The case of the C target: its model compiled to C, loaded, and simulated on the native
+/// engine.
+#[cfg(feature = "native")]
+fn run_c(dir: &Path, cid: &str) -> CaseResult {
+    use sbmlsim_c::CError;
+    let (settings, sbml) = match read_case(dir, cid) {
+        Ok(case) => case,
+        Err(result) => return result,
+    };
+    let source = match sbmlsim_c::generate(&sbml) {
+        Ok(source) => source,
+        Err(error @ CError::Unsupported { .. }) => {
+            return CaseResult::new(cid, Status::Refused, error.to_string());
+        }
+        Err(error) => return CaseResult::new(cid, Status::NotCompiled, error.to_string()),
+    };
+    // every model the C target compiles has the analytic Jacobian
+    let result = simulate_c(dir, cid, &settings, &source);
+    CaseResult {
+        jacobian: Some("analytic".to_string()),
+        ..result
+    }
+}
+
+/// [`run_c`] of the C of a case.
+#[cfg(feature = "native")]
+fn simulate_c(
+    dir: &Path,
+    cid: &str,
+    settings: &CaseSettings,
+    source: &sbmlsim_c::CSource,
+) -> CaseResult {
+    use sbmlsim_c::{CModel, Library};
+    let model = match Library::build(&source.code)
+        .and_then(|library| CModel::new(library, &source.description))
+    {
+        Ok(model) => model,
         Err(error) => return CaseResult::new(cid, Status::SimulationError, error.to_string()),
+    };
+    let engine = || {
+        sbmlsim_engine::Engine::new(Box::new(model.clone()), source.description.clone())
+            .map_err(|e| e.to_string())
+    };
+    let mut first = match engine() {
+        Ok(engine) => engine,
+        Err(message) => return CaseResult::new(cid, Status::SimulationError, message),
+    };
+    let fresh = || -> Result<Box<dyn Simulator>, String> { Ok(Box::new(engine()?)) };
+    simulate_case(dir, cid, settings, &mut first, &fresh, |_| Ok(()))
+}
+
+/// The settings and the SBML of the case in `dir`, or the result of a case which cannot be
+/// read or was not converted.
+fn read_case(dir: &Path, cid: &str) -> Result<(CaseSettings, String), CaseResult> {
+    let settings: CaseSettings = fs::read(dir.join("case.json"))
+        .map_err(anyhow::Error::from)
+        .and_then(|b| serde_json::from_slice(&b).map_err(anyhow::Error::from))
+        .map_err(|error| {
+            CaseResult::new(cid, Status::SimulationError, format!("case.json: {error}"))
+        })?;
+    if let Some(message) = &settings.not_converted {
+        return Err(CaseResult::new(
+            cid,
+            Status::NotCompiled,
+            format!("not converted: {message}"),
+        ));
+    }
+    let sbml = fs::read_to_string(dir.join("model.xml")).map_err(|error| {
+        CaseResult::new(cid, Status::SimulationError, format!("model.xml: {error}"))
+    })?;
+    Ok((settings, sbml))
+}
+
+/// Simulates a case on `instance` and compares the result with the expected results, then
+/// the repeat checks ([`repeat_check_with`], `fresh` a fresh simulator of the model); `passed`
+/// runs for a case which passes (the export), its failure a simulation error.
+fn simulate_case(
+    dir: &Path,
+    cid: &str,
+    settings: &CaseSettings,
+    instance: &mut dyn Simulator,
+    fresh: &dyn Fn() -> Result<Box<dyn Simulator>, String>,
+    passed: impl FnOnce(&SimulationResult) -> anyhow::Result<()>,
+) -> CaseResult {
+    let observed = match instance.simulate_case(&case_request(settings)) {
+        Ok(observed) => observed,
+        Err(message) => return CaseResult::new(cid, Status::SimulationError, message),
     };
     let expected = match fs::read_to_string(dir.join("expected.csv"))
         .map_err(anyhow::Error::from)
@@ -649,7 +794,7 @@ fn run_compiled(
             );
         }
     };
-    if let Some(message) = check_columns(&expected, &settings) {
+    if let Some(message) = check_columns(&expected, settings) {
         return CaseResult::new(cid, Status::MissingVariable, message);
     }
     match compare(
@@ -663,29 +808,21 @@ fn run_compiled(
             CaseResult::new(cid, failure.status, failure.message)
                 .with_difference(failure.max_difference)
         }
-        Ok(max_difference) => match repeat_check(
-            runtime,
-            compiled,
-            &mut instance,
-            &settings,
-            &expected,
-            &observed,
-        ) {
-            Some(message) => CaseResult::new(cid, Status::Repeat, message),
-            None => {
-                if let Some(out) = export
-                    && let Err(error) =
-                        export_case(runtime, compiled, &settings, &observed, out, cid)
-                {
-                    return CaseResult::new(
+        Ok(max_difference) => {
+            match repeat_check_with(instance, settings, &expected, &observed, fresh) {
+                Some(message) => CaseResult::new(cid, Status::Repeat, message),
+                None => match passed(&observed) {
+                    Err(error) => CaseResult::new(
                         cid,
                         Status::SimulationError,
                         format!("the export failed: {error:#}"),
-                    );
-                }
-                CaseResult::new(cid, Status::Pass, "").with_difference(Some(max_difference))
+                    ),
+                    Ok(()) => {
+                        CaseResult::new(cid, Status::Pass, "").with_difference(Some(max_difference))
+                    }
+                },
             }
-        },
+        }
     }
 }
 
@@ -800,12 +937,16 @@ pub struct Difference {
     pub reason: String,
 }
 
-/// The cases which do not have the outcome the baseline records.
+/// The cases which do not have the outcome the baseline records; a case the C target refuses
+/// ([`Status::Refused`]) is none.
 ///
 /// `full` is a run of every case: a listed case which was not run is a difference then.
 pub fn differences(results: &[CaseResult], baseline: &Baseline, full: bool) -> Vec<Difference> {
     let mut found = Vec::new();
     for result in results {
+        if result.status == Status::Refused {
+            continue;
+        }
         let recorded = baseline.expected_failures.get(&result.cid);
         let expected = recorded.map_or("pass", |e| e.status.as_str());
         if result.status.as_str() != expected {
@@ -911,6 +1052,20 @@ pub struct TestsuiteArgs {
     /// Write every case which passes into this directory (see the module).
     #[arg(long)]
     pub export: Option<PathBuf>,
+    /// The model code: `model.wasm` on `engine.wasm`, or the C target on the native engine
+    /// (a build with the feature `native`).
+    #[arg(long, value_enum, default_value_t = ModelCode::Wasm)]
+    pub model_code: ModelCode,
+}
+
+/// The values of `--model-code`.
+#[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelCode {
+    /// `model.wasm` on `engine.wasm` in wasmtime.
+    Wasm,
+    /// The C of the C target, compiled with the C compiler of the machine, on the native
+    /// engine.
+    C,
 }
 
 /// The values of `--jacobian`.
@@ -963,6 +1118,20 @@ pub fn run(args: &TestsuiteArgs) -> anyhow::Result<bool> {
         !(args.write_baseline && selection.is_some()),
         "--write-baseline needs a run of every case, without --cases"
     );
+    if args.model_code == ModelCode::C {
+        anyhow::ensure!(
+            cfg!(feature = "native"),
+            "--model-code c requires a build with --features native"
+        );
+        anyhow::ensure!(
+            !args.write_baseline && args.export.is_none(),
+            "--write-baseline and --export are of model.wasm, not of --model-code c"
+        );
+        anyhow::ensure!(
+            args.jacobian == JacobianArg::Auto && !args.no_optimize,
+            "--model-code c compiles with the analytic Jacobian and the optimizer"
+        );
+    }
     let dirs = case_dirs(&args.cases_dir, selection.as_deref())?;
     anyhow::ensure!(
         !dirs.is_empty(),
@@ -981,7 +1150,10 @@ pub fn run(args: &TestsuiteArgs) -> anyhow::Result<bool> {
         check_commits(&dirs, &baseline.suite_commit)?;
         Some(baseline)
     };
-    let runtime = Runtime::embedded()?;
+    let runtime = match args.model_code {
+        ModelCode::Wasm => Some(Runtime::embedded()?),
+        ModelCode::C => None,
+    };
     let mut builder = rayon::ThreadPoolBuilder::new();
     if let Some(jobs) = args.jobs {
         anyhow::ensure!(jobs > 0, "--jobs must be positive");
@@ -999,7 +1171,13 @@ pub fn run(args: &TestsuiteArgs) -> anyhow::Result<bool> {
     }
     let results: Vec<CaseResult> = pool.install(|| {
         dirs.par_iter()
-            .map(|dir| run_case_exported(&runtime, dir, &options, args.export.as_deref()))
+            .map(|dir| match &runtime {
+                Some(runtime) => run_case_exported(runtime, dir, &options, args.export.as_deref()),
+                #[cfg(feature = "native")]
+                None => run_case_c(dir),
+                #[cfg(not(feature = "native"))]
+                None => unreachable!("--model-code c is refused without the feature native"),
+            })
             .collect()
     });
 
@@ -1023,6 +1201,20 @@ pub fn run(args: &TestsuiteArgs) -> anyhow::Result<bool> {
         jacobians("analytic"),
         jacobians("colored_difference")
     )?;
+    let refused: Vec<&CaseResult> = results
+        .iter()
+        .filter(|r| r.status == Status::Refused)
+        .collect();
+    if !refused.is_empty() {
+        writeln!(
+            summary,
+            "refused by the C target (no difference to the baseline): {}",
+            refused.len()
+        )?;
+        for r in &refused {
+            writeln!(summary, "  {}: {}", r.cid, r.message)?;
+        }
+    }
     print!("{summary}");
 
     if args.write_baseline {

@@ -18,14 +18,18 @@ path = "src/main.rs"
 
 [features]
 default = []
-# the native engine, and the fit of a model on its batch (`sbmlsim-core fit`)
-native = ["sbmlsim-host/native", "dep:sbmlsim-fit"]
+# the native engine, the fit of a model on its batch (`sbmlsim-core fit`), and the native model
+# code of the C target (`sbmlsim-core testsuite --model-code c`)
+native = ["sbmlsim-host/native", "dep:sbmlsim-fit", "dep:sbmlsim-c", "dep:sbmlsim-engine"]
 
 [dependencies]
 anyhow = "1"
 clap = { version = "4.5", features = ["derive"] }
 sbmlsim-abi = { path = "../abi" }
+# the C target, whose model the native engine simulates
+sbmlsim-c = { path = "../c", optional = true }
 sbmlsim-compiler = { path = "../compiler" }
+sbmlsim-engine = { path = "../engine", optional = true }
 # the fit of a model, which needs the native engine of its batch
 sbmlsim-fit = { path = "../fit", optional = true }
 sbmlsim-host = { path = "../host" }

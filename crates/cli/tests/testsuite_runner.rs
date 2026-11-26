@@ -250,6 +250,18 @@ fn baseline_both_directions() {
     assert!(differences(&results, &absent, false).is_empty());
 }
 
+#[test]
+fn a_case_the_c_target_refuses_is_no_difference() {
+    let results = vec![
+        outcome("00001", Status::Pass),
+        outcome("00002", Status::Refused),
+    ];
+    // neither as an unlisted case nor as a listed one
+    assert!(differences(&results, &baseline(&[]), true).is_empty());
+    assert!(differences(&results, &baseline(&[("00002", "tolerance")]), true).is_empty());
+    assert_eq!(Status::Refused.as_str(), "refused");
+}
+
 fn cases_dir() -> Option<PathBuf> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/cases");
     if dir.join("00001/case.json").exists() {
@@ -395,6 +407,38 @@ fn runner_on_case_00001() {
     let runtime = sbmlsim_host::Runtime::embedded().unwrap();
     let result = run_case(&runtime, &dir.join("00001"));
     assert_eq!(result.status, Status::Pass, "{}", result.message);
+}
+
+/// The C target on the native engine: a case passes with its repeat checks, a delay is refused
+/// with its feature, and the command compares with the baseline of `model.wasm`.
+#[cfg(feature = "native")]
+#[test]
+fn runner_of_the_c_target() {
+    let Some(dir) = cases_dir() else { return };
+    let result = sbmlsim_cli::testsuite::run_case_c(&dir.join("00001"));
+    assert_eq!(result.status, Status::Pass, "{}", result.message);
+    assert_eq!(result.jacobian.as_deref(), Some("analytic"));
+    let delay = sbmlsim_cli::testsuite::run_case_c(&dir.join("00937"));
+    assert_eq!(delay.status, Status::Refused, "{}", delay.message);
+    assert!(delay.message.contains("delay"), "{}", delay.message);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sbmlsim-core"))
+        .args(["testsuite"])
+        .arg(&dir)
+        .arg("--baseline")
+        .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/testsuite_baseline.json"))
+        .args(["--cases", "00001-00003,00937", "--model-code", "c"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(output.status.code(), Some(0), "{stdout}");
+    assert!(stdout.contains("pass             3"), "{stdout}");
+    assert!(stdout.contains("refused          1"), "{stdout}");
+    assert!(
+        stdout.contains("00937: the C target does not support"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("no difference to the baseline"), "{stdout}");
 }
 
 #[test]

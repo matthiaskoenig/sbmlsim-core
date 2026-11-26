@@ -22,11 +22,14 @@ sbmlsim-core testsuite testdata/cases                          # the analytic Ja
 sbmlsim-core testsuite testdata/cases --jacobian difference    # the colored difference quotient
 sbmlsim-core testsuite testdata/cases --no-optimize            # without the optimizer
 sbmlsim-core testsuite testdata/cases --write-baseline         # the baseline from a run
+sbmlsim-core testsuite testdata/cases --model-code c           # the C target (--features native)
 ```
 
 `--cases 00001-00100` runs some cases, `--jobs` sets the threads, `--json` writes the result of every case and `--export DIR` writes every passing case for the JavaScript tests, which compare the CSV of Node with the one of wasmtime byte for byte. In every mode each passing case is simulated again to check that it repeats bitwise; a case which passes or fails otherwise than the baseline says fails the run.
 
-CI runs the whole suite in the three modes (the job `testsuite-parity`) and the parity of Node with wasmtime over every passing case (`same_bits_as_wasmtime`).
+`--model-code c` simulates every case on the native engine with the native model code of the [C target](rust.md#the-c-target) instead of `model.wasm`, against the same baseline: a case the C target refuses (a delay) is `refused`, listed in the summary with its feature and no difference to the baseline. Of the 1789 cases, 1701 pass, 35 are not compiled as in the baseline and 53 are refused, all for a delay.
+
+CI runs the whole suite in the three modes (the job `testsuite-parity`), with the C target (`testsuite-c-target`) and the parity of Node with wasmtime over every passing case (`same_bits_as_wasmtime`).
 
 The grid above is written from a run and committed, it is not built from a live run of the documentation:
 

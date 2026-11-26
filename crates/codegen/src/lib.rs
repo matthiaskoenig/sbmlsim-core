@@ -1146,8 +1146,12 @@ fn historical_initial(
 /// workspace, which the compiler crates share).
 pub const COMPILER: &str = concat!("sbmlsim-compiler ", env!("CARGO_PKG_VERSION"));
 
-/// The description of a model.
-fn description(
+/// The description of a model with the Jacobian `jacobian` (and `jacobian_p`, the pattern of
+/// its `model_jac_p`), the root functions of its discontinuities ([`Model::discontinuity_roots`]),
+/// its number of constants (`optimize::Plan::n_constants` of the programs of its functions, 0
+/// as written) and of the delays it reads (with the longest of them): the one of every target
+/// of the model representation, `model.wasm` and the native code of `sbmlsim-c` alike.
+pub fn description(
     model: &Model,
     jacobian: JacobianIr,
     jacobian_p: Option<abi::ParameterPattern>,

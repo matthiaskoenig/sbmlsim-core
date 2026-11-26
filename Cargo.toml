@@ -9,6 +9,7 @@ members = [
     "crates/compiler",
     "crates/csolvers",
     "crates/engine",
+    "crates/c",
     "crates/host",
     "crates/batch",
     "crates/fit",

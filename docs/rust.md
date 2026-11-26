@@ -139,6 +139,7 @@ The pool is the one the [Python](python.md) bindings run `simulate_many` and `ba
 | `sbmlsim-abi` | the contracts `model/2` and `simulation/1` as Rust types |
 | `sbmlsim-compiler` | SBML to `model.wasm` and `model.json` (over `sbml`, `ir` and `codegen`) |
 | `sbmlsim-engine` | the integrator, compiled to `engine.wasm` (CVODE, KLU) |
+| `sbmlsim-c` | the C target: the model as native code for the engine, compiled with the C compiler of the machine |
 | `sbmlsim-host` | the wasmtime host: `Runtime`, `LoadedModel`, `Instance` |
 | `sbmlsim-batch` | the pool of a batch of simulations: a thread per point, an instance per thread |
 | `sbmlsim-chaos` | the basis of a polynomial chaos expansion: its multi-indices, its design matrix and its surrogate |
@@ -150,4 +151,25 @@ The pool is the one the [Python](python.md) bindings run `simulate_many` and `ba
 
 ## Without WebAssembly
 
-`NativeInstance` is the same engine compiled for the machine instead of to wasm, the host the [benchmarks](benchmarks.md) call `native` and the one the python wheel runs. It answers the same requests; the model is still the `model.wasm` wasmtime runs, so results can differ from `engine.wasm` in the last bits (see [Python](python.md#the-engine-of-the-wheel)).
+`NativeInstance` is the same engine compiled for the machine instead of to wasm, the host the [benchmarks](benchmarks.md) call `native` and the one the python wheel runs. It answers the same requests; the model is still the `model.wasm` wasmtime runs, so results can differ from `engine.wasm` in the last bits (see [Python](python.md#the-engine-of-the-wheel)). The [C target](#the-c-target) runs without WebAssembly at all.
+
+## The C target
+
+`sbmlsim-c` runs a model without WebAssembly at all: the engine compiled for the machine with the model as native code. `generate` translates the SBML into C, the functions of the contract `model/2` (`defaults`, `init`, `rhs`, `jac`, `roots`, `trigger`, `priority`, `delay`, `event_values`, `event_apply`, `selections`, `assign`) with a prefix of the model (`sbmlsim_model_<id>_`), each a pure function of `t`, pointers to `y` and `p` and its outputs, without globals, and the description the WebAssembly target gives the model. `Library::build` compiles the C into a shared library and loads it, and `CModel` is its functions as the `ModelFns` of `sbmlsim_engine::Engine`; a clone of a `CModel` is a reference count, one per engine.
+
+```rust
+use sbmlsim_c::{CModel, Library, generate};
+use sbmlsim_engine::Engine;
+
+let source = generate(&std::fs::read_to_string("model.xml")?)?;
+let library = Library::build(&source.code)?;
+let model = CModel::new(library, &source.description)?;
+let mut engine = Engine::new(Box::new(model), source.description.clone())?;
+let result = engine.simulate(&request)?;
+```
+
+The compiler is `$CC`, else `cc`, with `-O3 -march=native -ffp-contract=off -fno-fast-math -fPIC -shared`: the processor of the machine, but no fused multiply adds and no fast math, so every operation is the IEEE operation the C writes, in the order of `model.wasm`. The libraries are cached in `$SBMLSIM_C_CACHE`, else `$XDG_CACHE_HOME/sbmlsim/c`, else `~/.cache/sbmlsim/c`, as `<key>.so` (`.dylib` on macOS) next to their source `<key>.c`; the key is the SHA-256 of the flags, the `--version` line of the compiler, the macros it predefines under the flags (`cc -dM -E` with them: the features `-march=native` selects, which make the key stricter than the version alone, so a cache shared by machines of different processors keeps a library for each and never loads one built for another processor) and the source. A library is compiled into a temporary file and renamed into place, so the processes of a parallel run which build the same model never load a partial one, and a library a process has loaded is shared by its engines. `CError` names what failed: `Unsupported { feature }`, `NoCompiler { command }`, `Compiler { command, stderr }`, `Load` and `Model`.
+
+The C reads the math functions of `<math.h>` and not those of mathlib, so its right hand side and Jacobian agree with those of `model.wasm` to the last bits of the math library (within `1e-13` relative in the tests) and a simulation within the tolerances of the integration, not bitwise. The cell model of `testdata/models` (7 states, 8 reactions) takes 0.23 ms a simulation of 1440 min on the native engine with its C, against 0.59 ms on `engine.wasm` in wasmtime; its C compiles in 0.12 s once, after which the cache loads it.
+
+Refused (`CError::Unsupported` with the feature): a model which reads its history (`delay`), and a model without an analytic Jacobian (`factorial` of a state), a known limitation: the engine would take the colored difference quotient of its right hand side, which needs no `jac`, but the C target asks for the analytic Jacobian of every model it compiles. Of the SBML Test Suite (`sbmlsim-core testsuite testdata/cases --model-code c`, [Test suite](testsuite.md)) every case of the baseline passes but the 53 delay models it refuses: 00937-00943, 00981-00985, 01142, 01173-01174, 01176, 01318-01320, 01400-01401, 01403-01404, 01406-01407, 01409-01419, 01454, 01480-01481, 01518-01524, 01534-01538 and 01592-01593. No model of the suite lacks an analytic Jacobian but those.
