@@ -1,5 +1,5 @@
 /* sbmlsim_rosenbrock.h: the Rosenbrock integrator of the QFunction target of sbmlsim-core
-   (sbmlsim-c), one step attempt of RODAS4 per point and application.
+   (sbmlsim-c), up to a number of step attempts of RODAS4 per point and application.
 
    Plain C99 for libCEED: no allocation, no call outside the model and <math.h>, no function
    pointer, every work array of a size the model fixes at compile time. sbmlsim-c pastes this
@@ -38,8 +38,9 @@
 
    The control of a point is t, h, done and failed: an attempt is made where done and failed
    are 0; it sets done where t reaches t1, and failed where the step it would take next is
-   below h_min (or no longer advances t), keeping the state of the last accepted step. The
-   counts of a point are its accepted and its rejected steps, cumulative. */
+   below h_min (or no longer advances t), keeping the state of the last accepted step. An
+   application makes attempts for a point until it is done or failed, at most `attempts` of
+   the context. The counts of a point are its accepted and its rejected steps, cumulative. */
 
 #ifndef SBMLSIM_ROSENBROCK_H
 #define SBMLSIM_ROSENBROCK_H
@@ -50,6 +51,7 @@ struct SbmlsimRosenbrockContext {
   double rtol;  /* the relative tolerance */
   double atol;  /* the absolute tolerance */
   double h_min; /* the smallest step: a point which needs a smaller one fails */
+  double attempts; /* the most step attempts of a point in one application, at least 1 */
 };
 
 /* The root mean square of v scaled by atol + rtol max(|a|, |b|). */
@@ -295,8 +297,8 @@ CEED_QFUNCTION_HELPER void sbmlsim_rosenbrock_attempt(const struct SbmlsimRosenb
   }
 }
 
-/* The body of the QFunction: for each of the Q points (each field [size][Q]), one attempt where
-   the point is neither done nor failed, else a copy. Inputs: state (N), parameters
+/* The body of the QFunction: for each of the Q points (each field [size][Q]), attempts until the
+   point is done or failed, at most c->attempts, else a copy. Inputs: state (N), parameters
    (N_PARAMETERS), control (4: t, h, done, failed), counts (2: accepted, rejected); outputs:
    state_out, control_out, counts_out of the same sizes. */
 CEED_QFUNCTION_HELPER int sbmlsim_rosenbrock_points(void *ctx, CeedInt Q, const CeedScalar *const *in,
@@ -312,7 +314,8 @@ CEED_QFUNCTION_HELPER int sbmlsim_rosenbrock_points(void *ctx, CeedInt Q, const 
     for (int k = 0; k < 2; k++) cnt[k] = counts[k * Q + i];
     if (ctl[2] == 0.0 && ctl[3] == 0.0) {
       SBMLSIM_ROSENBROCK_CONSTANTS(p);
-      sbmlsim_rosenbrock_attempt(c, p, y, ctl, cnt);
+      for (double a = 0.0; a < c->attempts && ctl[2] == 0.0 && ctl[3] == 0.0; a += 1.0)
+        sbmlsim_rosenbrock_attempt(c, p, y, ctl, cnt);
     }
     for (int k = 0; k < SBMLSIM_ROSENBROCK_N; k++) state_out[k * Q + i] = y[k];
     for (int k = 0; k < 4; k++) control_out[k * Q + i] = ctl[k];

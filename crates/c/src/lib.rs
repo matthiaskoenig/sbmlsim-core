@@ -32,8 +32,8 @@
 //! state).
 //!
 //! [`generate_qfunction`] is the second target: the model with a Rosenbrock integrator (RODAS4)
-//! as one libCEED QFunction which advances any number of points (the cells of a tissue) by one
-//! step attempt each per application, for libCEED's CPU backends and its JIT backends
+//! as one libCEED QFunction which advances any number of points (the cells of a tissue) by up to
+//! a number of step attempts each per application, for libCEED's CPU backends and its JIT backends
 //! (`qfunction.rs`); [`run_points`] runs it as libCEED calls it, without libCEED.
 
 mod build;

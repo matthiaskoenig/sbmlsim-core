@@ -9,8 +9,9 @@
 //! The points are the 50 seeded parameter sets of the tests (`tests/common`), repeated, each
 //! initialized by a stepper. A point-step is one interval of 60 min of one point, the unit of
 //! work of both paths: the QFunction harness (`run_points`, in blocks of 1 and of 8 points, the
-//! block of libCEED's blocked CPU backend) applies the QFunction until every point reaches the
-//! end of the interval, the stepper advances each point over it. Both at the same tolerances;
+//! block of libCEED's blocked CPU backend, with one step attempt per point and application or
+//! as many as a point takes) applies the QFunction until every point reaches the end of the
+//! interval, the stepper advances each point over it. Both at the same tolerances;
 //! the best of `--rounds` rounds. Pin the process to one core for a stable number
 //! (`taskset -c 2`).
 
@@ -112,7 +113,7 @@ fn main() {
     );
     println!("| path | point-steps/s | us/point-step | steps/point-step | rejected/point-step |");
     println!("|---|---:|---:|---:|---:|");
-    for block in [1, 8] {
+    for (block, attempts) in [(1, 1e6), (8, 1.0), (8, 1e6)] {
         let mut best = f64::INFINITY;
         let mut counts = [0.0; COUNTS];
         for _ in 0..args.rounds {
@@ -124,6 +125,7 @@ fn main() {
                     rtol: args.rtol,
                     atol: args.atol,
                     h_min: 1e-10,
+                    attempts,
                 };
                 points.start(60.0 * k as f64);
                 run_points(&library, &q, &context, &mut points, block).unwrap();
@@ -136,7 +138,7 @@ fn main() {
             }
         }
         report(
-            &format!("QFunction, RODAS4, block {block}"),
+            &format!("QFunction, RODAS4, block {block}, attempts {attempts:e}"),
             point_steps,
             best,
             counts[0],
