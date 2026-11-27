@@ -1,6 +1,6 @@
 {
   "name": "sbmlsim-core",
-  "version": "0.31.1",
+  "version": "0.32.0",
   "description": "Simulate SBML models compiled to WebAssembly in browsers and Node: the JavaScript host of sbmlsim-core with its engine (CVODE, KLU), a pool of workers and the panel endpoint of sbmlsim",
   "keywords": [
     "sbml",
