@@ -407,7 +407,7 @@ fn petab(
         eprintln!("simulation {simulation}: {message}");
     }
     println!(
-        "{} measurements, {} simulations of {} models: llh {:.10e}, chi2 {:.10e}, log prior {:.10e} \
+        "{} measurements, {} simulations of {} models: llh {:e}, chi2 {:e}, log prior {:e} \
          (read and compiled in {loaded:.3} s, evaluated in {:.3} s)",
         executor.plan().measurements.len(),
         executor.plan().simulations.len(),

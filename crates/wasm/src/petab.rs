@@ -13,7 +13,9 @@
 //!    parameters, with the index of its model, which the host simulates,
 //! 4. [`evaluate`] reads the results of those requests and gives the evaluation of PEtab: the
 //!    log-likelihood, `chi2`, the log priors, the simulated value of every measurement and the
-//!    simulation table,
+//!    simulation table; the values of the results come as the bytes of their `f64`s, the
+//!    `Float64Array` of the loader, so they cross exactly, `NaN` and the infinities included,
+//!    and are not written into JSON and parsed again,
 //! 5. [`close`] drops the problem.
 //!
 //! The C ABI of the module carries the same calls as `petab_open`, `petab_model`,
@@ -26,6 +28,7 @@ use std::collections::HashMap;
 use sbmlsim_abi::{IntegratorSettings, SimulationResult, Tolerance};
 use sbmlsim_petab::{DataAtChange, ExtensionPolicy, Options, PetabProblem, Plan};
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 
 use crate::{Compiled, give};
 
@@ -54,19 +57,6 @@ struct OpenOptions {
     extension: Option<String>,
 }
 
-/// What [`open`] says about a problem.
-#[derive(Serialize)]
-struct Summary {
-    handle: usize,
-    models: Vec<String>,
-    parameters: Vec<String>,
-    nominal: Vec<f64>,
-    lower: Vec<f64>,
-    upper: Vec<f64>,
-    simulations: usize,
-    measurements: usize,
-}
-
 /// A request of a simulation of the plan and the index of its model.
 #[derive(Serialize)]
 struct PlannedRequest {
@@ -74,12 +64,12 @@ struct PlannedRequest {
     request: sbmlsim_abi::SimulationRequest,
 }
 
-/// The result of a simulation as the host gives it: the table of `simulation/1`, or the
-/// message of its failure.
+/// The result of a simulation as the host gives it: the shape of the table of `simulation/1`,
+/// whose values are in the buffer of the values, or the message of its failure.
 #[derive(Deserialize)]
 #[serde(untagged)]
 enum HostResult {
-    Table(SimulationResult),
+    Table { columns: Vec<String>, n_rows: usize },
     Failure { error: String },
 }
 
@@ -93,12 +83,41 @@ struct EvaluateRequest {
     results: Vec<HostResult>,
 }
 
-#[derive(Serialize)]
-struct EvaluationAnswer {
-    #[serde(flatten)]
-    evaluation: sbmlsim_petab::Evaluation,
-    unnorm_log_posterior: f64,
-    simulation_table: String,
+/// A number of an answer: JSON has no `NaN` and no infinities (`serde_json` writes `null` for
+/// them), so they are the strings `"NaN"`, `"Infinity"` and `"-Infinity"`, which `Number` of
+/// JavaScript reads back; a log-likelihood of a failed simulation is `NaN`, a log prior
+/// outside of the bounds `-inf`.
+fn number(value: f64) -> Value {
+    if value.is_finite() {
+        Value::from(value)
+    } else if value.is_nan() {
+        Value::from("NaN")
+    } else if value > 0.0 {
+        Value::from("Infinity")
+    } else {
+        Value::from("-Infinity")
+    }
+}
+
+/// The JSON of an evaluation: the fields of [`sbmlsim_petab::Evaluation`], every number by
+/// [`number`], with the unnormalized log posterior and the simulation table.
+fn evaluation_answer(plan: &Plan, evaluation: &sbmlsim_petab::Evaluation) -> Value {
+    let numbers = |values: &[f64]| Value::Array(values.iter().copied().map(number).collect());
+    json!({
+        "llh": number(evaluation.llh),
+        "chi2": number(evaluation.chi2),
+        "log_prior": number(evaluation.log_prior),
+        "log_priors": evaluation
+            .log_priors
+            .iter()
+            .map(|(id, value)| json!([id, number(*value)]))
+            .collect::<Vec<_>>(),
+        "unnorm_log_posterior": number(evaluation.unnorm_log_posterior()),
+        "simulated": numbers(&evaluation.simulated),
+        "sigma": numbers(&evaluation.sigma),
+        "failures": evaluation.failures,
+        "simulation_table": plan.simulation_table(evaluation),
+    })
 }
 
 fn with_plan<T>(handle: usize, work: impl FnOnce(&Plan) -> Result<T, String>) -> Result<T, String> {
@@ -125,7 +144,10 @@ fn point(plan: &Plan, x: Option<Vec<f64>>) -> Result<Vec<f64>, String> {
 }
 
 /// Reads and plans a problem from the JSON `{"yaml": name, "files": {name: text}, "options":
-/// {...}}` and gives the JSON of its summary, whose `handle` the other calls take.
+/// {...}}` and gives the JSON of its summary, whose `handle` the other calls take: its
+/// `models`, its estimated `parameters` with their `nominal` values and their `lower` and
+/// `upper` bounds (an infinite bound as the string of [`number`]) and the numbers of its
+/// `simulations` and `measurements`.
 ///
 /// # Errors
 ///
@@ -170,23 +192,25 @@ pub fn open(request: &[u8]) -> Result<String, String> {
     let problem = PetabProblem::read(&request.yaml, &files).map_err(|err| err.to_string())?;
     let plan = Plan::new(&problem, &options).map_err(|err| err.to_string())?;
     let estimated = plan.estimated();
-    let parameter = |k: &usize| &plan.parameters[*k];
-    let mut summary = Summary {
-        handle: 0,
-        models: plan.models.iter().map(|model| model.id.clone()).collect(),
-        parameters: estimated.iter().map(|k| parameter(k).id.clone()).collect(),
-        nominal: plan.nominal(),
-        lower: estimated.iter().map(|k| parameter(k).lower).collect(),
-        upper: estimated.iter().map(|k| parameter(k).upper).collect(),
-        simulations: plan.simulations.len(),
-        measurements: plan.measurements.len(),
-    };
-    summary.handle = PROBLEMS.with(|problems| {
+    let numbers = |values: Vec<f64>| Value::Array(values.into_iter().map(number).collect());
+    let mut summary = json!({
+        "models": plan.models.iter().map(|model| model.id.clone()).collect::<Vec<_>>(),
+        "parameters": estimated
+            .iter()
+            .map(|k| plan.parameters[*k].id.clone())
+            .collect::<Vec<_>>(),
+        "nominal": numbers(plan.nominal()),
+        "lower": numbers(estimated.iter().map(|k| plan.parameters[*k].lower).collect()),
+        "upper": numbers(estimated.iter().map(|k| plan.parameters[*k].upper).collect()),
+        "simulations": plan.simulations.len(),
+        "measurements": plan.measurements.len(),
+    });
+    summary["handle"] = Value::from(PROBLEMS.with(|problems| {
         let mut problems = problems.borrow_mut();
         problems.push(Some(plan));
         problems.len() - 1
-    });
-    serde_json::to_string(&summary).map_err(|err| err.to_string())
+    }));
+    Ok(summary.to_string())
 }
 
 /// Compiles the model `k` of an open problem, with the observables the plan added to it.
@@ -234,15 +258,19 @@ pub fn requests(handle: usize, x: &[u8]) -> Result<String, String> {
     })
 }
 
-/// The JSON of the evaluation of an open problem from the results of its requests, the JSON
-/// `{"x": [...], "results": [...]}` of a result of `simulation/1` or `{"error": message}` per
-/// request.
+/// The JSON of the evaluation of an open problem from the results of its requests (`llh`,
+/// `chi2`, `log_prior`, `log_priors` as pairs of the id and the value, `unnorm_log_posterior`,
+/// `simulated` and `sigma` per measurement, `failures` as pairs of the simulation and the
+/// message and `simulation_table`, the numbers which are not finite as strings): the JSON
+/// `{"x": [...], "results": [...]}` of the shape `{"columns": [...], "n_rows": n}` of a result
+/// of `simulation/1` or `{"error": message}` per request, and the values of the tables of the
+/// results one after the other, each row major, as the little-endian bytes of their `f64`s.
 ///
 /// # Errors
 ///
-/// A handle of no open problem, an input which is no such JSON and results which are not one
-/// per simulation.
-pub fn evaluate(handle: usize, input: &[u8]) -> Result<String, String> {
+/// A handle of no open problem, an input which is no such JSON, results which are not one
+/// per simulation and values which are not those of the tables.
+pub fn evaluate(handle: usize, input: &[u8], values: &[u8]) -> Result<String, String> {
     with_plan(handle, |plan| {
         let input: EvaluateRequest =
             serde_json::from_slice(input).map_err(|err| err.to_string())?;
@@ -254,21 +282,41 @@ pub fn evaluate(handle: usize, input: &[u8]) -> Result<String, String> {
                 input.results.len()
             ));
         }
-        let results: Vec<Result<SimulationResult, String>> = input
-            .results
-            .into_iter()
-            .map(|result| match result {
-                HostResult::Table(table) => Ok(table),
+        let (chunks, rest) = values.as_chunks::<8>();
+        if !rest.is_empty() {
+            return Err(format!(
+                "the values are {} bytes, no whole number of f64",
+                values.len()
+            ));
+        }
+        let mut values = chunks.iter().map(|bytes| f64::from_le_bytes(*bytes));
+        let mut results = Vec::with_capacity(input.results.len());
+        for result in input.results {
+            results.push(match result {
+                HostResult::Table { columns, n_rows } => {
+                    let n = n_rows
+                        .checked_mul(columns.len())
+                        .ok_or("a table of more values than an address")?;
+                    let table: Vec<f64> = values.by_ref().take(n).collect();
+                    if table.len() != n {
+                        return Err("the values end before the tables of the results".to_string());
+                    }
+                    Ok(SimulationResult {
+                        columns,
+                        n_rows,
+                        values: table,
+                        sensitivities: None,
+                        local_errors: None,
+                    })
+                }
                 HostResult::Failure { error } => Err(error),
-            })
-            .collect();
+            });
+        }
+        if values.next().is_some() {
+            return Err("the values are more than the tables of the results".to_string());
+        }
         let evaluation = plan.evaluate(&x, &results);
-        let answer = EvaluationAnswer {
-            unnorm_log_posterior: evaluation.unnorm_log_posterior(),
-            simulation_table: plan.simulation_table(&evaluation),
-            evaluation,
-        };
-        serde_json::to_string(&answer).map_err(|err| err.to_string())
+        Ok(evaluation_answer(plan, &evaluation).to_string())
     })
 }
 
@@ -366,20 +414,29 @@ pub unsafe extern "C" fn petab_requests(
     unsafe { answer(requests(handle, bytes(pointer, len)), out) }
 }
 
-/// [`evaluate`] of the C ABI, with the two words of [`petab_open`] at `out`.
+/// [`evaluate`] of the C ABI: the JSON at `pointer`, the bytes of the values at `values`,
+/// with the two words of [`petab_open`] at `out`.
 ///
 /// # Safety
 ///
-/// As [`petab_open`].
+/// `pointer` and `values` are buffers of [`crate::allocate`] of `len` and `values_len` bytes
+/// (or null and 0), `out` two words of the caller.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn petab_evaluate(
     handle: usize,
     pointer: *const u8,
     len: usize,
+    values: *const u8,
+    values_len: usize,
     out: *mut usize,
 ) -> u32 {
     // SAFETY: the buffers are the caller's, as documented
-    unsafe { answer(evaluate(handle, bytes(pointer, len)), out) }
+    unsafe {
+        answer(
+            evaluate(handle, bytes(pointer, len), bytes(values, values_len)),
+            out,
+        )
+    }
 }
 
 /// [`close`] of the C ABI.

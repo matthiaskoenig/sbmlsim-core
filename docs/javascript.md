@@ -6,6 +6,7 @@
 |---|---|---|
 | `loader.mjs` | `.` | runs `engine.wasm`, `mathlib.wasm` and a `model.wasm` with the bits of wasmtime |
 | `compile.mjs` | `./compile` | compiles an SBML document into `model.wasm` and its description with `compiler.wasm` |
+| `petab.mjs` (since 0.39.0) | `./petab` | a problem of [PEtab v2](petab.md) read, simulated and evaluated in a page |
 | `pool.mjs` (with `worker.mjs`) | `./pool` | a pool of workers which run the loader off the main thread |
 | `panels.mjs` | `./panels` | the routes of the panel service of sbmlsim, answered inside a page from a bundle |
 | `plot.mjs` | `./plot` | draws the figures of sbmlsim with `plot.wasm`, see [Figures](plot.md) |
@@ -371,6 +372,63 @@ const instance = await runtime.instantiate(wasm, description);
 `compiler.wasm` is the compiler of the command line built for `wasm32-unknown-unknown` (`crates/wasm`, the C ABI of `allocate`, `compile` and `deallocate` over the memory of the module): the same reader of SBML, the same model representation and the same code generation, so a model compiled in a page gives the `model.wasm` and the `model.json` of `sbmlsim-core compile`, byte for byte, which `js/test/compile.test.mjs` asserts. The module reads no file and imports nothing of its host, so a page compiles a document a visitor drops into it without a server; `sbmlsim-core runtime -o DIR` writes it next to `engine.wasm` and `mathlib.wasm`.
 
 `compiler.compile(sbml, { optimize = true, jacobian = "auto", parameterJacobian = true })` gives `{ wasm, description }`, the bytes of the module and the description as an object, which `runtime.instantiate` takes as they are. The call is synchronous and takes a few milliseconds for a model of the size of the repressilator, so a page compiles on the main thread; a model of many reactions belongs in a worker next to the simulations. `optimize: false` leaves the optimizer out (the results are the same, the module is larger), `jacobian` is `"auto"`, `"difference-quotient"` or `"analytic"`, and a document the compiler refuses raises a `CompileError` with the message of the compiler. `parameterJacobian: false` omits analytic parameter derivatives and their cached constants for ordinary simulations (0.26.0). Forward sensitivities then use numerical parameter derivatives. This option requires a matching `compiler.wasm` with the `compile_with_options` export. One compiler compiles any number of models, and `compiler.module` is the compiled `WebAssembly.Module`, which a worker gets to create a compiler of its own.
+
+## PEtab problems
+
+`petab.mjs` (since 0.39.0) evaluates a problem of [PEtab v2](petab.md) in a page: the YAML file, the tables and the SBML of its models go in as text or bytes, and the log-likelihood, `chi2`, the priors and the simulation table come out, with no server and no python on the way.
+
+```js
+import { createCompiler } from "./js/compile.mjs";
+import { createRuntime } from "./js/loader.mjs";
+import { openPetab } from "./js/petab.mjs";
+
+// compiler.wasm with the feature petab (the default)
+const compiler = await createCompiler({ compiler });
+// or a pool of pool.mjs, openPetab({ compiler, pool, files })
+const runtime = await createRuntime({ engine, mathlib });
+// the files by their names, as text or bytes
+const problem = await openPetab({ compiler, runtime, files });
+
+// at the nominal values, and at a value per estimated parameter
+const { llh, chi2, logPrior, simulationTable } = await problem.evaluate();
+const atX = await problem.evaluate([0.5, 0.4, 3]);
+problem.close();
+```
+
+What a problem is, its plan and its likelihood are the Rust of `sbmlsim-petab` in `compiler.wasm`, the problem of `sbmlsim-core petab` and of `sbmlsim_core.petab` in python; the module only simulates the requests of the plan with the engine of the page:
+
+1. `openPetab` gives the files to `petab_open` of `compiler.wasm`, which reads and plans the problem, compiles every model of the plan with `petab_model` (the SBML with the observables of the problem added) and instantiates it in the `runtime`, or adds it to the `pool`,
+2. `evaluate(x)` asks `petab_requests` for the request of `simulation/1` of every simulation at the point, simulates them (one after the other with a runtime, next to each other on the workers of a pool) and gives the results to `petab_evaluate`: the shapes of the tables as JSON and their values as the bytes of the `Float64Array`s of the loader, so the values cross exactly, `NaN` included, without being written into text and parsed again,
+3. `close()` drops the plan in `compiler.wasm` and the models of the runtime or the pool.
+
+The engine of the page is `engine.wasm`, which the command line runs as well, and the likelihood is the same Rust in either, so a page evaluates a problem with the bits of the command line: `js/test/petab.test.mjs` compares the simulation table and the log-likelihood with the ones of `sbmlsim-core petab`, the pool with the loader, and runs the cases of the PEtab test suite at the tolerances of `crates/petab/tests/testsuite.rs`: the 31 of PEtab v2 pass, and the 20 of PEtab v1 which sbmlsim converts where they are present, as in Rust.
+
+| member | what it is |
+| --- | --- |
+| `openPetab({ compiler, runtime, files, yaml, options })` | the problem from the contents of its files (an object or a `Map` of names to text or bytes), simulated with a `runtime` or, in its place, a `pool`; `yaml` is the name of its YAML file, without it the one file of `.yaml` or `.yml`; `options` are `relativeTolerance` and `absoluteTolerance` of the integrator, `dataAtChange` (`"after"`, `"before"`) and `extension` (`"read"`, `"ignore"`), see [the extension of sbmlsim](petab.md#the-extension-of-sbmlsim); a problem which is not read, planned or compiled raises a `PetabError` with the reason |
+| `models`, `parameters`, `nominal`, `lower`, `upper` | the ids of the models and of the estimated parameters, in the order of a point, their nominal values and their bounds (`Float64Array`s) |
+| `nSimulations`, `nMeasurements` | the simulations of an evaluation, one per experiment of a model, and the measurements |
+| `requests(x)` | the requests of `simulation/1` of the simulations at a point, `[{ model, request }]` |
+| `simulations(x, { signal })` | the simulations at a point, `[{ model, request, result }]`, the result `{ columns, nRows, values }` of the loader or `{ error }` of a simulation which failed |
+| `evaluate(x, { simulations, signal })` | `llh`, `chi2`, `logPrior`, `logPriors` (by parameter), `unnormLogPosterior`, `simulated` and `sigma` (per measurement, `Float64Array`s), `failures` (`[{ simulation, message }]`) and `simulationTable`, the text of the simulation table of PEtab; from the `simulations` of `simulations(x)` when given |
+| `evaluateSimulations(x, simulations)` | the same, synchronous, from simulations which are given |
+| `close()` | drops the problem |
+
+A point `x` is a value per estimated parameter, the nominal values without one. A simulation which fails is in `failures` and gives `NaN` for its measurements, so a log-likelihood of `NaN`, as PEtab asks; a log prior outside of the support of its prior is `-Infinity`.
+
+The fit of the pharmacokinetics of hydrochlorothiazide of pkdb_models ([A fit of sbmlsim as PEtab](petab.md#a-fit-of-sbmlsim-as-petab): 6 parameters, 59 simulations, 777 measurements) evaluates in a page to the log-likelihood of the command line, `1620.2615718892766`, bit for bit, and so does its simulation table:
+
+| host | open (read, plan, compile, instantiate) | an evaluation |
+| --- | --- | --- |
+| Node 24, the runtime on the main thread | 150 ms | 60 ms |
+| Node 24, a pool of 8 workers | 150 ms | 21 ms |
+| Chrome (headless), the runtime on the main thread | 220 ms | 145 ms |
+| Chrome (headless), a pool of the default workers | 180 ms | 45 ms |
+| the command line (`sbmlsim-core petab`, wasmtime on the threads of rayon) | 40 ms (the modules of wasmtime cached) | 30 ms |
+
+`compiler.wasm` carries PEtab in every build since 0.39.0: the feature `petab` of `sbmlsim-wasm` is on by default and adds 340 kB to the 3.07 MB of the compiler alone (110 kB of 1.10 MB gzipped). A module of its own would have been larger in all: `petab_model` compiles the models of a plan, so a `petab.wasm` holds the whole compiler again (3.41 MB), and the package, the python wheels and the command line would carry both. `cargo build -p sbmlsim-wasm --no-default-features` builds the compiler alone. The inline build of the python package (`sbmlsim_core.web.script()`) carries the module as well (since 0.39.0), `sbmlsimCore.openPetab` with `sbmlsimCore.createCompiler` and `sbmlsimCore.createRuntime`, for a page of one file which evaluates a problem with the bytes of `sbmlsim_core.runtime_wasm()`.
+
+A fit of a problem in a page is not supported yet: the optimizers of the engine are `sbmlsim-fit`, which runs on the native host and its batch of threads, see [PEtab](petab.md#not-supported-yet).
 
 ## The worker pool
 

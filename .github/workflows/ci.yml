@@ -69,11 +69,13 @@ jobs:
       - run: cargo build -p sbmlsim-sensitivity --target wasm32-unknown-unknown
       # PEtab v2 read, planned and evaluated without an engine, as a page runs it
       - run: cargo build -p sbmlsim-petab --no-default-features --target wasm32-unknown-unknown
-      - run: cargo build -p sbmlsim-wasm --features petab --target wasm32-unknown-unknown --profile wasm
-      # `compiler.wasm`, the compiler of `js/compile.mjs`: the module of the npm package
+      # `compiler.wasm`, the compiler of `js/compile.mjs` with PEtab of `js/petab.mjs` (the
+      # default feature petab): the module of the npm package
       - run: cargo build -p sbmlsim-wasm --target wasm32-unknown-unknown --profile wasm
+      # the compiler alone
+      - run: cargo build -p sbmlsim-wasm --no-default-features --target wasm32-unknown-unknown --profile wasm
       - run: cargo test -p sbmlsim-wasm
-      - run: cargo test -p sbmlsim-wasm --features petab
+      - run: cargo test -p sbmlsim-wasm --no-default-features
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
@@ -134,7 +136,10 @@ jobs:
         run: test -f testdata/cases/SUITE_COMMIT || uv run scripts/prepare_testsuite.py --out testdata/cases
       - name: The prepared cases are present
         run: test -f testdata/cases/00001/case.json
-      - run: cargo build --release -p sbmlsim-cli
+      # with the feature native for its command petab, which js/test/petab.test.mjs compares with
+      - run: cargo build --release -p sbmlsim-cli --features native
+      # the cases of the PEtab test suite, which js/test/petab.test.mjs runs in the JavaScript host
+      - run: python3 scripts/petab_testsuite.py download
       - name: Export every passing case with the outputs of the wasmtime host (the parity is the job testsuite-parity)
         run: target/release/sbmlsim-core testsuite testdata/cases --export "$RUNNER_TEMP/export"
       - name: The build tools of the JavaScript host (esbuild of the inline build)

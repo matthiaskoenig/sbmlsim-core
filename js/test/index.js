@@ -18,3 +18,4 @@ import "./dde.test.mjs";
 import "./plot.test.mjs";
 import "./figure.test.mjs";
 import "./hydrate.test.mjs";
+import "./petab.test.mjs";

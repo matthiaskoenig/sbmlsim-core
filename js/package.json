@@ -1,7 +1,7 @@
 {
   "name": "sbmlsim-core",
   "version": "0.38.0",
-  "description": "Simulate SBML models compiled to WebAssembly in browsers and Node: the JavaScript host of sbmlsim-core with its engine (CVODE, KLU), a pool of workers and the panel endpoint of sbmlsim",
+  "description": "Simulate SBML models compiled to WebAssembly in browsers and Node: the JavaScript host of sbmlsim-core with its engine (CVODE, KLU), its compiler, PEtab v2 problems, a pool of workers and the panel endpoint of sbmlsim",
   "keywords": [
     "sbml",
     "systems-biology",
@@ -11,6 +11,7 @@
     "cvode",
     "ode",
     "pharmacokinetics",
+    "petab",
     "web-worker"
   ],
   "homepage": "https://matthiaskoenig.github.io/sbmlsim-core/",
@@ -28,6 +29,7 @@
   "exports": {
     ".": "./loader.mjs",
     "./compile": "./compile.mjs",
+    "./petab": "./petab.mjs",
     "./pool": "./pool.mjs",
     "./panels": "./panels.mjs",
     "./plot": "./plot.mjs",
@@ -46,6 +48,7 @@
   "files": [
     "loader.mjs",
     "compile.mjs",
+    "petab.mjs",
     "pool.mjs",
     "worker.mjs",
     "panels.mjs",
