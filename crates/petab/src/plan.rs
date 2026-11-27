@@ -67,7 +67,8 @@ pub enum ExtensionPolicy {
     /// at a change reads (`settings.data_at_change`), the tolerances of the integrator
     /// (`settings.relative_tolerance`, `settings.absolute_tolerance`) and which observables are
     /// data of the likelihood (`observables.<id>.kind`: training data enter, validation data
-    /// and outliers are simulated and do not). Its objective (the residuals, the weights and
+    /// and outliers are simulated and do not; the validation data of a validation problem,
+    /// `role: validation`, enter). Its objective (the residuals, the weights and
     /// the loss of sbmlsim's least squares) is not read: the plan evaluates the likelihood of
     /// PEtab.
     #[default]
@@ -301,10 +302,14 @@ fn read_extension(content: &serde_json::Value) -> SbmlsimExtension {
             .reduce(f64::min),
         _ => None,
     };
+    // the validation data of the validation problem of a fit (`role: validation`) is the data
+    // of its likelihood, which the problem evaluates the fit on, as sbmlsim reads it
+    let validation = content.get("role").and_then(|role| role.as_str()) == Some("validation");
     if let Some(serde_json::Value::Object(observables)) = content.get("observables") {
         for (id, observable) in observables {
             let kind = observable.get("kind").and_then(|kind| kind.as_str());
-            if kind.is_some_and(|kind| kind != "training") {
+            let data = |kind: &str| kind == "training" || (validation && kind == "validation");
+            if kind.is_some_and(|kind| !data(kind)) {
                 extension.excluded.insert(id.clone());
             }
         }

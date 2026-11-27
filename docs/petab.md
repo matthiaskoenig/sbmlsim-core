@@ -98,7 +98,7 @@ sbmlsim writes a problem with the extension `sbmlsim`, which carries what the ta
 
 - `settings.data_at_change`: `before` reads a measurement at a change after the start in the state before the change, except at the first time of an observable of an experiment which is measured later as well, the start of a collection,
 - `settings.relative_tolerance` and `settings.absolute_tolerance` (the smallest of its kinds), the tolerances of the integrator,
-- `observables.<id>.kind`: only the training data enter the likelihood; validation data and outliers are simulated and reported.
+- `observables.<id>.kind`: only the training data enter the likelihood; validation data and outliers are simulated and reported. The validation problem of a fit (`role: validation`, the problem of sbmlsim's `to_petab_problems` which holds the validation data at the fitted parameters) has its validation data as the data of its likelihood, so its log-likelihood is the one of the validation data, as in sbmlsim.
 
 `ExtensionPolicy::Ignore` (`extension="ignore"`) reads a problem as a tool which does not know the extension does. Any other extension which the problem marks as required is refused, as PEtab asks of a tool which does not support it.
 

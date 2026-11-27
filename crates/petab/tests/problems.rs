@@ -319,3 +319,36 @@ fn every_measurement_is_simulated_with_its_model() {
     let posterior = evaluation.unnorm_log_posterior();
     assert!((cost - executor.cost_offset().unwrap() + posterior).abs() < 1e-6);
 }
+
+/// The log-likelihood of the problem with the extension `sbmlsim` of a role, in which `obs_b`
+/// is validation data.
+fn llh_of_role(role: Option<&str>) -> f64 {
+    // data off the solution, so every measurement has a residual of its own
+    let values: Vec<f64> = exact(0.8, 0.6, 2.0).iter().map(|v| 1.1 * v).collect();
+    let mut files = files(PARAMETERS, &values);
+    if let Some(role) = role {
+        let extension = format!(
+            "extensions:\n  sbmlsim:\n    version: 0.5.0\n    required: false\n    role: {role}\n    observables:\n      obs_a: {{kind: training}}\n      obs_b: {{kind: validation}}\n"
+        );
+        files.insert(
+            "problem.yaml".to_string(),
+            format!("{YAML}{extension}").into_bytes(),
+        );
+    }
+    let problem = PetabProblem::read("problem.yaml", &files).unwrap();
+    let executor = Executor::new(Plan::new(&problem, &Options::default()).unwrap()).unwrap();
+    let evaluation = executor.evaluate(&executor.plan().nominal());
+    assert!(evaluation.failures.is_empty(), "{:?}", evaluation.failures);
+    evaluation.llh
+}
+
+#[test]
+fn the_validation_data_of_a_validation_problem_is_its_data() {
+    // a fit (and its training problem) leaves its validation data out of the likelihood, the
+    // validation problem of the fit has it as its data, as sbmlsim reads the roles
+    let all = llh_of_role(None);
+    let fit = llh_of_role(Some("fit"));
+    assert!((fit - all).abs() > 1e-3, "{fit} == {all}");
+    assert_eq!(llh_of_role(Some("training")), fit);
+    assert_eq!(llh_of_role(Some("validation")), all);
+}
