@@ -10,7 +10,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use sbmlsim_abi::{EngineError, SimulationResult};
+use sbmlsim_abi::{EngineError, IntegratorSettings, SimulationResult};
 use sbmlsim_fit::{Algorithm, Ask, Asking, Evolution, Fit, Opening, Settings, Simulation};
 use sbmlsim_host::{LoadedModel, Runtime};
 use sbmlsim_petab::{Executor, Options, PetabProblem, Plan};
@@ -40,11 +40,15 @@ fn models(plan: &Plan, runtime: &Runtime) -> Vec<Arc<LoadedModel>> {
         .collect()
 }
 
-/// The fit of a plan driven ask/tell, its simulations run on the native engine.
+/// The fit of a plan driven ask/tell, its simulations run on the native engine, with the
+/// tolerances of [`Plan::fit_settings`] as a page opens it.
 fn asked(plan: &Plan, models: &[Arc<LoadedModel>], settings: &Settings) -> Fit {
     let definition = plan.definition(&plan.nominal()).unwrap();
     let ids: Vec<String> = plan.models.iter().map(|model| model.id.clone()).collect();
-    let mut asking = Asking::open(Opening::new(definition, &ids).unwrap(), settings.clone());
+    let mut asking = Asking::open(
+        Opening::new(definition, &ids).unwrap(),
+        plan.fit_settings(settings),
+    );
     let mut instances: Vec<_> = models
         .iter()
         .map(|model| model.instantiate_native().unwrap())
@@ -158,4 +162,105 @@ fn the_fit_of_every_case_of_the_test_suite_asked_for_its_simulations_is_the_one_
     }
     eprintln!("{fitted} cases fitted on the batch and ask/tell alike");
     assert!(fitted > 0);
+}
+
+/// The statuses of a least squares fit which stopped at a tolerance of its step or its cost.
+const CONVERGED: [&str; 2] = ["RelativeCostTolerance", "RelativeParamTolerance"];
+
+/// Fits a plan with the default settings, which test the step and the cost at the tolerance of
+/// the integrator, and with tolerances so tight that the optimizer runs until the noise of the
+/// integrator stops it, as every fit did before the defaults (#161): the default fit ends at a
+/// tolerance, at the optimum of the tight one, with fewer evaluations, and the explicit
+/// tolerances win over the defaults.
+fn assert_converges_at_the_tolerance_of_the_integrator(name: &str, plan: &Plan, runtime: &Runtime) {
+    assert_eq!(plan.fit_tolerance(), 1e-8, "{name}");
+    let executor = Executor::with_runtime(plan.clone(), runtime).unwrap();
+    let fit = executor.fit(&Settings::default(), 2).unwrap();
+    assert!(
+        CONVERGED.contains(&fit.fit.status.as_str()),
+        "{name}: {}",
+        fit.fit.status
+    );
+    let tight = Settings {
+        gradient_tolerance: Some(1e-15),
+        step_tolerance: Some(1e-15),
+        cost_tolerance: Some(1e-15),
+        ..Settings::default()
+    };
+    let reference = executor.fit(&tight, 2).unwrap();
+    eprintln!(
+        "{name}: {} after {} evaluations, {} after {} at the tight tolerances",
+        fit.fit.status, fit.fit.evaluations, reference.fit.status, reference.fit.evaluations
+    );
+    let objective =
+        (fit.objective - reference.objective).abs() / reference.objective.abs().max(1.0);
+    assert!(
+        objective < 1e-9,
+        "{name}: the objective {} != {}",
+        fit.objective,
+        reference.objective
+    );
+    for (value, expected) in fit.x.iter().zip(&reference.x) {
+        assert!(
+            (value - expected).abs() <= 1e-4 * expected.abs().max(1e-6),
+            "{name}: the optimum {:?} != {:?}",
+            fit.x,
+            reference.x
+        );
+    }
+    assert!(
+        fit.fit.evaluations < reference.fit.evaluations,
+        "{name}: {} evaluations, {} at the tight tolerances",
+        fit.fit.evaluations,
+        reference.fit.evaluations
+    );
+}
+
+#[test]
+fn a_fit_ends_at_the_tolerance_of_the_integrator() {
+    let runtime = Runtime::embedded().unwrap();
+    assert_converges_at_the_tolerance_of_the_integrator("demo", &demo(), &runtime);
+    let Some(suite) = suite() else {
+        eprintln!("the PEtab test suite {COMMIT} is not downloaded");
+        return;
+    };
+    let problem = PetabProblem::from_path(suite.join("v2.0.0/sbml/0001/_0001.yaml")).unwrap();
+    let plan = Plan::new(&problem, &Options::default()).unwrap();
+    assert_converges_at_the_tolerance_of_the_integrator("v2.0.0/sbml/0001", &plan, &runtime);
+}
+
+#[test]
+fn the_tolerances_of_a_fit_default_to_the_one_of_the_integrator() {
+    let integrator = |relative_tolerance: f64| Options {
+        integrator: Some(IntegratorSettings {
+            relative_tolerance,
+            ..IntegratorSettings::default()
+        }),
+        ..Options::default()
+    };
+    let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/demo/conversion");
+    let problem = PetabProblem::from_path(directory.join("problem.yaml")).unwrap();
+    // the relative tolerance of the integrator, at least the 1e-8 of scipy
+    let coarse = Plan::new(&problem, &integrator(1e-6)).unwrap();
+    assert_eq!(coarse.fit_tolerance(), 1e-6);
+    assert_eq!(
+        Plan::new(&problem, &integrator(1e-12))
+            .unwrap()
+            .fit_tolerance(),
+        1e-8
+    );
+    let settings = coarse.fit_settings(&Settings::default());
+    assert_eq!(settings.gradient_tolerance, Some(1e-6));
+    assert_eq!(settings.step_tolerance, Some(1e-6));
+    assert_eq!(settings.cost_tolerance, Some(1e-6));
+    // an explicit tolerance wins, and the others take the default
+    let settings = coarse.fit_settings(&Settings {
+        step_tolerance: Some(1e-3),
+        max_iterations: 7,
+        ..Settings::default()
+    });
+    assert_eq!(settings.gradient_tolerance, Some(1e-6));
+    assert_eq!(settings.step_tolerance, Some(1e-3));
+    assert_eq!(settings.cost_tolerance, Some(1e-6));
+    assert_eq!(settings.max_iterations, 7);
 }

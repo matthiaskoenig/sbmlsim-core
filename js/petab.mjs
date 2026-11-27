@@ -310,9 +310,12 @@ class PetabProblem {
    *   the optimizer, trust region reflective by default; a differential evolution takes
    *   `{ seed, population, f, cr, polish }`
    * @param {number} [options.maxIterations] the iterations of a fit (100)
-   * @param {number} [options.gradientTolerance] the tolerance of the scaled gradient
+   * @param {number} [options.gradientTolerance] the tolerance of the scaled gradient (`gtol`)
    * @param {number} [options.stepTolerance] the relative tolerance of the step (`xtol`)
-   * @param {number} [options.costTolerance] the relative tolerance of the cost (`ftol`)
+   * @param {number} [options.costTolerance] the relative tolerance of the cost (`ftol`); each
+   *   of the three tolerances is the relative tolerance of the integrator of the problem, at
+   *   least `1e-8`, when it is not given, so a fit stops at the noise of its simulations
+   *   (`RelativeCostTolerance`, `RelativeParamTolerance`) instead of chasing it
    * @param {number} [options.maxSeconds] the time the fits may take, measured by the page,
    *   after which they stop at the best point they reached
    * @param {AbortSignal} [options.signal] stops the fits at their next step, with the best

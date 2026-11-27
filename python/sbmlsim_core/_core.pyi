@@ -321,7 +321,12 @@ class PetabProblem:
     def fit(
         self, settings: Mapping[str, Any] | None = None, *, threads: int | None = None
     ) -> dict[str, Any]:
-        """Fits the estimated parameters from their nominal values in the engine."""
+        """Fits the estimated parameters from their nominal values in the engine.
+
+        A tolerance of the optimizer which `settings` does not give (`gradient_tolerance`,
+        `step_tolerance`, `cost_tolerance`) is the relative tolerance of the integrator,
+        at least 1e-8.
+        """
 
 class BatchExecutor:
     """A reusable batch pool. Concurrent calls raise RuntimeError."""
