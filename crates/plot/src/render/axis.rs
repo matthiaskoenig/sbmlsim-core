@@ -51,6 +51,35 @@ pub(crate) fn pow10(e: f64) -> f64 {
     libm::pow(10.0, e)
 }
 
+/// The room the ticks of an axis are given: the pixels of one tick of a linear axis, and of a
+/// log axis the pixels matplotlib gives one tick (since 0.33.0; `get_tick_space`: three tick
+/// label sizes along x, two along y), from which `LogLocator` takes the number of its decades.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct TickRoom {
+    /// The pixels of one tick of a linear axis.
+    pub linear: f64,
+    /// The pixels of one tick of a log axis.
+    pub log: f64,
+}
+
+impl TickRoom {
+    /// The room of the ticks of an x axis of tick labels of `size`.
+    pub(crate) fn x(size: f64) -> Self {
+        TickRoom {
+            linear: X_TICK_ROOM,
+            log: 3.0 * size,
+        }
+    }
+
+    /// The room of the ticks of a y axis of tick labels of `size`.
+    pub(crate) fn y(size: f64) -> Self {
+        TickRoom {
+            linear: Y_TICK_ROOM,
+            log: 2.0 * size,
+        }
+    }
+}
+
 /// How the values of an axis become its coordinate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Transform {
@@ -77,6 +106,10 @@ pub(crate) struct ResolvedAxis {
     pub ticks: Vec<(f64, String)>,
     /// The multiplier of the labels, `×10^{n}`, written at the end of the axis (since 0.31.0).
     pub multiplier: Option<String>,
+    /// The tick marks of a log axis in data units, each with whether it is major (since
+    /// 0.33.0): the decades of `LogLocator` long and its minor ticks short, as matplotlib draws
+    /// them; `None` for an axis whose marks are the ticks.
+    pub marks: Option<Vec<(f64, bool)>>,
 }
 
 impl ResolvedAxis {
@@ -110,6 +143,32 @@ impl ResolvedAxis {
     /// of a decade a bit past it), which is set onto the end, so the end keeps its tick and
     /// Charton is never given a tick outside of its domain.
     pub fn tick_coordinates(&self) -> Vec<(f64, String)> {
+        self.tick_coordinates_indexed()
+            .into_iter()
+            .map(|(_, u, l)| (u, l))
+            .collect()
+    }
+
+    /// The tick marks of a log axis inside the domain as shares along the axis, each with
+    /// whether it is major (since 0.33.0); `None` for an axis whose marks are its ticks.
+    pub fn mark_shares(&self) -> Option<Vec<(f64, bool)>> {
+        let (lo, hi) = self.domain();
+        let slack = ((hi - lo) * 1e-9).max(1e-9);
+        self.marks.as_ref().map(|marks| {
+            marks
+                .iter()
+                .filter_map(|(v, major)| {
+                    let u = self.u(*v);
+                    (u >= lo - slack && u <= hi + slack)
+                        .then(|| (self.share(u.clamp(lo, hi)), *major))
+                })
+                .collect()
+        })
+    }
+
+    /// The ticks inside the domain as [`ResolvedAxis::tick_coordinates`], each with its index
+    /// among the ticks of the axis (since 0.33.0).
+    pub fn tick_coordinates_indexed(&self) -> Vec<(usize, f64, String)> {
         let (lo, hi) = self.domain();
         // a relative 1e-9 of a decade is an absolute 4.3e-10 of its log10
         let slack = match self.transform {
@@ -118,9 +177,10 @@ impl ResolvedAxis {
         };
         self.ticks
             .iter()
-            .filter_map(|(v, label)| {
+            .enumerate()
+            .filter_map(|(k, (v, label))| {
                 let u = self.u(*v);
-                (u >= lo - slack && u <= hi + slack).then(|| (u.clamp(lo, hi), label.clone()))
+                (u >= lo - slack && u <= hi + slack).then(|| (k, u.clamp(lo, hi), label.clone()))
             })
             .collect()
     }
@@ -146,9 +206,9 @@ pub(crate) fn resolve(
     values: &[f64],
     sticky: &[f64],
     length: f64,
-    room: f64,
+    room: TickRoom,
 ) -> ResolvedAxis {
-    let count = tick_count(length, room);
+    let count = tick_count(length, room.linear);
     match axis.scale {
         AxisScale::Category => {
             let names = axis.categories.as_deref().unwrap_or(&[]);
@@ -167,6 +227,7 @@ pub(crate) fn resolve(
                 high,
                 ticks,
                 multiplier: None,
+                marks: None,
             }
         }
         AxisScale::Linear | AxisScale::Log => {
@@ -191,18 +252,38 @@ pub(crate) fn resolve(
             if axis.frame.is_none() {
                 (low, high) = stick(values, sticky, log, (axis.min, axis.max), (low, high));
             }
-            let ticks = if log {
-                log_ticks(low, high, count)
-            } else {
-                linear_ticks(low, high, count)
+            // a log axis has the ticks of matplotlib's `LogLocator` (since 0.33.0)
+            let logged = log.then(|| {
+                let request = (length / room.log).floor().clamp(2.0, 9.0) as usize;
+                log_locator(low, high, request, request.max(count))
+            });
+            let ticks = match &logged {
+                Some(l) => l.labelled.iter().map(|(v, _)| *v).collect(),
+                None => linear_ticks(low, high, count),
             };
             // the given ticks with their labels (since 0.31.0), else the computed ones
+            let given = axis.ticks.is_some();
             let ticks = axis.ticks.clone().unwrap_or(ticks);
-            let (labels, multiplier) = match &axis.tick_labels {
-                Some(l) => (l.clone(), None),
-                None => axis_labels(&ticks, log, true),
+            let (labels, multiplier) = match (&axis.tick_labels, &logged) {
+                (Some(l), _) => (l.clone(), None),
+                (None, Some(l)) if !given => {
+                    (l.labelled.iter().map(|(_, t)| t.clone()).collect(), None)
+                }
+                (None, _) => axis_labels(&ticks, log, true),
             };
-            let ticks = if axis.ticks.is_some() {
+            let marks = logged.map(|l| {
+                // the given ticks are the major ones, the minor ticks of the locator beside them
+                let majors: Vec<f64> = if given { ticks.clone() } else { l.majors };
+                let mut marks: Vec<(f64, bool)> = majors.iter().map(|v| (*v, true)).collect();
+                marks.extend(
+                    l.minors
+                        .iter()
+                        .filter(|m| !majors.iter().any(|v| (v / *m - 1.0).abs() < 1e-9))
+                        .map(|m| (*m, false)),
+                );
+                marks
+            });
+            let ticks = if given {
                 ticks.into_iter().zip(labels).collect()
             } else {
                 distinct_ticks(ticks, labels)
@@ -218,6 +299,7 @@ pub(crate) fn resolve(
                 high,
                 ticks,
                 multiplier,
+                marks,
             }
         }
     }
@@ -235,6 +317,7 @@ pub(crate) fn with_aspect(
     (xa, ya): (ResolvedAxis, ResolvedAxis),
     ratio: f64,
     (width, height): (f64, f64),
+    (x_room, y_room): (TickRoom, TickRoom),
 ) -> (ResolvedAxis, ResolvedAxis) {
     let (x0, x1) = xa.domain();
     let (y0, y1) = ya.domain();
@@ -245,11 +328,11 @@ pub(crate) fn with_aspect(
     // the span of y which gives the aspect with the span of x, and the other way round
     let dy_wanted = height * dx / (ratio * width);
     if dy_wanted > dy {
-        let ya = widened(y_axis, &ya, dy_wanted, height, Y_TICK_ROOM);
+        let ya = widened(y_axis, &ya, dy_wanted, height, y_room);
         (xa, ya)
     } else {
         let dx_wanted = ratio * width * dy / height;
-        let xa = widened(x_axis, &xa, dx_wanted, width, X_TICK_ROOM);
+        let xa = widened(x_axis, &xa, dx_wanted, width, x_room);
         (xa, ya)
     }
 }
@@ -261,7 +344,7 @@ fn widened(
     resolved: &ResolvedAxis,
     wanted: f64,
     length: f64,
-    room: f64,
+    room: TickRoom,
 ) -> ResolvedAxis {
     let log = resolved.transform == Transform::Log;
     let to = |v: f64| if log { log10(v) } else { v };
@@ -467,50 +550,120 @@ fn linear_ticks(low: f64, high: f64, count: usize) -> Vec<f64> {
     ticks
 }
 
-/// The values of a ladder of steps per decade inside the limits.
-fn decade_ladder(low: f64, high: f64, steps: &[f64]) -> Vec<f64> {
-    let mut values = Vec::new();
-    let first = log10(low).floor() as i32;
-    let last = log10(high).ceil() as i32;
-    for e in first..=last {
-        if values.len() >= 1000 {
-            break;
+/// The ticks of a log axis as matplotlib's `LogLocator` and `LogFormatterSciNotation` give
+/// them (since 0.33.0; the ladders 1-2-5 and 1-3 before).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct LogTicks {
+    /// The major ticks, decades, those just outside of the limits included.
+    pub majors: Vec<f64>,
+    /// The minor ticks.
+    pub minors: Vec<f64>,
+    /// The ticks with a label inside the limits, in order: the decades and the minor ticks
+    /// matplotlib labels.
+    pub labelled: Vec<(f64, String)>,
+}
+
+/// The ticks of a log axis from `low` to `high` with `request` ticks asked for (matplotlib
+/// 3.11's `LogLocator.tick_values` with `numticks` of the tick space of the axis, the major
+/// ones every `stride` decades, the minor ones 2 to 9 of every decade when the major ones are
+/// every decade and there are fewer than ten of them; `linear` ticks of a linear axis are the
+/// minor ones when at most one tick falls into the limits, as matplotlib's fallback to
+/// `AutoLocator`). The labels follow `LogFormatterSciNotation.set_locs`: the decades alone when
+/// the limits span more than one decade tick, the minor ticks of 2, 3, 4 and 6 too when they
+/// span more than 0.4 decades, all of them below; a decade is `10^{n}`, another tick `c×10^{n}`.
+pub(crate) fn log_locator(low: f64, high: f64, request: usize, linear: usize) -> LogTicks {
+    let (efmin, efmax) = (log10(low), log10(high));
+    let (emin, emax) = (efmin.ceil() as i64, efmax.floor() as i64);
+    let n_avail = emax - emin + 1;
+    let mut n_request = request.max(2) as i64;
+    let mut stride = n_avail.max(0) / (n_request + 1) + 1;
+    let nr = (n_avail.max(0) + stride - 1) / stride;
+    if nr <= n_request {
+        n_request = nr;
+    }
+    let decades: Vec<i64> = if n_request == 0 {
+        stride = (emax + 1) - (emin - 1);
+        vec![emin - 1, emax + 1]
+    } else if n_request == 1 {
+        let mid = ((efmin + efmax) / 2.0).round() as i64;
+        stride = (mid - (emin - 1)).max((emax + 1) - mid);
+        vec![mid - stride, mid, mid + stride]
+    } else {
+        stride = (n_avail - 1) / (n_request - 1);
+        if (stride as f64) < n_avail as f64 / n_request as f64 {
+            stride = n_avail / n_request;
         }
-        let decade = pow10(e as f64);
-        for s in steps {
-            let v = s * decade;
-            if v >= low * (1.0 - 1e-9) && v <= high * (1.0 + 1e-9) {
-                values.push(v);
+        let olo = (n_avail - stride * n_request).max(0);
+        let ohi = (n_avail - stride * (n_request - 1)).min(stride);
+        let mut offset = (-emin).rem_euclid(stride);
+        if !(olo <= offset && offset < ohi) {
+            offset = olo;
+        }
+        let mut d = Vec::new();
+        let mut e = emin + offset - stride;
+        while e < emax + stride + 1 {
+            d.push(e);
+            e += stride;
+        }
+        d
+    };
+    let majors: Vec<f64> = decades.iter().map(|e| pow10(*e as f64)).collect();
+    let mut minors: Vec<f64> = Vec::new();
+    if n_avail < 10 && (stride == 1 || n_avail <= 1) {
+        for e in (emin - 1)..=emax {
+            for c in 2..10 {
+                minors.push(f64::from(c) * pow10(e as f64));
             }
         }
     }
-    values
-}
-
-/// The ticks of a logarithmic axis: the finest of the ladders 1-2-5, 1-3 and the decades which
-/// is no longer than asked for, every k-th decade where even those are too many.
-fn log_ticks(low: f64, high: f64, count: usize) -> Vec<f64> {
-    let ladders: Vec<Vec<f64>> = [&[1.0, 2.0, 5.0][..], &[1.0, 3.0], &[1.0]]
-        .iter()
-        .map(|steps| decade_ladder(low, high, steps))
-        .filter(|l| !l.is_empty())
-        .collect();
-    if ladders.is_empty() {
-        return vec![low, high];
+    let within = |v: &f64| *v >= low * (1.0 - 1e-9) && *v <= high * (1.0 + 1e-9);
+    let in_view =
+        majors.iter().filter(|v| within(v)).count() + minors.iter().filter(|v| within(v)).count();
+    if !minors.is_empty() && stride == 1 && in_view <= 1 {
+        minors = linear_ticks(low, high, linear);
     }
-    let mut i = 0;
-    while i < ladders.len() - 1 && ladders[i].len() > count {
-        i += 1;
+    // the labels: which coefficients of a decade are labelled
+    // matplotlib's `math.log(v, 10)`, a quotient of natural logarithms: log 0.1 is a bit
+    // above -1 there, which decides the labels of an axis from 0.1
+    let (lmin, lmax) = (
+        libm::log(low) / libm::log(10.0),
+        libm::log(high) / libm::log(10.0),
+    );
+    let numticks = lmax.floor() as i64 - libm::nextafter(lmin, f64::NEG_INFINITY).floor() as i64;
+    let numdec = lmax - lmin;
+    let sublabels: &[i64] = if numticks > 1 {
+        &[1]
+    } else if numdec > 0.4 {
+        &[1, 2, 3, 4, 6, 10]
+    } else {
+        &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    };
+    let mut labelled: Vec<(f64, String)> = Vec::new();
+    for v in majors.iter().chain(&minors).copied().filter(within) {
+        let fx = log10(v);
+        let exponent = fx.floor();
+        let coeff = pow10(fx - exponent);
+        let near = coeff.round();
+        let decade = (fx - fx.round()).abs() < 1e-9;
+        if decade {
+            labelled.push((v, power(fx.round() as i64)));
+        } else if sublabels.contains(&(near as i64)) {
+            let c = if (coeff - near).abs() < 1e-9 {
+                near
+            } else {
+                coeff
+            };
+            let text = format_number(c, 6, false);
+            labelled.push((v, format!("{text}\u{d7}{}", power(exponent as i64))));
+        }
     }
-    if (ladders[i].len() as f64) < LEAST_TICKS && i > 0 {
-        return ladders[i - 1].clone();
+    labelled.sort_by(|a, b| a.0.total_cmp(&b.0));
+    labelled.dedup_by(|a, b| (a.0 / b.0 - 1.0).abs() < 1e-9);
+    LogTicks {
+        majors,
+        minors,
+        labelled,
     }
-    let fitted = &ladders[i];
-    if fitted.len() <= count {
-        return fitted.clone();
-    }
-    let every = fitted.len().div_ceil(count).max(1);
-    fitted.iter().copied().step_by(every).collect()
 }
 
 /// Whether the labels of the ticks of a log axis are written with powers of ten: a tick of
@@ -809,8 +962,17 @@ mod tests {
         let kept = distinct_ticks(t, labels);
         assert!(kept.windows(2).all(|w| w[0].1 != w[1].1), "{kept:?}");
         assert!(kept.len() >= 2, "{kept:?}");
-        let t = log_ticks(5e-5, 200.0, 8);
-        assert_eq!(t.first().copied(), Some(1e-4));
-        assert!(t.len() <= 8);
+        // matplotlib's LogLocator: a tick every decade from 1e-4 to 1e2 with 9 asked for
+        let t = log_locator(5e-5, 200.0, 9, 8);
+        let labels: Vec<&str> = t.labelled.iter().map(|(_, l)| l.as_str()).collect();
+        assert_eq!(labels.len(), 7, "{labels:?}");
+        assert_eq!(t.labelled[0].0, 1e-4);
+        // six decades of 3 and of 4 ticks: matplotlib's strides of 3 and 2, no minor ticks
+        let t = log_locator(1e-3, 1e3, 3, 3);
+        assert_eq!(t.majors, [1e-6, 1e-3, 1.0, 1e3, 1e6]);
+        assert!(t.minors.is_empty());
+        let t = log_locator(1e-3, 1e3, 4, 4);
+        let majors: Vec<f64> = t.labelled.iter().map(|(v, _)| *v).collect();
+        assert_eq!(majors, [1e-3, 1e-1, 1e1, 1e3]);
     }
 }

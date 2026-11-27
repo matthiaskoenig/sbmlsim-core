@@ -301,16 +301,21 @@ pub fn text_width(text: &str, size: f64) -> f64 {
 
 /// The width of a text in pixels at a font size in pixels, in Inter of a weight (since 0.28.0):
 /// the width of its widest line.
+///
+/// A superscript (`^{...}`) or a subscript (`_{...}`, since 0.33.0) is measured at
+/// [`SUP_SCALE`] of the size, without its braces, as it is drawn.
 pub fn text_width_weighted(text: &str, size: f64, weight: FontWeight) -> f64 {
-    let units = lines(text)
+    lines(text)
         .map(|line| {
-            line.chars()
-                .map(|c| u64::from(advance(c, weight)))
-                .sum::<u64>()
+            runs(line)
+                .into_iter()
+                .map(|(t, script)| {
+                    let units: u64 = t.chars().map(|c| u64::from(advance(c, weight))).sum();
+                    units as f64 * size * script.scale() / UNITS_PER_EM
+                })
+                .sum::<f64>()
         })
-        .max()
-        .unwrap_or(0);
-    units as f64 * size / UNITS_PER_EM
+        .fold(0.0, f64::max)
 }
 
 /// The advance of every character of a monospace text in font sizes (since 0.31.1): Noto Sans
@@ -323,10 +328,16 @@ pub const MONO_ADVANCE: f64 = 0.6;
 pub fn text_width_family(text: &str, size: f64, weight: FontWeight, family: FontFamily) -> f64 {
     match family {
         FontFamily::Sans => text_width_weighted(text, size, weight),
-        FontFamily::Monospace => {
-            let chars = lines(text).map(|l| l.chars().count()).max().unwrap_or(0);
-            chars as f64 * MONO_ADVANCE * size
-        }
+        FontFamily::Monospace => lines(text)
+            .map(|l| {
+                runs(l)
+                    .into_iter()
+                    .map(|(t, script)| t.chars().count() as f64 * script.scale())
+                    .sum::<f64>()
+                    * MONO_ADVANCE
+                    * size
+            })
+            .fold(0.0, f64::max),
     }
 }
 
@@ -337,32 +348,79 @@ pub(crate) fn text_width_one_line(text: &str, size: f64, weight: FontWeight) -> 
     text_width_weighted(&text.replace('\n', " "), size, weight)
 }
 
-/// The font size of a superscript of a tick label as a share of the size of its label
-/// (matplotlib's mathtext shrinks a superscript to 0.7).
+/// The font size of a superscript or a subscript as a share of the size of its text
+/// (matplotlib's mathtext shrinks a script to 0.7).
 pub(crate) const SUP_SCALE: f64 = 0.7;
-/// How far a superscript of a tick label is raised, a share of the size of its label.
+/// How far a superscript is raised, a share of the size of its text (mathtext's `sup1` of
+/// DejaVu Sans, 0.41 em).
 pub(crate) const SUP_RISE: f64 = 0.4;
+/// How far a subscript is lowered, a share of the size of its text (mathtext's `sub1` of
+/// DejaVu Sans, 0.15 em; since 0.33.0).
+pub(crate) const SUB_DROP: f64 = 0.15;
 
-/// The runs of a line of a tick label (since 0.31.0): its plain text and its superscripts,
-/// each written `^{...}` (`10^{−3}`), a superscript `true`. A `^` without a closing brace is
-/// plain text.
-pub(crate) fn runs(line: &str) -> Vec<(&str, bool)> {
+/// What a run of a text is: plain, a superscript or a subscript.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Script {
+    /// Plain text.
+    Plain,
+    /// A superscript, written `^{...}`.
+    Super,
+    /// A subscript, written `_{...}` (since 0.33.0).
+    Sub,
+}
+
+impl Script {
+    /// The shift of the baseline of a run in font sizes of its text, up negative.
+    pub(crate) fn shift(self) -> f64 {
+        match self {
+            Script::Plain => 0.0,
+            Script::Super => -SUP_RISE,
+            Script::Sub => SUB_DROP,
+        }
+    }
+
+    /// The font size of a run as a share of the size of its text.
+    pub(crate) fn scale(self) -> f64 {
+        match self {
+            Script::Plain => 1.0,
+            Script::Super | Script::Sub => SUP_SCALE,
+        }
+    }
+}
+
+/// The runs of a line of a text (since 0.31.0 of a tick label, since 0.33.0 of every text of
+/// a figure): its plain text, its superscripts, each written `^{...}` (`10^{−3}`), and its
+/// subscripts, each written `_{...}` (`C_{max}`). A `^` or `_` without a brace after it, or
+/// without a closing brace, is plain text.
+pub(crate) fn runs(line: &str) -> Vec<(&str, Script)> {
     let mut out = Vec::new();
     let mut rest = line;
-    while let Some(start) = rest.find("^{") {
+    loop {
+        let next = [("^{", Script::Super), ("_{", Script::Sub)]
+            .into_iter()
+            .filter_map(|(mark, script)| rest.find(mark).map(|at| (at, script)))
+            .min_by_key(|(at, _)| *at);
+        let Some((start, script)) = next else {
+            break;
+        };
         let Some(len) = rest[start + 2..].find('}') else {
             break;
         };
         if start > 0 {
-            out.push((&rest[..start], false));
+            out.push((&rest[..start], Script::Plain));
         }
-        out.push((&rest[start + 2..start + 2 + len], true));
+        out.push((&rest[start + 2..start + 2 + len], script));
         rest = &rest[start + 3 + len..];
     }
     if !rest.is_empty() || out.is_empty() {
-        out.push((rest, false));
+        out.push((rest, Script::Plain));
     }
     out
+}
+
+/// Whether a text has a superscript or a subscript.
+pub(crate) fn has_scripts(text: &str) -> bool {
+    lines(text).any(|l| runs(l).iter().any(|(_, s)| *s != Script::Plain))
 }
 
 /// The text of a line of a tick label without its markup: its runs joined.
@@ -370,20 +428,11 @@ pub(crate) fn plain(line: &str) -> String {
     runs(line).into_iter().map(|(t, _)| t).collect()
 }
 
-/// The width of a tick label at a font size (since 0.31.0): of its widest line, a superscript
-/// measured at [`SUP_SCALE`] of the size.
+/// The width of a tick label (since 0.31.0) or another text (since 0.33.0) at a font size: of
+/// its widest line, a superscript or a subscript measured at [`SUP_SCALE`] of the size, as
+/// [`text_width_weighted`] measures every text since 0.33.0.
 pub(crate) fn label_width(text: &str, size: f64, weight: FontWeight) -> f64 {
-    lines(text)
-        .map(|line| {
-            runs(line)
-                .into_iter()
-                .map(|(t, sup)| {
-                    let s = if sup { size * SUP_SCALE } else { size };
-                    text_width_weighted(t, s, weight)
-                })
-                .sum::<f64>()
-        })
-        .fold(0.0, f64::max)
+    text_width_weighted(text, size, weight)
 }
 
 /// The height of the line box of a tick label at a font size: one font size per line and
@@ -451,13 +500,19 @@ mod tests {
 
     #[test]
     fn superscripts() {
-        assert_eq!(runs("10^{−3}"), [("10", false), ("−3", true)]);
+        use Script::*;
+        assert_eq!(runs("10^{−3}"), [("10", Plain), ("−3", Super)]);
         assert_eq!(
             runs("2×10^{4} s"),
-            [("2×10", false), ("4", true), (" s", false)]
+            [("2×10", Plain), ("4", Super), (" s", Plain)]
         );
-        assert_eq!(runs("a^b"), [("a^b", false)]);
-        assert_eq!(runs(""), [("", false)]);
+        assert_eq!(runs("a^b"), [("a^b", Plain)]);
+        assert_eq!(runs(""), [("", Plain)]);
+        assert_eq!(
+            runs("C_{max}^{2} a_b"),
+            [("C", Plain), ("max", Sub), ("2", Super), (" a_b", Plain)]
+        );
+        assert!(has_scripts("AUC_{0-∞}") && !has_scripts("a_b ^c"));
         assert_eq!(plain("10^{−3}"), "10−3");
         let w = label_width("10^{2}", 10.0, FontWeight::Normal);
         let expected = text_width("10", 10.0) + text_width("2", 7.0);

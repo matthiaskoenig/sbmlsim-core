@@ -24,7 +24,7 @@ use charton::error::ChartonError;
 use charton::prelude::SingleColor;
 
 use crate::spec::{FillStyle, FontWeight, Marker, MarkerType};
-use crate::text::{LINE_HEIGHT, SUP_RISE, SUP_SCALE, line_count, lines, runs};
+use crate::text::{LINE_HEIGHT, Script, line_count, lines, runs};
 
 /// The character which stands for the id prefix of the figure until the drawing is complete; it
 /// is no character of a text of the output, see [`escape`].
@@ -195,62 +195,71 @@ pub(crate) enum Stack {
 /// Writes the content of a `<text>` at `(x, y)` of a font size: a text of one line escaped, a
 /// text of several lines (split at `\n`) as a `<tspan>` per line at its own `x` and `y`,
 /// [`LINE_HEIGHT`] font sizes apart and placed by `stack`. The `x` and `y` are in the
-/// coordinates of the text, so the lines of a rotated text are rotated with it.
+/// coordinates of the text, so the lines of a rotated text are rotated with it. Its
+/// superscripts and subscripts are drawn as such (since 0.33.0, see [`label_lines`]).
 pub(crate) fn text_lines(
     out: &mut String,
     text: &str,
     (x, y): (f64, f64),
     size: f64,
     stack: Stack,
+    baseline: &str,
 ) {
-    let n = line_count(text);
-    if n == 1 {
-        text_node(out, text);
-        return;
-    }
-    let step = LINE_HEIGHT * size;
-    let before = match stack {
-        Stack::Down => 0.0,
-        Stack::Centred => (n - 1) as f64 / 2.0,
-        Stack::Up => (n - 1) as f64,
-    };
-    for (k, line) in lines(text).enumerate() {
-        out.push_str("<tspan");
-        attr_num(out, "x", x);
-        attr_num(out, "y", y + (k as f64 - before) * step);
-        out.push('>');
-        text_node(out, line);
-        out.push_str("</tspan>");
+    label_lines(out, text, (x, y), size, stack, baseline);
+}
+
+/// The shift of the baseline a renderer gives a text of a dominant baseline, in font sizes
+/// below its alphabetic baseline (the values of resvg and Chrome with the metrics of Inter:
+/// `hanging` 0.8 of the ascent, `middle` the half of the x-height, `central` the middle of the
+/// ascent and the descent, the edges the ascent and the descent).
+pub(crate) fn baseline_coefficient(baseline: &str) -> f64 {
+    const ASCENT: f64 = 1984.0 / 2048.0;
+    const DESCENT: f64 = -494.0 / 2048.0;
+    const X_HEIGHT: f64 = 1118.0 / 2048.0;
+    match baseline {
+        "hanging" => 0.8 * ASCENT,
+        "middle" => X_HEIGHT / 2.0,
+        "central" => (ASCENT + DESCENT) / 2.0,
+        "text-before-edge" | "before-edge" => ASCENT,
+        "text-after-edge" | "after-edge" | "ideographic" => DESCENT,
+        "mathematical" => 0.5 * ASCENT,
+        _ => 0.0,
     }
 }
 
-/// Writes a line of a tick label: its plain runs as text, its superscripts as `<tspan>`s of
-/// [`SUP_SCALE`] of the size raised by [`SUP_RISE`] of it, the run after one lowered back.
-fn label_line(out: &mut String, line: &str, size: f64) {
-    let mut raised = false;
-    for (text, sup) in runs(line) {
-        if sup {
-            out.push_str("<tspan");
-            attr_num(out, "dy", -SUP_RISE * size);
-            attr_num(out, "font-size", SUP_SCALE * size);
-            out.push('>');
+/// Writes a line of a text: its plain runs as text, its superscripts and subscripts as
+/// `<tspan>`s of [`SUP_SCALE`](crate::text::SUP_SCALE) of the size raised by
+/// [`SUP_RISE`](crate::text::SUP_RISE) of it (lowered by
+/// [`SUB_DROP`](crate::text::SUB_DROP), since 0.33.0), the run after one moved back.
+///
+/// A renderer places a script of a text of another dominant baseline than the alphabetic one
+/// at that baseline of the smaller font of the script, so the shift of a script is corrected
+/// by the difference of the baselines of the two sizes (`coefficient`, see
+/// [`baseline_coefficient`]).
+fn label_line(out: &mut String, line: &str, size: f64, coefficient: f64) {
+    let mut shift = 0.0;
+    for (text, script) in runs(line) {
+        let to = script.shift() + coefficient * (1.0 - script.scale());
+        if script == Script::Plain && shift == 0.0 {
             text_node(out, text);
-            out.push_str("</tspan>");
-            raised = true;
-        } else if raised {
-            out.push_str("<tspan");
-            attr_num(out, "dy", SUP_RISE * size);
-            out.push('>');
-            text_node(out, text);
-            out.push_str("</tspan>");
-            raised = false;
-        } else {
-            text_node(out, text);
+            continue;
         }
+        out.push_str("<tspan");
+        if to != shift {
+            attr_num(out, "dy", (to - shift) * size);
+        }
+        if script != Script::Plain {
+            attr_num(out, "font-size", script.scale() * size);
+        }
+        out.push('>');
+        text_node(out, text);
+        out.push_str("</tspan>");
+        shift = to;
     }
 }
 
-/// Writes the content of the `<text>` of a tick label (since 0.31.0): as [`text_lines`] does,
+/// Writes the content of the `<text>` of a tick label (since 0.31.0) or another text (since
+/// 0.33.0): as [`text_lines`] does,
 /// each line with its superscripts (see [`label_line`]).
 pub(crate) fn label_lines(
     out: &mut String,
@@ -258,10 +267,12 @@ pub(crate) fn label_lines(
     (x, y): (f64, f64),
     size: f64,
     stack: Stack,
+    baseline: &str,
 ) {
+    let coefficient = baseline_coefficient(baseline);
     let n = line_count(text);
     if n == 1 {
-        label_line(out, text, size);
+        label_line(out, text, size, coefficient);
         return;
     }
     let step = LINE_HEIGHT * size;
@@ -275,7 +286,7 @@ pub(crate) fn label_lines(
         attr_num(out, "x", x);
         attr_num(out, "y", y + (k as f64 - before) * step);
         out.push('>');
-        label_line(out, line, size);
+        label_line(out, line, size, coefficient);
         out.push_str("</tspan>");
     }
 }
@@ -334,6 +345,22 @@ pub(crate) struct LayerInfo {
     pub element: Option<usize>,
     /// The marker of a layer of points: every circle Charton draws becomes this marker.
     pub marker: Option<MarkerGlyph>,
+    /// What the crate draws for the layer instead of what Charton draws of it (since 0.33.0):
+    /// a text of its own layout, an arrow, the labels of contour lines, marks in the fractions
+    /// of the panel; Charton's primitives of the layer are dropped.
+    pub raw: Option<RawSvg>,
+}
+
+/// The SVG of a layer the crate draws itself, in pixels from the upper left corner of the
+/// panel (since 0.33.0): the part clipped to the panel and the part drawn over the whole canvas
+/// (`clip: false` of an element), which the writer writes after the panel, in a group of its
+/// element of its own.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct RawSvg {
+    /// Drawn in the panel, clipped to it.
+    pub clipped: String,
+    /// Drawn after the panel, not clipped.
+    pub unclipped: String,
 }
 
 /// The tag of an element group.
@@ -385,7 +412,18 @@ pub(crate) struct AxisHooks {
     /// axis as matplotlib's offset text: right below the tick labels of the bottom axis, above
     /// the top of the left axis.
     pub multiplier: Option<String>,
+    /// The colour of every tick label in the order of the ticks, `None` for the colour of the
+    /// theme (since 0.33.0).
+    pub label_colors: Vec<Option<String>>,
+    /// The tick marks the writer draws instead of Charton's (since 0.33.0): shares along the
+    /// axis, each with whether it is major, the minor ones shorter and thinner (a log axis).
+    pub marks: Option<Vec<(f64, bool)>>,
 }
+
+/// The length of a minor tick mark in pixels: matplotlib's 2 points of a major one of 3.5.
+pub(crate) const MINOR_TICK_LENGTH: f64 = 5.0 * 2.0 / 3.5;
+/// The width of a minor tick mark in pixels: matplotlib's 0.6 points of a major one of 0.8.
+pub(crate) const MINOR_TICK_WIDTH: f64 = 0.75;
 
 /// The grid lines of one axis, as shares along the axis from the start of its domain.
 #[derive(Debug, Clone, Default)]
@@ -417,6 +455,11 @@ pub(crate) struct PlotHooks {
     pub title_gap: f64,
     /// The grid lines.
     pub grid: GridLines,
+    /// Whether the plot is an inset (since 0.33.0): no background of its canvas, a white panel.
+    pub inset: bool,
+    /// Whether the crate draws the title of the plot instead of Charton (since 0.33.0; above a
+    /// top axis).
+    pub own_title: bool,
 }
 
 /// One open group of the writer.
@@ -461,6 +504,8 @@ pub(crate) struct PlotWriter<'a> {
     pub panel: Option<Rect>,
     /// The tick labels of the open axis written so far.
     tick_labels: usize,
+    /// The parts of layers drawn over the whole canvas, by element, written after the panel.
+    unclipped: Vec<(usize, String)>,
 }
 
 impl<'a> PlotWriter<'a> {
@@ -480,6 +525,40 @@ impl<'a> PlotWriter<'a> {
             marker: None,
             panel: None,
             tick_labels: 0,
+            unclipped: Vec::new(),
+        }
+    }
+
+    /// Writes SVG in pixels of the panel, moved onto the panel.
+    fn panel_svg(&mut self, svg: &str) {
+        let (x, y) = self.panel.map_or((0.0, 0.0), |p| (p.x, p.y));
+        self.body.push_str("<g transform=\"translate(");
+        num(&mut self.body, x);
+        self.body.push(' ');
+        num(&mut self.body, y);
+        self.body.push_str(")\">");
+        self.body.push_str(svg);
+        self.body.push_str("</g>");
+    }
+
+    /// Writes the parts of layers which are not clipped, each in a group of its element, after
+    /// the panel (since 0.33.0).
+    fn write_unclipped(&mut self) {
+        for (e, svg) in std::mem::take(&mut self.unclipped) {
+            let tag = &self.hooks.elements[e];
+            self.body.push_str("<g class=\"sbmlsim-element sbmlsim-");
+            self.body.push_str(tag.kind);
+            self.body.push_str(" sbmlsim-unclipped\" data-element=\"");
+            escape(&mut self.body, &tag.id);
+            self.body.push('"');
+            if let Some(legend) = &tag.legend {
+                self.body.push_str(" data-legend=\"");
+                escape(&mut self.body, legend);
+                self.body.push('"');
+            }
+            self.body.push('>');
+            self.panel_svg(&svg);
+            self.body.push_str("</g>");
         }
     }
 
@@ -500,6 +579,11 @@ impl<'a> PlotWriter<'a> {
             self.body.push_str(" data-legend=\"");
             escape(&mut self.body, legend);
             self.body.push('"');
+        }
+        // the cells of a heatmap meet without seams of antialiasing, as matplotlib's
+        // `pcolormesh` draws them without (since 0.33.0)
+        if tag.kind == "heatmap" {
+            self.body.push_str(" shape-rendering=\"crispEdges\"");
         }
         self.body.push('>');
     }
@@ -585,8 +669,70 @@ impl<'a> PlotWriter<'a> {
             b.push_str(")\">");
             ((x, y), Stack::Up)
         };
-        text_lines(b, &title, at, size, stack);
+        let baseline = if stack == Stack::Down {
+            "hanging"
+        } else {
+            "middle"
+        };
+        text_lines(b, &title, at, size, stack, baseline);
         b.push_str("</text></g>");
+    }
+
+    /// Writes the tick marks of the open axis the writer draws (since 0.33.0): the major ones
+    /// as Charton draws its ticks, the minor ones shorter and thinner, out of the panel.
+    fn own_marks(&mut self) {
+        let (Some(panel), Some(hooks)) = (self.panel, self.axis_hooks()) else {
+            return;
+        };
+        let Some(marks) = hooks.marks.clone() else {
+            return;
+        };
+        if hooks.marks_hidden || marks.is_empty() {
+            return;
+        }
+        let bottom = self.axis == Some(AxisKind::X);
+        let b = &mut self.body;
+        let _ = write!(
+            b,
+            "<g class=\"charton-tick sbmlsim-ticks\" stroke=\"{}\">",
+            theme::FG_SOFT
+        );
+        for major in [true, false] {
+            let (length, width) = if major {
+                (crate::render::TICK_LENGTH, 1.0)
+            } else {
+                (MINOR_TICK_LENGTH, MINOR_TICK_WIDTH)
+            };
+            let mut d = String::new();
+            for (t, _) in marks.iter().filter(|(_, m)| *m == major) {
+                if bottom {
+                    let x = panel.x + t * panel.width;
+                    let y = panel.y + panel.height;
+                    d.push('M');
+                    num(&mut d, x);
+                    d.push(' ');
+                    num(&mut d, y);
+                    d.push('V');
+                    num(&mut d, y + length);
+                } else {
+                    let y = panel.y + panel.height - t * panel.height;
+                    d.push('M');
+                    num(&mut d, panel.x);
+                    d.push(' ');
+                    num(&mut d, y);
+                    d.push('H');
+                    num(&mut d, panel.x - length);
+                }
+            }
+            if !d.is_empty() {
+                b.push_str("<path d=\"");
+                b.push_str(&d);
+                b.push('"');
+                attr_num(b, "stroke-width", width);
+                b.push_str("/>");
+            }
+        }
+        b.push_str("</g>");
     }
 
     /// Writes the multiplier of the tick labels of the open axis (since 0.31.0), as matplotlib
@@ -621,7 +767,14 @@ impl<'a> PlotWriter<'a> {
         } else {
             " text-anchor=\"start\">"
         });
-        label_lines(b, &text, at, size, Stack::Down);
+        label_lines(
+            b,
+            &text,
+            at,
+            size,
+            Stack::Down,
+            if bottom { "hanging" } else { "alphabetic" },
+        );
         b.push_str("</text></g>");
     }
 
@@ -707,8 +860,25 @@ fn outline(kind: MarkerType) -> Option<Outline> {
         | MarkerType::Circle
         | MarkerType::Cross
         | MarkerType::Plus
-        | MarkerType::X => {
+        | MarkerType::X
+        | MarkerType::TriDown
+        | MarkerType::TriUp
+        | MarkerType::TriLeft
+        | MarkerType::TriRight => {
             return None;
+        }
+        // matplotlib's `8`: the regular octagon turned by 22.5 degrees, a side at the top
+        MarkerType::Octagon => {
+            let (s, c) = (
+                libm::sin(std::f64::consts::PI / 8.0),
+                libm::cos(std::f64::consts::PI / 8.0),
+            );
+            plain(
+                regular(8, None)
+                    .into_iter()
+                    .map(|(x, y)| (x * c - y * s, x * s + y * c))
+                    .collect(),
+            )
         }
         MarkerType::Square => plain(vec![(-0.5, 0.5), (0.5, 0.5), (0.5, -0.5), (-0.5, -0.5)]),
         MarkerType::Triangle => Outline {
@@ -907,13 +1077,26 @@ pub(crate) fn glyph(b: &mut String, m: &MarkerGlyph, x: f64, y: f64) {
             attr_num(b, "height", 2.0 * r);
             paint(b, &m.fill);
         }
-        MarkerType::Cross | MarkerType::X | MarkerType::Plus => {
-            // matplotlib's `+` and `x`: lines across the square of the size
+        kind if kind.is_line() => {
+            // matplotlib's `+` and `x`: lines across the square of the size; its tri markers
+            // (since 0.33.0): three spokes from the centre, one of half the size to a side and
+            // two at 120 degrees from it (`_tri_path`, 0.8 and 0.5 of the half size)
             let d = r;
-            let segments: [(f64, f64, f64, f64); 2] = if m.kind == MarkerType::Plus {
-                [(-d, 0.0, d, 0.0), (0.0, -d, 0.0, d)]
-            } else {
-                [(-d, -d, d, d), (-d, d, d, -d)]
+            let tri = |dx: f64, dy: f64| -> Vec<(f64, f64, f64, f64)> {
+                // the spoke along (dx, dy) on the screen and the two turned from it
+                let (sx, sy) = (dx * d, dy * d);
+                let turn = |x: f64, y: f64| (-0.5 * x - 0.8 * y, 0.8 * x - 0.5 * y);
+                let (ax, ay) = turn(sx, sy);
+                let (bx, by) = (-0.5 * sx + 0.8 * sy, -0.8 * sx - 0.5 * sy);
+                vec![(0.0, 0.0, sx, sy), (0.0, 0.0, ax, ay), (0.0, 0.0, bx, by)]
+            };
+            let segments: Vec<(f64, f64, f64, f64)> = match kind {
+                MarkerType::Plus => vec![(-d, 0.0, d, 0.0), (0.0, -d, 0.0, d)],
+                MarkerType::TriDown => tri(0.0, 1.0),
+                MarkerType::TriUp => tri(0.0, -1.0),
+                MarkerType::TriLeft => tri(-1.0, 0.0),
+                MarkerType::TriRight => tri(1.0, 0.0),
+                _ => vec![(-d, -d, d, d), (-d, d, d, -d)],
             };
             b.push_str("<path d=\"");
             for (x1, y1, x2, y2) in segments {
@@ -1068,6 +1251,10 @@ impl RenderBackend for PlotWriter<'_> {
             .last()
             .map_or((false, false), |f| (f.tick_label, f.title));
         if tick_label && let Some(a) = self.axis_hooks() {
+            // the colour of the label (since 0.33.0)
+            if let Some(Some(color)) = a.label_colors.get(self.tick_labels) {
+                c.color = SingleColor::new(color.as_str());
+            }
             // the size and the weight of the tick labels of the axis
             c.font_size = a.tick_size as f32;
             c.font_weight = weight_name(a.tick_weight).into();
@@ -1156,6 +1343,7 @@ impl RenderBackend for PlotWriter<'_> {
                 (f64::from(c.x), f64::from(c.y)),
                 f64::from(c.font_size),
                 stack,
+                &c.dominant_baseline,
             );
         } else {
             text_lines(
@@ -1164,6 +1352,7 @@ impl RenderBackend for PlotWriter<'_> {
                 (f64::from(c.x), f64::from(c.y)),
                 f64::from(c.font_size),
                 stack,
+                &c.dominant_baseline,
             );
         }
         self.body.push_str("</text>");
@@ -1239,10 +1428,22 @@ impl RenderBackend for PlotWriter<'_> {
                     if self.panel.is_none() {
                         self.panel = Some(clip);
                     }
+                    // the panel of an inset is white over the panel of its host
+                    if self.hooks.inset {
+                        let b = &mut self.body;
+                        b.push_str("<rect class=\"sbmlsim-inset-panel\"");
+                        attr_num(b, "x", clip.x);
+                        attr_num(b, "y", clip.y);
+                        attr_num(b, "width", clip.width);
+                        attr_num(b, "height", clip.height);
+                        let _ = write!(b, " fill=\"{}\"/>", theme::BACKGROUND);
+                    }
                     self.grid(&clip);
                 }
                 frame.plot = true;
             }
+            // an inset draws no background over its host
+            Role::Background if self.hooks.inset => frame.suppress = true,
             Role::Mark => {
                 frame.mark = true;
                 let info = g.layer.and_then(|i| self.hooks.layers.get(i));
@@ -1255,6 +1456,16 @@ impl RenderBackend for PlotWriter<'_> {
                             self.next_element = e + 1;
                         }
                         self.marker = info.marker.clone();
+                        // a layer the crate draws itself: its SVG instead of Charton's
+                        if let Some(raw) = info.raw.clone() {
+                            if !raw.clipped.is_empty() {
+                                self.panel_svg(&raw.clipped);
+                            }
+                            if !raw.unclipped.is_empty() {
+                                self.unclipped.push((e, raw.unclipped));
+                            }
+                            frame.suppress = true;
+                        }
                     }
                     None => frame.suppress = true,
                 }
@@ -1264,7 +1475,9 @@ impl RenderBackend for PlotWriter<'_> {
                 frame.axis = true;
             }
             Role::Tick => {
-                frame.suppress |= self.axis_hooks().is_some_and(|a| a.marks_hidden);
+                frame.suppress |= self
+                    .axis_hooks()
+                    .is_some_and(|a| a.marks_hidden || a.marks.is_some());
             }
             Role::AxisLine => {
                 frame.suppress |= self.axis_hooks().is_some_and(|a| a.line_hidden);
@@ -1276,6 +1489,7 @@ impl RenderBackend for PlotWriter<'_> {
             }
             // Charton gets no axis titles; the writer draws them, see `AxisHooks`
             Role::AxisTitle => frame.suppress = true,
+            Role::Title if self.hooks.own_title => frame.suppress = true,
             _ => {}
         }
         // a series is a scope of Charton's own; the element group says what a host needs
@@ -1328,6 +1542,7 @@ impl RenderBackend for PlotWriter<'_> {
         }
         if frame.axis {
             if frame.wrote {
+                self.own_marks();
                 self.axis_title();
             }
             self.axis = None;
@@ -1337,6 +1552,9 @@ impl RenderBackend for PlotWriter<'_> {
         }
         if frame.wrote {
             self.body.push_str("</g>");
+        }
+        if frame.plot {
+            self.write_unclipped();
         }
     }
 

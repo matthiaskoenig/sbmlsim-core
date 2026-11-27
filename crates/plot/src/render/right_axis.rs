@@ -111,7 +111,32 @@ pub(crate) fn draw(
             theme::FG_SOFT
         );
     }
-    if layout.marks && !layout.ticks.is_empty() {
+    // the marks of a log axis, the minor ones shorter and thinner (since 0.33.0)
+    if let Some(marks) = resolved.mark_shares().filter(|_| layout.marks) {
+        let _ = write!(
+            out,
+            "<g class=\"charton-tick\" stroke=\"{}\">",
+            theme::FG_SOFT
+        );
+        for (t, major) in marks {
+            let y = panel.y + panel.height - t * panel.height;
+            let (length, width) = if major {
+                (TICK_LENGTH, 1.0)
+            } else {
+                (crate::svg::MINOR_TICK_LENGTH, crate::svg::MINOR_TICK_WIDTH)
+            };
+            out.push_str("<path d=\"M");
+            num(out, x);
+            out.push(' ');
+            num(out, y);
+            out.push('H');
+            num(out, x + length);
+            out.push('"');
+            attr_num(out, "stroke-width", width);
+            out.push_str("/>");
+        }
+        out.push_str("</g>");
+    } else if layout.marks && !layout.ticks.is_empty() {
         out.push_str("<g class=\"charton-tick\">");
         for (u, _) in &layout.ticks {
             let y = y_of(*u);
@@ -165,7 +190,7 @@ pub(crate) fn draw(
                 out.push_str(")\"");
             }
             out.push('>');
-            label_lines(out, label, (lx, y), tick, Stack::Centred);
+            label_lines(out, label, (lx, y), tick, Stack::Centred, "central");
             out.push_str("</text>");
         }
         out.push_str("</g>");
@@ -179,7 +204,7 @@ pub(crate) fn draw(
         attr_num(out, "font-size", fonts.y_tick());
         attr_weight(out, fonts.tick_weight);
         let _ = write!(out, " fill=\"{}\" text-anchor=\"end\">", theme::FG_SOFT);
-        label_lines(out, m, (mx, my), fonts.y_tick(), Stack::Down);
+        label_lines(out, m, (mx, my), fonts.y_tick(), Stack::Down, "alphabetic");
         out.push_str("</text></g>");
     }
     if let Some(title) = &layout.title {
@@ -202,7 +227,7 @@ pub(crate) fn draw(
         num(out, ty);
         out.push_str(")\">");
         // the lines stack outwards, right of the axis: down in the rotated text
-        text_lines(out, title, (tx, ty), fonts.label, Stack::Down);
+        text_lines(out, title, (tx, ty), fonts.label, Stack::Down, "middle");
         out.push_str("</text></g>");
     }
     out.push_str("</g>");

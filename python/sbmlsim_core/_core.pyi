@@ -388,6 +388,7 @@ def color_scale(
     log: bool = False,
     start: float = 0.0,
     end: float = 1.0,
+    gamma: float | None = None,
 ) -> list[str]:
     """The colours (`#rrggbb`) of `values` on a colour scale.
 
@@ -399,6 +400,9 @@ def color_scale(
     The values `low..high` take the part `start..end` of the colour map (since 0.28.0), e.g.
     `end=0.85` for the lines of a scan which leave out the lightest colours.
 
-    Raises `ValueError` for an unknown name, for stops which are no colour map and for a part
-    which is not `0 <= start < end <= 1`.
+    `gamma` (since 0.33.0) makes the scale a power scale, matplotlib's `PowerNorm`: a value at
+    the share `t` of the scale takes the colour at `t ** gamma`.
+
+    Raises `ValueError` for an unknown name, for stops which are no colour map, for a part
+    which is not `0 <= start < end <= 1` and for a `gamma` which is not positive.
     """

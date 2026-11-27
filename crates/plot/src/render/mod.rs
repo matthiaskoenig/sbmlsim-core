@@ -9,13 +9,17 @@
 //! ([`render_plot`]); the elements of a right y axis are drawn by an overlay chart over the
 //! same panel and the axis by the crate ([`right_axis`]), the legends by the crate ([`legend`]).
 
+pub(crate) mod annot;
 pub(crate) mod axis;
+pub(crate) mod contour;
 pub(crate) mod cut;
 pub(crate) mod heatmap;
 pub(crate) mod legend;
 pub(crate) mod marks;
+pub(crate) mod rich;
 pub(crate) mod right_axis;
 pub(crate) mod stats_marks;
+pub(crate) mod top_axis;
 
 use std::fmt::Write as _;
 
@@ -28,7 +32,7 @@ use crate::svg::{
     PanelProbe, PlotHooks, PlotWriter, Stack, escape, text_lines, theme,
 };
 use crate::text::{extra_lines, label_extent, label_height, label_width, widest_line};
-use axis::{ResolvedAxis, X_TICK_ROOM, Y_TICK_ROOM, axis_title};
+use axis::{ResolvedAxis, TickRoom, axis_title};
 use heatmap::ColorBarLayout;
 use right_axis::RightAxis;
 
@@ -111,8 +115,16 @@ pub(crate) const TICK_LABEL_PADDING: f64 = 3.0;
 /// The gap between the tick labels and the title of an axis in pixels (Charton's default).
 pub(crate) const TITLE_GAP: f64 = 10.0;
 
-/// The shares of the ticks of an axis along it, for its grid lines.
+/// The shares of the ticks of an axis along it, for its grid lines: of the major ticks of a
+/// log axis (since 0.33.0), as matplotlib's grid.
 fn grid_shares(axis: &ResolvedAxis) -> Vec<f64> {
+    if let Some(marks) = axis.mark_shares() {
+        return marks
+            .into_iter()
+            .filter(|(_, major)| *major)
+            .map(|(t, _)| t)
+            .collect();
+    }
     axis.tick_coordinates()
         .iter()
         .map(|(u, _)| axis.share(*u))
@@ -123,7 +135,14 @@ fn grid_shares(axis: &ResolvedAxis) -> Vec<f64> {
 type TickLabels = Vec<(f64, String)>;
 
 /// The labels of the ticks of an axis as Charton gets them: empty when they are hidden.
-fn tick_labels(a: &ResolvedAxis, visible: bool) -> TickLabels {
+///
+/// An axis without tick labels and tick marks has no ticks for Charton (since 0.33.0), so it
+/// reserves no room for them: the thin rows of a grid of such axes keep their panels.
+fn tick_labels(a: &ResolvedAxis, axis: &crate::spec::Axis) -> TickLabels {
+    if !axis.ticks_visible && !axis.marks_visible() {
+        return Vec::new();
+    }
+    let visible = axis.ticks_visible;
     a.tick_coordinates()
         .into_iter()
         .map(|(u, l)| (u, if visible { l } else { String::new() }))
@@ -161,11 +180,28 @@ struct AxisLayout {
 /// Inter depth, the lines of a title of several lines stacked outwards.
 fn axis_layout(
     axis: &crate::spec::Axis,
+    resolved: &ResolvedAxis,
     labels: &[(f64, String)],
-    multiplier: Option<&str>,
     fonts: &Fonts,
     bottom: bool,
 ) -> AxisLayout {
+    let multiplier = resolved.multiplier.as_deref();
+    // the colours of the labels, by the index of their ticks
+    let label_colors = match &axis.tick_label_color {
+        Some(colors) => resolved
+            .tick_coordinates_indexed()
+            .into_iter()
+            .map(|(k, _, _)| {
+                // a category is its position, which a cut axis does not start at
+                let index = match resolved.transform {
+                    axis::Transform::Category => resolved.ticks[k].0 as usize,
+                    _ => k,
+                };
+                colors.of(index).map(str::to_string)
+            })
+            .collect(),
+        None => Vec::new(),
+    };
     let angle = axis.tick_rotation;
     let tick = if bottom { fonts.tick } else { fonts.y_tick() };
     let inter = labels
@@ -186,7 +222,12 @@ fn axis_layout(
         0.0
     };
     let title_text = (axis.label_visible && !name.is_empty()).then_some(name);
-    let labels_depth = TICK_LENGTH + TICK_LABEL_PADDING + inter;
+    // hidden tick labels take no room, hidden tick marks neither (since 0.33.0)
+    let labels_depth = match (axis.marks_visible(), axis.ticks_visible) {
+        (_, true) => TICK_LENGTH + TICK_LABEL_PADDING + inter,
+        (true, false) => TICK_LENGTH,
+        (false, false) => 0.0,
+    };
     // the multiplier of the bottom axis goes below its tick labels at its right end, beside
     // the title (that of a left axis above the panel, see `prepare`)
     let multiplier = multiplier
@@ -208,6 +249,8 @@ fn axis_layout(
             labels_depth,
             labels: given_labels(labels, tick, fonts),
             multiplier,
+            label_colors,
+            marks: resolved.mark_shares(),
         },
         depth: labels_depth + title_room,
     }
@@ -242,6 +285,8 @@ pub(crate) struct Prepared {
     xl: AxisLayout,
     yl: AxisLayout,
     right: Option<RightAxis>,
+    /// The top axis (since 0.33.0).
+    top: Option<top_axis::TopAxis>,
     /// The colour bars laid out.
     pub bars: Vec<ColorBarLayout>,
     /// The room of the bar of the plot above its row, 0 without one (since 0.31.0).
@@ -283,33 +328,49 @@ pub(crate) fn prepare(figure: &Figure, plot: &Plot, panel: (f64, f64)) -> Prepar
         .iter()
         .map(|b| {
             let along = match b.placement {
-                ColorBarPlacement::Right => panel_height,
-                ColorBarPlacement::Inset => panel_width,
+                ColorBarPlacement::Right | ColorBarPlacement::Panel => panel_height,
+                ColorBarPlacement::Inset | ColorBarPlacement::Strip => panel_width,
                 ColorBarPlacement::Top => figure.width,
             };
             heatmap::colorbar_layout(b, fonts, along)
         })
         .collect();
-    let xa = axis::resolve(x_axis, &ext.xs, &ext.x_sticky, panel_width, X_TICK_ROOM);
-    let ya = axis::resolve(y_axis, &ext.ys, &ext.y_sticky, panel_height, Y_TICK_ROOM);
+    let (x_room, y_room) = (TickRoom::x(fonts.tick), TickRoom::y(fonts.y_tick()));
+    let xa = axis::resolve(x_axis, &ext.xs, &ext.x_sticky, panel_width, x_room);
+    let ya = axis::resolve(y_axis, &ext.ys, &ext.y_sticky, panel_height, y_room);
     // an aspect widens the limits of one axis for this panel
     let (xa, ya) = match plot.aspect {
-        Some(aspect) => axis::with_aspect((x_axis, y_axis), (xa, ya), aspect.ratio(), panel),
+        Some(aspect) => axis::with_aspect(
+            (x_axis, y_axis),
+            (xa, ya),
+            aspect.ratio(),
+            panel,
+            (x_room, y_room),
+        ),
         None => (xa, ya),
     };
     let y2a = plot
         .y2
         .as_ref()
-        .map(|a| axis::resolve(a, &ext2.ys, &ext2.y_sticky, panel_height, Y_TICK_ROOM));
+        .map(|a| axis::resolve(a, &ext2.ys, &ext2.y_sticky, panel_height, y_room));
     let right = plot
         .y2
         .as_ref()
         .zip(y2a.as_ref())
         .map(|(a, r)| right_axis::layout(a, r, fonts));
-    let x_labels = tick_labels(&xa, x_axis.ticks_visible);
-    let y_labels = tick_labels(&ya, y_axis.ticks_visible);
-    let xl = axis_layout(x_axis, &x_labels, xa.multiplier.as_deref(), fonts, true);
-    let yl = axis_layout(y_axis, &y_labels, ya.multiplier.as_deref(), fonts, false);
+    let top = plot
+        .x2
+        .as_ref()
+        .map(|a| top_axis::layout(a, &xa, panel_width, fonts));
+    let x_labels = tick_labels(&xa, x_axis);
+    let y_labels = tick_labels(&ya, y_axis);
+    let mut xl = axis_layout(x_axis, &xa, &x_labels, fonts, true);
+    let mut yl = axis_layout(y_axis, &ya, &y_labels, fonts, false);
+    // a frame replaces the lines of the axes (since 0.33.0)
+    if plot.frame.is_some() {
+        xl.hooks.line_hidden = true;
+        yl.hooks.line_hidden = true;
+    }
     // the last tick label of an unrotated x axis reaches half its width past the panel
     let overhang = match x_labels.last() {
         Some((_, l)) if x_axis.tick_rotation == 0.0 => {
@@ -383,10 +444,22 @@ pub(crate) fn prepare(figure: &Figure, plot: &Plot, panel: (f64, f64)) -> Prepar
         0.0
     };
     let depth = Sides {
-        top: bands.top + title_lines + multiplier_top,
+        top: bands.top + title_lines + multiplier_top + top.as_ref().map_or(0.0, |t| t.depth),
         right: bands.right.max(overhang).max(right_room),
         bottom: bands.bottom.max(xl.depth),
         left: bands.left.max(yl.depth),
+    };
+    // a plot of a bar in its panel draws nothing else, the room of the bar right of it
+    // (since 0.33.0)
+    let depth = match bars
+        .iter()
+        .find(|b| b.placement == ColorBarPlacement::Panel)
+    {
+        Some(b) => Sides {
+            right: b.room,
+            ..Sides::default()
+        },
+        None => depth,
     };
     Prepared {
         panel,
@@ -399,6 +472,7 @@ pub(crate) fn prepare(figure: &Figure, plot: &Plot, panel: (f64, f64)) -> Prepar
         xl,
         yl,
         right,
+        top,
         bars,
         top_bar,
         grid,
@@ -444,8 +518,26 @@ pub(crate) fn render_plot(
     canvas: Rect,
     panel: Rect,
     prefix: String,
+    spans: &[Option<(f64, f64)>],
 ) -> PlotSvg {
     let fonts = &figure.fonts;
+    // a plot of a bar in its panel draws the bar alone (since 0.33.0)
+    if let Some(k) = prep
+        .bars
+        .iter()
+        .position(|b| b.placement == ColorBarPlacement::Panel)
+    {
+        let local = Rect {
+            x: panel.x - canvas.x,
+            y: panel.y - canvas.y,
+            ..panel
+        };
+        let bar = &plot.color_bars()[k];
+        let layout = prep.bars[k].with_thickness(bar.thickness.unwrap_or(local.width));
+        let (mut body, mut defs) = (String::new(), String::new());
+        heatmap::draw_colorbar(&mut body, &mut defs, &prefix, k, bar, &layout, fonts, local);
+        return PlotSvg { body, defs };
+    }
     let (size, margins) = margins_for(canvas, panel, prep.bands);
     let local = Rect {
         x: panel.x - canvas.x,
@@ -459,9 +551,11 @@ pub(crate) fn render_plot(
         y: prep.yl.hooks.clone(),
         title_size: fonts.label,
         title_weight: fonts.label_weight,
-        plot_title_weight: fonts.title_weight,
+        plot_title_weight: fonts.plot_title_weight(),
         title_gap: TITLE_GAP,
         grid: prep.grid.clone(),
+        inset: plot.inset.is_some(),
+        own_title: prep.top.is_some(),
     };
     let built = marks::build(
         &plot.elements,
@@ -522,21 +616,77 @@ pub(crate) fn render_plot(
     // insets in the panel; a bar above the row is drawn by the figure
     for (k, (b, layout)) in plot.color_bars().iter().zip(&prep.bars).enumerate() {
         let at = match layout.placement {
-            ColorBarPlacement::Right => Rect {
-                x: drawn.x + bar_from,
-                y: drawn.y,
-                width: 0.0,
-                height: drawn.height,
-            },
+            // a bar over several rows spans their panels (since 0.33.0)
+            ColorBarPlacement::Right => {
+                let (y, height) = match spans.get(k).copied().flatten() {
+                    Some((top, h)) => (top - canvas.y, h),
+                    None => (drawn.y, drawn.height),
+                };
+                Rect {
+                    x: drawn.x + bar_from,
+                    y,
+                    width: 0.0,
+                    height,
+                }
+            }
             ColorBarPlacement::Inset => {
                 heatmap::inset_bar(layout, layout.inset_rect(b, drawn, fonts), fonts)
             }
-            ColorBarPlacement::Top => continue,
+            ColorBarPlacement::Strip => layout.strip_rect(b, drawn),
+            ColorBarPlacement::Top | ColorBarPlacement::Panel => continue,
         };
         heatmap::draw_colorbar(&mut body, &mut defs, &prefix, k, b, layout, fonts, at);
         if layout.placement == ColorBarPlacement::Right {
             bar_from += layout.room;
         }
+    }
+    // the top axis and the title of the plot above it (since 0.33.0)
+    if let (Some(x2), Some(top)) = (&plot.x2, &prep.top) {
+        top_axis::draw(&mut body, x2, top, fonts, drawn);
+        if let Some(title) = plot.title.as_deref().filter(|t| !t.is_empty()) {
+            let (tx, ty) = (drawn.x + drawn.width / 2.0, drawn.y - top.depth - TITLE_GAP);
+            body.push_str("<g class=\"charton-title\"><text");
+            svg::attr_num(&mut body, "x", tx);
+            svg::attr_num(&mut body, "y", ty);
+            svg::attr_num(&mut body, "font-size", fonts.plot_title_size());
+            svg::attr_weight(&mut body, fonts.plot_title_weight());
+            let _ = write!(
+                body,
+                " fill=\"{}\" text-anchor=\"middle\" dominant-baseline=\"text-after-edge\">",
+                theme::FG
+            );
+            text_lines(
+                &mut body,
+                title,
+                (tx, ty),
+                fonts.plot_title_size(),
+                Stack::Up,
+                "text-after-edge",
+            );
+            body.push_str("</text></g>");
+        }
+    }
+    // the frame of the panel over the marks (since 0.33.0), as matplotlib's spines
+    if let Some(fr) = &plot.frame
+        && fr.width > 0.0
+    {
+        body.push_str("<rect class=\"sbmlsim-frame\"");
+        for (name, v) in [
+            ("x", drawn.x),
+            ("y", drawn.y),
+            ("width", drawn.width),
+            ("height", drawn.height),
+        ] {
+            svg::attr_num(&mut body, name, v);
+        }
+        body.push_str(" fill=\"none\"");
+        svg::attr_css(
+            &mut body,
+            "stroke",
+            fr.color.as_deref().unwrap_or(theme::FG_SOFT),
+        );
+        svg::attr_num(&mut body, "stroke-width", fr.width);
+        body.push_str("/>");
     }
     if let Some(e) = failed {
         error_text(&mut body, canvas, &e.to_string());
@@ -603,6 +753,7 @@ fn overlay(
             .with_y_expand(zero)
             .configure_theme(|t| {
                 t.with_show_axes(false)
+                    .with_min_panel_size(1.0)
                     .with_grid(false)
                     .with_show_legend(false)
                     .with_background_color("none")
@@ -651,6 +802,8 @@ fn kind_name(e: &Element) -> &'static str {
         Text { .. } => "text",
         Rule { .. } => "rule",
         Polygon { .. } => "polygon",
+        Arrow { .. } => "arrow",
+        Contour { .. } => "contour",
     }
 }
 
@@ -688,7 +841,10 @@ fn frame(
         .with_x_label("")
         .with_y_label("")
         .configure_theme(move |t| {
+            // the layout gives every panel its size, which Charton keeps however small
+            // (its least panel of 100 pixels overlapped the plots of thin rows before 0.33.0)
             t.with_show_legend(false)
+                .with_min_panel_size(1.0)
                 .with_grid(false)
                 .with_background_color(theme::BACKGROUND)
                 .with_label_size(label)
@@ -750,6 +906,28 @@ pub(crate) fn render_planned(figure: &Figure, plan: &layout::Plan) -> String {
     let mut plots = String::new();
     for (i, plot) in figure.plots.iter().enumerate() {
         let canvas = plan.canvases[i];
+        // the bars of the plot over several rows: from the top of its panel to the bottom of
+        // the panels of the last of them
+        let spans: Vec<Option<(f64, f64)>> = plot
+            .color_bars()
+            .iter()
+            .map(|b| {
+                let rows = b.rows.filter(|r| *r > 1)?;
+                let top = lay.plots[i].rect.y;
+                let bottom = figure
+                    .plots
+                    .iter()
+                    .zip(&lay.plots)
+                    .filter(|(q, _)| {
+                        q.inset.is_none()
+                            && q.row + q.row_span > plot.row
+                            && q.row + q.row_span - 1 < plot.row + rows
+                    })
+                    .map(|(_, r)| r.rect.bottom())
+                    .fold(lay.plots[i].rect.bottom(), f64::max);
+                Some((top, bottom - top))
+            })
+            .collect();
         let p = render_plot(
             figure,
             plot,
@@ -757,6 +935,7 @@ pub(crate) fn render_planned(figure: &Figure, plan: &layout::Plan) -> String {
             canvas,
             lay.plots[i].rect,
             format!("{ID_PLACEHOLDER}-p{i}"),
+            &spans,
         );
         defs.push_str(&p.defs);
         plots.push_str("<svg class=\"sbmlsim-plot\" data-plot=\"");
@@ -787,6 +966,23 @@ pub(crate) fn render_planned(figure: &Figure, plan: &layout::Plan) -> String {
             fonts,
             *at,
         );
+    }
+    // the titles of the rows (since 0.33.0)
+    for (band, title) in &plan.row_titles {
+        let size = fonts.plot_title_size();
+        let at = (band.x + band.width / 2.0, band.y + band.height / 2.0);
+        plots.push_str("<g class=\"sbmlsim-row-title\"><text");
+        svg::attr_num(&mut plots, "x", at.0);
+        svg::attr_num(&mut plots, "y", at.1);
+        svg::attr_num(&mut plots, "font-size", size);
+        svg::attr_weight(&mut plots, fonts.plot_title_weight());
+        let _ = write!(
+            plots,
+            " text-anchor=\"middle\" dominant-baseline=\"middle\" fill=\"{}\">",
+            theme::FG
+        );
+        text_lines(&mut plots, title, at, size, Stack::Centred, "middle");
+        plots.push_str("</text></g>");
     }
     let mut legends = String::new();
     for ((b, entries), shape) in lay.legends.iter().zip(&plan.entries).zip(&plan.shapes) {
@@ -837,7 +1033,7 @@ pub(crate) fn render_planned(figure: &Figure, plan: &layout::Plan) -> String {
             theme::FG
         );
         let at = (band.x + band.width / 2.0, band.y + band.height / 2.0);
-        text_lines(&mut out, title, at, fonts.title, Stack::Centred);
+        text_lines(&mut out, title, at, fonts.title, Stack::Centred, "middle");
         out.push_str("</text></g>");
     }
     out.push_str(&plots);

@@ -20,7 +20,7 @@ use super::marks::{
     ERROR_WIDTH, Layers, Stroke, dash, dataset, error_runs, fill_of, group_name, path_layer,
     per_pixel,
 };
-use crate::spec::{BoxStats, Density, FillStyle, MarkerType, Style};
+use crate::spec::{BoxStats, Density, Errors, FillStyle, MarkerType, Style};
 use crate::svg::{LayerInfo, MarkerGlyph, theme};
 
 /// The width of a box, a share of the spacing of the positions (matplotlib's 0.5).
@@ -30,8 +30,6 @@ pub(crate) const VIOLIN_WIDTH: f64 = 0.8;
 /// The width of a bar without a width of its own, a share of the spacing of the positions
 /// (matplotlib's 0.8).
 pub(crate) const BAR_WIDTH: f64 = 0.8;
-/// The width of the edge between the bars of a histogram in pixels.
-pub(crate) const HISTOGRAM_EDGE: f64 = 0.8;
 /// The diameter of the marker of an outlier of a box in pixels.
 pub(crate) const OUTLIER_SIZE: f64 = 6.0;
 
@@ -143,6 +141,19 @@ pub(crate) fn outline_of(style: &Style, color: &str) -> Stroke {
     }
 }
 
+/// The tops of bars (since 0.33.0): their bases and heights, the heights without bases.
+pub(crate) fn tops(height: &[f64], base: Option<&[f64]>) -> Vec<f64> {
+    match base {
+        Some(b) => height.iter().zip(b).map(|(h, b)| b + h).collect(),
+        None => height.to_vec(),
+    }
+}
+
+/// The bases of `n` bars (since 0.33.0): the given ones, else 0.
+pub(crate) fn bases(base: Option<&[f64]>, n: usize) -> Vec<f64> {
+    base.map_or_else(|| vec![0.0; n], <[f64]>::to_vec)
+}
+
 /// The coordinate where a bar starts: 0, or the lower end of an axis which cannot show 0.
 pub(crate) fn base_of(axis: &ResolvedAxis) -> f64 {
     let zero = axis.u(0.0);
@@ -171,8 +182,10 @@ pub(crate) struct Bars<'a> {
     pub x: &'a [f64],
     /// Heights.
     pub height: &'a [f64],
+    /// Where the bars start, 0 without (since 0.33.0).
+    pub base: Option<&'a [f64]>,
     /// Errors of the heights.
-    pub err: Option<&'a [f64]>,
+    pub err: Option<&'a Errors>,
     /// Whether the bars are horizontal.
     pub horizontal: bool,
     /// Width in units of the axis of the positions.
@@ -197,14 +210,25 @@ pub(crate) fn bar_layers(
 ) -> Result<(), ChartonError> {
     let (along, across) = if bars.horizontal { (ya, xa) } else { (xa, ya) };
     let w = bars.width.unwrap_or(BAR_WIDTH * spacing(bars.x));
-    let base = base_of(across);
+    let zero = base_of(across);
     let point = |p: f64, v: f64| if bars.horizontal { (v, p) } else { (p, v) };
+    let tops = tops(bars.height, bars.base);
+    // the base of a bar of a base the axis cannot show is the start of the axis
+    let base_at = |k: usize| match bars.base {
+        Some(b) => {
+            let u = across.u(b[k]);
+            if u.is_finite() { u } else { zero }
+        }
+        None => zero,
+    };
     let rings: Vec<Vec<(f64, f64)>> = bars
         .x
         .iter()
-        .zip(bars.height)
-        .map(|(x, h)| {
+        .zip(&tops)
+        .enumerate()
+        .map(|(k, (x, h))| {
             let (a, b, top) = (along.u(x - w / 2.0), along.u(x + w / 2.0), across.u(*h));
+            let base = base_at(k);
             vec![point(a, base), point(b, base), point(b, top), point(a, top)]
         })
         .collect();
@@ -229,7 +253,9 @@ pub(crate) fn bar_layers(
             bars.panel.0
         };
         let cap = bars.error_cap * per_pixel(along, pixels);
-        let runs = error_runs(bars.height, err, &centers, across, bars.horizontal, cap);
+        let runs = error_runs(&tops, err, &centers, across, bars.horizontal, cap, &|_| {
+            true
+        });
         if let Some(l) = path_layer(&runs, &stroke, true)? {
             layers.push(l, info(index));
         }
@@ -242,6 +268,7 @@ fn info(index: usize) -> LayerInfo {
     LayerInfo {
         element: Some(index),
         marker: None,
+        raw: None,
     }
 }
 
@@ -251,16 +278,36 @@ pub(crate) fn box_width(positions: &[f64], width: Option<f64>) -> f64 {
     width.unwrap_or_else(|| BOX_WIDTH * spacing(positions))
 }
 
+/// The data and the look of box plots.
+pub(crate) struct Boxes<'a> {
+    /// The positions.
+    pub positions: &'a [f64],
+    /// The statistics per position.
+    pub stats: &'a [BoxStats],
+    /// The width of a box.
+    pub width: Option<f64>,
+    /// The colour of the median line (since 0.33.0).
+    pub median_color: Option<&'a str>,
+    /// The opacity of the whiskers and caps (since 0.33.0).
+    pub whisker_opacity: Option<f64>,
+}
+
 /// The layers of box plots from their statistics: the box from the first to the third
 /// quartile, the whiskers with their caps, the median across the box and a marker per outlier.
 pub(crate) fn box_layers(
     layers: &mut Layers,
     index: usize,
-    (positions, stats, width): (&[f64], &[BoxStats], Option<f64>),
+    boxes: Boxes<'_>,
     style: &Style,
     color: &str,
     (xa, ya): (&ResolvedAxis, &ResolvedAxis),
 ) -> Result<(), ChartonError> {
+    let Boxes {
+        positions,
+        stats,
+        width,
+        ..
+    } = boxes;
     let w = box_width(positions, width);
     let (mut rings, mut whiskers, mut medians) = (Vec::new(), Vec::new(), Vec::new());
     let (mut ox, mut oy) = (Vec::new(), Vec::new());
@@ -294,10 +341,19 @@ pub(crate) fn box_layers(
         dash: Vec::new(),
         ..stroke.clone()
     };
-    if let Some(l) = path_layer(&finite(whiskers), &solid, true)? {
+    // the whiskers and caps in an opacity, the median in a colour of their own (since 0.33.0)
+    let whisker = Stroke {
+        opacity: boxes.whisker_opacity.unwrap_or(solid.opacity),
+        ..solid.clone()
+    };
+    if let Some(l) = path_layer(&finite(whiskers), &whisker, true)? {
         layers.push(l, info(index));
     }
-    if let Some(l) = path_layer(&finite(medians), &solid, true)? {
+    let median = Stroke {
+        color: boxes.median_color.unwrap_or(&solid.color).to_string(),
+        ..solid.clone()
+    };
+    if let Some(l) = path_layer(&finite(medians), &median, true)? {
         layers.push(l, info(index));
     }
     let (ox, oy): (Vec<f64>, Vec<f64>) = ox
@@ -335,6 +391,7 @@ pub(crate) fn box_layers(
             LayerInfo {
                 element: Some(index),
                 marker: Some(glyph),
+                raw: None,
             },
         );
     }
@@ -379,35 +436,79 @@ pub(crate) fn violin_layers(
     Ok(())
 }
 
-/// The layers of a histogram from its bins: one ring per bin of a count which is not zero, from
-/// 0 to its count, with an edge of the background between neighbouring bins.
+/// The layers of a histogram from its bins: the bars of every run of neighbouring bins of a
+/// count which is not zero as one outline from their bases (0 by default, since 0.33.0) to their
+/// counts, so neighbouring bars meet without a seam (since 0.33.0; a ring per bin with an edge
+/// of the background between them before), and with a line of the style the outline of every
+/// bar in it (matplotlib's `edgecolor`).
 pub(crate) fn histogram_layers(
     layers: &mut Layers,
     index: usize,
-    (edges, counts): (&[f64], &[f64]),
+    (edges, counts, base): (&[f64], &[f64], Option<&[f64]>),
     style: &Style,
     color: &str,
     (xa, ya): (&ResolvedAxis, &ResolvedAxis),
 ) -> Result<(), ChartonError> {
-    let base = base_of(ya);
-    let rings: Vec<Vec<(f64, f64)>> = counts
-        .iter()
-        .zip(edges.windows(2))
-        .filter(|(c, _)| **c != 0.0)
-        .map(|(c, e)| {
-            let (a, b, top) = (xa.u(e[0]), xa.u(e[1]), ya.u(*c));
-            vec![(a, base), (b, base), (b, top), (a, top)]
+    let zero = base_of(ya);
+    let tops = tops(counts, base);
+    let base_at = |k: usize| match base {
+        Some(b) => {
+            let u = ya.u(b[k]);
+            if u.is_finite() { u } else { zero }
+        }
+        None => zero,
+    };
+    // the bins of a bar: from, to, base and top in coordinates, None for a bin without one
+    let bars: Vec<Option<(f64, f64, f64, f64)>> = (0..counts.len())
+        .map(|k| {
+            let (a, b, top, bottom) = (
+                xa.u(edges[k]),
+                xa.u(edges[k + 1]),
+                ya.u(tops[k]),
+                base_at(k),
+            );
+            (counts[k] != 0.0 && [a, b, top, bottom].iter().all(|v| v.is_finite()))
+                .then_some((a, b, bottom, top))
         })
         .collect();
+    // the outline of a run: along the tops from its first bin, back along the bases
+    let mut rings: Vec<Vec<(f64, f64)>> = Vec::new();
+    let mut k = 0;
+    while k < bars.len() {
+        if bars[k].is_none() {
+            k += 1;
+            continue;
+        }
+        let start = k;
+        while k < bars.len() && bars[k].is_some() {
+            k += 1;
+        }
+        let run: Vec<(f64, f64, f64, f64)> = bars[start..k].iter().flatten().copied().collect();
+        let mut ring = Vec::with_capacity(4 * run.len());
+        for (a, b, _, top) in &run {
+            ring.push((*a, *top));
+            ring.push((*b, *top));
+        }
+        for (a, b, bottom, _) in run.iter().rev() {
+            ring.push((*b, *bottom));
+            ring.push((*a, *bottom));
+        }
+        rings.push(ring);
+    }
     let (fill, opacity) = solid_fill(style, color);
-    let edge = Stroke {
-        color: theme::BACKGROUND.to_string(),
-        width: HISTOGRAM_EDGE,
-        dash: Vec::new(),
-        opacity: 1.0,
-    };
-    if let Some(l) = rings_layer(&rings, Some((&fill, opacity)), Some(&edge))? {
+    if let Some(l) = rings_layer(&rings, Some((&fill, opacity)), None)? {
         layers.push(l, info(index));
+    }
+    // the edges of the bars in the line of the style
+    if let Some(edge) = style.line.and_then(|l| Stroke::of(l, style, color)) {
+        let outlines: Vec<Vec<(f64, f64)>> = bars
+            .iter()
+            .flatten()
+            .map(|(a, b, bottom, top)| vec![(*a, *bottom), (*b, *bottom), (*b, *top), (*a, *top)])
+            .collect();
+        if let Some(l) = rings_layer(&outlines, None, Some(&edge))? {
+            layers.push(l, info(index));
+        }
     }
     Ok(())
 }

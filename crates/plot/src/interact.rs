@@ -16,7 +16,9 @@ use crate::layout::{self, LegendOwner, Plan, Rect};
 use crate::render::axis::ResolvedAxis;
 use crate::render::heatmap::cell_span;
 use crate::render::stats_marks::{BAR_WIDTH, VIOLIN_WIDTH, base_of, box_body, spacing};
-use crate::spec::{AxisScale, ElementKind, Figure, LineType, Orientation, YAxisRef, heatmap_size};
+use crate::spec::{
+    AxisScale, ElementKind, Errors, Figure, LineType, Orientation, YAxisRef, heatmap_size,
+};
 
 /// A figure laid out once: the plan the geometry and the pick read.
 pub struct FigurePlan(Plan);
@@ -251,6 +253,10 @@ pub fn pick_in(figure: &Figure, plan: &FigurePlan, x: f64, y: f64, radius: f64) 
                 YAxisRef::Y2 => map.y2a,
             };
             let Some(ya) = ya else { continue };
+            // the marks in fractions of the panel are no data (since 0.33.0)
+            if e.coordinates == crate::spec::Coordinates::Axes {
+                continue;
+            }
             best.plot = pi;
             best.element = ei;
             let line = e.style.line_or_default();
@@ -351,6 +357,16 @@ impl Map<'_> {
     }
 }
 
+/// The error below and above the value `i` of errors, NaN for none.
+fn e_at(e: &Option<Errors>, i: usize) -> (f64, f64) {
+    e.as_ref().map_or((f64::NAN, f64::NAN), |e| e.at(i))
+}
+
+/// The pairs of a finite value.
+fn finite(pairs: Vec<(String, f64)>) -> impl Iterator<Item = (String, f64)> {
+    pairs.into_iter().filter(|(_, v)| v.is_finite())
+}
+
 fn values(pairs: &[(&str, f64)]) -> BTreeMap<String, f64> {
     pairs
         .iter()
@@ -440,6 +456,18 @@ fn measure(kind: &ElementKind, lined: bool, m: &Map, best: &mut Best) {
         );
         overlaps(m, a, b).then(|| to_rect(at, a, b))
     };
+    // the error of a symmetric error bar under its name, the sides of one of two sides under
+    // `<name>_low` and `<name>_high` (since 0.33.0)
+    let errors = |name: &'static str, e: &Option<Errors>, i: usize| -> Vec<(String, f64)> {
+        match e {
+            Some(Errors::Symmetric(_)) => vec![(name.to_string(), e_at(e, i).1)],
+            Some(Errors::Sides { .. }) => {
+                let (lo, hi) = e_at(e, i);
+                vec![(format!("{name}_low"), lo), (format!("{name}_high"), hi)]
+            }
+            None => Vec::new(),
+        }
+    };
     let err = |e: &Option<Vec<f64>>, i: usize| {
         e.as_ref()
             .and_then(|e| e.get(i))
@@ -457,23 +485,17 @@ fn measure(kind: &ElementKind, lined: bool, m: &Map, best: &mut Best) {
                 }
                 let Some(p) = m.point(*xv, *yv) else { continue };
                 best.offer((at.0 - p.0).hypot(at.1 - p.1), i, || {
-                    let v = values(&[
-                        ("x", *xv),
-                        ("y", *yv),
-                        ("xerr", err(xerr, i)),
-                        ("yerr", err(yerr, i)),
-                    ]);
+                    let mut v = values(&[("x", *xv), ("y", *yv)]);
+                    v.extend(finite(errors("xerr", xerr, i)));
+                    v.extend(finite(errors("yerr", yerr, i)));
                     (v, no_label.clone())
                 });
             }
             if lined {
                 curve_segments(x, y, m, best, |i| {
-                    let v = values(&[
-                        ("x", x[i]),
-                        ("y", y[i]),
-                        ("xerr", err(xerr, i)),
-                        ("yerr", err(yerr, i)),
-                    ]);
+                    let mut v = values(&[("x", x[i]), ("y", y[i])]);
+                    v.extend(finite(errors("xerr", xerr, i)));
+                    v.extend(finite(errors("yerr", yerr, i)));
                     (v, no_label.clone())
                 });
             }
@@ -530,6 +552,7 @@ fn measure(kind: &ElementKind, lined: bool, m: &Map, best: &mut Best) {
             err: errs,
             horizontal,
             width,
+            base: bases,
             ..
         } => {
             // the bars run along the axis of their positions and across the axis of heights
@@ -539,9 +562,19 @@ fn measure(kind: &ElementKind, lined: bool, m: &Map, best: &mut Best) {
                 (m.xa, m.ya)
             };
             let w = width.unwrap_or(BAR_WIDTH * spacing(x));
-            let base = base_of(across);
+            let zero = base_of(across);
             for (i, (p, h)) in x.iter().zip(height).enumerate() {
-                let (a, b, top) = (along.u(p - w / 2.0), along.u(p + w / 2.0), across.u(*h));
+                // a bar of a base runs from it (since 0.33.0)
+                let from = bases.as_ref().map_or(0.0, |b| b[i]);
+                let base = match across.u(from) {
+                    u if u.is_finite() && bases.is_some() => u,
+                    _ => zero,
+                };
+                let (a, b, top) = (
+                    along.u(p - w / 2.0),
+                    along.u(p + w / 2.0),
+                    across.u(from + *h),
+                );
                 let (c0, c1) = if *horizontal {
                     ((m.px(base), m.py(a)), (m.px(top), m.py(b)))
                 } else {
@@ -551,7 +584,11 @@ fn measure(kind: &ElementKind, lined: bool, m: &Map, best: &mut Best) {
                     continue;
                 }
                 best.offer(to_rect(at, c0, c1), i, || {
-                    let v = values(&[("x", *p), ("height", *h), ("err", err(errs, i))]);
+                    let mut v = values(&[("x", *p), ("height", *h)]);
+                    if bases.is_some() {
+                        v.insert("base".into(), from);
+                    }
+                    v.extend(finite(errors("err", errs, i)));
                     (v, no_label.clone())
                 });
             }
@@ -560,6 +597,7 @@ fn measure(kind: &ElementKind, lined: bool, m: &Map, best: &mut Best) {
             positions,
             stats,
             width,
+            ..
         } => {
             let w = crate::render::stats_marks::box_width(positions, *width);
             for (i, (p, b)) in positions.iter().zip(stats).enumerate() {
@@ -611,12 +649,21 @@ fn measure(kind: &ElementKind, lined: bool, m: &Map, best: &mut Best) {
                 }
             }
         }
-        ElementKind::Histogram { edges, counts } => {
-            let base = base_of(m.ya);
+        ElementKind::Histogram {
+            edges,
+            counts,
+            base: bases,
+        } => {
+            let zero = base_of(m.ya);
             for (i, (c, e)) in counts.iter().zip(edges.windows(2)).enumerate() {
+                let from = bases.as_ref().map_or(0.0, |b| b[i]);
+                let base = match m.ya.u(from) {
+                    u if u.is_finite() && bases.is_some() => u,
+                    _ => zero,
+                };
                 let (a, b) = (
                     (m.px(m.xa.u(e[0])), m.py(base)),
-                    (m.px(m.xa.u(e[1])), m.py(m.ya.u(*c))),
+                    (m.px(m.xa.u(e[1])), m.py(m.ya.u(from + *c))),
                 );
                 if !overlaps(m, a, b) {
                     continue;
@@ -666,7 +713,16 @@ fn measure(kind: &ElementKind, lined: bool, m: &Map, best: &mut Best) {
                 }
             }
         }
-        ElementKind::Text { x, y, .. } => {
+        // a text at a location and an arrow are no data
+        ElementKind::Text { x: None, .. }
+        | ElementKind::Text { y: None, .. }
+        | ElementKind::Arrow { .. }
+        | ElementKind::Contour { .. } => {}
+        ElementKind::Text {
+            x: Some(x),
+            y: Some(y),
+            ..
+        } => {
             if let Some(p) = m.point(*x, *y) {
                 best.offer((at.0 - p.0).hypot(at.1 - p.1), 0, || {
                     (values(&[("x", *x), ("y", *y)]), no_label.clone())

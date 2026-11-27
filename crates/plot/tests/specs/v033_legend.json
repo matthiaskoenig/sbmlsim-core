@@ -1,0 +1,346 @@
+{
+  "contract": "figure/1",
+  "width": 900,
+  "height": 640,
+  "fonts": {
+    "legend_family": "sans"
+  },
+  "row_titles": [
+    "healthy",
+    "T2DM"
+  ],
+  "legends": [
+    {
+      "groups": [
+        "s2"
+      ],
+      "position": "bottom",
+      "title": "studies of the figure"
+    },
+    {
+      "groups": [
+        "ind"
+      ],
+      "position": "right",
+      "family": "monospace",
+      "title": "ID"
+    }
+  ],
+  "grid": {
+    "rows": 2,
+    "columns": 3
+  },
+  "plots": [
+    {
+      "id": "a",
+      "row": 0,
+      "column": 0,
+      "x": {
+        "label": "t"
+      },
+      "y": {
+        "label": "c"
+      },
+      "legend_title": "substance",
+      "legend_tuples": [
+        "ind"
+      ],
+      "legends": [
+        {
+          "groups": [
+            "s1"
+          ],
+          "title": "studies",
+          "loc": "lower_left"
+        }
+      ],
+      "elements": [
+        {
+          "id": "sim",
+          "kind": "curve",
+          "label": "simulation",
+          "x": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          "y": [
+            5,
+            4,
+            3,
+            2.5,
+            2,
+            1.8
+          ],
+          "style": {
+            "color": "#000000"
+          }
+        },
+        {
+          "id": "d1",
+          "kind": "curve",
+          "x": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          "y": [
+            5.2,
+            4.1,
+            2.8,
+            2.6,
+            2.1,
+            1.7
+          ],
+          "label": "data ± SD",
+          "style": {
+            "color": "#1f77b4",
+            "line": {
+              "type": "none"
+            },
+            "marker": {
+              "type": "circle",
+              "size": 7
+            }
+          },
+          "yerr": [
+            0.3,
+            0.3,
+            0.3,
+            0.3,
+            0.3,
+            0.3
+          ],
+          "error_cap": 4
+        },
+        {
+          "id": "i1",
+          "kind": "curve",
+          "x": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          "y": [
+            4.8,
+            3.6,
+            3.1,
+            2.2,
+            1.9,
+            1.5
+          ],
+          "label": "individuals",
+          "style": {
+            "color": "#2ca02c",
+            "line": {
+              "type": "none"
+            },
+            "marker": {
+              "type": "square",
+              "size": 7
+            }
+          },
+          "legend": "ind"
+        },
+        {
+          "id": "i2",
+          "kind": "curve",
+          "x": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          "y": [
+            5.5,
+            4.5,
+            3.3,
+            2.9,
+            2.3,
+            2.0
+          ],
+          "label": "individuals",
+          "style": {
+            "color": "#d62728",
+            "line": {
+              "type": "none"
+            },
+            "marker": {
+              "type": "triangle",
+              "size": 7
+            }
+          },
+          "legend": "ind"
+        },
+        {
+          "id": "s1",
+          "kind": "curve",
+          "x": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          "y": [
+            1,
+            1.2,
+            1.4,
+            1.6,
+            1.8,
+            2.0
+          ],
+          "label": "Smith2001",
+          "style": {
+            "color": "#9467bd",
+            "line": {
+              "type": "none"
+            },
+            "marker": {
+              "type": "diamond",
+              "size": 7
+            }
+          }
+        },
+        {
+          "id": "s2",
+          "kind": "curve",
+          "x": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          "y": [
+            0.5,
+            0.8,
+            1.0,
+            1.1,
+            1.3,
+            1.4
+          ],
+          "label": "Jones2010",
+          "style": {
+            "color": "#8c564b",
+            "line": {
+              "type": "none"
+            },
+            "marker": {
+              "type": "x",
+              "size": 7
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "b",
+      "row": 0,
+      "column": 1,
+      "x": {
+        "label": "t"
+      },
+      "y": {
+        "label": "c"
+      },
+      "legend_anchor": [
+        0.98,
+        0.02
+      ],
+      "legend_loc": "lower_right",
+      "colorbar": {
+        "scale": {
+          "name": "viridis",
+          "low": 0,
+          "high": 10
+        },
+        "label": "two rows, extend max",
+        "extend": "max",
+        "rows": 2
+      },
+      "elements": [
+        {
+          "id": "b1",
+          "kind": "curve",
+          "label": "anchored",
+          "x": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          "y": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5
+          ]
+        }
+      ]
+    },
+    {
+      "id": "c",
+      "row": 1,
+      "column": 0,
+      "x": {
+        "label": "t"
+      },
+      "y": {
+        "label": "c"
+      },
+      "legend": false,
+      "elements": []
+    },
+    {
+      "id": "d",
+      "row": 1,
+      "column": 1,
+      "x": {
+        "label": "t"
+      },
+      "y": {
+        "label": "c"
+      },
+      "legend": false,
+      "elements": []
+    },
+    {
+      "id": "who",
+      "row": 0,
+      "column": 2,
+      "row_span": 2,
+      "x": {},
+      "y": {},
+      "legend": false,
+      "colorbar": {
+        "scale": {
+          "name": "rdbu",
+          "low": -3,
+          "high": 5
+        },
+        "placement": "panel",
+        "label": "WHO Score [-]",
+        "thickness": 24
+      },
+      "elements": []
+    }
+  ]
+}
