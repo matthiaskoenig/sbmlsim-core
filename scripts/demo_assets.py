@@ -29,7 +29,7 @@ import urllib.request
 from pathlib import Path
 
 # the release of the npm package the demo runs, raised with a release
-NPM_VERSION = "0.39.0"
+NPM_VERSION = "0.40.0"
 REGISTRY = "https://registry.npmjs.org/sbmlsim-core"
 
 # what is taken out of the package, by its path in the tarball
