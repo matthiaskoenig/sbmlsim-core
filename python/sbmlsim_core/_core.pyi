@@ -3,7 +3,7 @@
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from os import PathLike
 from pathlib import Path
-from typing import Any
+from typing import Any, SupportsFloat
 
 import numpy
 import numpy.typing
@@ -652,20 +652,20 @@ def stats_mse(residuals: numpy.typing.ArrayLike) -> float:
     Raises `ValueError` without a residual.
     """
 
-def stats_rmse_from_mse(mse: float) -> float:
+def stats_rmse_from_mse(mse: SupportsFloat) -> float:
     """Root Mean Squared Error (RMSE) from the mean squared error (since 0.40.0).
 
     Raises `ValueError` for a negative MSE.
     """
 
-def stats_aic_from_mse(mse: float, n: int, k: int) -> float:
+def stats_aic_from_mse(mse: SupportsFloat, n: int, k: int) -> float:
     """Akaike Information Criterion of a least squares fit, `n ln(MSE) + 2 k` (since 0.40.0).
 
     `-inf` for an MSE of 0. Raises `ValueError` for a negative MSE and a number of points
     which is not positive.
     """
 
-def stats_bic_from_mse(mse: float, n: int, k: int) -> float:
+def stats_bic_from_mse(mse: SupportsFloat, n: int, k: int) -> float:
     """Bayesian Information Criterion of a least squares fit, `n ln(MSE) + k ln(n)` (since 0.40.0).
 
     `-inf` for an MSE of 0. Raises `ValueError` for a negative MSE and a number of points
@@ -684,7 +684,7 @@ def stats_r_squared(
 def stats_fold_counts(
     y_observed: numpy.typing.ArrayLike,
     y_predicted: numpy.typing.ArrayLike,
-    fold: float = 2.0,
+    fold: SupportsFloat = 2.0,
 ) -> tuple[int, int]:
     """The points within the fold factor and the points with a ratio (since 0.40.0).
 
@@ -696,7 +696,7 @@ def stats_fold_counts(
 def stats_fold_accepted(
     y_observed: numpy.typing.ArrayLike,
     y_predicted: numpy.typing.ArrayLike,
-    fold: float = 2.0,
+    fold: SupportsFloat = 2.0,
 ) -> numpy.typing.NDArray[numpy.float64]:
     """The fold criterion of every point, `Fold(fold).accepted` of sbmlsim (since 0.40.0).
 

@@ -230,9 +230,30 @@ def test_a_strided_an_integer_and_a_fortran_array_are_read_as_their_values() -> 
     y = numpy.asarray(case["inputs"]["y"])
     f = numpy.asarray(case["inputs"]["f"])
     assert y.dtype.kind == f.dtype.kind == "i"
-    assert stats.fold_counts(y[::1], f, 2.0) == tuple(case["expected"]["counts"])
+    assert stats.fold_counts(y, f, 2.0) == tuple(case["expected"]["counts"])
     numpy.testing.assert_array_equal(
         stats.fold_accepted(y, f, 2), case["expected"]["accepted"]
+    )
+    # views of doubles with a stride of two values and a negative one, which numpy
+    # does not copy and the binding reads in the order of their values
+    y_float = numpy.repeat(y.astype(numpy.float64), 2)[::2]
+    f_float = numpy.repeat(f.astype(numpy.float64), 2)[::2]
+    assert y_float.dtype == numpy.float64
+    assert not y_float.flags.c_contiguous
+    assert y_float.base is not None
+    assert stats.fold_counts(y_float, f_float) == tuple(case["expected"]["counts"])
+    numpy.testing.assert_array_equal(
+        stats.fold_accepted(y_float, f_float), case["expected"]["accepted"]
+    )
+    y_reversed = y.astype(numpy.float64)[::-1]
+    f_reversed = f.astype(numpy.float64)[::-1]
+    assert y_reversed.strides[0] < 0
+    assert stats.fold_counts(y_reversed, f_reversed) == tuple(
+        case["expected"]["counts"]
+    )
+    numpy.testing.assert_array_equal(
+        stats.fold_accepted(y_reversed, f_reversed),
+        case["expected"]["accepted"][::-1],
     )
     # a strided array of integers
     y_strided = numpy.repeat(y, 3)[::3]
@@ -242,3 +263,76 @@ def test_a_strided_an_integer_and_a_fortran_array_are_read_as_their_values() -> 
     x = numpy.asarray(case["inputs"]["x"], dtype=numpy.int32)
     assert stats.sse(x) == case["expected"]["sse"]
     assert stats.mse(x[::-1]) == case["expected"]["mse"]
+    # the residuals of a negative stride are summed in their order, as numpy sums the copy
+    case = METRICS["residuals/random_1000"]
+    x = numpy.asarray(case["inputs"]["x"])
+    reversed_view = x[::-1]
+    assert reversed_view.strides[0] < 0
+    assert stats.sse(reversed_view) == stats.sse(reversed_view.copy())
+    assert stats.sse(reversed_view) == pytest.approx(
+        case["expected"]["sse"], rel=KERNEL
+    )
+
+
+def large_residuals(n: int) -> numpy.ndarray:
+    """The residuals of `large_residuals` of `crates/stats/oracles/make_oracles.py`."""
+    i = numpy.arange(n, dtype=numpy.int64)
+    a = (i * 2654435761) % 1000003
+    return (a.astype(float) / 1000003.0 - 0.5) * numpy.ldexp(
+        1.0, (i % 31 - 15).astype(int)
+    )
+
+
+@pytest.mark.parametrize(("name", "case"), of("large_residuals/"))
+def test_the_metrics_of_many_residuals_are_the_pairwise_sums_of_numpy(
+    name: str, case: dict[str, Any]
+) -> None:
+    # more than a block of the pairwise sum and than a buffer of numpy, bit for bit
+    x = large_residuals(case["inputs"]["n"])
+    expected = case["expected"]
+    assert x[:4].tolist() == expected["first"]
+    assert stats.sse(x) == expected["sse"]
+    assert stats.mse(x) == expected["mse"]
+    assert stats.nrmse(x) == expected["nrmse"]
+
+
+@pytest.mark.parametrize(
+    ("call", "message"),
+    [
+        (
+            lambda: stats.fold_counts([1.0], [1.0], 1),
+            "The fold factor must be larger than 1, but '1' given.",
+        ),
+        (
+            lambda: stats.fold_accepted([1.0], [1.0], numpy.int64(0)),
+            "The fold factor must be larger than 1, but '0' given.",
+        ),
+        (
+            lambda: stats.fold_counts([1.0], [1.0], numpy.float64(0.5)),
+            "The fold factor must be larger than 1, but '0.5' given.",
+        ),
+        (
+            lambda: stats.rmse_from_mse(-1),
+            "RMSE requires a non-negative MSE, but '-1' given.",
+        ),
+        (
+            lambda: stats.aic_from_mse(-3, 10, 2),
+            "AIC requires a non-negative MSE, but '-3' given.",
+        ),
+        (
+            lambda: stats.bic_from_mse(numpy.int32(-2), 10, 2),
+            "BIC requires a non-negative MSE, but '-2' given.",
+        ),
+        (
+            lambda: stats.aic_from_mse(0, 0, 2),
+            "AIC requires a positive number of points, but '0' given.",
+        ),
+    ],
+)
+def test_a_number_given_as_an_integer_is_written_as_python_writes_it(
+    call: Any, message: str
+) -> None:
+    # the python writes the object it was given, `'1'` of the int 1 and not `'1.0'`
+    with pytest.raises(ValueError) as raised:
+        call()
+    assert str(raised.value) == message

@@ -1179,6 +1179,40 @@ fn the_metrics_of_residuals_are_the_ones_of_sbmlsim() {
     assert_close("residuals", KERNEL, rows);
 }
 
+/// The residuals `0..n` of `large_residuals` of `oracles/make_oracles.py`, bit for bit:
+/// `(((i * 2654435761) % 1000003) / 1000003 - 0.5) * 2^(i % 31 - 15)`.
+fn large_residuals(n: usize) -> Vec<f64> {
+    (0..n as i64)
+        .map(|i| {
+            let a = (i * 2_654_435_761) % 1_000_003;
+            // 2^e exactly, from its bits
+            let power = f64::from_bits(((i % 31 - 15 + 1023) as u64) << 52);
+            (a as f64 / 1_000_003.0 - 0.5) * power
+        })
+        .collect()
+}
+
+#[test]
+fn the_metrics_of_many_residuals_are_the_pairwise_sums_of_numpy_bit_for_bit() {
+    // more than a block of 128 and than the 8192 values of a buffer of numpy, which sums a
+    // contiguous array pairwise as a whole: the fixture holds that a sum in blocks of 8192
+    // would differ
+    let fixture = Fixture::load("metrics");
+    for name in fixture.cases("large_residuals/") {
+        let case = fixture.case(&name);
+        let x = large_residuals(case.input_usize("n"));
+        assert_eq!(x[..4], case.required("first")[..], "{name}: the formula");
+        let expected = &case.value["expected"];
+        assert_eq!(metrics::sse(&x), number(&expected["sse"]), "{name}");
+        assert_eq!(
+            metrics::mse(&x).unwrap(),
+            number(&expected["mse"]),
+            "{name}"
+        );
+        assert_eq!(metrics::nrmse(&x), number(&expected["nrmse"]), "{name}");
+    }
+}
+
 #[test]
 fn the_metrics_of_an_mse_are_the_ones_of_sbmlsim_and_refuse_as_it_does() {
     let fixture = Fixture::load("metrics");

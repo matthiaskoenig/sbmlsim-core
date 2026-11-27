@@ -12,6 +12,7 @@ use numpy::ndarray::{ArrayD, IxDyn};
 use numpy::{AllowTypeChange, PyArray1, PyArrayDyn, PyArrayLikeDyn, PyUntypedArrayMethods};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use pyo3::types::PyFloat;
 use sbmlsim_stats::{StatsError, metrics};
 
 /// The array of values of numpy the functions take, of any shape.
@@ -20,6 +21,53 @@ type Values<'py> = PyArrayLikeDyn<'py, f64, AllowTypeChange>;
 /// The error of the arguments of a function, the `ValueError` of the python.
 fn value_error(error: StatsError) -> PyErr {
     PyValueError::new_err(error.0)
+}
+
+/// A number of python as a double, with the error of the arguments it is in.
+///
+/// The crate writes the double into a message as python writes a float, where the python
+/// function wrote the number it was given: `'1.0'` for the int `1`, which python writes
+/// `'1'`. The error is the crate's with the number written as python writes the object.
+struct Number<'a, 'py> {
+    object: &'a Bound<'py, PyAny>,
+    value: f64,
+}
+
+impl<'a, 'py> Number<'a, 'py> {
+    /// The number `object`, which python converts to a double (`float`, `int`, numpy's).
+    fn of(object: &'a Bound<'py, PyAny>) -> PyResult<Self> {
+        Ok(Self {
+            object,
+            value: object.extract()?,
+        })
+    }
+
+    /// The error of the crate with the number as python writes the object (`str`, as an
+    /// f-string does) where the crate wrote the double.
+    fn error(&self, error: StatsError) -> PyErr {
+        let written = PyFloat::new(self.object.py(), self.value).str();
+        match (written, self.object.str()) {
+            (Ok(written), Ok(original)) => PyValueError::new_err(error.0.replacen(
+                &format!("'{written}'"),
+                &format!("'{original}'"),
+                1,
+            )),
+            _ => value_error(error),
+        }
+    }
+}
+
+/// The fold factor of a criterion, if one is given.
+fn fold_of<'a, 'py>(fold: Option<&'a Bound<'py, PyAny>>) -> PyResult<Option<Number<'a, 'py>>> {
+    fold.map(Number::of).transpose()
+}
+
+/// The error of a fold criterion, with its fold factor as python writes it.
+fn fold_error(fold: Option<&Number<'_, '_>>, error: StatsError) -> PyErr {
+    match fold {
+        Some(fold) => fold.error(error),
+        None => value_error(error),
+    }
 }
 
 /// The values of an array in the order numpy ravels it, borrowed where it is contiguous.
@@ -45,22 +93,25 @@ pub(crate) fn stats_mse(residuals: Values<'_>) -> PyResult<f64> {
 
 /// Root Mean Squared Error (RMSE) from the mean squared error.
 #[pyfunction]
-pub(crate) fn stats_rmse_from_mse(mse: f64) -> PyResult<f64> {
-    metrics::rmse_from_mse(mse).map_err(value_error)
+pub(crate) fn stats_rmse_from_mse(mse: &Bound<'_, PyAny>) -> PyResult<f64> {
+    let mse = Number::of(mse)?;
+    metrics::rmse_from_mse(mse.value).map_err(|error| mse.error(error))
 }
 
 /// Akaike Information Criterion (AIC) of a least squares fit from its mean squared error,
 /// `n ln(MSE) + 2 k`, `-inf` for an MSE of 0.
 #[pyfunction]
-pub(crate) fn stats_aic_from_mse(mse: f64, n: i64, k: i64) -> PyResult<f64> {
-    metrics::aic_from_mse(mse, n, k).map_err(value_error)
+pub(crate) fn stats_aic_from_mse(mse: &Bound<'_, PyAny>, n: i64, k: i64) -> PyResult<f64> {
+    let mse = Number::of(mse)?;
+    metrics::aic_from_mse(mse.value, n, k).map_err(|error| mse.error(error))
 }
 
 /// Bayesian Information Criterion (BIC) of a least squares fit from its mean squared error,
 /// `n ln(MSE) + k ln(n)`, `-inf` for an MSE of 0.
 #[pyfunction]
-pub(crate) fn stats_bic_from_mse(mse: f64, n: i64, k: i64) -> PyResult<f64> {
-    metrics::bic_from_mse(mse, n, k).map_err(value_error)
+pub(crate) fn stats_bic_from_mse(mse: &Bound<'_, PyAny>, n: i64, k: i64) -> PyResult<f64> {
+    let mse = Number::of(mse)?;
+    metrics::bic_from_mse(mse.value, n, k).map_err(|error| mse.error(error))
 }
 
 /// Coefficient of determination (R²) of a prediction, `nan` for fewer than two data points
@@ -71,29 +122,35 @@ pub(crate) fn stats_r_squared(y_observed: Values<'_>, y_predicted: Values<'_>) -
 }
 
 /// The number of data points whose prediction is within the fold factor and the number of
-/// the points with a ratio, a positive and finite value and prediction.
+/// the points with a ratio, a positive and finite value and prediction; twofold without a
+/// fold factor.
 #[pyfunction]
-#[pyo3(signature = (y_observed, y_predicted, fold = 2.0))]
+#[pyo3(signature = (y_observed, y_predicted, fold = None))]
 pub(crate) fn stats_fold_counts(
     y_observed: Values<'_>,
     y_predicted: Values<'_>,
-    fold: f64,
+    fold: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<(usize, usize)> {
-    metrics::fold_counts(&values(&y_observed), &values(&y_predicted), fold).map_err(value_error)
+    let fold = fold_of(fold)?;
+    let factor = fold.as_ref().map_or(2.0, |fold| fold.value);
+    metrics::fold_counts(&values(&y_observed), &values(&y_predicted), factor)
+        .map_err(|error| fold_error(fold.as_ref(), error))
 }
 
 /// The fold criterion of every data point: 1 within the fold factor, 0 outside and `nan`
-/// without a ratio.
+/// without a ratio; twofold without a fold factor.
 #[pyfunction]
-#[pyo3(signature = (y_observed, y_predicted, fold = 2.0))]
+#[pyo3(signature = (y_observed, y_predicted, fold = None))]
 pub(crate) fn stats_fold_accepted<'py>(
     py: Python<'py>,
     y_observed: Values<'py>,
     y_predicted: Values<'py>,
-    fold: f64,
+    fold: Option<&Bound<'py, PyAny>>,
 ) -> PyResult<Bound<'py, PyArray1<f64>>> {
-    let accepted = metrics::fold_accepted(&values(&y_observed), &values(&y_predicted), fold)
-        .map_err(value_error)?;
+    let fold = fold_of(fold)?;
+    let factor = fold.as_ref().map_or(2.0, |fold| fold.value);
+    let accepted = metrics::fold_accepted(&values(&y_observed), &values(&y_predicted), factor)
+        .map_err(|error| fold_error(fold.as_ref(), error))?;
     Ok(PyArray1::from_vec(py, accepted))
 }
 

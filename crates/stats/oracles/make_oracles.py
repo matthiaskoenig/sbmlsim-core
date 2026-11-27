@@ -9,21 +9,27 @@ The numbers are written by `repr`, so a double is read back as the double it was
 which JSON cannot hold are the strings "nan", "inf" and "-inf", and a call which raised is
 `{"error": "<the message>"}`. The fixtures are committed, the Rust tests read them
 (`tests/oracle.rs`), and the tests of the python bindings read the ones of the functions they
-bind (`python/tests/test_stats.py`); the script runs in a throwaway environment:
+bind (`python/tests/test_stats.py`). The script runs in a throwaway environment, and the
+modules take two:
 
-    uv run --no-project --with numpy --with scipy python crates/stats/oracles/make_oracles.py
+- `special` and `linalg` call numpy and scipy only. Without an argument the script writes
+  these two:
 
-The fixture of `metrics` calls the functions of sbmlsim itself (`sbmlsim.fit.metrics` and
-`sbmlsim.fit.evaluation`), which the environment then has as well, with the python and the
-package index of libroadrunner sbmlsim needs:
+      uv run --no-project --with numpy --with scipy \
+          python crates/stats/oracles/make_oracles.py
 
-    uv run --no-project --python 3.14 \
-        --index https://matthiaskoenig.github.io/roadrunner-wheels/simple/ \
-        --index-strategy unsafe-best-match \
-        --with sbmlsim==0.53.0 --with numpy --with scipy \
-        python crates/stats/oracles/make_oracles.py metrics
+- `metrics` calls the functions of sbmlsim itself (`sbmlsim.fit.metrics` and
+  `sbmlsim.fit.evaluation`), so its environment has sbmlsim as well, with the python and
+  the package index of libroadrunner sbmlsim needs:
 
-A module given as argument writes only its fixture (`... make_oracles.py special`).
+      uv run --no-project --python 3.14 \
+          --index https://matthiaskoenig.github.io/roadrunner-wheels/simple/ \
+          --index-strategy unsafe-best-match \
+          --with sbmlsim==0.53.0 --with numpy --with scipy \
+          python crates/stats/oracles/make_oracles.py metrics
+
+Modules given as arguments write only their fixtures (`... make_oracles.py special`); a
+module of sbmlsim in an environment without it stops before any fixture is written.
 """
 
 import json
@@ -340,6 +346,21 @@ def _with_specials(values: np.ndarray, rng: np.random.Generator) -> np.ndarray:
     return values
 
 
+def large_residuals(n: int) -> np.ndarray:
+    """Get the residuals `0..n` of a formula of integers and exact operations.
+
+    `(((i * 2654435761) % 1000003) / 1000003 - 0.5) * 2**(i % 31 - 15)`: the tests of the
+    Rust and of the python bindings compute them bit for bit as here instead of reading
+    them, and their squares over 60 binary orders of magnitude make a sum in blocks of 8192
+    differ from the pairwise one of the whole array.
+    """
+    i = np.arange(n, dtype=np.int64)
+    a = (i * 2654435761) % 1000003
+    return (a.astype(float) / 1000003.0 - 0.5) * np.ldexp(
+        1.0, (i % 31 - 15).astype(int)
+    )
+
+
 def metrics() -> dict[str, Any]:
     """The cases of `metrics`: the functions of `sbmlsim.fit.metrics` and `.evaluation`.
 
@@ -386,6 +407,26 @@ def metrics() -> dict[str, Any]:
             "nrmse": evaluation._rms(pd.Series(x, dtype=float)),
         }
         cases[f"residuals/{label}"] = {"inputs": {"x": x, "k": 3}, "expected": expected}
+
+    # residuals of more than a block of the pairwise sum and of more than the 8192 values
+    # of a buffer of numpy, an odd number of them too: the inputs are the formula of
+    # `large_residuals`, the sums numpy's, which a sum in blocks of 8192 would not give
+    for n in (20000, 100003):
+        x = large_residuals(n)
+        squares = np.square(x)
+        blocked = 0.0
+        for start in range(0, n, 8192):
+            blocked += float(np.sum(squares[start : start + 8192]))
+        assert blocked != m.sse(x), "the case does not tell the sums apart"
+        cases[f"large_residuals/{n}"] = {
+            "inputs": {"n": n, "k": 3},
+            "expected": {
+                "sse": m.sse(x),
+                "mse": m.mse(x),
+                "nrmse": evaluation._rms(pd.Series(x, dtype=float)),
+                "first": x[:4],
+            },
+        }
 
     # the functions of the MSE over a grid of their arguments, the refused ones included
     mses = [-1.0, -1e-05, -1e300, -np.inf, -0.0, 0.0, 1e-300, 0.5, 2.0, np.inf, np.nan]
@@ -602,14 +643,33 @@ OF_SBMLSIM = {"metrics"}
 
 
 def main(modules: list[str]) -> None:
-    """Write the fixtures of `modules`, of every module without one."""
-    for module in modules or list(GENERATORS):
+    """Write the fixtures of `modules`, without one of the modules of numpy and scipy only.
+
+    The modules of sbmlsim (`OF_SBMLSIM`) are written only when they are named, and only in
+    an environment with sbmlsim: the script stops before it writes a fixture otherwise.
+    """
+    modules = modules or [module for module in GENERATORS if module not in OF_SBMLSIM]
+    unknown = [module for module in modules if module not in GENERATORS]
+    if unknown:
+        sys.exit(
+            f"no module {', '.join(unknown)}, the modules are {', '.join(GENERATORS)}"
+        )
+    sbmlsim_version = None
+    if any(module in OF_SBMLSIM for module in modules):
+        try:
+            import sbmlsim
+        except ImportError:
+            sys.exit(
+                f"the fixtures of {', '.join(sorted(OF_SBMLSIM & set(modules)))} call "
+                "sbmlsim, which this environment does not have: run the script in the "
+                "environment of sbmlsim of the docstring of this script"
+            )
+        sbmlsim_version = sbmlsim.__version__
+    for module in modules:
         cases = GENERATORS[module]()
         versions = {"numpy": np.__version__, "scipy": scipy.__version__}
         if module in OF_SBMLSIM:
-            import sbmlsim
-
-            versions["sbmlsim"] = sbmlsim.__version__
+            versions["sbmlsim"] = sbmlsim_version
         fixture = {"_versions": versions}
         fixture.update(cases)
         text = json.dumps(encode(fixture), allow_nan=False, indent=1)
