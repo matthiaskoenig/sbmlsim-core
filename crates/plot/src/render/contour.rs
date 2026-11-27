@@ -98,8 +98,10 @@ pub(crate) fn level_lines(g: &Grid, level: f64) -> Vec<Vec<(f64, f64)>> {
             if v.iter().any(|x| !x.is_finite()) {
                 continue;
             }
-            // the corners at or above the level, counterclockwise from (i, j)
-            let up = v.map(|x| x >= level);
+            // the corners above the level, counterclockwise from (i, j), as contourpy's `z >
+            // level` (since 0.34.0; at or above before): a level at the least value of the data
+            // draws the edge of the region of that value, one at the largest value nothing
+            let up = v.map(|x| x > level);
             // the edges of the cell in the order of its corners: bottom, right, top, left
             let edges = [
                 Edge::H(i, j),
@@ -130,7 +132,7 @@ pub(crate) fn level_lines(g: &Grid, level: f64) -> Vec<Vec<(f64, f64)>> {
                 }
                 4 => {
                     // a saddle: the mean decides which corners are cut off
-                    let centre_up = (v[0] + v[1] + v[2] + v[3]) / 4.0 >= level;
+                    let centre_up = (v[0] + v[1] + v[2] + v[3]) / 4.0 > level;
                     if centre_up == up[0] {
                         // corners 1 and 3 are cut off
                         cut_corner(&mut segments, 0);
@@ -595,6 +597,42 @@ mod tests {
         assert_eq!(l.first(), l.last(), "{l:?}");
         // the crossings half way between the peak and its neighbours
         assert!(l.contains(&(0.5, 1.0)) && l.contains(&(1.0, 1.5)), "{l:?}");
+    }
+
+    /// The lines of matplotlib 3.11 (contourpy) of this grid at its least value, at 1 and at
+    /// its largest value, their repeated points (a corner at the level) left out.
+    #[test]
+    fn levels_at_the_ends_of_the_data_as_matplotlib() {
+        let values = vec![
+            vec![0.0, 0.0, 0.0, 0.0],
+            vec![0.0, 0.0, 1.0, 2.0],
+            vec![0.0, 1.0, 2.0, 3.0],
+            vec![1.0, 2.0, 3.0, 4.0],
+        ];
+        let (x, y) = grid(&values);
+        let g = Grid {
+            x: &x,
+            y: &y,
+            values: &values,
+        };
+        let lines = |level: f64| -> Vec<Vec<(f64, f64)>> {
+            level_lines(&g, level)
+                .into_iter()
+                .map(|mut l| {
+                    l.dedup();
+                    l
+                })
+                .collect()
+        };
+        assert_eq!(
+            lines(0.0),
+            vec![vec![(0.0, 2.0), (1.0, 1.0), (2.0, 0.0), (3.0, 0.0)]]
+        );
+        assert_eq!(
+            lines(1.0),
+            vec![vec![(0.0, 3.0), (1.0, 2.0), (2.0, 1.0), (3.0, 0.5)]]
+        );
+        assert!(lines(4.0).is_empty());
     }
 
     #[test]

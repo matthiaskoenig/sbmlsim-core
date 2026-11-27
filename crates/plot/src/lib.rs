@@ -4,6 +4,7 @@
 
 mod colors;
 mod error;
+mod image;
 mod ink;
 mod interact;
 mod layout;
@@ -16,6 +17,9 @@ mod text;
 
 pub use colors::{COLOR_SCALES, NO_VALUE_COLOR, check_stops, color_scale};
 pub use error::{RenderError, SpecError};
+pub use image::MAX_IMAGE_PIXELS;
+#[cfg(feature = "png")]
+pub use image::encode_png;
 pub use interact::{
     FigurePlan, Geometry, LegendEntryGeometry, Pick, PixelRect, PlotGeometry, Scale, geometry,
     geometry_of, pick, pick_in,

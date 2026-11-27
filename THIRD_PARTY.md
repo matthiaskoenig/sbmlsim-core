@@ -1112,8 +1112,11 @@ The feature `png` of the crate `sbmlsim-plot` (native builds only, never in a wa
 |---|---|---|---|
 | resvg, usvg, kurbo, simplecss, svgtypes | 0.50.0, 0.50.0, 0.13.1, 0.2.2, 0.16.2 | Apache-2.0 (of `Apache-2.0 OR MIT`) | |
 | adler2, arrayvec, data-url, euclid, fdeflate, flate2, font-types, miniz_oxide (0.8.9 and 0.9.1), png, polycool, read-fonts, skrifa, tinyvec, unicode-bidi, unicode-script, unicode-vo | 2.0.1, 0.7.8, 0.3.2, 0.22.14, 0.3.7, 1.1.11, 0.12.7, 0.8.9 and 0.9.1, 0.18.1, 0.4.0, 0.46.0, 0.49.0, 1.13.3, 0.3.18, 0.5.9, 0.1.0 | Apache-2.0 (of a dual or triple license) | |
+| gif, image-webp, quick-error, weezl, zune-core, zune-jpeg | 0.14.2, 0.2.4, 2.0.1, 0.1.12, 0.5.3, 0.5.15 | Apache-2.0 (of a dual or triple license; the raster images of resvg, which draw the PNG of an image element, since 0.34.0) | |
 | tiny-skia, tiny-skia-path | 0.12.0 | BSD-3-Clause | Copyright (c) 2011 Google Inc., (c) 2020 Yevhenii Reizner |
 | arrayref | 0.3.9 | BSD-2-Clause | Copyright (c) 2015 David Roundy |
+| byteorder-lite | 0.1.0 | MIT (of `Unlicense OR MIT`) | Copyright (c) 2015 Andrew Gallant |
+| color_quant | 1.1.0 | MIT | Copyright (c) 2016 PistonDevelopers |
 | fontdb | 0.24.0 | MIT | Copyright (c) 2020 Yevhenii Reizner |
 | harfrust | 0.15.0 | MIT | Copyright (c) HarfBuzz developers, (c) 2020 Yevhenii Reizner |
 | float-cmp | 0.9.0 | MIT | Copyright (c) 2014-2020 Optimal Computing (NZ) Ltd |

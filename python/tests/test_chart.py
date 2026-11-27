@@ -1,5 +1,6 @@
 """Tests of the chart builder of the figure contract `figure/1`."""
 
+import base64
 import json
 import math
 import xml.etree.ElementTree as ET
@@ -1212,3 +1213,151 @@ def test_legends_of_plots_and_of_the_figure() -> None:
     assert "sbmlsim-row-title" in svg
     with pytest.raises(ValueError, match="'groups'"):
         Chart(legends=[{"position": "right"}])
+
+
+def test_fields_of_0_34_are_written_only_when_given() -> None:
+    """A chart without the fields of 0.34.0 has none of them in its spec."""
+    chart = Chart()
+    plot = chart.plot()
+    plot.bar([0, 1], [1, 2])
+    plot.histogram([0, 1, 2], [1, 2])
+    plot.box(
+        [0], [{"low_whisker": 0, "q1": 1, "median": 2, "q3": 3, "high_whisker": 4}]
+    )
+    plot.colorbar("viridis", 0, 1)
+    (p,) = chart.spec()["plots"]
+    for element in p["elements"]:
+        assert not {"edge_color", "edge_width", "median_opacity", "z"} & set(element)
+    assert "tick_side" not in p["colorbar"]
+    assert not {"legend_size", "legend_weight", "legend_family", "legend_frame"} & set(
+        p
+    )
+    assert not {"tick_weight", "label_size"} & set(p["x"])
+
+
+def test_edges_medians_and_drawing_order() -> None:
+    """Edges of bars and bins, the opacity of a median and `z` across the y axes."""
+    chart = Chart()
+    plot = chart.plot(
+        x=ChartAxis(scale="category", categories=["a", "b"]),
+        y2=ChartAxis(label="activity"),
+    )
+    plot.bar(["a", "b"], [6, 8], axis="y2", z=-1, label="activity", color="grey")
+    plot.bar(
+        ["a", "b"], [1, 2], edge_color="white", edge_width=1.5, label="low", id="low"
+    )
+    plot.histogram([0, 1, 2], [1, 2], edge_color="black", color="white", label="bins")
+    plot.box(
+        ["a"],
+        [{"low_whisker": 0, "q1": 1, "median": 2, "q3": 3, "high_whisker": 4}],
+        median_opacity=1.0,
+        opacity=0.4,
+    )
+    activity, low, bins, box = chart.spec()["plots"][0]["elements"]
+    assert activity["z"] == -1.0
+    assert (low["edge_color"], low["edge_width"]) == ("#ffffff", 1.5)
+    assert bins["edge_color"] == "#000000" and "edge_width" not in bins
+    assert box["median_opacity"] == 1.0
+    svg = chart.svg()
+    # the bars of the right axis under those of the left one
+    assert svg.index('data-element="e0"') < svg.index('data-element="low"')
+    with pytest.raises(ValueError, match="width in pixels"):
+        Chart().plot().bar([0], [1], edge_width=-1)
+    with pytest.raises(ValueError, match="finite"):
+        Chart().plot().curve([0], [1], z=math.nan)
+
+
+def test_legend_fonts_frames_and_legends_above_and_under_columns() -> None:
+    """The fonts and frames of legends, legends of the figure on top and by column."""
+    chart = Chart(
+        width=700,
+        columns=3,
+        fonts={"colorbar_tick": 9, "colorbar_label_weight": "bold"},
+        legends=[
+            {"groups": ["h"], "position": "top", "size": 10, "frame": False},
+            {"groups": ["p"], "position": "bottom", "column": 0, "weight": "bold"},
+        ],
+    )
+    a = chart.plot(
+        0,
+        0,
+        legend_anchor=(1.02, 1.0),
+        legend_loc="upper left",
+        legend_size=9,
+        legend_weight="bold",
+        legend_family="monospace",
+        legend_frame=False,
+        legends=[{"groups": ["o"], "size": 12, "frame": False, "loc": "lower left"}],
+        x=ChartAxis(tick_weight="bold", label="t", label_size=9),
+    )
+    a.curve([0, 1], [0, 1], label="healthy", legend="h")
+    a.curve([0, 1], [1, 0], label="proximal", legend="p")
+    a.curve([0, 1], [0.5, 0.5], label="own")
+    a.curve([0, 1], [0.2, 0.2], label="observed", legend="o")
+    chart.plot(0, 1)
+    spec = chart.spec()
+    assert spec["fonts"] == {"colorbar_tick": 9.0, "colorbar_label_weight": "bold"}
+    assert spec["legends"] == [
+        {"groups": ["h"], "position": "top", "size": 10.0, "frame": False},
+        {"groups": ["p"], "position": "bottom", "weight": "bold", "column": 0},
+    ]
+    p = spec["plots"][0]
+    assert (p["legend_size"], p["legend_weight"], p["legend_family"]) == (
+        9.0,
+        "bold",
+        "monospace",
+    )
+    assert p["legend_frame"] is False
+    assert p["legends"] == [
+        {"groups": ["o"], "loc": "lower_left", "size": 12.0, "frame": False}
+    ]
+    assert (p["x"]["tick_weight"], p["x"]["label_size"]) == ("bold", 9.0)
+    geometry = sbmlsim_core.figure_geometry(chart.to_json())
+    figure = [e for e in geometry["legend_entries"] if e["owner"] == "figure"]
+    panels = [q["rect"] for q in geometry["plots"]]
+    assert figure[0]["rect"]["y"] < min(r["y"] for r in panels)
+    assert geometry["height"] > 360
+
+
+def test_colour_bars_below_a_row_and_their_tick_side() -> None:
+    """A colour bar below the panels of its row and the side of its ticks."""
+    chart = Chart(rows=2)
+    chart.plot(0, 0).colorbar("viridis", 0, 1, placement="inset", tick_side="top")
+    chart.plot(1, 0).colorbar("magma", 0, 12, placement="bottom", label="AUC")
+    spec = chart.spec()
+    assert spec["plots"][0]["colorbar"]["tick_side"] == "top"
+    assert spec["plots"][1]["colorbar"]["placement"] == "bottom"
+    assert "sbmlsim-colorbar-bottom" in chart.svg()
+    with pytest.raises(ValueError, match="'top' or 'bottom'"):
+        Chart().plot().colorbar("viridis", 0, 1, tick_side="top")
+
+
+def test_an_image_under_its_data() -> None:
+    """An image of an array, of PNG bytes and of base64, over its extent."""
+    pixels = np.zeros((3, 4, 3), dtype=np.uint8)
+    pixels[0, 0] = (214, 39, 40)
+    chart = Chart()
+    plot = chart.plot(x=ChartAxis(label="time", unit="hr"), aspect="equal")
+    curve = plot.curve([1, 2], [3, 4], label="digitized")
+    first = plot.image(pixels, (0, 24, 0, 18), opacity=0.8)
+    png = sbmlsim_core.image_png(pixels)
+    plot.image(base64.b64decode(png), (0, 1, 0, 1), origin="lower")
+    plot.image(png, (20, 24, 15, 18), interpolation="nearest", z=1)
+    spec = chart.spec()
+    _, image, lower, nearest = spec["plots"][0]["elements"]
+    assert image["kind"] == "image" and image["id"] == first
+    assert image["png"] == png and image["extent"] == [0.0, 24.0, 0.0, 18.0]
+    assert image["style"]["opacity"] == 0.8
+    assert "origin" not in image and "interpolation" not in image and "z" not in image
+    assert lower["png"] == png and lower["origin"] == "lower"
+    assert nearest["interpolation"] == "nearest" and nearest["z"] == 1.0
+    svg = chart.svg()
+    assert svg.count("data:image/png;base64,") == 3
+    # an image under the elements added before it
+    assert svg.index(f'data-element="{first}"') < svg.index(f'data-element="{curve}"')
+    with pytest.raises(ValueError, match="extent"):
+        plot.image(png, (0, 1, 0))
+    with pytest.raises(ValueError, match="origin"):
+        plot.image(png, (0, 1, 0, 1), origin="top")  # ty: ignore[invalid-argument-type]
+    with pytest.raises(ValueError, match="shape"):
+        plot.image(np.zeros((2, 2)), (0, 1, 0, 1))

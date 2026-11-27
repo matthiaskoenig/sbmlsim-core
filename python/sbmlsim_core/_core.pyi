@@ -406,3 +406,14 @@ def color_scale(
     Raises `ValueError` for an unknown name, for stops which are no colour map, for a part
     which is not `0 <= start < end <= 1` and for a `gamma` which is not positive.
     """
+
+def image_png(pixels: numpy.typing.ArrayLike) -> str:
+    """The `png` of an image element of a figure (since 0.34.0): the base64 of a PNG.
+
+    `pixels` is an RGB or RGBA image, an array of shape `(rows, columns, 3)` or
+    `(rows, columns, 4)` whose first row is the top of the image, of integers from 0 to 255 or
+    of numbers from 0 to 1, as matplotlib's `imshow` reads an image.
+
+    Raises `ValueError` for another shape, for values out of their range and for an image of
+    more than 64 Mpx.
+    """

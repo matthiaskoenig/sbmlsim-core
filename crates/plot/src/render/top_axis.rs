@@ -39,7 +39,7 @@ pub(crate) fn layout(axis: &Axis, xa: &ResolvedAxis, length: f64, fonts: &Fonts)
         .iter()
         .map(|(_, l)| {
             label_extent(
-                label_width(l, fonts.tick, fonts.tick_weight),
+                label_width(l, fonts.tick, axis.tick_weight_of(fonts)),
                 label_height(l, fonts.tick),
                 axis.tick_rotation,
                 true,
@@ -55,7 +55,7 @@ pub(crate) fn layout(axis: &Axis, xa: &ResolvedAxis, length: f64, fonts: &Fonts)
     let title = axis.label_visible && !name.is_empty();
     let depth = labels_depth
         + if title {
-            TITLE_GAP + fonts.label + extra_lines(&name, fonts.label)
+            TITLE_GAP + axis.label_size_of(fonts) + extra_lines(&name, axis.label_size_of(fonts))
         } else {
             0.0
         };
@@ -120,7 +120,7 @@ pub(crate) fn draw(out: &mut String, axis: &Axis, top: &TopAxis, fonts: &Fonts, 
             theme::FG_SOFT
         );
         attr_num(out, "font-size", fonts.tick);
-        attr_weight(out, fonts.tick_weight);
+        attr_weight(out, axis.tick_weight_of(fonts));
         out.push('>');
         let ly = y - TICK_LENGTH - TICK_LABEL_PADDING;
         for (k, u, label) in &ticks {
@@ -165,7 +165,7 @@ pub(crate) fn draw(out: &mut String, axis: &Axis, top: &TopAxis, fonts: &Fonts, 
         out.push_str("<g class=\"charton-axis-title\"><text");
         attr_num(out, "x", tx);
         attr_num(out, "y", ty);
-        attr_num(out, "font-size", fonts.label);
+        attr_num(out, "font-size", axis.label_size_of(fonts));
         attr_weight(out, fonts.label_weight);
         let _ = write!(
             out,
@@ -176,7 +176,7 @@ pub(crate) fn draw(out: &mut String, axis: &Axis, top: &TopAxis, fonts: &Fonts, 
             out,
             &name,
             (tx, ty),
-            fonts.label,
+            axis.label_size_of(fonts),
             Stack::Up,
             "text-after-edge",
         );

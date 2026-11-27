@@ -61,6 +61,14 @@ pub(crate) fn rasterize(svg: &str, dpi: f64) -> Result<Vec<u8>, RenderError> {
     let options = usvg::Options {
         fontdb: fonts(),
         font_family: "Inter".to_string(),
+        // the images of image elements (since 0.34.0): a PNG of a data URI, nothing else, and
+        // never a file
+        image_href_resolver: usvg::ImageHrefResolver {
+            resolve_data: Box::new(|mime, data, _| {
+                (mime == "image/png").then(|| usvg::ImageKind::PNG(data))
+            }),
+            resolve_string: Box::new(|_, _| None),
+        },
         ..usvg::Options::default()
     };
     let tree = usvg::Tree::from_str(svg, &options).map_err(|e| error(e.to_string()))?;

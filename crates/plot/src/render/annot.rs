@@ -309,13 +309,15 @@ pub(crate) fn arrow_layer(e: &Element, color: &str, fonts: &Fonts, px: &Pixels) 
             off(neck, -w / 2.0),
             off(a, -w / 2.0),
         ];
+        // the opacity of the arrow as a whole, its fill and its edge together, as matplotlib
+        // draws the alpha of the patch of an arrow with a body (since 0.34.0; the edge over the
+        // fill was darker before)
         svg.push_str("<path class=\"sbmlsim-arrow\"");
         polygon(&mut svg, &points);
         attr_css(&mut svg, "fill", color);
-        attr_opacity(&mut svg, "fill-opacity", opacity);
         attr_css(&mut svg, "stroke", color);
         svg.push_str(" stroke-width=\"1\" stroke-linejoin=\"miter\"");
-        attr_opacity(&mut svg, "stroke-opacity", opacity);
+        attr_opacity(&mut svg, "opacity", opacity);
         svg.push_str("/>");
         return Some(raw(e, svg));
     }

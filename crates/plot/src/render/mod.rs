@@ -28,8 +28,8 @@ use charton::prelude::*;
 use crate::layout::{self, LegendOwner, PAD, Rect};
 use crate::spec::{AxisScale, ColorBarPlacement, Element, Figure, Fonts, Plot, YAxisRef};
 use crate::svg::{
-    self, AxisHooks, ElementTag, FONT_FAMILY, GridLines, ID_PLACEHOLDER, MULTIPLIER_GAP,
-    PanelProbe, PlotHooks, PlotWriter, Stack, escape, text_lines, theme,
+    self, AxisHooks, ElementTag, FONT_FAMILY, GROUPS_SLOT, GridLines, ID_PLACEHOLDER,
+    MULTIPLIER_GAP, PanelProbe, PlotHooks, PlotWriter, Stack, escape, text_lines, theme,
 };
 use crate::text::{extra_lines, label_extent, label_height, label_width, widest_line};
 use axis::{ResolvedAxis, TickRoom, axis_title};
@@ -157,10 +157,14 @@ pub(crate) fn multiplier_room(fonts: &Fonts) -> f64 {
 
 /// The labels Charton is given for tick labels: the widest line of each without its
 /// superscripts, which it measures and places, with the label the writer writes.
-fn given_labels(labels: &[(f64, String)], size: f64, fonts: &Fonts) -> Vec<(String, String)> {
+fn given_labels(
+    labels: &[(f64, String)],
+    size: f64,
+    weight: crate::spec::FontWeight,
+) -> Vec<(String, String)> {
     labels
         .iter()
-        .map(|(_, l)| (widest_line(l, size, fonts.tick_weight), l.clone()))
+        .map(|(_, l)| (widest_line(l, size, weight), l.clone()))
         .collect()
 }
 
@@ -204,11 +208,13 @@ fn axis_layout(
     };
     let angle = axis.tick_rotation;
     let tick = if bottom { fonts.tick } else { fonts.y_tick() };
+    // the weight of the tick labels and the size of the title of the axis (since 0.34.0)
+    let (weight, title_size) = (axis.tick_weight_of(fonts), axis.label_size_of(fonts));
     let inter = labels
         .iter()
         .map(|(_, l)| {
             label_extent(
-                label_width(l, tick, fonts.tick_weight),
+                label_width(l, tick, weight),
                 label_height(l, tick),
                 angle,
                 bottom,
@@ -217,7 +223,7 @@ fn axis_layout(
         .fold(0.0, f64::max);
     let name = axis_title(axis);
     let title_room = if axis.label_visible && !name.is_empty() {
-        TITLE_GAP + fonts.label + extra_lines(&name, fonts.label)
+        TITLE_GAP + title_size + extra_lines(&name, title_size)
     } else {
         0.0
     };
@@ -243,11 +249,12 @@ fn axis_layout(
             marks_hidden: !axis.marks_visible(),
             line_hidden: !axis.line_visible,
             tick_size: tick,
-            tick_weight: fonts.tick_weight,
+            tick_weight: weight,
             label_angle: -angle,
             title: title_text,
+            title_size,
             labels_depth,
-            labels: given_labels(labels, tick, fonts),
+            labels: given_labels(labels, tick, weight),
             multiplier,
             label_colors,
             marks: resolved.mark_shares(),
@@ -291,6 +298,8 @@ pub(crate) struct Prepared {
     pub bars: Vec<ColorBarLayout>,
     /// The room of the bar of the plot above its row, 0 without one (since 0.31.0).
     pub top_bar: f64,
+    /// The room of the bar of the plot below its row, 0 without one (since 0.34.0).
+    pub bottom_bar: f64,
     grid: GridLines,
     /// The colour of every element.
     pub colors: Vec<String>,
@@ -330,7 +339,7 @@ pub(crate) fn prepare(figure: &Figure, plot: &Plot, panel: (f64, f64)) -> Prepar
             let along = match b.placement {
                 ColorBarPlacement::Right | ColorBarPlacement::Panel => panel_height,
                 ColorBarPlacement::Inset | ColorBarPlacement::Strip => panel_width,
-                ColorBarPlacement::Top => figure.width,
+                ColorBarPlacement::Top | ColorBarPlacement::Bottom => figure.width,
             };
             heatmap::colorbar_layout(b, fonts, along)
         })
@@ -374,7 +383,7 @@ pub(crate) fn prepare(figure: &Figure, plot: &Plot, panel: (f64, f64)) -> Prepar
     // the last tick label of an unrotated x axis reaches half its width past the panel
     let overhang = match x_labels.last() {
         Some((_, l)) if x_axis.tick_rotation == 0.0 => {
-            label_width(l, fonts.tick, fonts.tick_weight) / 2.0
+            label_width(l, fonts.tick, x_axis.tick_weight_of(fonts)) / 2.0
         }
         _ => 0.0,
     };
@@ -424,11 +433,16 @@ pub(crate) fn prepare(figure: &Figure, plot: &Plot, panel: (f64, f64)) -> Prepar
             .map(|b| b.room)
             .sum::<f64>();
     // a bar above the row takes room above the room of the plots of the row
-    let top_bar = bars
-        .iter()
-        .filter(|b| b.placement == ColorBarPlacement::Top)
-        .map(|b| b.room)
-        .fold(0.0, f64::max);
+    let row_bar = |placement: ColorBarPlacement| {
+        bars.iter()
+            .filter(|b| b.placement == placement)
+            .map(|b| b.room)
+            .fold(0.0, f64::max)
+    };
+    let (top_bar, bottom_bar) = (
+        row_bar(ColorBarPlacement::Top),
+        row_bar(ColorBarPlacement::Bottom),
+    );
     // a plot title of several lines stacks its lines up from the line Charton places, into
     // room above the band Charton reserves for one line
     let title_lines = plot
@@ -475,6 +489,7 @@ pub(crate) fn prepare(figure: &Figure, plot: &Plot, panel: (f64, f64)) -> Prepar
         top,
         bars,
         top_bar,
+        bottom_bar,
         grid,
         bands,
         depth,
@@ -493,6 +508,37 @@ fn element_tags(plot: &Plot, here: YAxisRef) -> Vec<ElementTag> {
             here: e.axis == here,
         })
         .collect()
+}
+
+/// The elements of a plot in the order they are drawn (since 0.34.0): by their `z` (0 by
+/// default, -1 for an image, which goes under the other elements as matplotlib's image of
+/// `zorder` 0), those of the left and the right y axis together, on a tie the elements of the
+/// left axis before those of the right one, each in their order.
+pub(crate) fn draw_order(plot: &Plot) -> Vec<usize> {
+    let key = |e: &Element| {
+        e.z.unwrap_or(match e.kind {
+            crate::spec::ElementKind::Image { .. } => -1.0,
+            _ => 0.0,
+        })
+    };
+    let mut order: Vec<usize> = (0..plot.elements.len()).collect();
+    order.sort_by(|a, b| {
+        let (ea, eb) = (&plot.elements[*a], &plot.elements[*b]);
+        key(ea)
+            .total_cmp(&key(eb))
+            .then((ea.axis == YAxisRef::Y2).cmp(&(eb.axis == YAxisRef::Y2)))
+            .then(a.cmp(b))
+    });
+    order
+}
+
+/// Whether the elements of a plot are drawn in another order than the one of the charts, the
+/// elements of the left axis and then those of the right one, each in their order.
+fn reordered(plot: &Plot, order: &[usize]) -> bool {
+    let charts = (0..plot.elements.len())
+        .filter(|i| plot.elements[*i].axis == YAxisRef::Y)
+        .chain((0..plot.elements.len()).filter(|i| plot.elements[*i].axis == YAxisRef::Y2));
+    !charts.eq(order.iter().copied())
 }
 
 /// A Charton chart whose integer canvas starts at `canvas` and the margins which put its panel
@@ -544,18 +590,21 @@ pub(crate) fn render_plot(
         y: panel.y - canvas.y,
         ..panel
     };
+    // the groups of the elements in the order of their `z` (since 0.34.0)
+    let order = draw_order(plot);
+    let capture = reordered(plot, &order);
     let hooks = PlotHooks {
         layers: Vec::new(),
         elements: element_tags(plot, YAxisRef::Y),
         x: prep.xl.hooks.clone(),
         y: prep.yl.hooks.clone(),
-        title_size: fonts.label,
         title_weight: fonts.label_weight,
         plot_title_weight: fonts.plot_title_weight(),
         title_gap: TITLE_GAP,
         grid: prep.grid.clone(),
         inset: plot.inset.is_some(),
         own_title: prep.top.is_some(),
+        capture,
     };
     let built = marks::build(
         &plot.elements,
@@ -597,9 +646,10 @@ pub(crate) fn render_plot(
     });
     let mut body = writer.body;
     let mut defs = writer.defs;
+    let mut groups = writer.groups;
     let mut bar_from = drawn.width;
     if let (Some(y2), Some(y2a), Some(right)) = (&plot.y2, &prep.y2a, &prep.right) {
-        overlay(
+        groups.extend(overlay(
             figure,
             plot,
             prep,
@@ -607,10 +657,20 @@ pub(crate) fn render_plot(
             size,
             drawn,
             &prefix,
-            (&mut body, &mut defs),
-        );
+            (&mut body, &mut defs, capture),
+        ));
         right_axis::draw(&mut body, y2, y2a, right, fonts, drawn);
         bar_from += right.depth;
+    }
+    if capture {
+        // the groups of both charts in the plot group of the primary one, in their order
+        let rank = |i: usize| order.iter().position(|o| *o == i).unwrap_or(usize::MAX);
+        groups.sort_by_key(|(i, _)| rank(*i));
+        let all: String = groups.into_iter().map(|(_, g)| g).collect();
+        match body.find(GROUPS_SLOT) {
+            Some(at) => body.replace_range(at..at + GROUPS_SLOT.len(), &all),
+            None => body.push_str(&all),
+        }
     }
     // the colour bars stacked right of the panel and the right axis in their order, and the
     // insets in the panel; a bar above the row is drawn by the figure
@@ -633,7 +693,9 @@ pub(crate) fn render_plot(
                 heatmap::inset_bar(layout, layout.inset_rect(b, drawn, fonts), fonts)
             }
             ColorBarPlacement::Strip => layout.strip_rect(b, drawn),
-            ColorBarPlacement::Top | ColorBarPlacement::Panel => continue,
+            ColorBarPlacement::Top | ColorBarPlacement::Bottom | ColorBarPlacement::Panel => {
+                continue;
+            }
         };
         heatmap::draw_colorbar(&mut body, &mut defs, &prefix, k, b, layout, fonts, at);
         if layout.placement == ColorBarPlacement::Right {
@@ -696,7 +758,9 @@ pub(crate) fn render_plot(
 
 /// Draws the elements of the right y axis of a plot: a chart of the same canvas whose panel is
 /// `panel`, the panel of the primary chart, without axes, grid and background (decision (b) of
-/// the spike). Its writer writes the groups of these elements, the primary one leaves them out.
+/// the spike). Its writer writes the groups of these elements, the primary one leaves them out;
+/// with `capture` it keeps them apart and gives them back, for the plot to order them with
+/// those of the primary chart (since 0.34.0).
 #[allow(clippy::too_many_arguments)]
 fn overlay(
     figure: &Figure,
@@ -706,10 +770,11 @@ fn overlay(
     size: (f64, f64),
     panel: Rect,
     prefix: &str,
-    (body, defs): (&mut String, &mut String),
-) {
+    (body, defs, capture): (&mut String, &mut String, bool),
+) -> Vec<(usize, String)> {
     let fonts = &figure.fonts;
     let hooks = PlotHooks {
+        capture,
         layers: Vec::new(),
         elements: element_tags(plot, YAxisRef::Y2),
         grid: GridLines {
@@ -770,8 +835,9 @@ fn overlay(
         let _ = chart.render(&mut writer);
     }
     writer.finish();
-    body.push_str(&writer.body);
+    body.push_str(&writer.body.replacen(GROUPS_SLOT, "", 1));
     defs.push_str(&writer.defs);
+    writer.groups
 }
 
 /// Writes the message of a plot Charton could not draw.
@@ -804,6 +870,7 @@ fn kind_name(e: &Element) -> &'static str {
         Polygon { .. } => "polygon",
         Arrow { .. } => "arrow",
         Contour { .. } => "contour",
+        Image { .. } => "image",
     }
 }
 
@@ -836,8 +903,12 @@ fn frame(
         .with_x_expand(zero)
         .with_y_domain(y0, y1)
         .with_y_expand(zero)
-        .with_x_ticks(proxies(x_labels, fonts.tick, fonts))
-        .with_y_ticks(proxies(y_labels, fonts.y_tick(), fonts))
+        .with_x_ticks(proxies(x_labels, fonts.tick, plot.x.tick_weight_of(fonts)))
+        .with_y_ticks(proxies(
+            y_labels,
+            fonts.y_tick(),
+            plot.y.tick_weight_of(fonts),
+        ))
         .with_x_label("")
         .with_y_label("")
         .configure_theme(move |t| {
@@ -869,10 +940,10 @@ fn frame(
 }
 
 /// The tick labels as Charton is given them: the widest line of each without its superscripts.
-fn proxies(labels: TickLabels, size: f64, fonts: &Fonts) -> TickLabels {
+fn proxies(labels: TickLabels, size: f64, weight: crate::spec::FontWeight) -> TickLabels {
     labels
         .into_iter()
-        .map(|(u, l)| (u, widest_line(&l, size, fonts.tick_weight)))
+        .map(|(u, l)| (u, widest_line(&l, size, weight)))
         .collect()
 }
 
@@ -953,8 +1024,8 @@ pub(crate) fn render_planned(figure: &Figure, plan: &layout::Plan) -> String {
         plots.push_str(&p.body);
         plots.push_str("</svg>");
     }
-    // the colour bars above the rows (since 0.31.0)
-    for (i, k, at) in &plan.top_bars {
+    // the colour bars above the rows (since 0.31.0) and below them (since 0.34.0)
+    for (i, k, at) in &plan.row_bars {
         let plot = &figure.plots[*i];
         heatmap::draw_colorbar(
             &mut plots,
@@ -995,7 +1066,7 @@ pub(crate) fn render_planned(figure: &Figure, plan: &layout::Plan) -> String {
             }
             LegendOwner::Figure => ("data-figure", "legend"),
         };
-        legend::draw(&mut legends, owner, b.rect, entries, shape, fonts);
+        legend::draw(&mut legends, owner, b.rect, entries, shape);
     }
 
     let mut out = String::with_capacity(plots.len() + defs.len() + legends.len() + 1024);

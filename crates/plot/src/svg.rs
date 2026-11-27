@@ -402,6 +402,8 @@ pub(crate) struct AxisHooks {
     pub label_angle: f64,
     /// The title, `None` when it is hidden or empty.
     pub title: Option<String>,
+    /// The font size of the title (since 0.34.0, of the axis).
+    pub title_size: f64,
     /// The distance from the spine to the far side of the tick labels, measured in Inter.
     pub labels_depth: f64,
     /// The tick labels in the order of the ticks (since 0.31.0), each with the line Charton is
@@ -445,8 +447,6 @@ pub(crate) struct PlotHooks {
     pub x: AxisHooks,
     /// The y axis.
     pub y: AxisHooks,
-    /// The font size of the axis titles.
-    pub title_size: f64,
     /// The weight of the axis titles.
     pub title_weight: FontWeight,
     /// The weight of the title of the plot.
@@ -460,7 +460,15 @@ pub(crate) struct PlotHooks {
     /// Whether the crate draws the title of the plot instead of Charton (since 0.33.0; above a
     /// top axis).
     pub own_title: bool,
+    /// Whether the groups of the elements are kept apart (in `PlotWriter::groups`) instead of
+    /// written, and a [`GROUPS_SLOT`] written where they go, so the plot puts them in the order
+    /// of their `z` (since 0.34.0).
+    pub capture: bool,
 }
+
+/// Where the writer of a plot whose groups it keeps apart puts them: after the grid in the plot
+/// group (since 0.34.0).
+pub(crate) const GROUPS_SLOT: &str = "\u{1}groups\u{1}";
 
 /// One open group of the writer.
 struct Frame {
@@ -478,6 +486,9 @@ struct Frame {
     tick_label: bool,
     /// Whether it is inside the group of the title of the plot.
     title: bool,
+    /// Whether the slot of the groups of the elements goes right after its start (the plot
+    /// group of a writer which keeps them apart, since 0.34.0).
+    slot: bool,
 }
 
 /// The backend Charton draws one plot through; it writes SVG into `body` and `defs`.
@@ -506,6 +517,10 @@ pub(crate) struct PlotWriter<'a> {
     tick_labels: usize,
     /// The parts of layers drawn over the whole canvas, by element, written after the panel.
     unclipped: Vec<(usize, String)>,
+    /// Where the group of the open element starts in `body`, when the groups are kept apart.
+    group_start: usize,
+    /// The groups of the elements by element, when they are kept apart (since 0.34.0).
+    pub groups: Vec<(usize, String)>,
 }
 
 impl<'a> PlotWriter<'a> {
@@ -526,6 +541,17 @@ impl<'a> PlotWriter<'a> {
             panel: None,
             tick_labels: 0,
             unclipped: Vec::new(),
+            group_start: 0,
+            groups: Vec::new(),
+        }
+    }
+
+    /// Closes the group of the element `index`, kept apart when the groups are.
+    fn close_element_group(&mut self, index: usize) {
+        self.body.push_str("</g>");
+        if self.hooks.capture {
+            let group = self.body.split_off(self.group_start.min(self.body.len()));
+            self.groups.push((index, group));
         }
     }
 
@@ -569,6 +595,7 @@ impl<'a> PlotWriter<'a> {
 
     /// Opens the group of an element.
     fn open_element_group(&mut self, index: usize) {
+        self.group_start = self.body.len();
         let tag = &self.hooks.elements[index];
         self.body.push_str("<g class=\"sbmlsim-element sbmlsim-");
         self.body.push_str(tag.kind);
@@ -590,14 +617,13 @@ impl<'a> PlotWriter<'a> {
 
     /// Writes the groups of the elements up to `until` (exclusive) which have none yet, empty.
     fn catch_up(&mut self, until: usize) {
-        if self.open_element.is_some() {
-            self.body.push_str("</g>");
-            self.open_element = None;
+        if let Some(open) = self.open_element.take() {
+            self.close_element_group(open);
         }
         while self.next_element < until.min(self.hooks.elements.len()) {
             if self.hooks.elements[self.next_element].here {
                 self.open_element_group(self.next_element);
-                self.body.push_str("</g>");
+                self.close_element_group(self.next_element);
             }
             self.next_element += 1;
         }
@@ -624,7 +650,7 @@ impl<'a> PlotWriter<'a> {
             return;
         };
         let (size, gap, depth, weight) = (
-            self.hooks.title_size,
+            hooks.title_size,
             self.hooks.title_gap,
             hooks.labels_depth,
             self.hooks.title_weight,
@@ -1421,6 +1447,7 @@ impl RenderBackend for PlotWriter<'_> {
             mark: false,
             tick_label: parent_tick_label,
             title: parent_title || g.role == Role::Title,
+            slot: false,
         };
         match g.role {
             Role::Plot => {
@@ -1441,6 +1468,9 @@ impl RenderBackend for PlotWriter<'_> {
                     self.grid(&clip);
                 }
                 frame.plot = true;
+                if self.hooks.capture {
+                    frame.slot = true;
+                }
             }
             // an inset draws no background over its host
             Role::Background if self.hooks.inset => frame.suppress = true,
@@ -1529,6 +1559,10 @@ impl RenderBackend for PlotWriter<'_> {
             }
             self.body.push('>');
             frame.wrote = true;
+            if frame.slot {
+                // the grid is written before the group, so it goes right after its start
+                self.body.push_str(GROUPS_SLOT);
+            }
         }
         self.stack.push(frame);
     }

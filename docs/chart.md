@@ -237,6 +237,93 @@ chart
 
 ![Output figure](images/chart/chart-04.svg)
 
+Since 0.34.0 `plot.image(image, (x0, x1, y0, y1))` draws a raster image over a rectangle of the axes, matplotlib's `imshow` with its `extent`, `origin` and `interpolation`, under the other elements of the plot, e.g. the scan of a figure of a study under the data digitized from it: the bytes of a PNG, its base64, or an RGB(A) array of bytes or of shares of 1 (`sbmlsim_core.image_png`), embedded in the SVG and drawn in the PNG. Every element takes `z`, matplotlib's `zorder`, which orders the elements of both y axes together. Bars and histograms take `edge_color` and `edge_width` (white edges between stacked bars), and the legend shows the edge of a bin; a box takes `median_opacity`. A legend of the figure goes above the grid (`position="top"`) and under or over a `column` of the grid, every legend takes its `size`, `weight` and `frame` (`legend_size`, `legend_weight`, `legend_family` and `legend_frame` of a plot, matplotlib's `fontsize` and `frameon`), and a `legend_anchor` beyond the panel reserves its room. A colour bar goes below the panels of its row (`placement="bottom"`) and puts its ticks on the `tick_side` it is given, the fonts take `colorbar_tick` and `colorbar_label_weight`, and an axis takes its `tick_weight` and `label_size`:
+
+```python
+import numpy as np
+
+from sbmlsim_core.chart import Chart, ChartAxis
+
+chart = Chart(
+    width=760,
+    height=560,
+    rows=2,
+    columns=2,
+    fonts={"colorbar_tick": 9, "colorbar_label_weight": "bold"},
+    legends=[
+        {"groups": ["low", "high"], "position": "top", "columns": 2, "frame": False},
+        {"groups": ["survivors"], "position": "bottom", "column": 1},
+    ],
+)
+rows, columns = np.mgrid[0:32, 0:48]
+curve = 28 - 22 * (1 - np.exp(-columns / 10))
+page = np.where(np.abs(rows - curve) <= 1, 0.15, 0.97)
+scan = np.repeat(page[:, :, None], 3, axis=2)
+study = chart.plot(
+    0,
+    0,
+    title="a scan under its data",
+    x=ChartAxis(label="time", unit="hr", tick_weight="bold"),
+    y=ChartAxis(label="concentration", unit="µM", label_size=11),
+    aspect="equal",
+    legend_frame=False,
+    legend_size=9,
+)
+study.image(scan, (0, 24, 0, 16), opacity=0.8)
+hours = np.arange(1, 24, 2.0)
+study.curve(
+    hours,
+    16 - (28 - 22 * (1 - np.exp(-(2 * hours - 0.5) / 10)) + 0.5) / 2,
+    line="none",
+    marker="circle",
+    size=5,
+    label="digitized",
+)
+
+stack = chart.plot(0, 1, title="edges", y=ChartAxis(label="count", max=9))
+stack.bar(
+    [0, 1, 2, 3],
+    [3, 4, 2, 5],
+    edge_color="white",
+    edge_width=1.5,
+    label="low",
+    legend="low",
+)
+stack.bar(
+    [0, 1, 2, 3],
+    [2, 1, 3, 1],
+    base=[3, 4, 2, 5],
+    edge_color="white",
+    edge_width=1.5,
+    label="high",
+    legend="high",
+)
+stack.histogram(
+    [4, 4.5, 5, 5.5, 6],
+    [2, 5, 4, 1],
+    color="white",
+    edge_color="black",
+    label="survivors",
+    legend="survivors",
+)
+
+doses = chart.plot(
+    1, 0, column_span=2, title="a bar below the grid", x=ChartAxis(label="dose")
+)
+doses.heatmap(
+    None,
+    None,
+    [[1, 3, 5, 7], [4, 6, 9, 12]],
+    x_edges=[0, 1, 2, 3, 4],
+    y_edges=[50, 70, 90],
+    scale="viridis",
+)
+doses.colorbar("viridis", 0, 12, placement="bottom", length=0.5, label="AUC [mg h/l]")
+chart
+```
+
+![Output figure](images/chart/chart-05.svg)
+
 A chart shows itself in a notebook, where its SVG is the last expression of a cell. The SVG is the default format of the package, the PNG takes a `dpi` (the resolution is stored in the PNG), and the JSON is the spec of the contract `figure/1`, `chart.spec()` as a dictionary, which `sbmlsim_core.render_svg` and the renderer of the JavaScript host draw again. A value which is not finite is a gap in a curve, `null` in the JSON.
 
 

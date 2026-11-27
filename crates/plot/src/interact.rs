@@ -120,8 +120,10 @@ pub struct Geometry {
     /// have their least panel in it (since 0.30.0). The PNG is `width * dpi / 72` pixels wide.
     pub width: f64,
     /// The height of the figure as drawn, the `height` of its SVG (to its two decimals): the
-    /// `height` of the spec, grown by a legend outside which is taller than its row, and by a
-    /// grid whose plots cannot have their least panel in it (since 0.30.0).
+    /// `height` of the spec, grown by a legend outside which is taller than its row, by a
+    /// grid whose plots cannot have their least panel in it (since 0.30.0), by the legends of
+    /// the figure below and above the grid (above since 0.34.0) and by a legend anchored beyond
+    /// its panel which would reach out of the figure (since 0.34.0, which widens it likewise).
     pub height: f64,
     /// The plots, in the order of the spec.
     pub plots: Vec<PlotGeometry>,
@@ -653,6 +655,7 @@ fn measure(kind: &ElementKind, lined: bool, m: &Map, best: &mut Best) {
             edges,
             counts,
             base: bases,
+            ..
         } => {
             let zero = base_of(m.ya);
             for (i, (c, e)) in counts.iter().zip(edges.windows(2)).enumerate() {
@@ -717,7 +720,8 @@ fn measure(kind: &ElementKind, lined: bool, m: &Map, best: &mut Best) {
         ElementKind::Text { x: None, .. }
         | ElementKind::Text { y: None, .. }
         | ElementKind::Arrow { .. }
-        | ElementKind::Contour { .. } => {}
+        | ElementKind::Contour { .. }
+        | ElementKind::Image { .. } => {}
         ElementKind::Text {
             x: Some(x),
             y: Some(y),

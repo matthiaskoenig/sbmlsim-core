@@ -1,5 +1,6 @@
 """The figures: their SVG and PNG, their geometry and picks, and their colour scales."""
 
+import base64
 import json
 import os
 import statistics
@@ -8,6 +9,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+import numpy
 import pytest
 import sbmlsim_core
 
@@ -284,6 +286,62 @@ def test_fields_of_0_32_render() -> None:
     geometry = sbmlsim_core.figure_geometry(spec)
     owners = {e["owner"] for e in geometry["legend_entries"]}
     assert {"figure", "a", "b"} <= owners
+
+
+def test_fields_of_0_34_render() -> None:
+    # the specs of the renderer's fixtures of the fields since 0.34.0
+    for name in ["v034", "v034_legend"]:
+        spec = (PLOT / "specs" / f"{name}.json").read_text(encoding="utf-8")
+        svg = sbmlsim_core.render_svg(spec)
+        assert svg == (PLOT / "golden" / f"{name}.svg").read_text(encoding="utf-8")
+    # the legends of the figure above and below the grid, the image drawn into the PNG
+    geometry = sbmlsim_core.figure_geometry(spec)
+    figure = [e["legend"] for e in geometry["legend_entries"] if e["owner"] == "figure"]
+    assert figure == ["healthy", "cirrhosis", "proximal", "distal"]
+    spec = (PLOT / "specs" / "v034.json").read_text(encoding="utf-8")
+    assert sbmlsim_core.render_png(spec, 72.0).startswith(b"\x89PNG")
+
+
+def test_image_png() -> None:
+    # an image element of an RGB array of bytes and of an RGBA array of shares
+    rgb = numpy.zeros((2, 3, 3), dtype=numpy.uint8)
+    rgb[0, 0] = (214, 39, 40)
+    png = base64.b64decode(sbmlsim_core.image_png(rgb))
+    assert png.startswith(b"\x89PNG\r\n\x1a\n")
+    assert png[16:24] == (3).to_bytes(4, "big") + (2).to_bytes(4, "big")
+    rgba = numpy.full((1, 1, 4), 0.5)
+    spec = json.dumps(
+        {
+            "contract": "figure/1",
+            "width": 200,
+            "height": 150,
+            "grid": {"rows": 1, "columns": 1},
+            "plots": [
+                {
+                    "id": "p",
+                    "row": 0,
+                    "column": 0,
+                    "x": {},
+                    "y": {},
+                    "elements": [
+                        {
+                            "id": "scan",
+                            "kind": "image",
+                            "png": sbmlsim_core.image_png(rgba),
+                            "extent": [0, 1, 0, 1],
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    assert "data:image/png;base64," in sbmlsim_core.render_svg(spec)
+    with pytest.raises(ValueError, match="shape"):
+        sbmlsim_core.image_png(numpy.zeros((2, 3)))
+    with pytest.raises(ValueError, match="between 0 and 1"):
+        sbmlsim_core.image_png(numpy.full((1, 1, 3), 2.0))
+    with pytest.raises(ValueError, match="png"):
+        sbmlsim_core.render_svg(spec.replace(sbmlsim_core.image_png(rgba), "abc"))
 
 
 def test_color_scale_of_a_power() -> None:
