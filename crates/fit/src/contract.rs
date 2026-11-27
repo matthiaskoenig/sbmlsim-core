@@ -320,6 +320,9 @@ pub struct PinnedRequest {
 }
 
 /// A value of a condition which follows the parameters of a fit, `constant + Σ factor * p`.
+///
+/// The form is linear by its shape, so a jacobian of the sensitivities carries it exactly, by
+/// the chain rule over its terms, see [`crate::Derived`].
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct DerivedRequest {
     /// The entity of the model the value is set on, a settable selection, which must be no

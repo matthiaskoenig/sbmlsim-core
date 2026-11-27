@@ -123,6 +123,12 @@ pub enum JacobianChoice {
     #[default]
     Auto,
     /// The sensitivities, and a condition which does not carry them is refused.
+    ///
+    /// A derived value of a condition ([`Derived`]) is carried as well: its target is a
+    /// varying target of the condition, whose sensitivity enters the column of every parameter
+    /// of its terms times the factor of the term, the chain rule, which is exact for the linear
+    /// form a derived value is. A target whose sensitivity the engine refuses refuses the
+    /// condition, as the target of a parameter does.
     Sensitivities,
     /// The finite differences of the residuals, whatever the conditions carry.
     DifferenceQuotient,
@@ -829,6 +835,13 @@ pub struct Pinned {
 /// the form at the values the optimizer is at and sets it on its target as a
 /// pre-initialization of the condition, which is what a varying target of a prepared request
 /// is ([`sbmlsim_core_engine::Engine::prepare`]).
+///
+/// The value is linear in the parameters by its shape, a constant and a factor per term, so
+/// its derivative in a parameter is the factor of the term: a fit of
+/// [`JacobianChoice::Sensitivities`] takes the sensitivity of its target and the chain rule
+/// over its terms, and a fit of the differences moves it with the parameters it reads. A value
+/// which is no linear form of the parameters, e.g. a product of two of them, is no derived
+/// value, and a host keeps such a condition out of a fit of the engine.
 #[derive(Clone, Debug)]
 pub struct Derived {
     /// The entity of the model the value is set on, a settable selection.
@@ -1086,13 +1099,14 @@ fn measurement_rows(kind: NoiseKind, sigma: f64, value: f64, prediction: f64) ->
 /// One condition of the fit: what to simulate and which residuals its table carries.
 #[derive(Debug)]
 struct Point {
-    /// The request of the condition, with the parameters of the fit as its varying targets.
+    /// The request of the condition, with the parameters of the fit and then the targets of its
+    /// derived values as its varying targets.
     prepared: PreparedSimulation,
     /// The model of the condition, its index in the models of the pool of the problem.
     model: usize,
-    /// The same condition with the forward sensitivities of those targets, which give the
-    /// block of the jacobian of the condition in one simulation; `None` for a condition the
-    /// engine does not carry them for.
+    /// The same condition with the forward sensitivities of all of those targets, which give
+    /// the block of the jacobian of the condition in one simulation ([`Point::links`]); `None`
+    /// for a fit of the differences.
     sensitive: Option<PreparedSimulation>,
     /// The number of columns of its table, for the index of a value.
     columns: usize,
@@ -1138,6 +1152,23 @@ fn varying_values<'a>(
     Cow::Owned(values)
 }
 
+/// How the sensitivity of a varying target of a condition enters a column of the jacobian of
+/// the search space, see [`Point::links`].
+///
+/// The target of a parameter has one link, to the column of its parameter, and the target of
+/// a derived value one per term of a parameter which is searched, so a column is the sum of
+/// the sensitivities of every target which follows its parameter: the chain rule.
+#[derive(Clone, Copy, Debug)]
+struct Link {
+    /// The varying target, its index in the sensitivities of the condition.
+    target: usize,
+    /// The column of the search space.
+    column: usize,
+    /// The derivative of the value of the target in the point of that column: the derivative
+    /// of the scale of the parameter, times the factor of the term of a derived value.
+    factor: f64,
+}
+
 impl Point {
     /// The values of the varying targets of the condition at the values of the parameters,
     /// in the order [`Problem::new`] prepared them in, see [`varying_values`].
@@ -1145,20 +1176,40 @@ impl Point {
         varying_values(&self.derived, &self.pinned, parameters)
     }
 
-    /// The factors of the jacobian of the condition, `factors` of [`Point::block`] without the
-    /// targets it pins, whose values do not follow a parameter here.
-    fn factors_of<'a>(
-        &self,
-        factors: &'a [Option<(usize, f64)>],
-    ) -> Cow<'a, [Option<(usize, f64)>]> {
-        if self.pinned.is_empty() {
-            return Cow::Borrowed(factors);
+    /// The links of the jacobian of the condition, the chain rule from the sensitivities of its
+    /// varying targets to the columns of the search space, see [`Link`].
+    ///
+    /// `factors` is, per parameter of the fit, the column of the search space it takes its
+    /// value from and the derivative of that value in it ([`Scale::derivative`]), `None` for a
+    /// parameter which is held at a value. The target of a parameter is the parameter itself,
+    /// unless the condition pins it, whose value does not follow the parameter here; the
+    /// target of a derived value `constant + Σ factor * p` follows every parameter of its
+    /// terms with the factor of the term, which reads the parameter and not a pin.
+    fn links(&self, factors: &[Option<(usize, f64)>]) -> Vec<Link> {
+        let mut links = Vec::with_capacity(factors.len() + self.derived.len());
+        for (target, factor) in factors.iter().enumerate() {
+            if let Some((column, factor)) = factor
+                && !self.pinned.iter().any(|pin| pin.parameter == target)
+            {
+                links.push(Link {
+                    target,
+                    column: *column,
+                    factor: *factor,
+                });
+            }
         }
-        let mut own = factors.to_vec();
-        for pin in &self.pinned {
-            own[pin.parameter] = None;
+        for (at, value) in self.derived.iter().enumerate() {
+            for term in &value.terms {
+                if let Some((column, factor)) = factors[term.parameter] {
+                    links.push(Link {
+                        target: factors.len() + at,
+                        column,
+                        factor: term.factor * factor,
+                    });
+                }
+            }
         }
-        Cow::Owned(own)
+        links
     }
 
     /// The length of the output of the condition: its residuals and the predictions of its
@@ -1242,9 +1293,9 @@ impl Point {
     /// derivative of every residual of its curves in every parameter of the search space,
     /// `n_residuals * k` row major in the order of its curves.
     ///
-    /// `factors` is, per varying target of the condition, the parameter of the search space it
-    /// takes its value from and the derivative of that value in it ([`Scale::derivative`]),
-    /// `None` for a target which is held at a value.
+    /// `links` carries the sensitivity of every varying target of the condition into the
+    /// columns of the search space it follows ([`Point::links`]): the derivative of a residual
+    /// in a column is the sum of its sensitivities times the factor of every link to it.
     ///
     /// The two rows of a measurement of a likelihood are the chain rule of its residuals: the
     /// one of its data follows the column of the curve and, where its standard deviation is a
@@ -1255,7 +1306,7 @@ impl Point {
     fn block(
         &self,
         table: &SimulationResult,
-        factors: &[Option<(usize, f64)>],
+        links: &[Link],
         k: usize,
     ) -> Result<Vec<f64>, EngineError> {
         let Some(sensitivities) = &table.sensitivities else {
@@ -1285,10 +1336,9 @@ impl Point {
                 for (point, noise) in curve.noise.iter().enumerate() {
                     let scale = curve.weight / noise;
                     let values = dprediction(point);
-                    for (value, factor) in values.iter().zip(factors) {
-                        if let Some((parameter, factor)) = factor {
-                            out[(at + point) * k + parameter] = value * scale * factor;
-                        }
+                    for link in links {
+                        out[(at + point) * k + link.column] +=
+                            values[link.target] * scale * link.factor;
                     }
                 }
                 at += n;
@@ -1311,12 +1361,9 @@ impl Point {
                 let dnoise = likelihood
                     .noise_column
                     .map(|column| derivatives(curve.rows[point], column));
-                for (target, factor) in factors.iter().enumerate() {
-                    let Some((parameter, factor)) = factor else {
-                        continue;
-                    };
-                    let dsigma = dnoise.map_or(0.0, |values| values[target]);
-                    let dr = (dcolumn[target] - rows.r * dsigma) / rows.sigma;
+                for link in links {
+                    let dsigma = dnoise.map_or(0.0, |values| values[link.target]);
+                    let dr = (dcolumn[link.target] - rows.r * dsigma) / rows.sigma;
                     let ddata = if likelihood.distribution.laplace() {
                         // the residual of the data of a Laplace kind is the root it carries,
                         // which has no derivative where the deviation is zero, the minimum
@@ -1334,9 +1381,9 @@ impl Point {
                     } else {
                         0.0
                     };
-                    let weight = curve.weight * factor;
-                    out[(at + point) * k + parameter] = ddata * weight;
-                    out[(at + n + point) * k + parameter] = dscale * weight;
+                    let weight = curve.weight * link.factor;
+                    out[(at + point) * k + link.column] += ddata * weight;
+                    out[(at + n + point) * k + link.column] += dscale * weight;
                 }
             }
             at += 2 * n;
@@ -1353,10 +1400,8 @@ impl Point {
                     None => derivatives(node.rows[point], node.column),
                 };
                 out[at] = *prediction;
-                for (value, factor) in values.iter().zip(factors) {
-                    if let Some((parameter, factor)) = factor {
-                        out[at + 1 + parameter] = value * factor;
-                    }
+                for link in links {
+                    out[at + 1 + link.column] += values[link.target] * link.factor;
                 }
                 at += k + 1;
             }
@@ -1730,7 +1775,6 @@ impl Problem {
             varyings.push(check_derived(at, condition, &varying)?);
             check_pinned(at, condition, parameters.len())?;
         }
-        let derived = conditions.iter().any(|c| !c.derived.is_empty());
         let ats = models_of(&models, &conditions)?;
         let workers = Workers::of_models(
             models.into_iter().map(|(_, model)| model).collect(),
@@ -1764,11 +1808,11 @@ impl Problem {
                     })?,
             );
         }
-        // a derived value follows more than one parameter in general, which the one parameter
-        // per varying target of a block of the jacobian cannot carry, so such a fit takes the
-        // difference quotients of its optimizer
-        let (sensitive, jacobian) = if jacobian == JacobianChoice::Sensitivities && !derived {
-            let prepared = sensitive_conditions(&workers, &conditions, &ats, &varying)?;
+        // the sensitivities of a condition are the ones of all of its varying targets, the
+        // targets of its derived values among them, whose columns the chain rule over their
+        // terms maps onto the parameters, see `Point::links`
+        let (sensitive, jacobian) = if jacobian == JacobianChoice::Sensitivities {
+            let prepared = sensitive_conditions(&workers, &conditions, &ats, &varyings)?;
             (prepared, JacobianChoice::Sensitivities)
         } else {
             (
@@ -2209,8 +2253,7 @@ impl Problem {
                 };
                 let values = shot.point.values(shot.values);
                 let table = instance.simulate_prepared(prepared, &values)?;
-                shot.point
-                    .block(&table, &shot.point.factors_of(&factors), k)
+                shot.point.block(&table, &shot.point.links(&factors), k)
             },
         );
         let mut jacobian = vec![0.0; self.n_residuals * k];
@@ -2378,22 +2421,29 @@ fn models_of(
     Ok(ats)
 }
 
-/// Every condition of a fit prepared with its forward sensitivities.
+/// Every condition of a fit prepared with the forward sensitivities of its varying targets,
+/// `varyings` per condition: the targets of the parameters and of its derived values.
 ///
 /// A condition which carries none is refused: the jacobian of a fit is the one of the
 /// sensitivities or the one of the differences, and never a mixture of the two, which would
-/// be a jacobian of two accuracies.
+/// be a jacobian of two accuracies. So is a condition whose derived value has a target the
+/// sensitivities do not carry, which the fit would otherwise have to difference.
 fn sensitive_conditions(
     workers: &Workers,
     conditions: &[Condition],
     ats: &[usize],
-    varying: &[String],
+    varyings: &[Vec<String>],
 ) -> Result<Vec<Option<PreparedSimulation>>, FitError> {
     // an instance per model of the conditions, made at the first condition of that model
     let mut instances: Vec<Option<NativeInstance>> =
         workers.models().iter().map(|_| None).collect();
     let mut prepared = Vec::with_capacity(conditions.len());
-    for ((at, condition), model) in conditions.iter().enumerate().zip(ats.iter()) {
+    for (((at, condition), model), varying) in conditions
+        .iter()
+        .enumerate()
+        .zip(ats.iter())
+        .zip(varyings.iter())
+    {
         let instance = match &mut instances[*model] {
             Some(instance) => instance,
             none => {
