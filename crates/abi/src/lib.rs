@@ -120,6 +120,12 @@
 //!   parameters a caller changes gives also its parameters. It gives 0, and -1 (changing
 //!   nothing) for a negative `n`, a pointer which is not a multiple of 8 or an array past the end
 //!   of the memory.
+//!
+//!   A change of a state (such as `[S_ext]`) is not an argument of `init`: the caller writes the
+//!   state after `init` (as an amount where the state is one, converted with its compartment),
+//!   and the initial assignments which read that state are not evaluated again. A parameter which
+//!   is the target of an assignment rule and is given finite keeps its value in `parameters`, but
+//!   the right hand side computes the rule, so that value does not change the integration.
 //! - `sbmlsim_kernel_advance(n, state, parameters, control, counts, context, scratch) -> i32`
 //!   advances `n` points by step attempts of RODAS4 with the step control of the QFunction:
 //!   `control` holds [`KernelDescription::control`] values per point (`t`, `h`, `done`,

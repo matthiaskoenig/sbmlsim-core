@@ -19,7 +19,7 @@ use common::{
 };
 use sbmlsim_abi::{IntegratorSettings, KERNEL_CONTRACT, KernelDescription, Tolerance};
 use sbmlsim_c::{
-    CModel, CONTROL, CONTROL_DONE, CONTROL_FAILED, CONTROL_T, COUNTS, Library, Points,
+    CModel, CONTROL, CONTROL_DONE, CONTROL_FAILED, CONTROL_H, CONTROL_T, COUNTS, Library, Points,
     RosenbrockContext, generate, generate_qfunction, run_points,
 };
 use sbmlsim_codegen::emit_kernel;
@@ -364,7 +364,8 @@ const RELATIVE: f64 = 4e-6;
 const ABSOLUTE: f64 = 4e-9;
 
 /// The kernel and the QFunction advance the same points over the same intervals: every point
-/// is done (or failed) in both, and its states are within the bound.
+/// is done (or failed) in both, takes the same accepted and rejected steps in both after every
+/// interval, and its states are within the bound.
 fn compare(name: &str, sbml: &str, initial: &Points, intervals: &[f64]) {
     let q = generate_qfunction(sbml).unwrap();
     let library = Library::build(&q.host_code()).unwrap();
@@ -399,6 +400,11 @@ fn compare(name: &str, sbml: &str, initial: &Points, intervals: &[f64]) {
             );
             assert_eq!(a[CONTROL_FAILED], b[CONTROL_FAILED], "{name}, point {i}");
             assert_eq!(a[CONTROL_T], b[CONTROL_T], "{name}, point {i} at {t1}");
+            assert_eq!(
+                &mine.counts[i * COUNTS..(i + 1) * COUNTS],
+                &reference.counts[i * COUNTS..(i + 1) * COUNTS],
+                "{name}, the steps of point {i} at {t1}"
+            );
             let (ya, yb) = (
                 &mine.state[i * n..(i + 1) * n],
                 &reference.state[i * n..(i + 1) * n],
@@ -414,20 +420,12 @@ fn compare(name: &str, sbml: &str, initial: &Points, intervals: &[f64]) {
             }
         }
     }
-    // the points moved, by as many steps as the QFunction took (within a step per point)
+    // the points moved
     let steps = |p: &Points| p.counts.chunks(COUNTS).map(|c| c[0]).sum::<f64>();
     assert!(steps(&mine) >= mine.len() as f64, "{name}");
-    assert!(
-        (steps(&mine) - steps(&reference)).abs() <= mine.len() as f64,
-        "{name}"
-    );
     assert_ne!(mine.state, initial.state, "{name}");
-    let differing = (mine.counts.iter().zip(&reference.counts))
-        .filter(|(a, b)| a != b)
-        .count();
     eprintln!(
-        "{name}: the largest difference is {worst:.3e} of the bound, {} steps, {differing} counts \
-         of the QFunction's differ",
+        "{name}: the largest difference is {worst:.3e} of the bound, {} steps, the same per point",
         steps(&mine)
     );
 }
@@ -467,6 +465,98 @@ fn kernel_matches_qfunction() {
         &points(states, parameters, 200),
         &quarter,
     );
+}
+
+/// The points of `y' = a y^2` from `y = 1` with `a = 1, -1, 0.5` to `t1 = 1.5`, one attempt per
+/// call, as the QFunction's `step_size_underflow_flags_failed`: the first point blows up at
+/// `t = 1`, its step falls below `h_min` and it fails, and the others finish.
+#[test]
+fn kernel_step_size_underflow_flags_failed() {
+    let sbml = blow_up();
+    let mut kernel = Kernel::new(&sbml);
+    assert_eq!(kernel.description.state_ids, ["y"]);
+    assert_eq!(kernel.description.parameter_ids, ["a"]);
+    let rates = [1.0, -1.0, 0.5];
+    let initial = points(vec![1.0; 3], rates.to_vec(), 3);
+    let context = RosenbrockContext {
+        t1: 1.5,
+        rtol: 1e-6,
+        atol: 1e-9,
+        h_min: 1e-8,
+        attempts: 1.0,
+    };
+    let mut mine = initial.clone();
+    mine.start(0.0);
+    let mut failed_at = None;
+    for call in 0..100_000 {
+        let before = mine.clone();
+        let failed = kernel.advance(&mut mine, &context);
+        // the result is the number of the points which are failed
+        let flagged = (mine.control.chunks(CONTROL))
+            .filter(|c| c[CONTROL_FAILED] == 1.0)
+            .count();
+        assert_eq!(failed as usize, flagged, "call {call}");
+        if before.control[CONTROL_FAILED] == 0.0 && mine.control[CONTROL_FAILED] == 1.0 {
+            // the failed point keeps the state and the time of its last accepted step
+            assert_eq!(mine.state[0].to_bits(), before.state[0].to_bits());
+            assert_eq!(
+                mine.control[CONTROL_T].to_bits(),
+                before.control[CONTROL_T].to_bits()
+            );
+            failed_at = Some(call);
+        }
+        if mine.finished() {
+            break;
+        }
+    }
+    assert!(failed_at.is_some(), "{:?}", mine.control);
+    let control = &mine.control[..CONTROL];
+    assert_eq!(control[CONTROL_DONE], 0.0);
+    assert_eq!(control[CONTROL_FAILED], 1.0);
+    assert!(control[CONTROL_H] < context.h_min, "{control:?}");
+    let t = control[CONTROL_T];
+    assert!(t < 1.0 && t > 0.99, "{control:?}");
+    assert!(
+        mine.state[0].is_finite() && mine.state[0] > 100.0,
+        "{}",
+        mine.state[0]
+    );
+    // the others finish at their values
+    for (i, a) in rates.iter().enumerate().skip(1) {
+        let control = &mine.control[i * CONTROL..(i + 1) * CONTROL];
+        assert_eq!(control[CONTROL_DONE], 1.0);
+        assert_eq!(control[CONTROL_FAILED], 0.0);
+        assert_eq!(control[CONTROL_T], 1.5);
+        let exact = 1.0 / (1.0 - a * 1.5);
+        assert!(
+            (mine.state[i] - exact).abs() <= 1e-4 * exact.abs(),
+            "{a}: {} against {exact}",
+            mine.state[i]
+        );
+    }
+    // the QFunction fails the same point after the same steps, and finishes the others alike
+    let q = generate_qfunction(&sbml).unwrap();
+    let library = Library::build(&q.host_code()).unwrap();
+    let mut reference = initial.clone();
+    reference.start(0.0);
+    run_points(&library, &q, &context, &mut reference, 2).unwrap();
+    assert_eq!(mine.counts, reference.counts);
+    for i in 0..rates.len() {
+        let (a, b) = (
+            &mine.control[i * CONTROL..(i + 1) * CONTROL],
+            &reference.control[i * CONTROL..(i + 1) * CONTROL],
+        );
+        assert_eq!(a[CONTROL_DONE], b[CONTROL_DONE], "point {i}");
+        assert_eq!(a[CONTROL_FAILED], b[CONTROL_FAILED], "point {i}");
+        assert!(
+            (a[CONTROL_T] - b[CONTROL_T]).abs() <= 1e-12 * b[CONTROL_T],
+            "point {i}: {a:?} against {b:?}"
+        );
+    }
+    // a failed point is copied by every call after, and the result stays the count
+    let before = mine.clone();
+    assert_eq!(kernel.advance(&mut mine, &context), 1);
+    assert_eq!(mine, before);
 }
 
 /// Whether `a` is within `1e-14` of `b`, relatively (both NaN, or both the same infinity).
