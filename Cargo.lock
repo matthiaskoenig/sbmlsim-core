@@ -2864,6 +2864,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "sbmlsim-stats"
+version = "0.39.0"
+dependencies = [
+ "libm",
+ "sbmlsim-sensitivity",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "sbmlsim-thin"
 version = "0.41.0"
 
