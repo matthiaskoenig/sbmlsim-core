@@ -35,6 +35,8 @@ results = model.simulate_many(requests, threads=None)
 
 `sbmlsim_core.web.figure_script()` is the script of a static report whose `<figure data-figure="KEY">` elements hold an inline SVG and a child `<script type="application/json" data-figure-spec="KEY">` with its `figure/1` spec: the inline build plus the renderer (`plot_wasm()`) as base64, which makes the figures interactive (legend toggles, selection, read-out) when the page loads, with no network.
 
+`sbmlsim_core.chart` builds the figures in python, pure python on numpy: a `Chart` of plots (`ChartPlot`, `ChartAxis`) whose curves, bands, bars, heat maps, contours, texts and colour bars take sequences, numpy arrays, quantities of pint and data arrays of xarray (both optional, read by duck typing), drawn with `chart.svg()`, `chart.png()` or `chart.save("figure.svg")`, see [Charts](https://matthiaskoenig.github.io/sbmlsim-core/chart/).
+
 ## License
 
 MIT for the code of sbmlsim-core. The extension embeds `engine.wasm`, which links SUNDIALS (BSD-3-Clause) and KLU and BTF of SuiteSparse (LGPL-2.1-or-later), so the wheel is under `MIT AND BSD-3-Clause AND LGPL-2.1-or-later` and carries `LICENSE` and `THIRD_PARTY.md`.
