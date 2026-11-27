@@ -7,6 +7,7 @@
 | `loader.mjs` | `.` | runs `engine.wasm`, `mathlib.wasm` and a `model.wasm` with the bits of wasmtime |
 | `compile.mjs` | `./compile` | compiles an SBML document into `model.wasm` and its description with `compiler.wasm` |
 | `petab.mjs` (since 0.39.0) | `./petab` | a problem of [PEtab v2](petab.md) read, simulated, evaluated and (since 0.40.0) fitted in a page |
+| `kernel.mjs` (since 0.41.0) | `./kernel` | instantiates the [batched kernel](#the-batched-kernel) of a model, which advances many instances of it per call |
 | `pool.mjs` (with `worker.mjs`) | `./pool` | a pool of workers which run the loader off the main thread |
 | `panels.mjs` | `./panels` | the routes of the panel service of sbmlsim, answered inside a page from a bundle |
 | `plot.mjs` | `./plot` | draws the figures of sbmlsim with `plot.wasm`, see [Figures](plot.md) |
@@ -19,7 +20,7 @@ The package is published to npm as [`sbmlsim-core`](https://www.npmjs.com/packag
 npm install sbmlsim-core
 ```
 
-A page imports the modules from its own files or from a CDN (`https://cdn.jsdelivr.net/npm/sbmlsim-core@0.40.0/panels.mjs`); a pool of a module of another origin starts its workers through a module of the page's own origin, which browsers require of a worker. A checkout serves the files of `js/` with the runtime of a build (`sbmlsim-core runtime -o js/runtime`, see [Installation](installation.md#building)). A release publishes the package from the tag `vX.Y.Z` (`.github/workflows/publish.yml`, trusted publishing with provenance, together with the python package on PyPI); the version of `js/package.json` is the one of the crates and of `CORE_VERSION`, which `npm pack` checks.
+A page imports the modules from its own files or from a CDN (`https://cdn.jsdelivr.net/npm/sbmlsim-core@0.41.0/panels.mjs`); a pool of a module of another origin starts its workers through a module of the page's own origin, which browsers require of a worker. A checkout serves the files of `js/` with the runtime of a build (`sbmlsim-core runtime -o js/runtime`, see [Installation](installation.md#building)). A release publishes the package from the tag `vX.Y.Z` (`.github/workflows/publish.yml`, trusted publishing with provenance, together with the python package on PyPI); the version of `js/package.json` is the one of the crates and of `CORE_VERSION`, which `npm pack` checks.
 
 ## Draw a figure
 
@@ -451,7 +452,7 @@ best.runs;      // every fit, in the order of the starts; `best` is the one of t
 | --- | --- |
 | `starts` | the points the fits start from (each a value per estimated parameter), or their number: the nominal values and points drawn uniformly in the space the optimizer searches, `log10` of a parameter of positive bounds, with `seed`; the nominal values alone without it |
 | `algorithm` | `"trustRegion"` (trust region reflective, the default), `"levenbergMarquardt"` or `{ differentialEvolution: { seed, population, f, cr, polish } }`, the [optimizers](fitting.md#the-optimizer) of the command line |
-| `maxIterations`, `gradientTolerance`, `stepTolerance`, `costTolerance` | what an optimizer may spend and when it stops, `max_iterations` (100) and the tolerances of [the optimizer](fitting.md#the-optimizer); a tolerance which is not given is the relative tolerance of the integrator of the problem, at least `1e-8` ([the fit](petab.md#the-fit)) |
+| `maxIterations`, `gradientTolerance`, `stepTolerance`, `costTolerance` | what an optimizer may spend and when it stops, `max_iterations` (100) and the tolerances of [the optimizer](fitting.md#the-optimizer); since 0.41.0 a tolerance which is not given is the relative tolerance of the integrator of the problem, at least `1e-8` ([the fit](petab.md#the-fit)) |
 | `maxSeconds`, `signal` | the time the fits may take on the clock of the page, and an `AbortSignal`: either stops the fits at their next step, with the best point they reached (`status` `UserRequested`) |
 | `onStep` | called after the simulations of every step of every fit, with the index of its `start`, the `step`, the `simulations` it ran and the `seconds` since the fits began |
 
@@ -772,7 +773,7 @@ const failed = kernel.advance(n, state, parameters, control, counts, context, sc
 kernel.assign(n, state, parameters, control);
 ```
 
-`compiler.compileKernel(sbml)` compiles the [batched kernel](compiling.md#a-batched-kernel) of a model (`kernel/1`): the model with its RODAS4 integrator in one module, which advances any number of points per call, the cells of a tissue in a page, say. It gives `{ wasm, description }`, the `kernel.wasm` and the `kernel.json` of `sbmlsim-core compile --kernel` byte for byte (`js/test/kernel.test.mjs`), and raises a `CompileError` for a model the kernel does not integrate (events, delays, algebraic rules). It needs a `compiler.wasm` with the export `compile_kernel`.
+`compiler.compileKernel(sbml)` (since 0.41.0) compiles the [batched kernel](compiling.md#a-batched-kernel) of a model (`kernel/1`): the model with its RODAS4 integrator in one module, which advances any number of points per call, the cells of a tissue in a page, say. It gives `{ wasm, description }`, the `kernel.wasm` and the `kernel.json` of `sbmlsim-core compile --kernel` byte for byte (`js/test/kernel.test.mjs`), and raises a `CompileError` for a model the kernel does not integrate (events, delays, algebraic rules). It needs a `compiler.wasm` with the export `compile_kernel`.
 
 `instantiateKernel({ wasm, mathlib, memory })` checks that the module imports only `env.memory` and functions of mathlib and exports the three functions of the contract, and instantiates it with mathlib and the `WebAssembly.Memory` of the caller. It gives `{ module, memory, init, advance, assign }`: the arguments of the functions are byte offsets into `memory`, each a multiple of 8, of arrays of `f64` with the values of the points one point after the other (the parameters, `description.parameter_ids` per point; the states, `description.state_ids`; the control `t`, `h`, `done`, `failed`; the counts; the context `t1`, `rtol`, `atol`, `h_min`, `attempts`; the scratch, `description.scratch_per_point` per point). `init` takes a parameter which is NaN as not given (it gets its SBML value and initial assignment) and writes both the parameters and the states; `advance` makes step attempts for every point which is neither done nor failed and gives the number of failed points, and leaves the targets of the assignment rules in the parameters as they are; `assign` evaluates the assignment rules of every point at its time and its states and writes their targets (`description.assigned_ids`) into its parameters, so an output which is the target of a rule of a state or of the time has its value after an advance. All three give -1 and write nothing for invalid arguments. The module exports `KERNEL_CONTRACT` as well.
 

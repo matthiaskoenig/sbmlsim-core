@@ -1,4 +1,4 @@
-// sbmlsim-core 0.40.0, the inline build of its JavaScript host (js/inline.mjs, js/build.mjs).
+// sbmlsim-core 0.41.0, the inline build of its JavaScript host (js/inline.mjs, js/build.mjs).
 // Generated, do not edit. MIT AND BSD-3-Clause AND LGPL-2.1-or-later, see LICENSE and THIRD_PARTY.md.
 var sbmlsimCore = (() => {
   var __defProp = Object.defineProperty;
@@ -1000,7 +1000,7 @@ var sbmlsimCore = (() => {
   }
 
   // panels.mjs
-  var CORE_VERSION = "0.40.0";
+  var CORE_VERSION = "0.41.0";
   var ENGINE = `sbmlsim-core ${CORE_VERSION}`;
   var BUNDLE_CONTRACT = "panelbundle/1";
   var PANEL_CONTRACT = "panel/1";
@@ -2894,9 +2894,9 @@ var sbmlsimCore = (() => {
       );
     }
     /**
-     * Compiles an SBML Level 3 Version 2 document into a batched kernel (`kernel/1`): the model
-     * with its RODAS4 integrator in one module, which `kernel.mjs` instantiates and which advances
-     * many points (the cells of a tissue) per call. The bytes and the description are those of
+     * Compiles an SBML Level 3 Version 2 document into a batched kernel (`kernel/1`, since
+     * 0.41.0): the model with its RODAS4 integrator in one module, which `kernel.mjs` instantiates
+     * and which advances many points (the cells of a tissue) per call. The bytes and the description are those of
      * `sbmlsim-core compile --kernel`.
      *
      * @param {string} sbml the text of the document
@@ -3288,9 +3288,9 @@ var sbmlsimCore = (() => {
      * @param {number} [options.gradientTolerance] the tolerance of the scaled gradient (`gtol`)
      * @param {number} [options.stepTolerance] the relative tolerance of the step (`xtol`)
      * @param {number} [options.costTolerance] the relative tolerance of the cost (`ftol`); each
-     *   of the three tolerances is the relative tolerance of the integrator of the problem, at
-     *   least `1e-8`, when it is not given, so a fit stops at the noise of its simulations
-     *   (`RelativeCostTolerance`, `RelativeParamTolerance`) instead of chasing it
+     *   of the three tolerances is (since 0.41.0) the relative tolerance of the integrator of the
+     *   problem, at least `1e-8`, when it is not given, so a fit stops at the noise of its
+     *   simulations (`RelativeCostTolerance`, `RelativeParamTolerance`) instead of chasing it
      * @param {number} [options.maxSeconds] the time the fits may take, measured by the page,
      *   after which they stop at the best point they reached
      * @param {AbortSignal} [options.signal] stops the fits at their next step, with the best

@@ -21,9 +21,9 @@
 // (`crates/wasm/src/lib.rs`): the document goes into the memory of the module as the bytes of
 // its UTF-8, the result comes back as the description (the JSON of `model.json`) and the bytes
 // of `model.wasm`, and every buffer is freed again. `compile` is synchronous and takes a few
-// milliseconds for a model of the size of the repressilator. `compileKernel` compiles the batched
-// kernel of a model instead (`compile_kernel`, `kernel.wasm` and `kernel.json`), which
-// `kernel.mjs` instantiates.
+// milliseconds for a model of the size of the repressilator. `compileKernel` (since 0.41.0)
+// compiles the batched kernel of a model instead (`compile_kernel`, `kernel.wasm` and
+// `kernel.json`), which `kernel.mjs` instantiates.
 
 /** The exports of `compiler.wasm` this host calls. */
 const COMPILER_EXPORTS = ["allocate", "compile", "deallocate", "memory"];
@@ -111,9 +111,9 @@ class Compiler {
   }
 
   /**
-   * Compiles an SBML Level 3 Version 2 document into a batched kernel (`kernel/1`): the model
-   * with its RODAS4 integrator in one module, which `kernel.mjs` instantiates and which advances
-   * many points (the cells of a tissue) per call. The bytes and the description are those of
+   * Compiles an SBML Level 3 Version 2 document into a batched kernel (`kernel/1`, since
+   * 0.41.0): the model with its RODAS4 integrator in one module, which `kernel.mjs` instantiates
+   * and which advances many points (the cells of a tissue) per call. The bytes and the description are those of
    * `sbmlsim-core compile --kernel`.
    *
    * @param {string} sbml the text of the document
