@@ -2,6 +2,9 @@
 resolver = "2"
 members = [
     "crates/abi",
+    "crates/document",
+    "crates/reader",
+    "crates/ode",
     "crates/mathlib",
     "crates/sbml",
     "crates/ir",

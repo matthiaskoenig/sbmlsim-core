@@ -1,0 +1,252 @@
+# The ODE system of the model `variable_compartment`: Variable compartments.
+#
+# Written by sbmlode 0.3.3, SBML L3V2.
+#
+# Units of the model:
+#
+#   time       s
+#   substance  mole
+#   extent     mole
+#   volume     l
+#
+# States x:
+#
+#      id  name          unit
+#   1  Vc  growing cell  l
+#   2  S1  substrate     mole/l
+#   3  S2  intermediate  mole/l
+#   4  S3  product       mole/l
+#   5  B   buffer        mole/l
+#
+# `initial_values(p)` returns the initial states x0 and the constants p at t = 0,
+# `f_dxdt(t, x, p)` the rates of change of the states (in a list, as deSolve
+# wants them) and `f_y(t, x, p)` the assigned values y, the rules and the
+# reaction rates.
+# `EVENTS` lists the events with the functions of their delays, priorities and
+# assignments, `event_triggers(t, x, p)` and `event_conditions(t, x, p)` their
+# triggers.
+# Sourcing the file needs base R only.
+
+# the ids of the states x, the constants p and the assigned values y
+XIDS <- c(
+  "Vc",  # growing cell [l]
+  "S1",  # substrate [mole/l]
+  "S2",  # intermediate [mole/l]
+  "S3",  # product [mole/l]
+  "B"  # buffer [mole/l]
+)
+PIDS <- c(
+  "Ve",  # resized compartment [l]
+  "k_g",  # growth rate [1/s]
+  "k_a",  # expansion rate [1/s]
+  "Va0",  # initial size of Va [l]
+  "c_a",  # swelling by the substrate [l^2/mol]
+  "k1",  # [1/s]
+  "k2"  # [1/s]
+)
+YIDS <- c(
+  "dVc_dt",  # rate of growing cell [l/s]
+  "Va",  # assigned compartment [l]
+  "J1",  # transport [mole/s]
+  "dVa_dt",  # rate of assigned compartment [l/s]
+  "J2"  # conversion [mole/s]
+)
+
+# the names and the units of the ids, `NA` for none
+NAMES <- c(
+  "Vc" = "growing cell",
+  "S1" = "substrate",
+  "S2" = "intermediate",
+  "S3" = "product",
+  "B" = "buffer",
+  "Ve" = "resized compartment",
+  "k_g" = "growth rate",
+  "k_a" = "expansion rate",
+  "Va0" = "initial size of Va",
+  "c_a" = "swelling by the substrate",
+  "k1" = NA_character_,
+  "k2" = NA_character_,
+  "dVc_dt" = "rate of growing cell",
+  "Va" = "assigned compartment",
+  "J1" = "transport",
+  "dVa_dt" = "rate of assigned compartment",
+  "J2" = "conversion"
+)
+UNITS <- c(
+  "Vc" = "l",
+  "S1" = "mole/l",
+  "S2" = "mole/l",
+  "S3" = "mole/l",
+  "B" = "mole/l",
+  "Ve" = "l",
+  "k_g" = "1/s",
+  "k_a" = "1/s",
+  "Va0" = "l",
+  "c_a" = "l^2/mol",
+  "k1" = "1/s",
+  "k2" = "1/s",
+  "dVc_dt" = "l/s",
+  "Va" = "l",
+  "J1" = "mole/s",
+  "dVa_dt" = "l/s",
+  "J2" = "mole/s"
+)
+
+# the default values of the constants, `NaN` for one without a value, e.g. one
+# which an initial assignment sets and `initial_values` computes
+P0 <- c(
+  "Ve" = 1,  # resized compartment [l]
+  "k_g" = 0.1,  # growth rate [1/s]
+  "k_a" = 0.2,  # expansion rate [1/s]
+  "Va0" = 1,  # initial size of Va [l]
+  "c_a" = 0.1,  # swelling by the substrate [l^2/mol]
+  "k1" = 1,  # [1/s]
+  "k2" = 0.5  # [1/s]
+)
+
+# The initial states x0 and the constants p at t = 0.
+#
+# The initial values, initial assignments and the rules they need are evaluated
+# in the order of their dependencies.
+#
+# Every constant keeps the value passed.
+#
+# Returns a list of the initial states x0 and the constants p, named vectors.
+initial_values <- function(p = P0) {
+  p <- as.numeric(p)
+  t <- 0  # the initial time
+  # constants
+  k_a <- p[[3]]  # expansion rate [1/s]
+  Va0 <- p[[4]]  # initial size of Va [l]
+  c_a <- p[[5]]  # swelling by the substrate [l^2/mol]
+  # initial values
+  Vc <- 1  # growing cell [l]
+  S1 <- 1  # substrate [mole/l]
+  Va <- Va0 * (1 + k_a * t) + c_a * S1  # assigned compartment [l]
+  S2 <- 1 / Va  # intermediate [mole/l]
+  S3 <- 1  # product [mole/l]
+  B <- 1  # buffer [mole/l]
+  x0 <- as.numeric(c(Vc, S1, S2, S3, B))
+  names(x0) <- XIDS
+  names(p) <- PIDS
+  list(x0 = x0, p = p)
+}
+
+# The rates of change dx/dt of the states x at the time t, in a list (deSolve).
+f_dxdt <- function(t, x, p) {
+  # states
+  Vc <- x[[1]]  # growing cell [l]
+  S1 <- x[[2]]  # substrate [mole/l]
+  S2 <- x[[3]]  # intermediate [mole/l]
+  B <- x[[5]]  # buffer [mole/l]
+  # constants
+  Ve <- p[[1]]  # resized compartment [l]
+  k_g <- p[[2]]  # growth rate [1/s]
+  k_a <- p[[3]]  # expansion rate [1/s]
+  Va0 <- p[[4]]  # initial size of Va [l]
+  c_a <- p[[5]]  # swelling by the substrate [l^2/mol]
+  k1 <- p[[6]]  # [1/s]
+  k2 <- p[[7]]  # [1/s]
+  # assigned values and reaction rates
+  dVc_dt <- k_g * Vc  # rate of growing cell [l/s]
+  Va <- Va0 * (1 + k_a * t) + c_a * S1  # assigned compartment [l]
+  J1 <- k1 * S1 * Vc  # transport [mole/s]
+  dVa_dt <- Va0 * k_a + c_a * (-J1 / Vc - S1 / Vc * dVc_dt)  # rate of assigned compartment [l/s]
+  J2 <- k2 * S2 * Va  # conversion [mole/s]
+  # rates of change
+  dx <- numeric(5)
+  dx[[1]] <- k_g * Vc  # dVc/dt
+  dx[[2]] <- -J1 / Vc - S1 / Vc * dVc_dt  # dS1/dt
+  dx[[3]] <- (J1 - J2) / Va - S2 / Va * dVa_dt  # dS2/dt
+  dx[[4]] <- J2 / Ve  # dS3/dt
+  dx[[5]] <- -(B / Vc * dVc_dt)  # dB/dt
+  list(dx)
+}
+
+# The assigned values y at the time t, the rules and the reaction rates.
+f_y <- function(t, x, p) {
+  # states
+  Vc <- x[[1]]  # growing cell [l]
+  S1 <- x[[2]]  # substrate [mole/l]
+  S2 <- x[[3]]  # intermediate [mole/l]
+  # constants
+  k_g <- p[[2]]  # growth rate [1/s]
+  k_a <- p[[3]]  # expansion rate [1/s]
+  Va0 <- p[[4]]  # initial size of Va [l]
+  c_a <- p[[5]]  # swelling by the substrate [l^2/mol]
+  k1 <- p[[6]]  # [1/s]
+  k2 <- p[[7]]  # [1/s]
+  # assigned values and reaction rates
+  dVc_dt <- k_g * Vc  # rate of growing cell [l/s]
+  Va <- Va0 * (1 + k_a * t) + c_a * S1  # assigned compartment [l]
+  J1 <- k1 * S1 * Vc  # transport [mole/s]
+  dVa_dt <- Va0 * k_a + c_a * (-J1 / Vc - S1 / Vc * dVc_dt)  # rate of assigned compartment [l/s]
+  J2 <- k2 * S2 * Va  # conversion [mole/s]
+  as.numeric(c(dVc_dt, Va, J1, dVa_dt, J2))
+}
+
+# The root function of the trigger of each event, positive where it holds.
+#
+# An integrator locates the time at which a trigger changes as a root of its
+# function. At a root, where the function is 0, the trigger itself decides, see
+# `event_conditions`: `a >= b` holds at `a == b`, `a > b` does not.
+event_triggers <- function(t, x, p) {
+  as.numeric(c(
+    t - 2  # grow
+  ))
+}
+
+# Whether the trigger of each event holds.
+event_conditions <- function(t, x, p) {
+  c(
+    isTRUE(t > 2)  # grow
+  )
+}
+
+# The values the event grow assigns, evaluated when its trigger turns true.
+event_values_grow <- function(t, x, p) {
+  as.numeric(c(
+    2,  # Ve resized compartment [l]
+    NaN  # S3: not assigned, its amount is kept
+  ))
+}
+
+# The sizes of the compartments the event grow changes, after its assignments.
+event_sizes_grow <- function(t, x, p) {
+  # constants
+  Ve <- p[[1]]  # resized compartment [l]
+  as.numeric(c(Ve))
+}
+
+# Execute the event grow: a list of the states x and the constants p with the
+# values.
+#
+# A concentration in a compartment whose size the event changes keeps its amount:
+# it is scaled with the size before the event and divided by the size after it,
+# `event_sizes_grow`, evaluated with the values the event assigned.
+event_assign_grow <- function(t, x, p, values) {
+  # states
+  S3 <- x[[4]]  # product [mole/l]
+  # constants
+  Ve <- p[[1]]  # resized compartment [l]
+  p[[1]] <- values[[1]]  # Ve resized compartment [l]
+  sizes <- event_sizes_grow(t, x, p)
+  x[[4]] <- S3 * Ve / sizes[[1]]  # S3 product [mole/l]
+  list(x = x, p = p)
+}
+
+# the events in the order of the model: their flags and the functions of their
+# delay, priority and assignments; the trigger of EVENTS[[k]] is the entry k of
+# `event_triggers` and `event_conditions`
+EVENTS <- list(
+  list(
+    id = "grow",
+    initial_value = TRUE,
+    persistent = TRUE,
+    use_trigger_values = TRUE,
+    delay = NULL,
+    priority = NULL,
+    values = event_values_grow,
+    assign = event_assign_grow
+  )
+)

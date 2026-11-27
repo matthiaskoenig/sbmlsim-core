@@ -1,0 +1,279 @@
+# The ODE system of the model `BIOMD0000000012`: Elowitz2000 - Repressilator.
+#
+# Written by sbmlode 0.3.3, SBML L2V3.
+#
+# Units of the model:
+#
+#   time       min
+#   substance  item
+#   extent     item
+#   volume     fl
+#   area       m^2
+#   length     m
+#
+# States x:
+#
+#      id  name          unit
+#   1  PX  LacI protein  item
+#   2  PY  TetR protein  item
+#   3  PZ  cI protein    item
+#   4  X   LacI mRNA     item
+#   5  Y   TetR mRNA     item
+#   6  Z   cI mRNA       item
+#
+# `initial_values(p)` returns the initial states x0 and the constants p at t = 0,
+# `f_dxdt(t, x, p)` the rates of change of the states (in a list, as deSolve
+# wants them) and `f_y(t, x, p)` the assigned values y, the rules and the
+# reaction rates.
+# Sourcing the file needs base R only.
+
+# the ids of the states x, the constants p and the assigned values y
+XIDS <- c(
+  "PX",  # LacI protein [item]
+  "PY",  # TetR protein [item]
+  "PZ",  # cI protein [item]
+  "X",  # LacI mRNA [item]
+  "Y",  # TetR mRNA [item]
+  "Z"  # cI mRNA [item]
+)
+PIDS <- c(
+  "cell",  # [fl]
+  "eff",  # translation efficiency
+  "n",
+  "KM",
+  "tau_mRNA",  # mRNA half life
+  "tau_prot",  # protein half life
+  "ps_a",  # tps_active
+  "ps_0"  # tps_repr
+)
+YIDS <- c(
+  "t_ave",  # average mRNA life time
+  "beta",
+  "k_tl",
+  "a_tr",
+  "a0_tr",
+  "kd_prot",
+  "kd_mRNA",
+  "alpha",
+  "alpha0",
+  "Reaction1",  # degradation of LacI transcripts [item/min]
+  "Reaction2",  # degradation of TetR transcripts [item/min]
+  "Reaction3",  # degradation of CI transcripts [item/min]
+  "Reaction4",  # translation of LacI [item/min]
+  "Reaction5",  # translation of TetR [item/min]
+  "Reaction6",  # translation of CI [item/min]
+  "Reaction7",  # degradation of LacI [item/min]
+  "Reaction8",  # degradation of TetR [item/min]
+  "Reaction9",  # degradation of CI [item/min]
+  "Reaction10",  # transcription of LacI [item/min]
+  "Reaction11",  # transcription of TetR [item/min]
+  "Reaction12"  # transcription of CI [item/min]
+)
+
+# the names and the units of the ids, `NA` for none
+NAMES <- c(
+  "PX" = "LacI protein",
+  "PY" = "TetR protein",
+  "PZ" = "cI protein",
+  "X" = "LacI mRNA",
+  "Y" = "TetR mRNA",
+  "Z" = "cI mRNA",
+  "cell" = NA_character_,
+  "eff" = "translation efficiency",
+  "n" = "n",
+  "KM" = "KM",
+  "tau_mRNA" = "mRNA half life",
+  "tau_prot" = "protein half life",
+  "ps_a" = "tps_active",
+  "ps_0" = "tps_repr",
+  "t_ave" = "average mRNA life time",
+  "beta" = "beta",
+  "k_tl" = "k_tl",
+  "a_tr" = "a_tr",
+  "a0_tr" = "a0_tr",
+  "kd_prot" = "kd_prot",
+  "kd_mRNA" = "kd_mRNA",
+  "alpha" = "alpha",
+  "alpha0" = "alpha0",
+  "Reaction1" = "degradation of LacI transcripts",
+  "Reaction2" = "degradation of TetR transcripts",
+  "Reaction3" = "degradation of CI transcripts",
+  "Reaction4" = "translation of LacI",
+  "Reaction5" = "translation of TetR",
+  "Reaction6" = "translation of CI",
+  "Reaction7" = "degradation of LacI",
+  "Reaction8" = "degradation of TetR",
+  "Reaction9" = "degradation of CI",
+  "Reaction10" = "transcription of LacI",
+  "Reaction11" = "transcription of TetR",
+  "Reaction12" = "transcription of CI"
+)
+UNITS <- c(
+  "PX" = "item",
+  "PY" = "item",
+  "PZ" = "item",
+  "X" = "item",
+  "Y" = "item",
+  "Z" = "item",
+  "cell" = "fl",
+  "eff" = NA_character_,
+  "n" = NA_character_,
+  "KM" = NA_character_,
+  "tau_mRNA" = NA_character_,
+  "tau_prot" = NA_character_,
+  "ps_a" = NA_character_,
+  "ps_0" = NA_character_,
+  "t_ave" = NA_character_,
+  "beta" = NA_character_,
+  "k_tl" = NA_character_,
+  "a_tr" = NA_character_,
+  "a0_tr" = NA_character_,
+  "kd_prot" = NA_character_,
+  "kd_mRNA" = NA_character_,
+  "alpha" = NA_character_,
+  "alpha0" = NA_character_,
+  "Reaction1" = "item/min",
+  "Reaction2" = "item/min",
+  "Reaction3" = "item/min",
+  "Reaction4" = "item/min",
+  "Reaction5" = "item/min",
+  "Reaction6" = "item/min",
+  "Reaction7" = "item/min",
+  "Reaction8" = "item/min",
+  "Reaction9" = "item/min",
+  "Reaction10" = "item/min",
+  "Reaction11" = "item/min",
+  "Reaction12" = "item/min"
+)
+
+# the default values of the constants, `NaN` for one without a value, e.g. one
+# which an initial assignment sets and `initial_values` computes
+P0 <- c(
+  "cell" = 1,  # [fl]
+  "eff" = 20,  # translation efficiency
+  "n" = 2,
+  "KM" = 40,
+  "tau_mRNA" = 2,  # mRNA half life
+  "tau_prot" = 10,  # protein half life
+  "ps_a" = 0.5,  # tps_active
+  "ps_0" = 0.0005  # tps_repr
+)
+
+# The initial states x0 and the constants p at t = 0.
+#
+# The initial values, initial assignments and the rules they need are evaluated
+# in the order of their dependencies.
+#
+# Every constant keeps the value passed.
+#
+# Returns a list of the initial states x0 and the constants p, named vectors.
+initial_values <- function(p = P0) {
+  p <- as.numeric(p)
+  # initial values
+  PX <- 0  # LacI protein [item]
+  PY <- 0  # TetR protein [item]
+  PZ <- 0  # cI protein [item]
+  X <- 0  # LacI mRNA [item]
+  Y <- 20  # TetR mRNA [item]
+  Z <- 0  # cI mRNA [item]
+  x0 <- as.numeric(c(PX, PY, PZ, X, Y, Z))
+  names(x0) <- XIDS
+  names(p) <- PIDS
+  list(x0 = x0, p = p)
+}
+
+# The rates of change dx/dt of the states x at the time t, in a list (deSolve).
+f_dxdt <- function(t, x, p) {
+  # states
+  PX <- x[[1]]  # LacI protein [item]
+  PY <- x[[2]]  # TetR protein [item]
+  PZ <- x[[3]]  # cI protein [item]
+  X <- x[[4]]  # LacI mRNA [item]
+  Y <- x[[5]]  # TetR mRNA [item]
+  Z <- x[[6]]  # cI mRNA [item]
+  # constants
+  eff <- p[[2]]  # translation efficiency
+  n <- p[[3]]
+  KM <- p[[4]]
+  tau_mRNA <- p[[5]]  # mRNA half life
+  tau_prot <- p[[6]]  # protein half life
+  ps_a <- p[[7]]  # tps_active
+  ps_0 <- p[[8]]  # tps_repr
+  # assigned values and reaction rates
+  t_ave <- tau_mRNA / log(2)  # average mRNA life time
+  k_tl <- eff / t_ave
+  a_tr <- (ps_a - ps_0) * 60
+  a0_tr <- ps_0 * 60
+  kd_prot <- log(2) / tau_prot
+  kd_mRNA <- log(2) / tau_mRNA
+  Reaction1 <- kd_mRNA * X  # degradation of LacI transcripts [item/min]
+  Reaction2 <- kd_mRNA * Y  # degradation of TetR transcripts [item/min]
+  Reaction3 <- kd_mRNA * Z  # degradation of CI transcripts [item/min]
+  Reaction4 <- k_tl * X  # translation of LacI [item/min]
+  Reaction5 <- k_tl * Y  # translation of TetR [item/min]
+  Reaction6 <- k_tl * Z  # translation of CI [item/min]
+  Reaction7 <- kd_prot * PX  # degradation of LacI [item/min]
+  Reaction8 <- kd_prot * PY  # degradation of TetR [item/min]
+  Reaction9 <- kd_prot * PZ  # degradation of CI [item/min]
+  Reaction10 <- a0_tr + a_tr * KM ^ n / (KM ^ n + PZ ^ n)  # transcription of LacI [item/min]
+  Reaction11 <- a0_tr + a_tr * KM ^ n / (KM ^ n + PX ^ n)  # transcription of TetR [item/min]
+  Reaction12 <- a0_tr + a_tr * KM ^ n / (KM ^ n + PY ^ n)  # transcription of CI [item/min]
+  # rates of change
+  dx <- numeric(6)
+  dx[[1]] <- Reaction4 - Reaction7  # dPX/dt
+  dx[[2]] <- Reaction5 - Reaction8  # dPY/dt
+  dx[[3]] <- Reaction6 - Reaction9  # dPZ/dt
+  dx[[4]] <- -Reaction1 + Reaction10  # dX/dt
+  dx[[5]] <- -Reaction2 + Reaction11  # dY/dt
+  dx[[6]] <- -Reaction3 + Reaction12  # dZ/dt
+  list(dx)
+}
+
+# The assigned values y at the time t, the rules and the reaction rates.
+f_y <- function(t, x, p) {
+  # states
+  PX <- x[[1]]  # LacI protein [item]
+  PY <- x[[2]]  # TetR protein [item]
+  PZ <- x[[3]]  # cI protein [item]
+  X <- x[[4]]  # LacI mRNA [item]
+  Y <- x[[5]]  # TetR mRNA [item]
+  Z <- x[[6]]  # cI mRNA [item]
+  # constants
+  eff <- p[[2]]  # translation efficiency
+  n <- p[[3]]
+  KM <- p[[4]]
+  tau_mRNA <- p[[5]]  # mRNA half life
+  tau_prot <- p[[6]]  # protein half life
+  ps_a <- p[[7]]  # tps_active
+  ps_0 <- p[[8]]  # tps_repr
+  # assigned values and reaction rates
+  t_ave <- tau_mRNA / log(2)  # average mRNA life time
+  beta <- tau_mRNA / tau_prot
+  k_tl <- eff / t_ave
+  a_tr <- (ps_a - ps_0) * 60
+  a0_tr <- ps_0 * 60
+  kd_prot <- log(2) / tau_prot
+  kd_mRNA <- log(2) / tau_mRNA
+  alpha <- a_tr * eff * tau_prot / (log(2) * KM)
+  alpha0 <- a0_tr * eff * tau_prot / (log(2) * KM)
+  Reaction1 <- kd_mRNA * X  # degradation of LacI transcripts [item/min]
+  Reaction2 <- kd_mRNA * Y  # degradation of TetR transcripts [item/min]
+  Reaction3 <- kd_mRNA * Z  # degradation of CI transcripts [item/min]
+  Reaction4 <- k_tl * X  # translation of LacI [item/min]
+  Reaction5 <- k_tl * Y  # translation of TetR [item/min]
+  Reaction6 <- k_tl * Z  # translation of CI [item/min]
+  Reaction7 <- kd_prot * PX  # degradation of LacI [item/min]
+  Reaction8 <- kd_prot * PY  # degradation of TetR [item/min]
+  Reaction9 <- kd_prot * PZ  # degradation of CI [item/min]
+  Reaction10 <- a0_tr + a_tr * KM ^ n / (KM ^ n + PZ ^ n)  # transcription of LacI [item/min]
+  Reaction11 <- a0_tr + a_tr * KM ^ n / (KM ^ n + PX ^ n)  # transcription of TetR [item/min]
+  Reaction12 <- a0_tr + a_tr * KM ^ n / (KM ^ n + PY ^ n)  # transcription of CI [item/min]
+  as.numeric(c(
+      t_ave, beta, k_tl, a_tr, a0_tr, kd_prot, kd_mRNA, alpha, alpha0, Reaction1,
+      Reaction2, Reaction3, Reaction4, Reaction5, Reaction6, Reaction7, Reaction8,
+      Reaction9, Reaction10, Reaction11, Reaction12
+  ))
+}
+
+# the model has no events
+EVENTS <- list()

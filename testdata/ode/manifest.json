@@ -1,0 +1,24 @@
+{
+  "oracle": {
+    "sbmlode": "0.3.3",
+    "libsbml": "5.21.2"
+  },
+  "models": [
+    {
+      "name": "demo",
+      "sha256": "f22a51af80ba1f3f0031911313f001fe9c93df6c11696085d5e9787bd0247d39"
+    },
+    {
+      "name": "repressilator",
+      "sha256": "f5ea746733b05375f06c7e0a9a9232e763cb5ccd91deab0641c4d6a53c2936bf"
+    },
+    {
+      "name": "variable_compartment",
+      "sha256": "fbee5baf3075e0baff12d17ba9062ecbf7ab9e23529c5d183a096bdd4a651e3e"
+    },
+    {
+      "name": "events",
+      "sha256": "526bfebf2d00d38a0230ad2bf3ee8ad2837b7839edb3d04de11f7a3fd8395b00"
+    }
+  ]
+}

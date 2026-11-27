@@ -3,7 +3,7 @@
 # `runtime`, which `publish` also gives the npm package), and every wheel embeds it through
 # SBMLSIM_CORE_WASM_DIR, so the extension of every platform runs the bits of the JavaScript host.
 # The linux wheels are linked with zig against glibc 2.28 (manylinux_2_28). Every wheel is
-# installed in a fresh environment on python 3.14 and 3.15, imported from outside the checkout,
+# installed in a fresh environment on python 3.12 to 3.15, imported from outside the checkout,
 # and the tests of python/tests and the type check of python/typecheck run against it. Called by
 # `ci` (pull requests and develop) and by `publish` (a tag), which publishes the artifacts
 # `wheel-*`.
@@ -109,17 +109,17 @@ jobs:
         run: |
           export SBMLSIM_CORE_WASM_DIR="$GITHUB_WORKSPACE/runtime"
           uvx --from "$MATURIN" maturin build --release --locked ${{ matrix.args }} --out dist
-      - name: The wheel is abi3 for python 3.14
+      - name: The wheel is abi3 for python 3.12
         run: |
           ls dist
           test "$(ls dist/*.whl | wc -l)" -eq 1
-          test -n "$(ls dist/sbmlsim_core-*-cp314-abi3-*.whl)"
-      - name: The tests and the type check against the installed wheel, on python 3.14 and 3.15
-        # the wheel is cp314-abi3, so one build has to load on every later python
+          test -n "$(ls dist/sbmlsim_core-*-cp312-abi3-*.whl)"
+      - name: The tests and the type check against the installed wheel, on python 3.12 to 3.15
+        # the wheel is cp312-abi3, so one build has to load on every later python
         run: |
           if [ "$RUNNER_OS" = Windows ]; then bin=Scripts; else bin=bin; fi
           mkdir "$RUNNER_TEMP/typecheck" && cp python/typecheck/usage.py "$RUNNER_TEMP/typecheck/"
-          for python in 3.14 3.15; do
+          for python in 3.12 3.13 3.14 3.15; do
             venv="$RUNNER_TEMP/venv-$python"
             uv venv --python "$python" "$venv"
             # the pins of the dev group, so the environments of ci cannot drift apart

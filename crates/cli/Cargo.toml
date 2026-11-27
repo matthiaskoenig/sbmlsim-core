@@ -23,6 +23,7 @@ default = []
 native = ["sbmlsim-host/native", "dep:sbmlsim-fit", "dep:sbmlsim-c", "dep:sbmlsim-engine"]
 
 [dependencies]
+sbmlsim-ode = { path = "../ode", features = ["filesystem"] }
 anyhow = "1"
 clap = { version = "4.5", features = ["derive"] }
 sbmlsim-abi = { path = "../abi" }

@@ -1,0 +1,17 @@
+[package]
+name = "sbmlsim-reader"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "A lossless namespace-aware SBML reader in pure Rust"
+publish = false
+
+[dependencies]
+sbmlsim-document = { path = "../document" }
+roxmltree = "0.21"
+sha1 = "0.11"
+thiserror.workspace = true
+
+[lints]

@@ -8,7 +8,7 @@ Compile SBML models to WebAssembly and simulate them. [sbmlsim-core](https://mat
 pip install sbmlsim-core
 ```
 
-One abi3 wheel per platform for python 3.14 or newer: linux (x86_64, aarch64, manylinux_2_28), macOS (arm64, x86_64) and windows (x86_64). There is no source distribution; a build from source is described in the [repository](https://github.com/matthiaskoenig/sbmlsim-core).
+One abi3 wheel per platform for python 3.12 or newer: linux (x86_64, aarch64, manylinux_2_28), macOS (arm64, x86_64) and windows (x86_64). There is no source distribution; a build from source is described in the [repository](https://github.com/matthiaskoenig/sbmlsim-core).
 
 ## Compile and simulate
 
@@ -40,3 +40,5 @@ results = model.simulate_many(requests, threads=None)
 ## License
 
 MIT for the code of sbmlsim-core. The extension embeds `engine.wasm`, which links SUNDIALS (BSD-3-Clause) and KLU and BTF of SuiteSparse (LGPL-2.1-or-later), so the wheel is under `MIT AND BSD-3-Clause AND LGPL-2.1-or-later` and carries `LICENSE` and `THIRD_PARTY.md`.
+
+Standalone ODE exports use `from sbmlsim_core import OdeSystem`. Read original SBML bytes or a path with `OdeSystem.from_sbml`, then `render("python")` or `write("model.md")`. Seven targets share the Rust generator; see [ODE source exports](https://matthiaskoenig.github.io/sbmlsim-core/odes/).

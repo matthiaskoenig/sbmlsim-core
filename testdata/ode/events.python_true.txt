@@ -1,0 +1,589 @@
+"""The ODE system of the model events_model.
+
+Written by sbmlode 0.3.3, SBML L3V2.
+
+States x:
+
+       id  name       unit
+    0  V
+    1  S   substrate
+    2  P
+    3  A
+    4  B
+
+`initial_values(p)` returns the initial states x0 and the constants p at t = 0,
+`f_dxdt(t, x, p)` the rates of change of the states and `f_y(t, x, p)` the assigned
+values y, the rules and the reaction rates.
+`EVENTS` lists the events with the functions of their delays, priorities and
+assignments, `event_triggers(t, x, p)` and `event_conditions(t, x, p)` their
+triggers.
+`simulate(t_end)` integrates the model with an integrator of `scipy.integrate`
+and executes its events, the file run as a script prints the head of a simulation.
+"""
+
+from functools import partial
+
+import numpy as np
+import pandas as pd
+import scipy.integrate
+from scipy.integrate import DenseOutput
+
+# the ids of the states x, the constants p and the assigned values y
+XIDS = [
+    "V",
+    "S",  # substrate
+    "P",
+    "A",
+    "B",
+]
+PIDS = [
+    "c",
+    "vmax",
+    "km",
+    "k1",
+    "S0",
+    "total",
+]
+YIDS = [
+    "dV_dt",  # rate of V
+    "k2",
+    "J0",
+    "J1",
+]
+
+# the names and the units of the ids
+NAMES = {
+    "V": None,
+    "S": "substrate",
+    "P": None,
+    "A": None,
+    "B": None,
+    "c": None,
+    "vmax": None,
+    "km": None,
+    "k1": None,
+    "S0": None,
+    "total": None,
+    "dV_dt": "rate of V",
+    "k2": None,
+    "J0": None,
+    "J1": None,
+}
+UNITS = {
+    "V": None,
+    "S": None,
+    "P": None,
+    "A": None,
+    "B": None,
+    "c": None,
+    "vmax": None,
+    "km": None,
+    "k1": None,
+    "S0": None,
+    "total": None,
+    "dV_dt": None,
+    "k2": None,
+    "J0": None,
+    "J1": None,
+}
+
+# the default values of the constants, `np.nan` for one without a value, e.g. one
+# which an initial assignment sets and `initial_values` computes
+P0 = np.array([
+    1.0,  # c
+    2.0,  # vmax
+    0.5,  # km
+    0.1,  # k1
+    10.0,  # S0
+    0.0,  # total
+])
+
+
+def mm(S, km):
+    return S / (km + S)
+
+
+def initial_values(p: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:
+    """The initial states x0 and the constants p at t = 0.
+
+    The initial values, initial assignments and the rules they need are evaluated
+    in the order of their dependencies.
+
+    Every constant keeps the value passed.
+
+    Args:
+        p: the constants, `P0` if not given
+
+    Returns:
+        the initial states x0 and the constants p, a new array
+    """
+    p = np.array(P0 if p is None else p, dtype=float)
+    # constants
+    S0 = p[4]
+    # initial values
+    V = 2.0
+    S = S0  # substrate
+    P = 0.0
+    A = 5.0
+    B = 1.0
+    x0 = np.array([V, S, P, A, B], dtype=float)
+    return x0, p
+
+
+def f_dxdt(t: float, x: np.ndarray, p: np.ndarray) -> np.ndarray:
+    """The rates of change dx/dt of the states x at the time t."""
+    # states
+    V = x[0]
+    S = x[1]  # substrate
+    A = x[3]
+    B = x[4]
+    # constants
+    c = p[0]
+    vmax = p[1]
+    km = p[2]
+    k1 = p[3]
+    # assigned values and reaction rates
+    dV_dt = 0.1  # rate of V
+    J0 = vmax * mm(S, km)
+    J1 = k1 * S * A
+    # rates of change
+    dx = np.zeros(5)
+    dx[0] = 0.1  # dV/dt
+    dx[1] = (-J0 - J1) / c  # dS/dt
+    dx[2] = (J0 + 2.0 * J1) / c  # dP/dt
+    dx[3] = -J1 / V - A / V * dV_dt  # dA/dt
+    dx[4] = -0.1 * B  # dB/dt
+    return dx
+
+
+def f_y(t: float, x: np.ndarray, p: np.ndarray) -> np.ndarray:
+    """The assigned values y at the time t, the rules and the reaction rates."""
+    # states
+    S = x[1]  # substrate
+    A = x[3]
+    # constants
+    vmax = p[1]
+    km = p[2]
+    k1 = p[3]
+    # assigned values and reaction rates
+    dV_dt = 0.1  # rate of V
+    k2 = 2 * k1
+    J0 = vmax * mm(S, km)
+    J1 = k1 * S * A
+    return np.array([dV_dt, k2, J0, J1], dtype=float)
+
+
+def event_triggers(t: float, x: np.ndarray, p: np.ndarray) -> np.ndarray:
+    """The root function of the trigger of each event, positive where it holds.
+
+    An integrator locates the time at which a trigger changes as a root of its
+    function. At a root, where the function is 0, the trigger itself decides, see
+    `event_conditions`: `a >= b` holds at `a == b`, `a > b` does not.
+    """
+    t = np.float64(t)  # a numpy scalar: math out of its domain is nan, no error
+    # states
+    S = x[1]  # substrate
+    return np.array([
+        t - 5,  # E1 reset
+        2 - S,  # E2
+    ])
+
+
+def event_conditions(t: float, x: np.ndarray, p: np.ndarray) -> np.ndarray:
+    """Whether the trigger of each event holds."""
+    t = np.float64(t)  # a numpy scalar: math out of its domain is nan, no error
+    # states
+    S = x[1]  # substrate
+    return np.array([
+        t > 5,  # E1 reset
+        S < 2,  # E2
+    ], dtype=bool)
+
+
+def event_priority_E1(t: float, x: np.ndarray, p: np.ndarray) -> float:
+    """The priority of the event E1, evaluated before each execution."""
+    return 1
+
+
+def event_values_E1(t: float, x: np.ndarray, p: np.ndarray) -> np.ndarray:
+    """The values the event E1 assigns, evaluated when its trigger turns true."""
+    # states
+    V = x[0]
+    return np.array([
+        2 * V,  # V
+        10,  # S substrate
+        np.nan,  # A: not assigned, its amount is kept
+        np.nan,  # B: not assigned, its amount is kept
+    ], dtype=float)
+
+
+def event_sizes_E1(t: float, x: np.ndarray, p: np.ndarray) -> np.ndarray:
+    """The sizes of the compartments the event E1 changes, after its assignments."""
+    # states
+    V = x[0]
+    return np.array([V], dtype=float)
+
+
+def event_assign_E1(
+    t: float, x: np.ndarray, p: np.ndarray, values: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """Execute the event E1: the states x and the constants p with the values.
+
+    A concentration in a compartment whose size the event changes keeps its amount:
+    it is scaled with the size before the event and divided by the size after it,
+    `event_sizes_E1`, evaluated with the values the event assigned.
+    """
+    # states
+    V = x[0]
+    A = x[3]
+    B = x[4]
+    x = x.copy()
+    p = p.copy()
+    x[0] = values[0]  # V
+    x[1] = values[1]  # S substrate
+    sizes = event_sizes_E1(t, x, p)
+    x[3] = A * V / sizes[0]  # A
+    x[4] = B * V / sizes[0]  # B
+    return x, p
+
+
+def event_delay_E2(t: float, x: np.ndarray, p: np.ndarray) -> float:
+    """The delay of the event E2, evaluated when its trigger turns true."""
+    return 1
+
+
+def event_values_E2(t: float, x: np.ndarray, p: np.ndarray) -> np.ndarray:
+    """The values the event E2 assigns, evaluated when its trigger turns true."""
+    # constants
+    total = p[5]
+    return np.array([
+        1,  # A
+        total + 1,  # total
+    ], dtype=float)
+
+
+def event_assign_E2(
+    t: float, x: np.ndarray, p: np.ndarray, values: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """Execute the event E2: the states x and the constants p with the values."""
+    x = x.copy()
+    p = p.copy()
+    x[3] = values[0]  # A
+    p[5] = values[1]  # total
+    return x, p
+
+
+# the events in the order of the model: their flags and the functions of their
+# delay, priority and assignments; the trigger of EVENTS[k] is the entry k of
+# `event_triggers` and `event_conditions`
+EVENTS = [
+    {
+        "id": "E1",
+        "initial_value": True,
+        "persistent": True,
+        "use_trigger_values": True,
+        "delay": None,
+        "priority": event_priority_E1,
+        "values": event_values_E1,
+        "assign": event_assign_E1,
+    },
+    {
+        "id": "E2",
+        "initial_value": True,
+        "persistent": True,
+        "use_trigger_values": True,
+        "delay": event_delay_E2,
+        "priority": None,
+        "values": event_values_E2,
+        "assign": event_assign_E2,
+    },
+]
+
+
+# the limits of a simulation: the steps of the integrator beyond those which the largest
+# step forces, and the executions of events at one time, beyond which an infinite
+# cascade is probable
+MAX_STEPS = 100000
+MAX_CASCADE = 10000
+
+# the points of a step of the integrator at which the triggers are evaluated, evenly
+# spaced to its end, as the root finding of julia's OrdinaryDiffEq does
+TRIGGER_POINTS = 10
+
+
+def first_change(
+    interpolant: DenseOutput,
+    t_old: float,
+    t_new: float,
+    p: np.ndarray,
+    holds: np.ndarray,
+) -> float:
+    """The first time in a step of the integration at which a trigger changes.
+
+    Bisection on the solution of the step, between a time without and a time with
+    a change, finds the first time with a change to the rounding error:
+    `time >= 1` changes at t = 1. A trigger which keeps its value at its root and
+    changes right after it, `time > 1` at t = 1, changes at a time clearly after
+    the root, as an integrator locates it, so that the time stays after the root
+    when a delay is added to it.
+
+    Args:
+        interpolant: the solution of the step
+        t_old: the start of the step, where the triggers are `holds`
+        t_new: the end of the step, where a trigger differs from `holds`
+        p: the constants
+        holds: whether each trigger holds at the start of the step
+
+    Returns:
+        the time of the change
+    """
+
+    def changed(t: float) -> bool:
+        return bool(np.any(event_conditions(t, interpolant(t), p) != holds))
+
+    t_low, t_high = t_old, t_new
+    while True:
+        t_middle = t_low + (t_high - t_low) / 2
+        if t_middle <= t_low or t_middle >= t_high:
+            break
+        if changed(t_middle):
+            t_high = t_middle
+        else:
+            t_low = t_middle
+    turned = event_conditions(t_high, interpolant(t_high), p) != holds
+    if np.any(event_triggers(t_low, interpolant(t_low), p)[turned] == 0):
+        return min(t_new, t_low + 1e-13 * max(1.0, abs(t_low)))
+    return t_high
+
+
+def change_in_step(
+    interpolant: DenseOutput,
+    t_old: float,
+    t_new: float,
+    p: np.ndarray,
+    holds: np.ndarray,
+) -> float | None:
+    """The first time in a step of the integration at which a trigger changes.
+
+    The triggers are evaluated at `TRIGGER_POINTS` points of the step, evenly spaced
+    from its start to its end, and the first change between two of them is located by
+    `first_change`. A trigger which holds for a shorter time than the distance of the
+    points, between two of them, is not seen.
+
+    Args:
+        interpolant: the solution of the step
+        t_old: the start of the step, where the triggers are `holds`
+        t_new: the end of the step
+        p: the constants
+        holds: whether each trigger holds at the start of the step
+
+    Returns:
+        the time of the first change, `None` if no trigger changes
+    """
+    t_low = t_old
+    for t_point in np.linspace(t_old, t_new, TRIGGER_POINTS + 1)[1:]:
+        if np.any(event_conditions(t_point, interpolant(t_point), p) != holds):
+            return first_change(interpolant, t_low, t_point, p, holds)
+        t_low = t_point
+    return None
+
+
+def execute_events(
+    t: float, x: np.ndarray, p: np.ndarray, holds: np.ndarray, pending: list[dict]
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Execute the events due at the time t.
+
+    1. A trigger which turned true schedules an execution of its event at t plus
+       its delay, with the values of its assignments if it uses the values from
+       the trigger time; a trigger which turned false drops the executions of its
+       event unless it is persistent.
+    2. Of the executions due, the one of the highest priority is executed (an
+       event without a priority has the priority 0), ties in the order of
+       `EVENTS`, which SBML leaves to chance.
+    3. The triggers are evaluated with the new states and constants, repeating
+       from step 1 until no execution is due: an event can trigger another one or
+       drop it. More than `MAX_CASCADE` executions at one time raise.
+
+    Args:
+        t: the time
+        x: the states
+        p: the constants
+        holds: whether each trigger held before t
+        pending: the scheduled executions, which are changed
+
+    Returns:
+        the states, the constants and whether each trigger holds, after the events
+
+    Raises:
+        RuntimeError: for more than `MAX_CASCADE` executions, an infinite cascade
+    """
+    executions = 0
+    while True:
+        holds_now = event_conditions(t, x, p)
+        for event_index, event in enumerate(EVENTS):
+            if holds_now[event_index] and not holds[event_index]:
+                delay_time = event["delay"](t, x, p) if event["delay"] else 0.0
+                if event["use_trigger_values"]:
+                    values = event["values"](t, x, p)
+                else:
+                    values = None
+                pending.append(
+                    {"event": event_index, "time": t + delay_time, "values": values}
+                )
+            elif holds[event_index] and not holds_now[event_index]:
+                if event["persistent"]:
+                    continue
+                # the trigger turned false, the executions of the event are dropped
+                pending[:] = [
+                    scheduled
+                    for scheduled in pending
+                    if scheduled["event"] != event_index
+                ]
+        holds = holds_now
+
+        due = [scheduled for scheduled in pending if scheduled["time"] <= t]
+        if not due:
+            return x, p, holds
+
+        # the priority of each execution due, ties in the order of `EVENTS`
+        ranks = []
+        for scheduled in due:
+            event = EVENTS[scheduled["event"]]
+            priority_value = event["priority"](t, x, p) if event["priority"] else 0.0
+            ranks.append((priority_value, -scheduled["event"]))
+        execution = due[ranks.index(max(ranks))]
+        executions += 1
+        if executions > MAX_CASCADE:
+            raise RuntimeError(
+                f"More than {MAX_CASCADE} events were executed at t = {t}, the "
+                "events trigger each other in an infinite cascade."
+            )
+        # by identity: the values of two executions do not compare as booleans
+        pending[:] = [scheduled for scheduled in pending if scheduled is not execution]
+        event = EVENTS[execution["event"]]
+        values = execution["values"]
+        if values is None:
+            values = event["values"](t, x, p)
+        x, p = event["assign"](t, x, p, values)
+
+
+def simulate(
+    t_end: float,
+    points: int = 101,
+    p: np.ndarray | None = None,
+    x0: np.ndarray | None = None,
+    rtol: float = 1e-8,
+    atol: float = 1e-10,
+    method: str = "LSODA",
+    max_step: float | None = None,
+    max_steps: int | None = None,
+) -> pd.DataFrame:
+    """Simulate the model from t = 0 to `t_end`, with its events.
+
+    The triggers before t = 0 have their initial values, a trigger which holds at
+    t = 0 and has the initial value false fires at t = 0. The integration stops
+    where a trigger changes, at the execution of a delayed event and at `t_end`;
+    there the events are executed, see `execute_events`, and the integration
+    restarts with the states and constants after them.
+
+    The triggers are evaluated at `TRIGGER_POINTS` points of every step of the
+    integrator, which is at most `max_step`, see `change_in_step`: a trigger which
+    holds for a shorter time than the distance of these points can be stepped over.
+    A time point at a delayed execution, to the rounding of the time (1e-14
+    relative), has the values after it: the rounding errors of the integration shift
+    the time of the trigger, not its integration error.
+
+    Args:
+        t_end: the end time
+        points: the number of time points, 0 and `t_end` included
+        p: the constants, `P0` if not given
+        x0: the initial states, those of `initial_values` if not given
+        rtol: the relative tolerance of the integration
+        atol: the absolute tolerance of the integration
+        method: the integrator, a class of `scipy.integrate`, e.g. `"BDF"`
+        max_step: the largest step of the integrator, by default the distance of
+            the time points
+        max_steps: the largest number of steps of the integrator, by default
+            `MAX_STEPS` plus twice the number of steps `max_step` forces
+
+    Returns:
+        the time, the states, the assigned values and the constants which events
+        change at the time points, at the time of an event the values after it
+
+    Raises:
+        RuntimeError: if the integration fails, takes more than `max_steps` steps
+            or its step is too small to advance the time, e.g. when a state grows
+            without bound, and for an infinite cascade of events
+    """
+    x_initial, p = initial_values(p)
+    x = x_initial if x0 is None else np.array(x0, dtype=float)
+    times = np.linspace(0.0, t_end, points)
+    if max_step is None:
+        max_step = times[1] if points > 1 and t_end > 0 else np.inf
+    if max_steps is None:
+        max_steps = MAX_STEPS + 2 * int(np.ceil(t_end / max_step))
+    solver_type = getattr(scipy.integrate, method)  # e.g. scipy.integrate.LSODA
+    rows = []  # the states and the constants at each time point
+    steps = 0  # the steps of the integrator
+
+    t = 0.0
+    holds = np.array([event["initial_value"] for event in EVENTS])
+    pending = []  # the scheduled executions of the events
+    x, p, holds = execute_events(t, x, p, holds, pending)
+    while t < t_end:
+        # integrate to the next execution of a delayed event, at most to t_end
+        t_stop = min([t_end, *(scheduled["time"] for scheduled in pending)])
+        solver = solver_type(
+            partial(f_dxdt, p=p), t, x, t_stop, rtol=rtol, atol=atol, max_step=max_step
+        )
+        while True:
+            solver.step()
+            steps += 1
+            if solver.status == "failed":
+                raise RuntimeError(f"The integration failed: {solver.message}")
+            if steps > max_steps:
+                raise RuntimeError(
+                    f"The integration took more than {max_steps} steps, at t = "
+                    f"{solver.t}."
+                )
+            step_size = solver.t - solver.t_old
+            if solver.status == "running" and step_size <= 4 * np.spacing(solver.t):
+                raise RuntimeError(
+                    f"The step of the integration is too small to advance the time "
+                    f"at t = {solver.t}, a state may grow without bound."
+                )
+            interpolant = solver.dense_output()
+            # the integration stops at the change of a trigger
+            t_change = change_in_step(interpolant, solver.t_old, solver.t, p, holds)
+            changed = t_change is not None
+            t_next = solver.t if t_change is None else t_change
+            # the time points of the step before t_next, at t_next after its events; a
+            # time point at the end of the integration (a delayed execution) to the
+            # rounding of the time is at it, the execution is shifted by the rounding
+            # errors of the integration of its trigger, e.g. by 1e-14 at t = 3.4
+            t_points = t_next
+            if not changed and solver.status == "finished":
+                t_points -= 1e-14 * max(1.0, abs(t_next))
+            while len(rows) < points and times[len(rows)] < t_points:
+                rows.append((interpolant(times[len(rows)]), p))
+            if changed or solver.status == "finished":
+                break
+        t, x = t_next, interpolant(t_next)
+        x, p, holds = execute_events(t, x, p, holds, pending)
+    # the time points at t_end, after its events
+    rows.extend((x, p) for _ in range(points - len(rows)))
+
+    xt = np.array([x for x, _ in rows]).reshape(points, len(XIDS))
+    yt = np.array([f_y(t, x, p) for t, (x, p) in zip(times, rows, strict=True)])
+    # the constants which events change
+    pt = np.array([p[[5]] for _, p in rows])
+    data = np.column_stack([times, xt, yt.reshape(points, len(YIDS)), pt])
+    columns = [
+        "time", *XIDS, *YIDS,
+        "total",
+    ]
+    return pd.DataFrame(data, columns=columns)
+
+
+if __name__ == "__main__":
+    print(simulate(t_end=10.0).head())

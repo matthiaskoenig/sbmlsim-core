@@ -18,8 +18,11 @@ name = "sbmlsim_core"
 crate-type = ["cdylib"]
 
 [dependencies]
+sbmlsim-ode = { path = "../ode", features = ["filesystem"] }
+serde.workspace = true
+serde_json.workspace = true
 numpy = "0.30"
-pyo3 = { version = "0.30", features = ["extension-module", "abi3-py314"] }
+pyo3 = { version = "0.30", features = ["extension-module", "abi3-py312"] }
 pythonize = "0.30"
 sbmlsim-abi = { path = "../abi" }
 # the pool of the threads of a batch, with an engine instance per thread

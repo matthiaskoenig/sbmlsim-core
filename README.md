@@ -111,9 +111,13 @@ The host is published to npm as [`sbmlsim-core`](https://www.npmjs.com/package/s
 
 The tests (`node --test js/test`) build the command line (`SBMLSIM_CORE_CLI` names a built one) and compare every passing case of the prepared SBML Test Suite with the wasmtime host (`SBMLSIM_CORE_EXPORT` names the output of `sbmlsim-core testsuite <cases> --export <dir>`).
 
+## ODE source exports
+
+The shared Rust generator exports Python, Diffrax/JAX, Julia, R, Markdown, LaTeX and Typst. Native Python, the CLI and browser WASM share the same reader, equation plan and templates. See [ODE source exports](docs/odes.md).
+
 ## Python
 
-`sbmlsim-core` is also a python package on PyPI, `pip install sbmlsim-core` (python 3.14 or newer, one abi3 wheel per platform, built with maturin by `.github/workflows/wheels.yml` and published with the npm package by `publish.yml`, see [Python](https://matthiaskoenig.github.io/sbmlsim-core/python/); the extension embeds `engine.wasm` through `sbmlsim-host`, so the build needs `WASI_SDK_PATH` or `SBMLSIM_CORE_WASM_DIR` as above). It ships `py.typed` and a stub of the extension, `python/sbmlsim_core/_core.pyi`, which `ty check python/typecheck` holds against a file that uses the API as a caller does:
+`sbmlsim-core` is also a python package on PyPI, `pip install sbmlsim-core` (python 3.12 or newer, one abi3 wheel per platform, built with maturin by `.github/workflows/wheels.yml` and published with the npm package by `publish.yml`, see [Python](https://matthiaskoenig.github.io/sbmlsim-core/python/); the extension embeds `engine.wasm` through `sbmlsim-host`, so the build needs `WASI_SDK_PATH` or `SBMLSIM_CORE_WASM_DIR` as above). It ships `py.typed` and a stub of the extension, `python/sbmlsim_core/_core.pyi`, which `ty check python/typecheck` holds against a file that uses the API as a caller does:
 
 ```bash
 uv venv --python 3.14 && uv pip install -e . --group dev   # editable, with pytest and ty

@@ -29,6 +29,14 @@ The native Wasmtime hosts (`sbmlsim-host`, the command line and the Python exten
 
 SuiteSparse_config states its license in the header of `third_party/SuiteSparse/SuiteSparse_config/SuiteSparse_config.c`: "SuiteSparse_config, Copyright (c) 2012-2023, Timothy A. Davis. All Rights Reserved. SPDX-License-Identifier: BSD-3-clause", the license of the text of AMD and COLAMD below.
 
+The portable equation generator (`compiler.wasm` and the native extension) also links
+MiniJinja and minijinja-contrib (Apache-2.0), roxmltree (MIT OR Apache-2.0),
+indexmap and regex (MIT OR Apache-2.0), sha1 and its digest dependencies
+(MIT OR Apache-2.0), and their permissive dependencies. The lossless document
+model, reader, equation analysis and source templates moved from sbml4humans-core
+and sbmlode (MIT, Matthias König). The historical generated files in `testdata/ode`
+are migration oracles, not runtime dependencies.
+
 ## License texts
 
 The texts below are copied verbatim from the files of the submodules or repositories named in their headings.

@@ -7,6 +7,7 @@ from sbmlsim_core._core import (
     FIT_FIELDS,
     FIT_REDUCTIONS,
     MODEL_CONTRACT,
+    ODE_CONTRACT,
     SIMULATION_CONTRACT,
     THIRD_PARTY,
     BatchExecutor,
@@ -45,6 +46,7 @@ from sbmlsim_core._core import (
     text_width,
 )
 from sbmlsim_core.batch import simulate_stream
+from sbmlsim_core.ode import ODE_FORMATS, OdeFormat, OdeSystem, render_ode
 
 __all__ = [
     "COLOR_SCALES",
@@ -53,6 +55,8 @@ __all__ = [
     "FIT_FIELDS",
     "FIT_REDUCTIONS",
     "MODEL_CONTRACT",
+    "ODE_CONTRACT",
+    "ODE_FORMATS",
     "SIMULATION_CONTRACT",
     "THIRD_PARTY",
     "BatchExecutor",
@@ -64,6 +68,8 @@ __all__ = [
     "InternalError",
     "LoadError",
     "LoadedModel",
+    "OdeFormat",
+    "OdeSystem",
     "PointError",
     "PreparedSimulation",
     "RequestError",
@@ -85,6 +91,7 @@ __all__ = [
     "image_png",
     "pick",
     "plot_wasm",
+    "render_ode",
     "render_png",
     "render_svg",
     "runtime_wasm",

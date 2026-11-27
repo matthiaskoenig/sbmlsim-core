@@ -1,5 +1,7 @@
 """The units of a chart: the short form of a unit and the optional pint and xarray."""
 
+from __future__ import annotations
+
 import subprocess
 import sys
 from typing import Any

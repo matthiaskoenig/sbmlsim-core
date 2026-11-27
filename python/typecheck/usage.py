@@ -13,10 +13,12 @@ type checker, and `jacobian` is a plain `str` in the stub, so an invalid value i
 Those are held by the tests of `python/tests`.
 """
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 import numpy
+import numpy.typing
 import sbmlsim_core
 from sbmlsim_core import (
     CompiledModel,
@@ -257,3 +259,14 @@ def the_chart_builder(values: list[float], path: Path) -> None:
     short_unit(1)  # ty: ignore[invalid-argument-type]
     print(element, band, spec, text, svg, png, saved, label, short, color, alpha)
     print(locs, markers)
+
+
+def equation_exports(source: Path) -> None:
+    """The same shared equation source exports native code and linked data."""
+    system = sbmlsim_core.OdeSystem.from_sbml(source)
+    identifier: str | None = system.model_id
+    code: str = system.render("python", simulator=False)
+    output: Path = system.write("model.py", fmt="diffrax")
+    document: str = system.render("typst", symbols="name", standalone=False)
+    equations: dict[str, Any] = system.typeset({"symbols": {"S": "model/Species:S"}})
+    formats: Mapping[str, sbmlsim_core.OdeFormat] = sbmlsim_core.ODE_FORMATS

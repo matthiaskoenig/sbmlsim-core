@@ -1,0 +1,347 @@
+"""
+The ODE system of the model `Koenig_demo_v15`.
+
+Written by sbmlode 0.3.3, SBML L3V1.
+
+Units of the model:
+
+    time       s
+    substance  mole
+    extent     mole
+    volume     m^3
+    area       m^2
+    length     m
+
+States x:
+
+       id    name  unit
+    1  c__A  A     mole/m^3
+    2  c__B  B     mole/m^3
+    3  c__C  C     mole/m^3
+    4  e__A  A     mole/m^3
+    5  e__B  B     mole/m^3
+    6  e__C  C     mole/m^3
+
+`initial_values(p)` returns the initial states x0 and the constants p at t = 0,
+`f!(dx, x, p, t)` the rates of change of the states and `f_y(x, p, t)` the assigned
+values y, the rules and the reaction rates.
+`simulate(t_end)` returns a `DataFrame` of a simulation with an integrator of
+OrdinaryDiffEq.
+"""
+module Koenig_demo_v15
+
+using DataFrames: DataFrame
+using OrdinaryDiffEq: ODEProblem, ReturnCode, Rodas5P, solve
+
+export XIDS, PIDS, YIDS, NAMES, UNITS, P0, EVENTS, initial_values, f!, f_y, simulate
+
+# the ids of the states x, the constants p and the assigned values y
+const XIDS = [
+    "c__A",  # A [mole/m^3]
+    "c__B",  # B [mole/m^3]
+    "c__C",  # C [mole/m^3]
+    "e__A",  # A [mole/m^3]
+    "e__B",  # B [mole/m^3]
+    "e__C",  # C [mole/m^3]
+]
+const PIDS = [
+    "e",  # external compartment [m^3]
+    "c",  # cell compartment [m^3]
+    "m",  # plasma membrane [m^2]
+    "scale_f",  # metabolic scaling factor [-]
+    "Vmax_bA",  # [mol/s]
+    "Km_A",  # [mmol/l]
+    "Vmax_bB",  # [mol/s]
+    "Km_B",  # [mmol/l]
+    "Vmax_bC",  # [mol/s]
+    "Km_C",  # [mmol/l]
+    "Vmax_v1",  # [mol/s]
+    "Keq_v1",  # [-]
+    "Vmax_v2",  # [mol/s]
+    "Vmax_v3",  # [mol/s]
+    "Vmax_v4",  # [mol/s]
+    "Keq_v4",  # [-]
+]
+const YIDS = [
+    "bA",  # bA (A import) [mole/s]
+    "bB",  # bB (B export) [mole/s]
+    "bC",  # bC (C export) [mole/s]
+    "v1",  # v1 (A -> B) [mole/s]
+    "v2",  # v2 (A -> C) [mole/s]
+    "v3",  # v3 (C -> A) [mole/s]
+    "v4",  # v4 (C -> B) [mole/s]
+]
+
+# the names and the units of the ids
+const NAMES = Dict{String, Union{Nothing, String}}(
+    "c__A" => "A",
+    "c__B" => "B",
+    "c__C" => "C",
+    "e__A" => "A",
+    "e__B" => "B",
+    "e__C" => "C",
+    "e" => "external compartment",
+    "c" => "cell compartment",
+    "m" => "plasma membrane",
+    "scale_f" => "metabolic scaling factor",
+    "Vmax_bA" => nothing,
+    "Km_A" => nothing,
+    "Vmax_bB" => nothing,
+    "Km_B" => nothing,
+    "Vmax_bC" => nothing,
+    "Km_C" => nothing,
+    "Vmax_v1" => nothing,
+    "Keq_v1" => nothing,
+    "Vmax_v2" => nothing,
+    "Vmax_v3" => nothing,
+    "Vmax_v4" => nothing,
+    "Keq_v4" => nothing,
+    "bA" => "bA (A import)",
+    "bB" => "bB (B export)",
+    "bC" => "bC (C export)",
+    "v1" => "v1 (A -> B)",
+    "v2" => "v2 (A -> C)",
+    "v3" => "v3 (C -> A)",
+    "v4" => "v4 (C -> B)",
+)
+const UNITS = Dict{String, Union{Nothing, String}}(
+    "c__A" => "mole/m^3",
+    "c__B" => "mole/m^3",
+    "c__C" => "mole/m^3",
+    "e__A" => "mole/m^3",
+    "e__B" => "mole/m^3",
+    "e__C" => "mole/m^3",
+    "e" => "m^3",
+    "c" => "m^3",
+    "m" => "m^2",
+    "scale_f" => "-",
+    "Vmax_bA" => "mol/s",
+    "Km_A" => "mmol/l",
+    "Vmax_bB" => "mol/s",
+    "Km_B" => "mmol/l",
+    "Vmax_bC" => "mol/s",
+    "Km_C" => "mmol/l",
+    "Vmax_v1" => "mol/s",
+    "Keq_v1" => "-",
+    "Vmax_v2" => "mol/s",
+    "Vmax_v3" => "mol/s",
+    "Vmax_v4" => "mol/s",
+    "Keq_v4" => "-",
+    "bA" => "mole/s",
+    "bB" => "mole/s",
+    "bC" => "mole/s",
+    "v1" => "mole/s",
+    "v2" => "mole/s",
+    "v3" => "mole/s",
+    "v4" => "mole/s",
+)
+
+# the default values of the constants, `NaN` for one without a value, e.g. one which an
+# initial assignment sets and `initial_values` computes
+const P0 = [
+    1.0e-6,  # e
+    1.0e-6,  # c
+    1.0,  # m
+    1.0e-6,  # scale_f
+    5.0,  # Vmax_bA
+    1.0,  # Km_A
+    2.0,  # Vmax_bB
+    0.5,  # Km_B
+    2.0,  # Vmax_bC
+    3.0,  # Km_C
+    1.0,  # Vmax_v1
+    10.0,  # Keq_v1
+    0.5,  # Vmax_v2
+    0.5,  # Vmax_v3
+    0.5,  # Vmax_v4
+    2.0,  # Keq_v4
+]
+
+"""
+    initial_values(p=P0)
+
+The initial states x0 and the constants p at t = 0.
+
+The initial values, initial assignments and the rules they need are evaluated in the
+order of their dependencies.
+
+Every constant keeps the value passed.
+
+Returns the initial states x0 and the constants p, a new vector.
+"""
+function initial_values(p::AbstractVector{<:Real}=P0)
+    p = collect(Float64, p)
+    # initial values
+    c__A = 0.0  # A [mole/m^3]
+    c__B = 0.0  # B [mole/m^3]
+    c__C = 0.0  # C [mole/m^3]
+    e__A = 0.0  # A [mole/m^3]
+    e__B = 0.0  # B [mole/m^3]
+    e__C = 0.0  # C [mole/m^3]
+    x0 = Float64[c__A, c__B, c__C, e__A, e__B, e__C]
+    return x0, p
+end
+
+"""
+    f!(dx, x, p, t)
+
+The rates of change dx/dt of the states x at the time t, written into dx.
+"""
+function f!(dx, x, p, t)
+    # states
+    c__A = x[1]  # A [mole/m^3]
+    c__B = x[2]  # B [mole/m^3]
+    c__C = x[3]  # C [mole/m^3]
+    e__A = x[4]  # A [mole/m^3]
+    e__B = x[5]  # B [mole/m^3]
+    e__C = x[6]  # C [mole/m^3]
+    # constants
+    e_ = p[1]  # external compartment [m^3]
+    c = p[2]  # cell compartment [m^3]
+    scale_f = p[4]  # metabolic scaling factor [-]
+    Vmax_bA = p[5]  # [mol/s]
+    Km_A = p[6]  # [mmol/l]
+    Vmax_bB = p[7]  # [mol/s]
+    Km_B = p[8]  # [mmol/l]
+    Vmax_bC = p[9]  # [mol/s]
+    Km_C = p[10]  # [mmol/l]
+    Vmax_v1 = p[11]  # [mol/s]
+    Keq_v1 = p[12]  # [-]
+    Vmax_v2 = p[13]  # [mol/s]
+    Vmax_v3 = p[14]  # [mol/s]
+    Vmax_v4 = p[15]  # [mol/s]
+    Keq_v4 = p[16]  # [-]
+    # assigned values and reaction rates
+    bA = scale_f * (Vmax_bA / Km_A) * (e__A - c__A) / (1.0 + e__A / Km_A + c__A / Km_A)  # bA (A import) [mole/s]
+    bB = scale_f * (Vmax_bB / Km_B) * (c__B - e__B) / (1.0 + e__B / Km_B + c__B / Km_B)  # bB (B export) [mole/s]
+    bC = scale_f * (Vmax_bC / Km_C) * (c__C - e__C) / (1.0 + e__C / Km_C + c__C / Km_C)  # bC (C export) [mole/s]
+    v1 = scale_f * Vmax_v1 / Km_A * (c__A - 1.0 / Keq_v1 * c__B)  # v1 (A -> B) [mole/s]
+    v2 = scale_f * Vmax_v2 / Km_A * c__A  # v2 (A -> C) [mole/s]
+    v3 = scale_f * Vmax_v3 / Km_A * c__C  # v3 (C -> A) [mole/s]
+    v4 = scale_f * Vmax_v4 / Km_A * (c__C - 1.0 / Keq_v4 * c__B)  # v4 (C -> B) [mole/s]
+    # rates of change
+    dx[1] = (bA - v1 - v2 + v3) / c  # dc__A/dt
+    dx[2] = (-bB + v1 + v4) / c  # dc__B/dt
+    dx[3] = (-bC + v2 - v3 - v4) / c  # dc__C/dt
+    dx[4] = -bA / e_  # de__A/dt
+    dx[5] = bB / e_  # de__B/dt
+    dx[6] = bC / e_  # de__C/dt
+    return nothing
+end
+
+"""
+    f_y(x, p, t)
+
+The assigned values y at the time t, the rules and the reaction rates.
+"""
+function f_y(x, p, t)
+    # states
+    c__A = x[1]  # A [mole/m^3]
+    c__B = x[2]  # B [mole/m^3]
+    c__C = x[3]  # C [mole/m^3]
+    e__A = x[4]  # A [mole/m^3]
+    e__B = x[5]  # B [mole/m^3]
+    e__C = x[6]  # C [mole/m^3]
+    # constants
+    scale_f = p[4]  # metabolic scaling factor [-]
+    Vmax_bA = p[5]  # [mol/s]
+    Km_A = p[6]  # [mmol/l]
+    Vmax_bB = p[7]  # [mol/s]
+    Km_B = p[8]  # [mmol/l]
+    Vmax_bC = p[9]  # [mol/s]
+    Km_C = p[10]  # [mmol/l]
+    Vmax_v1 = p[11]  # [mol/s]
+    Keq_v1 = p[12]  # [-]
+    Vmax_v2 = p[13]  # [mol/s]
+    Vmax_v3 = p[14]  # [mol/s]
+    Vmax_v4 = p[15]  # [mol/s]
+    Keq_v4 = p[16]  # [-]
+    # assigned values and reaction rates
+    bA = scale_f * (Vmax_bA / Km_A) * (e__A - c__A) / (1.0 + e__A / Km_A + c__A / Km_A)  # bA (A import) [mole/s]
+    bB = scale_f * (Vmax_bB / Km_B) * (c__B - e__B) / (1.0 + e__B / Km_B + c__B / Km_B)  # bB (B export) [mole/s]
+    bC = scale_f * (Vmax_bC / Km_C) * (c__C - e__C) / (1.0 + e__C / Km_C + c__C / Km_C)  # bC (C export) [mole/s]
+    v1 = scale_f * Vmax_v1 / Km_A * (c__A - 1.0 / Keq_v1 * c__B)  # v1 (A -> B) [mole/s]
+    v2 = scale_f * Vmax_v2 / Km_A * c__A  # v2 (A -> C) [mole/s]
+    v3 = scale_f * Vmax_v3 / Km_A * c__C  # v3 (C -> A) [mole/s]
+    v4 = scale_f * Vmax_v4 / Km_A * (c__C - 1.0 / Keq_v4 * c__B)  # v4 (C -> B) [mole/s]
+    return Float64[bA, bB, bC, v1, v2, v3, v4]
+end
+
+# the model has no events
+const EVENTS = NamedTuple[]
+
+# the limits of a simulation: the steps of the integrator beyond those which the
+# largest step forces
+const MAX_STEPS = 100000
+
+"""
+    simulate(t_end; points=101, p=nothing, x0=nothing, reltol=1e-8, abstol=1e-10,
+             alg=Rodas5P(), dtmax=nothing, max_steps=nothing)
+
+Simulate the model from t = 0 to `t_end`.
+
+# Arguments
+- `t_end`: the end time
+- `points`: the number of time points, 0 and `t_end` included
+- `p`: the constants, `P0` if not given
+- `x0`: the initial states, those of `initial_values` if not given
+- `reltol`: the relative tolerance of the integration
+- `abstol`: the absolute tolerance of the integration
+- `alg`: the integrator, an algorithm of OrdinaryDiffEq, e.g. `FBDF()`
+- `dtmax`: the largest step of the integrator, by default the distance of the time
+  points
+- `max_steps`: the largest number of steps of the integrator, by default `MAX_STEPS`
+  plus twice the number of steps `dtmax` forces
+
+Returns a `DataFrame` of the time, the states and the assigned values at the time
+points.
+Throws an error if the integration fails or takes more than `max_steps` steps, e.g.
+when a state grows without bound.
+"""
+function simulate(
+    t_end::Real;
+    points::Integer=101,
+    p::Union{Nothing, AbstractVector{<:Real}}=nothing,
+    x0::Union{Nothing, AbstractVector{<:Real}}=nothing,
+    reltol::Real=1e-8,
+    abstol::Real=1e-10,
+    alg=Rodas5P(),
+    dtmax::Union{Nothing, Real}=nothing,
+    max_steps::Union{Nothing, Integer}=nothing,
+)
+    x_initial, p = initial_values(something(p, P0))
+    x = x0 === nothing ? x_initial : collect(Float64, x0)
+    # the time points, a single one at t = 0
+    times = points > 1 ? collect(range(0.0, Float64(t_end); length=points)) : zeros(points)
+    dtmax = something(dtmax, points > 1 && t_end > 0 ? times[2] : Inf)
+    max_steps = something(max_steps, MAX_STEPS + 2 * ceil(Int, t_end / dtmax))
+    rows = [(x, p) for _ in times]  # the states and the constants
+    if t_end > 0
+        problem = ODEProblem(f!, x, (0.0, Float64(t_end)), p)
+        # the first step is at most the integration: OrdinaryDiffEq 7 interpolates a
+        # first step which the end of the integration shortens with its full length
+        solution = solve(
+            problem, alg; saveat=times, reltol, abstol, dtmax=min(dtmax, t_end),
+            maxiters=max_steps,
+        )
+        if solution.retcode == ReturnCode.MaxIters
+            error(
+                "The integration took more than $max_steps steps, at t = " *
+                "$(solution.t[end]).",
+            )
+        elseif solution.retcode != ReturnCode.Success
+            error("The integration failed at t = $(solution.t[end]): $(solution.retcode)")
+        end
+        rows = [(x, p) for x in solution.u]
+    end
+
+    # the table: the time, the states and the assigned values
+    ys = [f_y(x, p, t) for (t, (x, p)) in zip(times, rows)]
+    xt = Float64[x[index] for (x, _) in rows, index in eachindex(XIDS)]
+    yt = Float64[y[index] for y in ys, index in eachindex(YIDS)]
+    data = hcat(times, xt, yt)
+    columns = ["time"; XIDS; YIDS]
+    return DataFrame(data, columns; makeunique=true)
+end
+
+end  # module Koenig_demo_v15

@@ -8,7 +8,7 @@ see [Compilation cache](python.md#compilation-cache). The JavaScript host is unc
 The releases of sbmlsim-core are two packages of the same name, built from the same tag with the same `engine.wasm` and `mathlib.wasm`:
 
 ```bash
-pip install sbmlsim-core   # the compiler and the engine for python 3.14 or newer, see Python
+pip install sbmlsim-core   # the compiler and the engine for python 3.12 or newer, see Python
 npm install sbmlsim-core   # the JavaScript host for browsers and Node, see JavaScript
 ```
 

@@ -120,7 +120,7 @@ def test_the_stub_names_what_the_module_exposes() -> None:
             names.add(node.target.id)
         elif isinstance(node, (ast.ClassDef, ast.FunctionDef)):
             names.add(node.name)
-    reported = {"__version__", "__allocator__"}
+    reported = {"__version__", "__allocator__", "_EquationSystem"}
     exposed = {n for n in dir(_core) if not n.startswith("_") or n in reported}
     assert names == exposed
     stub_class = next(
