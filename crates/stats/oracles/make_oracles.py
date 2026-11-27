@@ -18,15 +18,16 @@ modules take two:
       uv run --no-project --with numpy --with scipy \
           python crates/stats/oracles/make_oracles.py
 
-- `metrics` calls the functions of sbmlsim itself (`sbmlsim.fit.metrics` and
-  `sbmlsim.fit.evaluation`), so its environment has sbmlsim as well, with the python and
-  the package index of libroadrunner sbmlsim needs:
+- `metrics` and `fisher` call the functions of sbmlsim itself (`sbmlsim.fit.metrics`,
+  `sbmlsim.fit.evaluation`, `sbmlsim.fit.fisher` and `sbmlsim.fit.posterior`), so their
+  environment has sbmlsim as well, with the python and the package index of libroadrunner
+  sbmlsim needs:
 
       uv run --no-project --python 3.14 \
           --index https://matthiaskoenig.github.io/roadrunner-wheels/simple/ \
           --index-strategy unsafe-best-match \
           --with sbmlsim==0.53.0 --with numpy --with scipy \
-          python crates/stats/oracles/make_oracles.py metrics
+          python crates/stats/oracles/make_oracles.py metrics fisher
 
 Modules given as arguments write only their fixtures (`... make_oracles.py special`); a
 module of sbmlsim in an environment without it stops before any fixture is written.
@@ -632,14 +633,434 @@ def metrics() -> dict[str, Any]:
     return cases
 
 
+# --- fisher ---------------------------------------------------------------------------------
+
+
+def _fisher_case(
+    j: np.ndarray,
+    *,
+    cost: float,
+    likelihood: bool,
+    scales: list[str],
+    values: np.ndarray,
+    n: int | None = None,
+    alpha: float = 0.95,
+) -> tuple[dict[str, Any], Any]:
+    """The case of a jacobian: the statistics of `FisherInformation` of its `J' J`.
+
+    The input `information` is the matrix of numpy (`jac.T @ jac` of `fisher_information`),
+    `j` the jacobian it is of; `dof` the degrees of freedom of the intervals, `null` for a
+    likelihood, whose intervals are the ones of the normal distribution.
+    """
+    from sbmlsim.fit.fisher import DEFAULT_RANK_TOLERANCE, FisherInformation
+    from sbmlsim.fit.options import ObjectiveType, ParameterScaleType
+
+    rows, k = j.shape
+    n = rows if n is None else n
+    objective = ObjectiveType.LIKELIHOOD if likelihood else ObjectiveType.LEAST_SQUARES
+    matrix = j.T @ j
+    fisher = FisherInformation(
+        opid="op",
+        sid="estimate",
+        pids=[f"p{i}" for i in range(k)],
+        values=np.asarray(values, dtype=float),
+        scale=ParameterScaleType.LINEAR,
+        matrix=matrix,
+        cost=cost,
+        n=n,
+        alpha=alpha,
+        scales=[ParameterScaleType[name] for name in scales],
+        objective=objective,
+    )
+    assert fisher.rank_tolerance == DEFAULT_RANK_TOLERANCE == 1e-8
+    with np.errstate(all="ignore"):
+        lower, upper = fisher.confidence_intervals()
+        case = {
+            "inputs": {
+                "rows": rows,
+                "k": k,
+                "j": j.ravel(),
+                "information": matrix.ravel(),
+                "cost": cost,
+                "n": n,
+                "likelihood": likelihood,
+                "scales": scales,
+                "values": values,
+                "alpha": alpha,
+                "dof": None if likelihood else n - k,
+            },
+            "expected": {
+                "gram": matrix.ravel(),
+                "sigma2": fisher.sigma2,
+                "spectrum": fisher.eigenvalues,
+                "rank": fisher.rank,
+                "condition": fisher.condition_number,
+                "covariance": fisher.covariance.ravel(),
+                "standard_errors": fisher.standard_errors,
+                "correlation": fisher.correlation.to_numpy().ravel(),
+                "lower": lower,
+                "upper": upper,
+                "relative_errors": fisher.relative_errors,
+            },
+        }
+    return case, fisher
+
+
+class _Problem:
+    """The parts of an `OptimizationProblem` `posterior_laplace` reads, of a Fisher information.
+
+    No parameter has a prior, so the precision is the information divided by the variance of
+    the residuals, and the bounds are wide.
+    """
+
+    def __init__(self, fisher: Any) -> None:
+        from types import SimpleNamespace
+
+        self.fisher = fisher
+        self.opid = fisher.opid
+        self.pids = list(fisher.pids)
+        self.objective = fisher.objective
+        self.parameters = [
+            SimpleNamespace(pid=pid, prior=None, target_id=pid) for pid in self.pids
+        ]
+        self.scales_initialized = fisher.parameter_scales
+        self.parameter_units = dict.fromkeys(self.pids)
+        self.bounds = (
+            np.array([1e-12 if s.is_log else -1e12 for s in self.scales_initialized]),
+            np.full(len(self.pids), 1e12),
+        )
+
+    def initialize(self, settings: Any) -> None:
+        """Nothing to initialize."""
+
+    def bind_parameter_set(self, parameter_set: Any) -> Any:
+        """The values of the information."""
+        from types import SimpleNamespace
+
+        return SimpleNamespace(x=lambda pids: self.fisher.values)
+
+    def to_scale(self, values: Any) -> np.ndarray:
+        """The values on the scales of the information."""
+        return self.fisher.to_scale(values)
+
+    def from_scale(self, values: Any) -> np.ndarray:
+        """The values of the scales of the information in the units of the model."""
+        return self.fisher.from_scale(values)
+
+
+def _posterior_case(fisher: Any, *, matrix: np.ndarray | None = None) -> dict[str, Any]:
+    """The case of the Laplace approximation of a Fisher information without priors.
+
+    `posterior_laplace` of sbmlsim on a problem of the information (`_Problem`); the input
+    `precision` is the one it decomposes, the information divided by the variance of the
+    residuals (`matrix` instead of the information, unsymmetric, to see it symmetrized). The
+    expected covariance or the message of the ValueError, and of the posterior its
+    correlation, the rank and the normal correlation, the standard deviation of the logarithm
+    (`_log_sd`), the coefficient of variation of a log-normal marginal (`distributions`, `nan`
+    of a normal one) and the intervals of two levels.
+    """
+    from types import SimpleNamespace
+
+    from sbmlsim.fit.fisher import DEFAULT_RANK_TOLERANCE
+    from sbmlsim.fit.options import ParameterScaleType
+    from sbmlsim.fit.posterior import _log_sd, posterior_laplace
+
+    if matrix is not None:
+        fisher.matrix = matrix
+    precision = np.asarray(fisher.matrix, dtype=float) / fisher.sigma2
+    names = [s.name for s in fisher.parameter_scales]
+    case: dict[str, Any] = {
+        "inputs": {
+            "k": fisher.k,
+            "precision": precision.ravel(),
+            "rank_tolerance": DEFAULT_RANK_TOLERANCE,
+            "opid": fisher.opid,
+            "pids": fisher.pids,
+            "scales": names,
+            "values": fisher.values,
+        }
+    }
+    # duck types of the problem, the settings it does not read and the parameter set
+    problem: Any = _Problem(fisher)
+    settings: Any = None
+    parameter_set: Any = SimpleNamespace(sid=fisher.sid)
+    try:
+        posterior = posterior_laplace(problem, settings, parameter_set, fisher=fisher)
+    except ValueError as error:
+        case["expected"] = {"error": str(error)}
+        return case
+    sd = posterior.standard_deviations
+    distributions: Any = posterior.distributions()
+    cv = [
+        distributions[pid].cv if scale is not ParameterScaleType.LINEAR else math.nan
+        for pid, scale in zip(posterior.pids, posterior.scales, strict=True)
+    ]
+    lower95, upper95 = posterior.intervals(0.95)
+    lower50, upper50 = posterior.intervals(0.5)
+    case["expected"] = {
+        "covariance": posterior.covariance.ravel(),
+        "standard_deviations": sd,
+        "correlation": posterior.correlation_matrix.ravel(),
+        "rank_correlation": posterior.rank_correlation().ravel(),
+        "normal_correlation": posterior.normal_correlation().matrix.ravel(),
+        "log_sd": [
+            _log_sd(scale, float(s))
+            for scale, s in zip(posterior.scales, sd, strict=True)
+        ],
+        "cv": cv,
+        "lower95": lower95,
+        "upper95": upper95,
+        "lower50": lower50,
+        "upper50": upper50,
+    }
+    return case
+
+
+def fisher() -> dict[str, Any]:
+    """The cases of `fisher` and `posterior`: `FisherInformation` and `posterior_laplace`.
+
+    The statistics of the Fisher information (`sigma2`, the eigenvalues, the rank, the
+    condition number, the covariance, the standard errors, the correlation, the intervals
+    and the relative errors) of random jacobians of a least squares fit and of a likelihood
+    on the three scales, of rank deficient ones (a column a multiple of another, a column of
+    zeros, eight parameters with two such columns), without degrees of freedom, of a perfect
+    fit and of a cost which is not a number or overflows the intervals; the Laplace
+    approximation of the posterior of some of them, of a direction which the data do not
+    constrain and of matrices whose correlation the rank correlation clips.
+    """
+    from sbmlsim.fit.options import ObjectiveType, ParameterScaleType
+    from sbmlsim.fit.posterior import ParameterPosterior
+
+    rng = np.random.default_rng(20261127)
+    cases: dict[str, Any] = {}
+    fishers: dict[str, Any] = {}
+
+    def add(label: str, j: np.ndarray, **kwargs: Any) -> None:
+        cases[f"fisher/{label}"], fishers[label] = _fisher_case(j, **kwargs)
+
+    def positive(k: int) -> np.ndarray:
+        return np.exp(rng.standard_normal(k))
+
+    j = rng.standard_normal((50, 4)) * np.array([1.0, 3.0, 0.2, 10.0])
+    cost = float(0.5 * np.sum(rng.standard_normal(50) ** 2))
+    mixed = ["LINEAR", "LOG", "LOG10", "LOG10"]
+    add(
+        "least_squares",
+        j,
+        cost=cost,
+        likelihood=False,
+        scales=["LINEAR"] * 4,
+        values=rng.standard_normal(4),
+    )
+    add(
+        "likelihood_log",
+        j,
+        cost=cost,
+        likelihood=True,
+        scales=["LOG"] * 4,
+        values=positive(4),
+    )
+    add(
+        "mixed_scales",
+        j,
+        cost=cost,
+        likelihood=False,
+        scales=mixed,
+        values=positive(4),
+        alpha=0.9,
+    )
+    add(
+        "likelihood_log10",
+        rng.standard_normal((30, 3)),
+        cost=12.5,
+        likelihood=True,
+        scales=["LOG10"] * 3,
+        values=positive(3),
+        alpha=0.68,
+    )
+    # a parameter the data tell only together with another one, of a clear direction
+    deficient = j.copy()
+    deficient[:, 3] = 2.0 * deficient[:, 1]
+    add(
+        "rank_deficient",
+        deficient,
+        cost=cost,
+        likelihood=False,
+        scales=mixed,
+        values=positive(4),
+    )
+    # a parameter the data do not depend on
+    zero = j.copy()
+    zero[:, 2] = 0.0
+    add(
+        "zero_column",
+        zero,
+        cost=cost,
+        likelihood=False,
+        scales=mixed,
+        values=positive(4),
+    )
+    # eight parameters, two of them a combination of others
+    eight = rng.standard_normal((50, 8))
+    eight[:, 5] = eight[:, 0] - eight[:, 2]
+    eight[:, 7] = 0.5 * eight[:, 3]
+    add(
+        "rank_deficient_8",
+        eight,
+        cost=cost,
+        likelihood=False,
+        scales=["LOG"] * 8,
+        values=positive(8),
+    )
+    # as many and more parameters than data points
+    square = rng.standard_normal((4, 4))
+    add(
+        "dof_zero",
+        square,
+        cost=1.5,
+        likelihood=False,
+        scales=mixed,
+        values=positive(4),
+    )
+    add(
+        "dof_negative",
+        square[:3],
+        cost=1.5,
+        likelihood=False,
+        scales=mixed,
+        values=positive(4),
+    )
+    add(
+        "dof_negative_likelihood",
+        square,
+        n=2,
+        cost=1.5,
+        likelihood=True,
+        scales=mixed,
+        values=positive(4),
+    )
+    add(
+        "perfect_fit",
+        j,
+        cost=0.0,
+        likelihood=False,
+        scales=mixed,
+        values=positive(4),
+    )
+    add(
+        "cost_not_a_number",
+        j,
+        cost=math.nan,
+        likelihood=False,
+        scales=mixed,
+        values=positive(4),
+    )
+    # standard errors of about 1e149, past the largest double on a logarithmic scale
+    add(
+        "overflow",
+        j,
+        cost=1e300,
+        likelihood=False,
+        scales=mixed,
+        values=positive(4),
+    )
+    # values a logarithm cannot take, and a linear value of zero
+    add(
+        "values_not_positive",
+        j,
+        cost=cost,
+        likelihood=False,
+        scales=["LINEAR", "LOG", "LOG10", "LOG"],
+        values=np.array([0.0, 0.0, -2.0, -0.5]),
+    )
+    add(
+        "one",
+        rng.standard_normal((10, 1)),
+        cost=2.0,
+        likelihood=False,
+        scales=["LOG10"],
+        values=positive(1),
+    )
+
+    def with_objective(label: str, objective: ObjectiveType) -> Any:
+        fisher = fishers[label]
+        fisher.objective = objective
+        return fisher
+
+    cases["posterior/likelihood_log"] = _posterior_case(fishers["likelihood_log"])
+    cases["posterior/likelihood_log10"] = _posterior_case(fishers["likelihood_log10"])
+    cases["posterior/least_squares_mixed"] = _posterior_case(fishers["mixed_scales"])
+    cases["posterior/least_squares_linear"] = _posterior_case(fishers["least_squares"])
+    # an information which is not exactly symmetric, symmetrized by the python
+    fisher = _fisher_case(
+        rng.standard_normal((40, 5)),
+        cost=4.0,
+        likelihood=True,
+        scales=["LOG", "LINEAR", "LOG10", "LOG", "LINEAR"],
+        values=positive(5),
+    )[1]
+    skew = rng.standard_normal((5, 5)) * 1e-6
+    cases["posterior/unsymmetric"] = _posterior_case(
+        fisher, matrix=fisher.matrix + skew * np.abs(fisher.matrix)
+    )
+    cases["posterior/weak_combination"] = _posterior_case(
+        with_objective("rank_deficient", ObjectiveType.LIKELIHOOD)
+    )
+    small = j.copy()
+    small[:, 0] *= 1e-5
+    cases["posterior/weak_small"] = _posterior_case(
+        _fisher_case(
+            small, cost=cost, likelihood=True, scales=mixed, values=positive(4)
+        )[1]
+    )
+    cases["posterior/weak_zero"] = _posterior_case(
+        _fisher_case(
+            np.zeros((5, 3)),
+            cost=1.0,
+            likelihood=True,
+            scales=["LOG"] * 3,
+            values=positive(3),
+        )[1]
+    )
+
+    # the rank correlation of correlations past one and of not a number (a negative variance)
+    covariances = {
+        "past_one": np.array([[1.0, 2.0, 0.5], [2.0, 1.0, -3.0], [0.5, -3.0, 4.0]]),
+        "negative_variance": np.array(
+            [[1.0, 0.3, 0.1], [0.3, -2.0, 0.2], [0.1, 0.2, 0.0]]
+        ),
+    }
+    for label, covariance in covariances.items():
+        posterior = ParameterPosterior(
+            opid="op",
+            sid="estimate",
+            pids=["a", "b", "c"],
+            values=np.ones(3),
+            scales=[ParameterScaleType.LINEAR] * 3,
+            covariance=covariance,
+            units=[None] * 3,
+            targets=["a", "b", "c"],
+            lower_bounds=np.zeros(3),
+            upper_bounds=np.full(3, 10.0),
+            objective=ObjectiveType.LIKELIHOOD,
+        )
+        with np.errstate(all="ignore"):
+            cases[f"rank_correlation/{label}"] = {
+                "inputs": {"k": 3, "r": posterior.correlation_matrix.ravel()},
+                "expected": posterior.rank_correlation().ravel(),
+            }
+    return cases
+
+
 GENERATORS: dict[str, Callable[[], dict[str, Any]]] = {
     "special": special,
     "linalg": linalg,
     "metrics": metrics,
+    "fisher": fisher,
 }
 
 #: the modules whose fixture is of the functions of sbmlsim, whose version it records
-OF_SBMLSIM = {"metrics"}
+OF_SBMLSIM = {"metrics", "fisher"}
 
 
 def main(modules: list[str]) -> None:

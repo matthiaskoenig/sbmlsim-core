@@ -8,15 +8,20 @@
 
 use std::borrow::Cow;
 
-use numpy::ndarray::{ArrayD, IxDyn};
-use numpy::{AllowTypeChange, PyArray1, PyArrayDyn, PyArrayLikeDyn, PyUntypedArrayMethods};
+use numpy::ndarray::{Array2, ArrayD, IxDyn};
+use numpy::{
+    AllowTypeChange, PyArray1, PyArray2, PyArrayDyn, PyArrayLikeDyn, PyUntypedArrayMethods,
+};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::PyFloat;
-use sbmlsim_stats::{StatsError, metrics};
+use pyo3::types::{PyDict, PyFloat, PyString};
+use sbmlsim_stats::{Scale, StatsError, fisher, linalg, metrics, posterior};
 
 /// The array of values of numpy the functions take, of any shape.
 type Values<'py> = PyArrayLikeDyn<'py, f64, AllowTypeChange>;
+
+/// The lower and the upper bounds of intervals.
+type Bounds<'py> = (Bound<'py, PyArray1<f64>>, Bound<'py, PyArray1<f64>>);
 
 /// The error of the arguments of a function, the `ValueError` of the python.
 fn value_error(error: StatsError) -> PyErr {
@@ -248,6 +253,225 @@ pub(crate) fn stats_subset_agreement(
     metrics::subset_agreement(&values(&y_observed), &values(&y_predicted)).map_err(value_error)
 }
 
+/// The shape of an array as python writes the tuple, `(3,)` of one dimension.
+fn shape_text(shape: &[usize]) -> String {
+    match shape {
+        [n] => format!("({n},)"),
+        _ => format!(
+            "({})",
+            shape
+                .iter()
+                .map(usize::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    }
+}
+
+/// The values of a square matrix, row-major, and its number of rows; an error which names the
+/// matrix `what` of another shape.
+fn square<'a>(array: &'a Values<'_>, what: &str) -> PyResult<(Cow<'a, [f64]>, usize)> {
+    match array.shape() {
+        &[rows, columns] if rows == columns => Ok((values(array), rows)),
+        shape => Err(PyValueError::new_err(format!(
+            "The {what} must be a square matrix, not of the shape {}.",
+            shape_text(shape)
+        ))),
+    }
+}
+
+/// The `k x k` matrix of row-major values as an array of numpy.
+fn matrix(py: Python<'_>, values: Vec<f64>, k: usize) -> Bound<'_, PyArray2<f64>> {
+    let matrix = Array2::from_shape_vec((k, k), values).expect("k * k values of a matrix");
+    PyArray2::from_owned_array(py, matrix)
+}
+
+/// A scale of a parameter: a name of `sbmlsim.fit.options.ParameterScaleType` (`LINEAR`,
+/// `LOG`, `LOG10`), of PEtab (`lin`, `log`, `log10`) or a member of an enum of these names.
+pub(crate) struct ScaleArg(Scale);
+
+impl<'a, 'py> FromPyObject<'a, 'py> for ScaleArg {
+    type Error = PyErr;
+
+    fn extract(object: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+        let name: Option<String> = if object.is_instance_of::<PyString>() {
+            object.extract().ok()
+        } else {
+            object
+                .getattr("name")
+                .ok()
+                .and_then(|name| name.extract().ok())
+        };
+        match name.as_deref() {
+            Some("LINEAR" | "lin") => Ok(Self(Scale::Linear)),
+            Some("LOG" | "log") => Ok(Self(Scale::Log)),
+            Some("LOG10" | "log10") => Ok(Self(Scale::Log10)),
+            _ => Err(PyValueError::new_err(format!(
+                "The parameter scale {} is none of 'LINEAR', 'LOG' and 'LOG10' (of PEtab \
+                 'lin', 'log' and 'log10').",
+                object.repr()?
+            ))),
+        }
+    }
+}
+
+/// The values, the standard errors and the scales of the parameters, checked to be as many.
+fn parameters(
+    values: &Values<'_>,
+    standard_errors: &Values<'_>,
+    scales: Vec<ScaleArg>,
+) -> PyResult<(Vec<f64>, Vec<f64>, Vec<Scale>)> {
+    let (values, se) = (
+        self::values(values).into_owned(),
+        self::values(standard_errors).into_owned(),
+    );
+    let scales: Vec<Scale> = scales.into_iter().map(|ScaleArg(scale)| scale).collect();
+    if values.len() != se.len() || values.len() != scales.len() {
+        return Err(PyValueError::new_err(format!(
+            "{} values, {} standard errors and {} scales",
+            values.len(),
+            se.len(),
+            scales.len()
+        )));
+    }
+    Ok((values, se, scales))
+}
+
+/// The Fisher information `JᵀJ` of a jacobian of the residuals by the parameters.
+#[pyfunction]
+pub(crate) fn stats_gram<'py>(
+    py: Python<'py>,
+    jacobian: Values<'py>,
+) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    let &[n, k] = jacobian.shape() else {
+        return Err(PyValueError::new_err(format!(
+            "The jacobian must be a matrix of the residuals by the parameters, not of the \
+             shape {}.",
+            shape_text(jacobian.shape())
+        )));
+    };
+    Ok(matrix(py, linalg::gram(&values(&jacobian), n, k), k))
+}
+
+/// The statistics of a Fisher information as `FisherInformation`: the variance of the
+/// residuals, the eigenvalues, the rank, the condition number, the covariance, the standard
+/// errors and the correlation.
+#[pyfunction]
+#[pyo3(signature = (information, cost, n, likelihood = false, rank_tolerance = fisher::DEFAULT_RANK_TOLERANCE))]
+pub(crate) fn stats_fisher_statistics<'py>(
+    py: Python<'py>,
+    information: Values<'py>,
+    cost: f64,
+    n: usize,
+    likelihood: bool,
+    rank_tolerance: f64,
+) -> PyResult<Bound<'py, PyDict>> {
+    let (information, k) = square(&information, "Fisher information")?;
+    let s = fisher::statistics(&information, k, cost, n, likelihood, rank_tolerance)
+        .map_err(value_error)?;
+    let dict = PyDict::new(py);
+    dict.set_item("sigma2", s.sigma2)?;
+    dict.set_item("spectrum", PyArray1::from_vec(py, s.spectrum))?;
+    dict.set_item("rank", s.rank)?;
+    dict.set_item("condition", s.condition)?;
+    dict.set_item("covariance", matrix(py, s.covariance, k))?;
+    dict.set_item("standard_errors", PyArray1::from_vec(py, s.standard_errors))?;
+    dict.set_item("correlation", matrix(py, s.correlation, k))?;
+    Ok(dict)
+}
+
+/// The lower and the upper bounds of the confidence intervals of the parameters in the units
+/// of the model, of the t distribution of `dof` degrees of freedom, of the normal one without.
+#[pyfunction]
+#[pyo3(signature = (values, standard_errors, scales, level = 0.95, dof = None))]
+pub(crate) fn stats_fisher_intervals<'py>(
+    py: Python<'py>,
+    values: Values<'py>,
+    standard_errors: Values<'py>,
+    scales: Vec<ScaleArg>,
+    level: f64,
+    dof: Option<f64>,
+) -> PyResult<Bounds<'py>> {
+    let (values, se, scales) = parameters(&values, &standard_errors, scales)?;
+    let (lower, upper): (Vec<f64>, Vec<f64>) = fisher::intervals(&values, &se, &scales, level, dof)
+        .into_iter()
+        .unzip();
+    Ok((PyArray1::from_vec(py, lower), PyArray1::from_vec(py, upper)))
+}
+
+/// The standard error of every parameter relative to its value, as `FisherInformation`.
+#[pyfunction]
+pub(crate) fn stats_fisher_relative_errors<'py>(
+    py: Python<'py>,
+    values: Values<'py>,
+    standard_errors: Values<'py>,
+    scales: Vec<ScaleArg>,
+) -> PyResult<Bound<'py, PyArray1<f64>>> {
+    let (values, se, scales) = parameters(&values, &standard_errors, scales)?;
+    Ok(PyArray1::from_vec(
+        py,
+        fisher::relative_errors(&values, &se, &scales),
+    ))
+}
+
+/// The covariance of the Laplace approximation of the posterior of a precision; the error of
+/// `posterior_laplace` names the parameters of a weak direction by their pids, by their
+/// indices without.
+#[pyfunction]
+#[pyo3(signature = (precision, pids = None, opid = None, rank_tolerance = fisher::DEFAULT_RANK_TOLERANCE))]
+pub(crate) fn stats_posterior_laplace<'py>(
+    py: Python<'py>,
+    precision: Values<'py>,
+    pids: Option<Vec<Bound<'py, PyAny>>>,
+    opid: Option<String>,
+    rank_tolerance: f64,
+) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    let (precision, k) = square(&precision, "precision")?;
+    // a pid as python writes it in a list, its repr
+    let names = match pids {
+        Some(pids) => pids
+            .iter()
+            .map(|pid| Ok(pid.repr()?.to_string()))
+            .collect::<PyResult<Vec<String>>>()?,
+        None => (0..k).map(|i| i.to_string()).collect(),
+    };
+    let covariance = posterior::laplace_of(&precision, k, rank_tolerance, opid.as_deref(), &names)
+        .map_err(value_error)?;
+    Ok(matrix(py, covariance, k))
+}
+
+/// The Spearman rank correlation of the normal of a correlation, `6 / π asin(r / 2)`.
+#[pyfunction]
+pub(crate) fn stats_rank_correlation<'py>(
+    py: Python<'py>,
+    r: Values<'py>,
+) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    let (r, k) = square(&r, "correlation")?;
+    Ok(matrix(py, posterior::rank_correlation(&r, k), k))
+}
+
+/// The correlation of the normal scores of a posterior: the symmetric part, the diagonal 1.
+#[pyfunction]
+pub(crate) fn stats_normal_correlation<'py>(
+    py: Python<'py>,
+    r: Values<'py>,
+) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    let (r, k) = square(&r, "correlation")?;
+    Ok(matrix(py, posterior::normal_correlation(&r, k), k))
+}
+
+/// The standard deviation of the natural logarithm of a standard deviation on a scale.
+#[pyfunction]
+pub(crate) fn stats_log_sd(scale: ScaleArg, sd: f64) -> f64 {
+    posterior::log_sd(scale.0, sd)
+}
+
+/// The coefficient of variation of the log-normal of a standard deviation of the logarithm.
+#[pyfunction]
+pub(crate) fn stats_lognormal_cv(sigma: f64) -> f64 {
+    posterior::lognormal_cv(sigma)
+}
+
 /// Adds the functions and the constants of the statistics to the module, by the names
 /// `stats_<name>` and `STATS_<NAME>`.
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -255,6 +479,19 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
         "STATS_MIN_POINTS_SUBSET_AGREEMENT",
         metrics::MIN_POINTS_SUBSET_AGREEMENT,
     )?;
+    m.add(
+        "STATS_DEFAULT_RANK_TOLERANCE",
+        fisher::DEFAULT_RANK_TOLERANCE,
+    )?;
+    m.add_function(wrap_pyfunction!(stats_gram, m)?)?;
+    m.add_function(wrap_pyfunction!(stats_fisher_statistics, m)?)?;
+    m.add_function(wrap_pyfunction!(stats_fisher_intervals, m)?)?;
+    m.add_function(wrap_pyfunction!(stats_fisher_relative_errors, m)?)?;
+    m.add_function(wrap_pyfunction!(stats_posterior_laplace, m)?)?;
+    m.add_function(wrap_pyfunction!(stats_rank_correlation, m)?)?;
+    m.add_function(wrap_pyfunction!(stats_normal_correlation, m)?)?;
+    m.add_function(wrap_pyfunction!(stats_log_sd, m)?)?;
+    m.add_function(wrap_pyfunction!(stats_lognormal_cv, m)?)?;
     m.add_function(wrap_pyfunction!(stats_sse, m)?)?;
     m.add_function(wrap_pyfunction!(stats_mse, m)?)?;
     m.add_function(wrap_pyfunction!(stats_rmse_from_mse, m)?)?;

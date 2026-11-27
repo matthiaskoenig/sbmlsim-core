@@ -770,6 +770,107 @@ def stats_subset_agreement(
     another number of predictions than of values.
     """
 
+STATS_DEFAULT_RANK_TOLERANCE: float
+"""The fraction of the largest eigenvalue below which an eigenvalue is a direction the data
+do not constrain, 1e-8 (since 0.40.0)."""
+
+def stats_gram(jacobian: numpy.typing.ArrayLike) -> numpy.typing.NDArray[numpy.float64]:
+    """The Fisher information `J' J` of a jacobian of the residuals by the parameters (since 0.40.0).
+
+    Raises `ValueError` for a jacobian which is not a matrix.
+    """
+
+def stats_fisher_statistics(
+    information: numpy.typing.ArrayLike,
+    cost: float,
+    n: int,
+    likelihood: bool = False,
+    rank_tolerance: float = 1e-8,
+) -> dict[str, Any]:
+    """The statistics of a Fisher information, `sbmlsim.fit.fisher.FisherInformation` (since 0.40.0).
+
+    `information` is `J' J` of `n` data points with the cost `cost` of the data, of a
+    likelihood with `likelihood`. The keys: `sigma2`, the variance of the residuals
+    `2 cost / (n - k)` (`nan` for `n <= k`, 1 for a likelihood); `spectrum`, the eigenvalues
+    largest first; `rank`, the number of eigenvalues above `rank_tolerance` times the
+    largest one; `condition`, the ratio of the largest to the smallest eigenvalue (`inf` of
+    a smallest one which is not positive); `covariance`, `sigma2` times the pseudo-inverse
+    of the information, `(k, k)`; `standard_errors`, `nan` of a variance which is not
+    positive (zero allowed of an identifiable information); `correlation`,
+    `cov_ij / (sd_i sd_j)`, `(k, k)`. Raises `ValueError` for an information which is not
+    a square, finite and symmetric matrix of at least one parameter.
+    """
+
+def stats_fisher_intervals(
+    values: numpy.typing.ArrayLike,
+    standard_errors: numpy.typing.ArrayLike,
+    scales: Sequence[Any],
+    level: float = 0.95,
+    dof: float | None = None,
+) -> tuple[numpy.typing.NDArray[numpy.float64], numpy.typing.NDArray[numpy.float64]]:
+    """The lower and upper bounds of the intervals of the parameters (since 0.40.0).
+
+    `value ± q SE` on the scale of every parameter, transformed back into the units of the
+    model, with the quantile `q` of the t distribution of `dof` degrees of freedom (`nan`
+    intervals for `dof <= 0`), of the normal distribution without (a likelihood, the
+    credible intervals of the Laplace approximation). Raises `ValueError` for another
+    number of standard errors or scales than of values and for an unknown scale. A scale
+    is a name of `sbmlsim.fit.options.ParameterScaleType` (`"LINEAR"`, `"LOG"`, `"LOG10"`),
+    of PEtab (`"lin"`, `"log"`, `"log10"`) or a member of an enum of these names.
+    """
+
+def stats_fisher_relative_errors(
+    values: numpy.typing.ArrayLike,
+    standard_errors: numpy.typing.ArrayLike,
+    scales: Sequence[Any],
+) -> numpy.typing.NDArray[numpy.float64]:
+    """The standard errors relative to the values, `FisherInformation.relative_errors` (since 0.40.0).
+
+    `|SE / value|` on the linear scale, `SE` on the natural and `ln(10) SE` on the decadic
+    logarithm. Raises `ValueError` as `stats_fisher_intervals`.
+    """
+
+def stats_posterior_laplace(
+    precision: numpy.typing.ArrayLike,
+    pids: Sequence[str] | None = None,
+    opid: str | None = None,
+    rank_tolerance: float = 1e-8,
+) -> numpy.typing.NDArray[numpy.float64]:
+    """The covariance of the Laplace approximation of a posterior of its precision (since 0.40.0).
+
+    `sbmlsim.fit.posterior.posterior_laplace` from the precision on. Raises `ValueError` with
+    its message for a direction the precision does not constrain, the parameters named by
+    `pids` (by their indices without) and the message prefixed by `opid`, and for a
+    precision which is not a square finite matrix of at least one parameter.
+    """
+
+def stats_rank_correlation(
+    r: numpy.typing.ArrayLike,
+) -> numpy.typing.NDArray[numpy.float64]:
+    """The Spearman rank correlation `6 / π asin(r / 2)` of a correlation (since 0.40.0).
+
+    `ParameterPosterior.rank_correlation`: `r` clipped to `[-1, 1]`, the diagonal 1,
+    symmetrized. Raises `ValueError` for a matrix which is not square.
+    """
+
+def stats_normal_correlation(
+    r: numpy.typing.ArrayLike,
+) -> numpy.typing.NDArray[numpy.float64]:
+    """The correlation of the normal scores of a posterior (since 0.40.0).
+
+    `ParameterPosterior.normal_correlation`: the symmetric part of `r`, the diagonal 1.
+    Raises `ValueError` for a matrix which is not square.
+    """
+
+def stats_log_sd(scale: Any, sd: float) -> float:
+    """The standard deviation of the natural logarithm of an SD on a scale (since 0.40.0).
+
+    `ln(10) sd` on `LOG10`, `sd` otherwise. Raises `ValueError` for an unknown scale.
+    """
+
+def stats_lognormal_cv(sigma: float) -> float:
+    """The coefficient of variation `sqrt(exp(sigma²) - 1)` of a log-normal (since 0.40.0)."""
+
 ODE_CONTRACT: str
 
 class _EquationSystem:

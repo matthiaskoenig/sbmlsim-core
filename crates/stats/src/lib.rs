@@ -12,14 +12,21 @@
 //!   of a jacobian, as numpy gives them.
 //! - [`metrics`]: the metrics of a fit and the criteria of its evaluation, as
 //!   `sbmlsim.fit.metrics` and `sbmlsim.fit.evaluation` give them, their sums numpy's.
+//! - [`fisher`]: the statistics of the Fisher information of a fit, its eigenvalues, rank,
+//!   condition, covariance, standard errors, correlation and intervals, as
+//!   `sbmlsim.fit.fisher.FisherInformation` gives them.
+//! - [`posterior`]: the Laplace approximation of the posterior from its precision and the
+//!   correlations and marginals of the posterior, as `sbmlsim.fit.posterior` gives them.
 //!
 //! Every transcendental function comes from the crate libm, so one input gives the same bits
 //! on every target, natively and in wasm. The tests hold every function to the values of numpy
 //! and scipy, and the metrics to the functions of sbmlsim, computed once by
 //! `oracles/make_oracles.py` and stored next to it as JSON.
 
+pub mod fisher;
 pub mod linalg;
 pub mod metrics;
+pub mod posterior;
 pub mod special;
 
 /// An error of the arguments of a function.
@@ -29,3 +36,37 @@ pub struct StatsError(pub String);
 
 /// The result of a function of the crate.
 pub type Result<T> = std::result::Result<T, StatsError>;
+
+/// The space the optimizer searches a parameter in, `sbmlsim.fit.options.ParameterScaleType`:
+/// the value in the units of the model, its natural or its decadic logarithm.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Scale {
+    /// The value itself (`LINEAR`, PEtab's `lin`).
+    Linear,
+    /// The natural logarithm of the value (`LOG`, PEtab's `log`).
+    Log,
+    /// The decadic logarithm of the value (`LOG10`, PEtab's `log10`).
+    Log10,
+}
+
+impl Scale {
+    /// The value of the model in the space of the optimizer, `ParameterScaleType.to_scale`:
+    /// a logarithm of zero is minus infinity, of a negative value not a number.
+    pub fn to_scale(self, x: f64) -> f64 {
+        match self {
+            Self::Linear => x,
+            Self::Log => libm::log(x),
+            Self::Log10 => libm::log10(x),
+        }
+    }
+
+    /// The value of the optimizer in the units of the model, `ParameterScaleType.from_scale`:
+    /// infinite past the largest double.
+    pub fn from_scale(self, x: f64) -> f64 {
+        match self {
+            Self::Linear => x,
+            Self::Log => libm::exp(x),
+            Self::Log10 => libm::pow(10.0, x),
+        }
+    }
+}

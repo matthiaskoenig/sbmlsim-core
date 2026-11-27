@@ -4,7 +4,9 @@ which `crates/stats/oracles/make_oracles.py` computed once with the functions of
 the bindings replace. A call of the python which raised a ValueError is its message there,
 and a binding raises a ValueError with the same one."""
 
+import enum
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -346,3 +348,254 @@ def test_a_number_given_as_an_integer_is_written_as_python_writes_it(
     with pytest.raises(ValueError) as raised:
         call()
     assert str(raised.value) == message
+
+
+# --- fisher and posterior ---------------------------------------------------------------------
+
+FISHER = cases("fisher", "")
+
+
+def of_fisher(prefix: str) -> list[tuple[str, dict[str, Any]]]:
+    """The cases of `fisher.json` whose names start with `prefix`, as test parameters."""
+    return [(name, case) for name, case in FISHER.items() if name.startswith(prefix)]
+
+
+def square(values: list[float], k: int) -> numpy.ndarray:
+    """A row-major list of `k * k` values as the matrix."""
+    return numpy.asarray(values, dtype=float).reshape(k, k)
+
+
+def assert_matrix_close(found: numpy.ndarray, expected: numpy.ndarray) -> None:
+    """Hold a matrix to the expected one at `KERNEL` relative to `sqrt(|e_ii e_jj|)`, not a
+    number to not a number."""
+    assert found.shape == expected.shape
+    numpy.testing.assert_array_equal(numpy.isnan(found), numpy.isnan(expected))
+    root = numpy.sqrt(numpy.abs(numpy.diag(expected)))
+    scale = numpy.outer(root, root)
+    both = ~numpy.isnan(expected) & (found != expected)
+    assert numpy.all(numpy.abs(found - expected)[both] <= KERNEL * scale[both])
+
+
+@pytest.mark.parametrize(("name", "case"), of_fisher("fisher/"))
+def test_the_fisher_statistics_are_the_ones_of_sbmlsim(
+    name: str, case: dict[str, Any]
+) -> None:
+    inputs, expected = case["inputs"], case["expected"]
+    k = inputs["k"]
+    jacobian = numpy.asarray(inputs["j"]).reshape(inputs["rows"], k)
+    assert_matrix_close(stats.gram(jacobian), square(expected["gram"], k))
+    found = stats.fisher_statistics(
+        square(inputs["information"], k),
+        inputs["cost"],
+        inputs["n"],
+        likelihood=inputs["likelihood"],
+    )
+    assert set(found) == {
+        "sigma2",
+        "spectrum",
+        "rank",
+        "condition",
+        "covariance",
+        "standard_errors",
+        "correlation",
+    }
+    numpy.testing.assert_allclose(found["sigma2"], expected["sigma2"], rtol=KERNEL)
+    spectrum = numpy.asarray(expected["spectrum"])
+    numpy.testing.assert_allclose(
+        found["spectrum"], spectrum, rtol=0.0, atol=KERNEL * numpy.abs(spectrum).max()
+    )
+    assert found["rank"] == expected["rank"]
+    se = numpy.asarray(expected["standard_errors"])
+    numpy.testing.assert_array_equal(
+        numpy.isnan(found["standard_errors"]), numpy.isnan(se)
+    )
+    if found["rank"] < k:
+        # the smallest eigenvalue is the noise of the rounding, both say rank deficient
+        assert found["condition"] >= 1e8
+        assert expected["condition"] >= 1e8
+        if k > 5:
+            return
+    else:
+        numpy.testing.assert_allclose(
+            found["condition"], expected["condition"], rtol=KERNEL
+        )
+    assert_matrix_close(found["covariance"], square(expected["covariance"], k))
+    numpy.testing.assert_allclose(found["standard_errors"], se, rtol=KERNEL)
+    numpy.testing.assert_allclose(
+        found["correlation"],
+        square(expected["correlation"], k),
+        rtol=0.0,
+        atol=KERNEL,
+    )
+
+
+@pytest.mark.parametrize(("name", "case"), of_fisher("fisher/"))
+def test_the_intervals_and_the_relative_errors_are_the_ones_of_sbmlsim(
+    name: str, case: dict[str, Any]
+) -> None:
+    inputs, expected = case["inputs"], case["expected"]
+    lower, upper = stats.fisher_intervals(
+        inputs["values"],
+        expected["standard_errors"],
+        inputs["scales"],
+        level=inputs["alpha"],
+        dof=inputs["dof"],
+    )
+    numpy.testing.assert_allclose(lower, expected["lower"], rtol=KERNEL, atol=0.0)
+    numpy.testing.assert_allclose(upper, expected["upper"], rtol=KERNEL, atol=0.0)
+    numpy.testing.assert_allclose(
+        stats.fisher_relative_errors(
+            inputs["values"], expected["standard_errors"], inputs["scales"]
+        ),
+        expected["relative_errors"],
+        rtol=KERNEL,
+        atol=0.0,
+    )
+
+
+class ParameterScaleType(enum.Enum):
+    """The scales of `sbmlsim.fit.options.ParameterScaleType`, by their names."""
+
+    LINEAR = 1
+    LOG = 2
+    LOG10 = 3
+
+
+def test_a_scale_is_its_name_its_petab_name_or_a_member_of_an_enum() -> None:
+    values, se = [2.0, 3.0, 4.0], [0.1, 0.2, 0.3]
+    expected = stats.fisher_intervals(values, se, ["LINEAR", "LOG", "LOG10"])
+    for scales in (
+        ["lin", "log", "log10"],
+        [ParameterScaleType.LINEAR, ParameterScaleType.LOG, ParameterScaleType.LOG10],
+        ("LINEAR", ParameterScaleType.LOG, "log10"),
+    ):
+        found = stats.fisher_intervals(values, se, scales)
+        numpy.testing.assert_array_equal(found, expected)
+    with pytest.raises(ValueError, match="'ln' is none of"):
+        stats.fisher_relative_errors(values, se, ["LINEAR", "ln", "LOG"])
+    with pytest.raises(ValueError, match="3 values, 2 standard errors and 3 scales"):
+        stats.fisher_intervals(values, se[:2], ["LOG"] * 3)
+    assert stats.log_sd(ParameterScaleType.LOG10, 1.0) == math.log(10.0)
+    assert stats.log_sd("log", 0.5) == 0.5
+
+
+@pytest.mark.parametrize(("name", "case"), of_fisher("posterior/"))
+def test_the_laplace_approximation_is_the_one_of_sbmlsim(
+    name: str, case: dict[str, Any]
+) -> None:
+    inputs, expected = case["inputs"], case["expected"]
+    k = inputs["k"]
+    precision = square(inputs["precision"], k)
+    call = lambda: stats.posterior_laplace(  # noqa: E731
+        precision, pids=inputs["pids"], opid=inputs["opid"]
+    )
+    if "error" in expected:
+        assert_outcome(call, expected)
+        with pytest.raises(ValueError, match=r"^the data and the priors do not"):
+            stats.posterior_laplace(precision)
+        return
+    covariance = call()
+    assert_matrix_close(covariance, square(expected["covariance"], k))
+    numpy.testing.assert_array_equal(covariance, stats.posterior_laplace(precision))
+    r = square(expected["correlation"], k)
+    numpy.testing.assert_allclose(
+        stats.rank_correlation(r),
+        square(expected["rank_correlation"], k),
+        rtol=0.0,
+        atol=KERNEL,
+    )
+    numpy.testing.assert_allclose(
+        stats.normal_correlation(r),
+        square(expected["normal_correlation"], k),
+        rtol=0.0,
+        atol=KERNEL,
+    )
+    sd = expected["standard_deviations"]
+    log_sd = [
+        stats.log_sd(scale, s) for scale, s in zip(inputs["scales"], sd, strict=True)
+    ]
+    numpy.testing.assert_allclose(log_sd, expected["log_sd"], rtol=KERNEL)
+    cv = [
+        math.nan if scale == "LINEAR" else stats.lognormal_cv(sigma)
+        for scale, sigma in zip(inputs["scales"], log_sd, strict=True)
+    ]
+    numpy.testing.assert_allclose(cv, expected["cv"], rtol=KERNEL)
+    for level, label in ((0.95, "95"), (0.5, "50")):
+        lower, upper = stats.fisher_intervals(
+            inputs["values"], sd, inputs["scales"], level=level
+        )
+        numpy.testing.assert_allclose(lower, expected[f"lower{label}"], rtol=KERNEL)
+        numpy.testing.assert_allclose(upper, expected[f"upper{label}"], rtol=KERNEL)
+
+
+@pytest.mark.parametrize(("name", "case"), of_fisher("rank_correlation/"))
+def test_the_rank_correlation_clips_as_sbmlsim(name: str, case: dict[str, Any]) -> None:
+    k = case["inputs"]["k"]
+    numpy.testing.assert_allclose(
+        stats.rank_correlation(square(case["inputs"]["r"], k)),
+        square(case["expected"], k),
+        rtol=KERNEL,
+    )
+
+
+def test_a_singular_information_has_no_errors_of_its_null_space() -> None:
+    found = stats.fisher_statistics(numpy.array([[4.0, 0.0], [0.0, 0.0]]), 3.0, 12)
+    assert found["rank"] == 1
+    assert found["condition"] == math.inf
+    assert math.isnan(found["standard_errors"][1])
+    assert found["standard_errors"][0] == math.sqrt(0.15)
+    assert stats.DEFAULT_RANK_TOLERANCE == 1e-8
+
+
+def test_the_shapes_of_the_matrices_are_checked() -> None:
+    with pytest.raises(ValueError, match="matrix of the residuals by the parameters"):
+        stats.gram(numpy.ones(3))
+    with pytest.raises(ValueError, match="square matrix"):
+        stats.fisher_statistics(numpy.ones((2, 3)), 1.0, 5)
+    with pytest.raises(ValueError, match="square matrix"):
+        stats.posterior_laplace(numpy.ones(4))
+    with pytest.raises(ValueError, match="square matrix"):
+        stats.rank_correlation(numpy.ones((3, 2)))
+    with pytest.raises(ValueError, match="square matrix"):
+        stats.normal_correlation(numpy.ones((1, 2, 2)))
+    with pytest.raises(ValueError, match="not 1 names"):
+        stats.posterior_laplace(numpy.eye(2), pids=["a"])
+    with pytest.raises(ValueError, match="not finite"):
+        stats.fisher_statistics(numpy.array([[1.0, math.nan], [math.nan, 1.0]]), 1.0, 5)
+    with pytest.raises(ValueError, match="no parameters"):
+        stats.fisher_statistics(numpy.ones((0, 0)), 1.0, 5)
+
+
+def test_a_strided_an_integer_and_a_fortran_matrix_are_read_as_their_values() -> None:
+    case = FISHER["fisher/least_squares"]
+    inputs, expected = case["inputs"], case["expected"]
+    jacobian = numpy.asarray(inputs["j"]).reshape(inputs["rows"], inputs["k"])
+    # every second row of a jacobian twice as long, and the jacobian in Fortran order
+    strided = numpy.repeat(jacobian, 2, axis=0)[::2]
+    fortran = numpy.asfortranarray(jacobian)
+    for array in (strided, fortran):
+        assert not array.flags.c_contiguous
+        numpy.testing.assert_array_equal(stats.gram(array), stats.gram(jacobian))
+    information = square(inputs["information"], inputs["k"])
+    reference = stats.fisher_statistics(information, inputs["cost"], inputs["n"])
+    found = stats.fisher_statistics(
+        numpy.asfortranarray(information), inputs["cost"], inputs["n"]
+    )
+    for key in ("covariance", "standard_errors", "correlation", "spectrum"):
+        numpy.testing.assert_array_equal(found[key], reference[key])
+    # integers, converted to doubles
+    integers = numpy.array([[4, 2], [2, 3]])
+    assert integers.dtype.kind == "i"
+    numpy.testing.assert_array_equal(
+        stats.posterior_laplace(integers), stats.posterior_laplace(integers * 1.0)
+    )
+    numpy.testing.assert_array_equal(
+        stats.gram(numpy.array([[1, 2], [3, 4]])), [[10.0, 14.0], [14.0, 20.0]]
+    )
+    numpy.testing.assert_allclose(
+        stats.fisher_intervals(
+            numpy.array([2, 3]), numpy.array([1, 1])[::-1], ["LOG", "LINEAR"]
+        ),
+        stats.fisher_intervals([2.0, 3.0], [1.0, 1.0], ["LOG", "LINEAR"]),
+    )
+    assert expected["rank"] == 4
