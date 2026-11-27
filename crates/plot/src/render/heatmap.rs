@@ -30,7 +30,7 @@ use std::fmt::Write as _;
 use charton::error::ChartonError;
 use charton::prelude::*;
 
-use super::axis::{self, ResolvedAxis, X_TICK_ROOM};
+use super::axis::{self, ResolvedAxis, TickRoom, X_TICK_ROOM};
 use super::marks::{Layers, dataset};
 use super::stats_marks::rings_layer;
 use crate::FontWeight;
@@ -188,6 +188,7 @@ pub(crate) fn heatmap_layers(
     let info = || LayerInfo {
         element: Some(index),
         marker: None,
+        raw: None,
     };
     // the cells of every colour, in the order of the colours
     let mut by_color: BTreeMap<&str, Vec<Vec<(f64, f64)>>> = BTreeMap::new();
@@ -312,7 +313,10 @@ fn bands(s: &ColorScale) -> f64 {
 /// none.
 fn default_length(placement: ColorBarPlacement) -> f64 {
     match placement {
-        ColorBarPlacement::Right | ColorBarPlacement::Top => 1.0,
+        ColorBarPlacement::Right
+        | ColorBarPlacement::Top
+        | ColorBarPlacement::Strip
+        | ColorBarPlacement::Panel => 1.0,
         ColorBarPlacement::Inset => 0.5,
     }
 }
@@ -330,7 +334,7 @@ pub(crate) fn colorbar_layout(bar: &ColorBar, fonts: &Fonts, along: f64) -> Colo
     let placement = bar.placement;
     let length = bar.length.unwrap_or(default_length(placement));
     let thickness = bar.thickness.unwrap_or(COLORBAR_WIDTH);
-    let horizontal = placement != ColorBarPlacement::Right;
+    let horizontal = horizontal_bar(placement);
     let scale_axis = Axis {
         label: None,
         unit: None,
@@ -353,11 +357,19 @@ pub(crate) fn colorbar_layout(bar: &ColorBar, fonts: &Fonts, along: f64) -> Colo
         tick_rotation: 0.0,
         ticks: None,
         tick_labels: None,
+        tick_label_color: None,
     };
     let room = if horizontal {
         X_TICK_ROOM
     } else {
         COLORBAR_TICK_ROOM
+    };
+    // the log room of matplotlib's colour bar: of a y axis along a vertical bar, of an x axis
+    // along a horizontal one
+    let size = fonts.y_tick();
+    let room = TickRoom {
+        linear: room,
+        log: if horizontal { 3.0 * size } else { 2.0 * size },
     };
     let resolved = || axis::resolve(&scale_axis, &[], &[], along * length, room);
     // the shares of the ticks from the low end of the bar with their labels
@@ -406,7 +418,13 @@ pub(crate) fn colorbar_layout(bar: &ColorBar, fonts: &Fonts, along: f64) -> Colo
             };
             r.tick_coordinates()
                 .into_iter()
-                .map(|(u, l)| (r.share(u), l))
+                .map(|(u, l)| {
+                    let t = match s.gamma {
+                        Some(_) => share_of_bar(s, u),
+                        None => r.share(u),
+                    };
+                    (t, l)
+                })
                 .collect()
         }
     };
@@ -421,14 +439,21 @@ pub(crate) fn colorbar_layout(bar: &ColorBar, fonts: &Fonts, along: f64) -> Colo
         .fold(0.0, f64::max);
     // a label of several lines stacks them outwards, away from the bar
     let label_room = match bar.label.as_deref() {
-        Some(l) if !l.is_empty() => COLORBAR_LABEL_GAP + fonts.label + extra_lines(l, fonts.label),
+        Some(l) if !l.is_empty() => {
+            let size = fonts.colorbar_label_size();
+            COLORBAR_LABEL_GAP + size + extra_lines(l, size)
+        }
         _ => 0.0,
     };
     let across = thickness + COLORBAR_TICK + COLORBAR_TICK_PADDING;
     let room = match placement {
         ColorBarPlacement::Right => COLORBAR_GAP + across + labels_width + label_room,
         ColorBarPlacement::Top => COLORBAR_GAP + across + labels_height + label_room,
-        ColorBarPlacement::Inset => 0.0,
+        // a bar in the panel takes the room of its ticks and labels right of it
+        ColorBarPlacement::Panel => {
+            COLORBAR_TICK + COLORBAR_TICK_PADDING + labels_width + label_room
+        }
+        ColorBarPlacement::Inset | ColorBarPlacement::Strip => 0.0,
     };
     ColorBarLayout {
         ticks,
@@ -442,7 +467,42 @@ pub(crate) fn colorbar_layout(bar: &ColorBar, fonts: &Fonts, along: f64) -> Colo
     }
 }
 
+/// Whether a bar of a placement runs horizontally.
+fn horizontal_bar(placement: ColorBarPlacement) -> bool {
+    !matches!(
+        placement,
+        ColorBarPlacement::Right | ColorBarPlacement::Panel
+    )
+}
+
+/// The share of the length of a bar its triangles take beyond its ends (matplotlib's
+/// `extendfrac` of 0.05 of the inner bar).
+const EXTEND_FRAC: f64 = 0.05;
+
 impl ColorBarLayout {
+    /// The layout with another thickness (since 0.33.0): of a bar in its panel, as wide as it.
+    pub(crate) fn with_thickness(&self, thickness: f64) -> ColorBarLayout {
+        ColorBarLayout {
+            ticks: self.ticks.clone(),
+            labels_width: self.labels_width,
+            labels_height: self.labels_height,
+            label_room: self.label_room,
+            placement: self.placement,
+            thickness,
+            length: self.length,
+            room: self.room,
+        }
+    }
+
+    /// The rectangle of a strip along the top of a panel (since 0.33.0): as wide as the panel,
+    /// its thickness or 0.03 of the height of the panel high.
+    pub(crate) fn strip_rect(&self, bar: &ColorBar, panel: Rect) -> Rect {
+        Rect {
+            height: bar.thickness.unwrap_or(0.03 * panel.height),
+            ..panel
+        }
+    }
+
     /// The half widths of the first and the last tick label of a horizontal bar beyond the
     /// ends of the bar, at most, in pixels.
     fn overhang(&self, fonts: &Fonts) -> f64 {
@@ -477,6 +537,12 @@ fn value_at(s: &ColorScale, t: f64) -> f64 {
         let (a, b) = (libm::log10(s.low), libm::log10(s.high));
         libm::pow(10.0, a + t * (b - a))
     } else {
+        // a bar of a power scale has its colours evenly along it, as matplotlib's bar of a
+        // `PowerNorm` (since 0.33.0)
+        let t = match s.gamma {
+            Some(g) if t > 0.0 => libm::pow(t, 1.0 / g),
+            _ => t,
+        };
         s.low + t * (s.high - s.low)
     }
 }
@@ -487,7 +553,11 @@ fn share_of_bar(s: &ColorScale, v: f64) -> f64 {
         let (a, b) = (libm::log10(s.low), libm::log10(s.high));
         (libm::log10(v) - a) / (b - a)
     } else {
-        (v - s.low) / (s.high - s.low)
+        let t = (v - s.low) / (s.high - s.low);
+        match s.gamma {
+            Some(g) if t > 0.0 => libm::pow(t, g),
+            _ => t,
+        }
     }
 }
 
@@ -587,14 +657,40 @@ pub(crate) fn draw_colorbar(
     at: Rect,
 ) {
     let s = &bar.scale;
-    let horizontal = layout.placement != ColorBarPlacement::Right;
+    let horizontal = horizontal_bar(layout.placement);
     let th = layout.thickness;
     // the bar: x, y, width and height, and where a share of it lies
     let (bx, by, bw, bh) = if horizontal {
         (at.x, at.y, at.width, th)
     } else {
         let (y, h) = centred((at.y, at.height), layout.length);
-        (at.x + COLORBAR_GAP, y, th, h)
+        // a bar in its panel starts at the panel (since 0.33.0)
+        let x = if layout.placement == ColorBarPlacement::Panel {
+            at.x
+        } else {
+            at.x + COLORBAR_GAP
+        };
+        (x, y, th, h)
+    };
+    // a strip is its colours alone (since 0.33.0)
+    let strip = layout.placement == ColorBarPlacement::Strip;
+    // the triangles of the ends beyond the bar, which is shorter by them (since 0.33.0)
+    let (low_end, high_end) = if strip {
+        (false, false)
+    } else {
+        bar.extend.ends()
+    };
+    let ends = f64::from(u8::from(low_end) + u8::from(high_end));
+    let (bx, by, bw, bh, tri) = if ends == 0.0 {
+        (bx, by, bw, bh, 0.0)
+    } else if horizontal {
+        let inner = bw / (1.0 + EXTEND_FRAC * ends);
+        let tri = EXTEND_FRAC * inner;
+        (bx + if low_end { tri } else { 0.0 }, by, inner, bh, tri)
+    } else {
+        let inner = bh / (1.0 + EXTEND_FRAC * ends);
+        let tri = EXTEND_FRAC * inner;
+        (bx, by + if high_end { tri } else { 0.0 }, bw, inner, tri)
     };
     let along = |t: f64| {
         if horizontal {
@@ -607,6 +703,8 @@ pub(crate) fn draw_colorbar(
         ColorBarPlacement::Right => "sbmlsim-colorbar",
         ColorBarPlacement::Top => "sbmlsim-colorbar sbmlsim-colorbar-top",
         ColorBarPlacement::Inset => "sbmlsim-colorbar sbmlsim-colorbar-inset",
+        ColorBarPlacement::Strip => "sbmlsim-colorbar sbmlsim-colorbar-strip",
+        ColorBarPlacement::Panel => "sbmlsim-colorbar sbmlsim-colorbar-panel",
     };
     let _ = write!(body, "<g class=\"{class}\">");
     let rect = |body: &mut String, (x, y, w, h): (f64, f64, f64, f64)| {
@@ -639,6 +737,44 @@ pub(crate) fn draw_colorbar(
         rect(body, (bx, by, bw, bh));
         let _ = write!(body, " fill=\"url(#{id})\"/>");
     }
+    if strip {
+        body.push_str("</g>");
+        return;
+    }
+    // the triangles of the ends in the colours of the ends
+    let triangle = |low: bool| -> [(f64, f64); 3] {
+        match (horizontal, low) {
+            (true, true) => [(bx, by), (bx, by + bh), (bx - tri, by + bh / 2.0)],
+            (true, false) => [
+                (bx + bw, by),
+                (bx + bw, by + bh),
+                (bx + bw + tri, by + bh / 2.0),
+            ],
+            (false, true) => [
+                (bx, by + bh),
+                (bx + bw, by + bh),
+                (bx + bw / 2.0, by + bh + tri),
+            ],
+            (false, false) => [(bx, by), (bx + bw, by), (bx + bw / 2.0, by - tri)],
+        }
+    };
+    let path = |body: &mut String, points: &[(f64, f64)]| {
+        body.push_str("<path d=\"");
+        for (k, (x, y)) in points.iter().enumerate() {
+            body.push(if k == 0 { 'M' } else { 'L' });
+            svg::num(body, *x);
+            body.push(' ');
+            svg::num(body, *y);
+        }
+        body.push_str("Z\"");
+    };
+    for (on, low) in [(low_end, true), (high_end, false)] {
+        if on {
+            path(body, &triangle(low));
+            let v = if low { s.low } else { s.high };
+            let _ = write!(body, " fill=\"{}\"/>", color_of(s, v));
+        }
+    }
     // the marks across the bar (since 0.31.0), under its outline
     if let Some(marks) = bar.marks.as_ref().filter(|m| !m.is_empty()) {
         body.push_str("<g class=\"sbmlsim-colorbar-marks\">");
@@ -668,7 +804,35 @@ pub(crate) fn draw_colorbar(
         }
         body.push_str("</g>");
     }
-    rect(body, (bx, by, bw, bh));
+    if ends == 0.0 {
+        rect(body, (bx, by, bw, bh));
+    } else {
+        // the outline around the bar and its triangles
+        let mut outline: Vec<(f64, f64)> = Vec::new();
+        if horizontal {
+            outline.extend_from_slice(&[(bx, by), (bx + bw, by)]);
+            if high_end {
+                outline.push(triangle(false)[2]);
+            }
+            outline.push((bx + bw, by + bh));
+            outline.push((bx, by + bh));
+            if low_end {
+                outline.push(triangle(true)[2]);
+            }
+        } else {
+            outline.push((bx, by + bh));
+            if low_end {
+                outline.push(triangle(true)[2]);
+            }
+            outline.extend_from_slice(&[(bx + bw, by + bh), (bx + bw, by)]);
+            if high_end {
+                outline.push(triangle(false)[2]);
+            }
+            outline.push((bx, by));
+        }
+        outline.dedup();
+        path(body, &outline);
+    }
     let _ = write!(
         body,
         " fill=\"none\" stroke=\"{}\" stroke-width=\"1\"/>",
@@ -719,27 +883,27 @@ pub(crate) fn draw_colorbar(
     for (t, label) in &layout.ticks {
         let p = along(*t);
         body.push_str("<text");
-        let (at, stack) = if !horizontal {
+        let (at, stack, baseline) = if !horizontal {
             let at = (edge + gap, p);
             attr(body, "x", at.0);
             attr(body, "y", at.1);
             body.push_str(" dominant-baseline=\"middle\">");
-            (at, svg::Stack::Centred)
+            (at, svg::Stack::Centred, "middle")
         } else if up {
             // the last line ends at the padding above the ticks
             let at = (p, edge - gap);
             attr(body, "x", at.0);
             attr(body, "y", at.1);
             body.push_str(" text-anchor=\"middle\" dominant-baseline=\"text-after-edge\">");
-            (at, svg::Stack::Up)
+            (at, svg::Stack::Up, "text-after-edge")
         } else {
             let at = (p, edge + gap);
             attr(body, "x", at.0);
             attr(body, "y", at.1);
             body.push_str(" text-anchor=\"middle\" dominant-baseline=\"hanging\">");
-            (at, svg::Stack::Down)
+            (at, svg::Stack::Down, "hanging")
         };
-        svg::label_lines(body, label, at, size, stack);
+        svg::label_lines(body, label, at, size, stack, baseline);
         body.push_str("</text>");
     }
     body.push_str("</g>");
@@ -747,12 +911,15 @@ pub(crate) fn draw_colorbar(
         body.push_str("<g class=\"sbmlsim-colorbar-label\"><text");
         if !horizontal {
             let (tx, ty) = (
-                edge + gap + layout.labels_width + COLORBAR_LABEL_GAP + fonts.label / 2.0,
+                edge + gap
+                    + layout.labels_width
+                    + COLORBAR_LABEL_GAP
+                    + fonts.colorbar_label_size() / 2.0,
                 by + bh / 2.0,
             );
             attr(body, "x", tx);
             attr(body, "y", ty);
-            attr(body, "font-size", fonts.label);
+            attr(body, "font-size", fonts.colorbar_label_size());
             svg::attr_weight(body, fonts.label_weight);
             let _ = write!(
                 body,
@@ -764,7 +931,14 @@ pub(crate) fn draw_colorbar(
             svg::num(body, ty);
             body.push_str(")\">");
             // the lines stack outwards, right of the bar: down in the rotated text
-            svg::text_lines(body, label, (tx, ty), fonts.label, svg::Stack::Down);
+            svg::text_lines(
+                body,
+                label,
+                (tx, ty),
+                fonts.colorbar_label_size(),
+                svg::Stack::Down,
+                "middle",
+            );
         } else {
             let tx = bx + bw / 2.0;
             let reach = gap + layout.labels_height + COLORBAR_LABEL_GAP;
@@ -775,14 +949,21 @@ pub(crate) fn draw_colorbar(
             };
             attr(body, "x", tx);
             attr(body, "y", ty);
-            attr(body, "font-size", fonts.label);
+            attr(body, "font-size", fonts.colorbar_label_size());
             svg::attr_weight(body, fonts.label_weight);
             let _ = write!(
                 body,
                 " fill=\"{}\" text-anchor=\"middle\" dominant-baseline=\"{baseline}\">",
                 theme::FG
             );
-            svg::text_lines(body, label, (tx, ty), fonts.label, stack);
+            svg::text_lines(
+                body,
+                label,
+                (tx, ty),
+                fonts.colorbar_label_size(),
+                stack,
+                baseline,
+            );
         }
         body.push_str("</text></g>");
     }

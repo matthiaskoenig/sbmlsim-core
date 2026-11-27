@@ -33,6 +33,7 @@ fn scale(name: ColorScaleName, low: f64, high: f64) -> ColorScale {
         high,
         center: None,
         log: false,
+        gamma: None,
         start: 0.0,
         end: 1.0,
     }
@@ -462,23 +463,17 @@ fn histogram_bins() {
     let svg = render(&json);
     let doc = Document::parse(&svg).unwrap();
     let p = panel(&doc);
+    // the bars of neighbouring bins are one outline, without seams between them (since 0.33.0)
     let bars = filled(element_group(&doc, "h"));
-    assert_eq!(bars.len(), 4, "n bars for n + 1 edges");
-    let mut tops: Vec<f64> = bars
-        .iter()
-        .map(|b| {
-            let ring = &subpaths(b.attribute("d").unwrap())[0];
-            assert!(ring.closed);
-            assert_near(y_span(ring).1, p.y + p.height, "the base of a bar at 0");
-            y_span(ring).0
-        })
-        .collect();
-    tops.sort_by(f64::total_cmp);
+    assert_eq!(bars.len(), 1, "one outline of the four bars");
+    let ring = &subpaths(bars[0].attribute("d").unwrap())[0];
+    assert!(ring.closed);
+    assert_near(y_span(ring).1, p.y + p.height, "the base of the bars at 0");
+    // along the tops: two corners per bin at the height of its count
     let y = |v: f64| y_pixel(p, 0.0, 6.0, v);
-    let mut want = [y(1.0), y(3.0), y(2.0), y(5.0)];
-    want.sort_by(f64::total_cmp);
-    for (t, w) in tops.iter().zip(want) {
-        assert_near(*t, w, "height of a bar");
+    for (k, c) in [1.0, 3.0, 2.0, 5.0].into_iter().enumerate() {
+        assert_near(ring.points[2 * k].1, y(c), "the top of a bar");
+        assert_near(ring.points[2 * k + 1].1, y(c), "the top of a bar");
     }
 }
 
@@ -495,7 +490,7 @@ fn bars_start_at_zero() {
     let doc = Document::parse(&svg).unwrap();
     let p = panel(&doc);
     let bars = filled(element_group(&doc, "h"));
-    assert_eq!(bars.len(), 2);
+    assert_eq!(bars.len(), 1);
     for bar in bars {
         let ring = &subpaths(bar.attribute("d").unwrap())[0];
         assert_near(

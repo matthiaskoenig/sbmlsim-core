@@ -86,10 +86,12 @@ pub(crate) enum ColorMap {
 /// The colours (`#rrggbb`) of `values` on a colour scale, the values `low..high` on the
 /// part `start..end` of the colour map: a named map, or a map of stops (since 0.31.0).
 ///
-/// Raises `ValueError` for an unknown name, for stops which are no colour map and for a part
-/// which is not `0 <= start < end <= 1`.
+/// `gamma` (since 0.33.0) makes the scale a power scale, matplotlib's `PowerNorm`.
+///
+/// Raises `ValueError` for an unknown name, for stops which are no colour map, for a part
+/// which is not `0 <= start < end <= 1` and for a `gamma` which is not positive.
 #[pyfunction]
-#[pyo3(signature = (name, low, high, values, center=None, log=false, start=0.0, end=1.0))]
+#[pyo3(signature = (name, low, high, values, center=None, log=false, start=0.0, end=1.0, gamma=None))]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn color_scale(
     py: Python<'_>,
@@ -101,7 +103,14 @@ pub(crate) fn color_scale(
     log: bool,
     start: f64,
     end: f64,
+    gamma: Option<f64>,
 ) -> PyResult<Vec<String>> {
+    if gamma.is_some_and(|g| !(g > 0.0 && g.is_finite())) {
+        return Err(PyValueError::new_err(format!(
+            "gamma {} is no exponent of a power scale, expected a positive number",
+            gamma.unwrap_or(f64::NAN)
+        )));
+    }
     if !(start >= 0.0 && start < end && end <= 1.0) {
         return Err(PyValueError::new_err(format!(
             "start {start} and end {end} are no part of the colour map, expected 0 <= start < end <= 1"
@@ -128,6 +137,7 @@ pub(crate) fn color_scale(
         high,
         center,
         log,
+        gamma,
         start,
         end,
     };

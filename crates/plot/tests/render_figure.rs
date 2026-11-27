@@ -381,23 +381,13 @@ fn list(values: impl IntoIterator<Item = f64>) -> String {
     format!("[{}]", v.join(", "))
 }
 
-/// Whether a polyline of the figure meets a rectangle, sampled every half pixel.
-fn polyline_meets(points: &[(f64, f64)], r: &Rect) -> bool {
-    points.windows(2).any(|w| {
-        let ((ax, ay), (bx, by)) = (w[0], w[1]);
-        let n = (((bx - ax).hypot(by - ay)) * 2.0).ceil().max(1.0) as usize;
-        (0..=n).any(|k| {
-            let t = k as f64 / n as f64;
-            let (x, y) = (ax + t * (bx - ax), ay + t * (by - ay));
-            x > r.x && x < r.right() && y > r.y && y < r.bottom()
-        })
-    })
-}
-
 #[test]
-fn legend_avoids_a_band_interior() {
+fn legend_counts_the_badness_of_a_band() {
     // a band fills the right half of the panel from its bottom to its top, its edges on the
-    // edges of the panel; a line crosses the upper left corner; the lower left one is free
+    // edges of the panel; a line crosses the upper left corner. matplotlib's `best` counts the
+    // vertices and the segments of the outline of the band, not its interior (since 0.33.0;
+    // the lower left corner before): the upper right corner over the band is free of both, as
+    // matplotlib places it
     let x = list((0..=20).map(|i| 5.0 + f64::from(i) * 0.25));
     let band = format!(
         r#"{{"id": "band", "kind": "band", "label": "range", "x": {x}, "low": {}, "high": {}}}"#,
@@ -423,16 +413,18 @@ fn legend_avoids_a_band_interior() {
     let p = panel(&doc, "p");
     let frame = legends(&doc)[0].frame;
     assert!(p.holds(&frame), "{frame:?} not in {p:?}");
-    // the lower left corner
-    assert!(frame.right() < p.x + p.width / 2.0, "{frame:?} in {p:?}");
-    assert!(frame.y > p.y + p.height / 2.0, "{frame:?} in {p:?}");
+    // the upper right corner
+    assert!(frame.x > p.x + p.width / 2.0, "{frame:?} in {p:?}");
+    assert!(frame.bottom() < p.y + p.height / 2.0, "{frame:?} in {p:?}");
 }
 
 #[test]
-fn legend_avoids_dense_curves() {
+fn legend_counts_the_badness_of_dense_curves() {
     // the shape of the HCTZ panels: curves rise from the lower left and fill the upper right,
-    // data points of the highest one with error bars reach up into the upper left corner; the
-    // lower right corner, below the plateaus, is free
+    // data points of the highest one with error bars reach up into the upper left corner.
+    // matplotlib's `best` counts the vertices of the curves (97 each) and not the error bars
+    // (since 0.33.0; the lower right corner before): the upper left corner of six data points
+    // has the least, as matplotlib places it
     let t: Vec<f64> = (0..=96).map(|i| f64::from(i) * 0.25).collect();
     let mut elements = Vec::new();
     for (k, a) in [8.0f64, 9.0, 10.0].into_iter().enumerate() {
@@ -472,13 +464,9 @@ fn legend_avoids_dense_curves() {
     let p = panel(&doc, "p");
     let frame = legends(&doc)[0].frame;
     assert!(p.holds(&frame), "{frame:?} not in {p:?}");
-    // the lower right corner, where no curve passes
-    assert!(frame.x > p.x + p.width / 2.0, "{frame:?} in {p:?}");
-    assert!(frame.y > p.y + p.height / 2.0, "{frame:?} in {p:?}");
-    for k in 0..3 {
-        let line = path_points(&doc, &format!("dose{k}"));
-        assert!(!polyline_meets(&line, &frame), "dose{k} under {frame:?}");
-    }
+    // the upper left corner
+    assert!(frame.right() < p.x + p.width / 2.0, "{frame:?} in {p:?}");
+    assert!(frame.bottom() < p.y + p.height / 2.0, "{frame:?} in {p:?}");
 }
 
 #[test]

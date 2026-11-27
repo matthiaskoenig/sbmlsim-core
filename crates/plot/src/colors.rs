@@ -8,7 +8,8 @@
 //!
 //! A value becomes its share `t` of the scale, `(v - low) / (high - low)`, or of the decades
 //! with `log`; with a `center` the values from `low` to `center` take the lower half of the
-//! table and the values from `center` to `high` the upper half (matplotlib's `TwoSlopeNorm`).
+//! table and the values from `center` to `high` the upper half (matplotlib's `TwoSlopeNorm`);
+//! with a `gamma` (since 0.33.0) the share is `t^gamma` (matplotlib's `PowerNorm`).
 //! The colour of `t` is the entry `floor(256 t)` of the table, the first one below the scale and
 //! the last one above it, which is how matplotlib reads a colour map, so a value has the colour
 //! matplotlib gives it. A scale may take a part `start..end` of the table (since 0.28.0): the
@@ -129,7 +130,15 @@ pub(crate) fn share(scale: &ColorScale, v: f64) -> f64 {
                 1.0
             }
         }
-        _ => (u - lo) / (hi - lo),
+        _ => {
+            let t = (u - lo) / (hi - lo);
+            // a power scale (since 0.33.0), matplotlib's PowerNorm: below the low end 0
+            match scale.gamma {
+                Some(g) if t > 0.0 => libm::pow(t, g),
+                Some(_) => t.min(0.0),
+                None => t,
+            }
+        }
     }
 }
 

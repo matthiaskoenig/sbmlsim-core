@@ -89,6 +89,7 @@ fn stops_scale(stops: &[(f64, &str)]) -> ColorScale {
         high: 1.0,
         center: None,
         log: false,
+        gamma: None,
         start: 0.0,
         end: 1.0,
     }

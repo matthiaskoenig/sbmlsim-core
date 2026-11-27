@@ -28,12 +28,12 @@ use std::fmt::Write as _;
 use super::marks::{ERROR_WIDTH, Stroke, fill_of};
 use super::stats_marks::{outline_of, solid_fill};
 use crate::layout::Rect;
-use crate::spec::{ElementKind, Fonts, MarkerType, Plot, Style};
+use crate::spec::{ElementKind, FontFamily, Fonts, MarkerType, Plot, Style};
 use crate::svg::{
     MarkerGlyph, Stack, attr_css, attr_dash, attr_num, attr_opacity, attr_weight, escape, glyph,
     text_lines, theme,
 };
-use crate::text::{extra_lines, text_width_weighted};
+use crate::text::{extra_lines, text_width_family};
 
 /// The padding inside the frame of a legend in pixels.
 pub(crate) const PADDING: f64 = 6.0;
@@ -64,6 +64,8 @@ pub(crate) struct Shape {
     pub title: Option<String>,
     /// The columns, at least 1.
     pub columns: usize,
+    /// The family of the labels and the title (since 0.33.0).
+    pub family: FontFamily,
 }
 
 impl Default for Shape {
@@ -71,6 +73,7 @@ impl Default for Shape {
         Shape {
             title: None,
             columns: 1,
+            family: FontFamily::Sans,
         }
     }
 }
@@ -87,7 +90,7 @@ impl Shape {
     /// The width of the title, 0 without one.
     fn title_width(&self, fonts: &Fonts) -> f64 {
         self.title.as_deref().map_or(0.0, |t| {
-            text_width_weighted(t, fonts.legend, fonts.legend_weight)
+            text_width_family(t, fonts.legend, fonts.legend_weight, self.family)
         })
     }
 
@@ -166,7 +169,21 @@ pub(crate) fn plot_entries(plot: &Plot, colors: &[String], fonts: &Fonts) -> Vec
                     colors[k].as_str()
                 }
             };
+            // a tuple of the markers of all the elements of the group (since 0.33.0)
+            let tuple = plot
+                .legend_tuples
+                .as_ref()
+                .is_some_and(|t| t.iter().any(|x| x == g));
             let swatch = match (given, of_kind(true), of_kind(false)) {
+                _ if tuple => {
+                    let members: Vec<(usize, &crate::spec::Element)> = plot
+                        .elements
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, m)| m.legend_group() == Some(g))
+                        .collect();
+                    tuple_swatch(&members, colors, fonts)
+                }
                 (Some(style), _, _) => swatch(
                     &e.kind,
                     style,
@@ -249,7 +266,7 @@ fn column_widths(labels: &[&str], shape: &Shape, fonts: &Fonts) -> Vec<f64> {
         .map(|column| {
             let widest = column
                 .iter()
-                .map(|l| text_width_weighted(l, fonts.legend, fonts.legend_weight))
+                .map(|l| text_width_family(l, fonts.legend, fonts.legend_weight, shape.family))
                 .fold(0.0, f64::max);
             SWATCH_WIDTH + SWATCH_GAP + widest
         })
@@ -386,12 +403,13 @@ pub(crate) fn draw(
         attr_num(out, "y", y);
         attr_num(out, "font-size", fonts.legend);
         attr_weight(out, fonts.legend_weight);
+        family_attr(out, shape.family);
         let _ = write!(
             out,
             " fill=\"{}\" text-anchor=\"middle\" dominant-baseline=\"hanging\">",
             theme::FG
         );
-        text_lines(out, title, (x, y), fonts.legend, Stack::Down);
+        text_lines(out, title, (x, y), fonts.legend, Stack::Down, "hanging");
         out.push_str("</text>");
     }
     for (e, r) in entries
@@ -417,15 +435,32 @@ pub(crate) fn draw(
         attr_num(out, "y", cy);
         attr_num(out, "font-size", fonts.legend);
         attr_weight(out, fonts.legend_weight);
+        family_attr(out, shape.family);
         let _ = write!(
             out,
             " fill=\"{}\" dominant-baseline=\"central\">",
             theme::FG
         );
-        text_lines(out, &e.label, (x, cy), fonts.legend, Stack::Centred);
+        text_lines(
+            out,
+            &e.label,
+            (x, cy),
+            fonts.legend,
+            Stack::Centred,
+            "central",
+        );
         out.push_str("</text></g>");
     }
     out.push_str("</g>");
+}
+
+/// Writes ` font-family` of a monospace legend.
+fn family_attr(out: &mut String, family: FontFamily) {
+    if family == FontFamily::Monospace {
+        out.push_str(" font-family=\"");
+        escape(out, crate::svg::MONO_FAMILY);
+        out.push('"');
+    }
 }
 
 /// Writes a horizontal line through the swatch.
@@ -469,28 +504,72 @@ fn filled(out: &mut String, (fill, opacity): (&str, f64), edge: Option<&Stroke>,
     out.push_str("/>");
 }
 
+/// The swatch of a tuple of elements (since 0.33.0), matplotlib's `HandlerTuple`: the width of
+/// the swatch divided among them, the marker (else the swatch) of each in its part.
+fn tuple_swatch(
+    members: &[(usize, &crate::spec::Element)],
+    colors: &[String],
+    fonts: &Fonts,
+) -> String {
+    let n = members.len().max(1) as f64;
+    let mut out = String::new();
+    for (k, (i, e)) in members.iter().enumerate() {
+        let x = (k as f64 + 0.5) * SWATCH_WIDTH / n;
+        let m = &e.style.marker;
+        if m.kind != MarkerType::None && m.size > 0.0 {
+            let g = MarkerGlyph {
+                size: m.size.min(ENTRY_HEIGHT * fonts.legend),
+                ..MarkerGlyph::of(m, &colors[*i], e.style.opacity)
+            };
+            glyph(&mut out, &g, x, 0.0);
+        } else if let Some(s) = Stroke::of_line(&e.style, &colors[*i]) {
+            let half = SWATCH_WIDTH / n / 2.0;
+            segment(&mut out, &s, (x - half, 0.0), (x + half, 0.0));
+        }
+    }
+    out
+}
+
 /// The swatch of an element of a kind drawn with a style in a colour.
 fn swatch(kind: &ElementKind, style: &Style, color: &str, fonts: &Fonts) -> String {
     let mut out = String::new();
     match kind {
-        ElementKind::Curve { xerr, yerr, .. } => {
+        ElementKind::Curve {
+            xerr,
+            yerr,
+            error_cap,
+            error_width,
+            ..
+        } => {
             if let Some(s) = Stroke::of_line(style, color) {
                 line(&mut out, &s);
             }
-            // the error bars of the curve, a short bar through the middle of the swatch
+            // the error bars of the curve, a short bar through the middle of the swatch, with
+            // the caps of the curve (since 0.33.0, as matplotlib's handler of an errorbar)
             let bar = Stroke {
                 color: color.to_string(),
-                width: ERROR_WIDTH,
+                width: error_width.unwrap_or(ERROR_WIDTH),
                 dash: Vec::new(),
                 opacity: style.opacity,
             };
             let half = ERROR_BAR * fonts.legend / 2.0;
             let mid = SWATCH_WIDTH / 2.0;
+            let cap = error_cap / 2.0;
             if yerr.is_some() {
                 segment(&mut out, &bar, (mid, -half), (mid, half));
+                if cap > 0.0 {
+                    for y in [-half, half] {
+                        segment(&mut out, &bar, (mid - cap, y), (mid + cap, y));
+                    }
+                }
             }
             if xerr.is_some() {
                 segment(&mut out, &bar, (mid - half, 0.0), (mid + half, 0.0));
+                if cap > 0.0 {
+                    for x in [mid - half, mid + half] {
+                        segment(&mut out, &bar, (x, -cap), (x, cap));
+                    }
+                }
             }
             let m = &style.marker;
             if m.kind != MarkerType::None && m.size > 0.0 {
@@ -544,7 +623,15 @@ fn swatch(kind: &ElementKind, style: &Style, color: &str, fonts: &Fonts) -> Stri
                 line(&mut out, &s);
             }
         }
-        ElementKind::Text { .. } => {}
+        ElementKind::Text { .. } | ElementKind::Arrow { .. } => {}
+        ElementKind::Contour { filled: true, .. } => {
+            filled(&mut out, (color, style.opacity), None, fonts);
+        }
+        ElementKind::Contour { .. } => {
+            if let Some(s) = Stroke::of_line(style, color) {
+                line(&mut out, &s);
+            }
+        }
     }
     out
 }

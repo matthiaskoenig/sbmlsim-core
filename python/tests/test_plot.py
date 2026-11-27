@@ -275,6 +275,26 @@ def test_fields_of_0_31_render() -> None:
     assert {e["owner"] for e in geometry["legend_entries"]} == {"figure"}
 
 
+def test_fields_of_0_32_render() -> None:
+    # the specs of the renderer's fixtures of the fields since 0.33.0
+    for name in ["v033", "v033_legend"]:
+        spec = (PLOT / "specs" / f"{name}.json").read_text(encoding="utf-8")
+        svg = sbmlsim_core.render_svg(spec)
+        assert svg == (PLOT / "golden" / f"{name}.svg").read_text(encoding="utf-8")
+    geometry = sbmlsim_core.figure_geometry(spec)
+    owners = {e["owner"] for e in geometry["legend_entries"]}
+    assert {"figure", "a", "b"} <= owners
+
+
+def test_color_scale_of_a_power() -> None:
+    # matplotlib's PowerNorm(2): 0.5 takes the colour of 0.25
+    assert sbmlsim_core.color_scale("viridis", 0.0, 1.0, [0.5], gamma=2.0) == (
+        sbmlsim_core.color_scale("viridis", 0.0, 1.0, [0.25])
+    )
+    with pytest.raises(ValueError, match="gamma"):
+        sbmlsim_core.color_scale("viridis", 0.0, 1.0, [0.5], gamma=0.0)
+
+
 @pytest.mark.skipif(
     bool(os.environ.get("CI")) and os.environ.get("SBMLSIM_CORE_BENCH") != "1",
     reason="timing on CI needs SBMLSIM_CORE_BENCH=1",
