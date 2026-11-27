@@ -655,14 +655,42 @@ impl<'a, 'py> FromPyObject<'a, 'py> for DesignArg {
 #[pyo3(text_signature = "(d, n, *, design='sobol', seed, start=0)")]
 pub(crate) fn stats_unit_points(
     py: Python<'_>,
-    d: usize,
-    n: usize,
+    d: i64,
+    n: i64,
     design: DesignArg,
     seed: Seed,
-    start: u64,
+    start: i64,
 ) -> PyResult<Bound<'_, PyArray2<f64>>> {
     let design = design.0.map_err(PyValueError::new_err)?;
-    let points = draws::unit_points(d, n, design, seed.0, start).map_err(value_error)?;
+    // the errors of a negative argument in the order of the python: scipy's of the dimensions
+    // of a sampler, of `fast_forward` (an OverflowError) and numpy's of the shape
+    let dimension_error = || PyValueError::new_err("d must be a non-negative integer value");
+    let shape_error = || PyValueError::new_err("negative dimensions are not allowed");
+    match design {
+        Design::Sobol if d < 0 => return Err(dimension_error()),
+        Design::Sobol if start < 0 => {
+            return Err(PyOverflowError::new_err(
+                "can't convert negative value to npy_uint32",
+            ));
+        }
+        // a Latin hypercube refuses any start first, a negative one as well
+        Design::Lhs if start == 0 && d < 0 => return Err(dimension_error()),
+        Design::Random if d < 0 => return Err(shape_error()),
+        // numpy advances its generator back by a negative number of doubles, the stream of
+        // xoshiro256++ has no way back
+        Design::Random if start < 0 => {
+            return Err(PyValueError::new_err(format!(
+                "The start of random points must not be negative, not {start}."
+            )));
+        }
+        _ => {}
+    }
+    if n < 0 && (design != Design::Lhs || start == 0) {
+        return Err(shape_error());
+    }
+    let (d, n) = (d.unsigned_abs() as usize, n.unsigned_abs() as usize);
+    let points =
+        draws::unit_points(d, n, design, seed.0, start.unsigned_abs()).map_err(value_error)?;
     Ok(rectangle(py, points, n, d))
 }
 
@@ -810,7 +838,15 @@ pub(crate) fn stats_validate_covariance(
         .map(|target| Ok(target.str()?.to_string()))
         .collect::<PyResult<Vec<String>>>()?;
     let targets: Vec<&str> = targets.iter().map(String::as_str).collect();
-    let units = units.map(|units| units.len()).transpose()?;
+    // `tuple(units)` of the python, of any iterable, whose number the validation compares
+    // with the targets only for a covariance
+    let units = units
+        .map(|units| {
+            units
+                .try_iter()?
+                .try_fold(0usize, |count, item| item.map(|_| count + 1))
+        })
+        .transpose()?;
     correlation::validate(
         &values(&matrix),
         matrix.shape(),

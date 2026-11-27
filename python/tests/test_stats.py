@@ -927,6 +927,22 @@ def test_the_nearest_correlation_is_the_one_of_higham_of_sbmlsim(
     )
 
 
+def test_the_nearest_correlation_of_200_targets_is_the_one_of_sbmlsim() -> None:
+    # every 97th value and the sums of the rows against numpy, at 1e-12 of the largest
+    # value of the matrix, 1: Jacobi and LAPACK round differently
+    case = DRAWS["nearest_large/200"]
+    inputs, expected = case["inputs"], case["expected"]
+    found = stats.nearest_correlation(
+        large_correlation(inputs["k"]), inputs["max_iterations"], inputs["tol"]
+    )
+    numpy.testing.assert_allclose(
+        found.ravel()[:: inputs["stride"]], expected["strided"], rtol=0.0, atol=KERNEL
+    )
+    numpy.testing.assert_allclose(
+        found.sum(axis=1), expected["row_sums"], rtol=0.0, atol=KERNEL
+    )
+
+
 def test_the_nearest_correlation_refuses_the_shapes_numpy_refuses() -> None:
     with pytest.raises(ValueError) as raised:
         stats.nearest_correlation(numpy.ones((2, 3)))
@@ -1069,6 +1085,43 @@ def test_the_points_refuse_as_the_python() -> None:
     assert stats.unit_points(0, 4, design="lhs", seed=1).shape == (4, 0)
 
 
+def test_negative_arguments_of_the_points_are_refused_as_the_python() -> None:
+    dimensions = "d must be a non-negative integer value"
+    shape = "negative dimensions are not allowed"
+    lhs = "A Latin hypercube has no continuation"
+    for design, d, n, start, error, message in [
+        ("sobol", -1, 4, 0, ValueError, dimensions),
+        ("sobol", 2, -4, 0, ValueError, shape),
+        (
+            "sobol",
+            2,
+            4,
+            -1,
+            OverflowError,
+            "can't convert negative value to npy_uint32",
+        ),
+        # the start of a sobol sequence before its points
+        ("sobol", 2, -4, -1, OverflowError, "can't convert negative value"),
+        ("lhs", -1, 4, 0, ValueError, dimensions),
+        ("lhs", 2, -4, 0, ValueError, shape),
+        ("lhs", -1, -4, -1, ValueError, lhs),
+        ("random", -1, 4, 0, ValueError, shape),
+        ("random", 2, -4, 0, ValueError, shape),
+        (
+            "random",
+            2,
+            4,
+            -1,
+            ValueError,
+            "The start of random points must not be negative",
+        ),
+    ]:
+        with pytest.raises(error) as raised:
+            stats.unit_points(d, n, design=design, seed=1, start=start)
+        assert type(raised.value) is error
+        assert str(raised.value).startswith(message), (design, d, n, start)
+
+
 def test_the_points_are_uniform_and_a_latin_hypercube_stratified() -> None:
     n = 1000
     for design in ("sobol", "lhs", "random"):
@@ -1093,6 +1146,18 @@ def test_the_copula_correlates_the_normal_scores_of_the_draws() -> None:
         u = stats.copula(stats.unit_points(2, 4096, design=design, seed=5), r)
         z = ppf(u)
         assert abs(numpy.corrcoef(z.T)[0, 1] - 0.7) < 0.02, design
+
+
+def test_the_units_are_any_iterable_and_counted_only_for_a_covariance() -> None:
+    # `tuple(units)` of the python; a correlation ignores their number
+    stats.validate_covariance(
+        ["a", "b"], numpy.eye(2), kind="correlation", units=["mM"]
+    )
+    stats.validate_covariance(["a", "b"], numpy.eye(2), units=(u for u in ["mM", None]))
+    with pytest.raises(ValueError, match="needs one unit per target"):
+        stats.validate_covariance(["a", "b"], numpy.eye(2), units=iter(["mM"]))
+    with pytest.raises(TypeError, match="'int' object is not iterable"):
+        stats.validate_covariance(["a", "b"], numpy.eye(2), units=1)  # ty: ignore[invalid-argument-type]
 
 
 def test_strided_integer_and_fortran_matrices_of_the_correlations() -> None:

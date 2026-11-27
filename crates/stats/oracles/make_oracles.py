@@ -1430,7 +1430,8 @@ def draws() -> dict[str, Any]:
 
     The nearest correlation matrix (`nearest_correlation`, Higham 2002) of the classical
     example of Higham, of matrices which are a correlation already, without iterations, of
-    a not a number and of 50 targets; `_is_psd` at its tolerance; the validation of a
+    a not a number and of 50 and 200 targets (of the latter every 97th value and the sums
+    of the rows); `_is_psd` at its tolerance; the validation of a
     `Covariance` with every message; the coefficients of the normal scores of
     `normal_score_correlation`; and the Gaussian copula of `draw` for given points and a
     positive definite correlation (a singular one has the factor of the eigendecomposition,
@@ -1486,6 +1487,13 @@ def draws() -> dict[str, Any]:
             "inputs": inputs,
             "expected": nearest_correlation(m, iterations, tol).ravel(),
         }
+    # 200 targets of the formula: every 97th value of the result in the order of the rows and
+    # the sums of the rows, so the fixture stays small (the 40000 values are about 1 MB)
+    y = nearest_correlation(large_correlation(200))
+    cases["nearest_large/200"] = {
+        "inputs": {"k": 200, "max_iterations": 100, "tol": 1e-10, "stride": 97},
+        "expected": {"strided": y.ravel()[::97], "row_sums": y.sum(axis=1)},
+    }
 
     psd = {
         "identity": np.eye(3),

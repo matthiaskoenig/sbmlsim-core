@@ -2431,6 +2431,49 @@ fn the_nearest_correlation_is_the_one_of_higham_of_sbmlsim() {
 }
 
 #[test]
+#[ignore = "about 15 s in release, minutes in debug and in wasm: run it with `cargo test -p \
+            sbmlsim-stats --release -- --ignored`; the binding test of python/tests/test_stats.py \
+            runs the same case on every wheel"]
+fn the_nearest_correlation_of_200_targets_is_the_one_of_sbmlsim() {
+    // the 200 x 200 matrix of the formula, 100 iterations of eigendecompositions: every 97th
+    // value and the sums of the rows against numpy, at 1e-12 of the largest value of the
+    // matrix, 1 (Jacobi and LAPACK round differently, an entry of 1e-3 differs by a few 1e-12
+    // of itself)
+    let fixture = Fixture::load("draws");
+    let case = fixture.case("nearest_large/200");
+    let k = case.input_usize("k");
+    let found = correlation::nearest_correlation(
+        &large_correlation(k),
+        k,
+        case.input_usize("max_iterations"),
+        case.input_f64("tol"),
+    )
+    .unwrap();
+    let stride = case.input_usize("stride");
+    let strided: Vec<f64> = found.iter().step_by(stride).copied().collect();
+    let row_sums: Vec<f64> = found.chunks(k).map(|row| row.iter().sum()).collect();
+    let mut worst = 0.0_f64;
+    for (what, found) in [("strided", strided), ("row_sums", row_sums)] {
+        let expected = numbers(&case.value["expected"][what]);
+        assert_eq!(found.len(), expected.len(), "{what}");
+        for (index, (found, expected)) in found.iter().zip(&expected).enumerate() {
+            let error = (found - expected).abs();
+            worst = worst.max(error);
+            assert!(
+                error <= 1e-12,
+                "{what}[{index}] = {found:e}, expected {expected:e}"
+            );
+        }
+    }
+    println!("nearest_correlation of 200: largest absolute error {worst:.3e}");
+    assert_eq!(
+        hash(&found),
+        0x8af4_f179_594f_93f9,
+        "the bits of 200 x 200 values"
+    );
+}
+
+#[test]
 fn the_nearest_correlation_is_positive_semi_definite_with_a_unit_diagonal() {
     let k = 50;
     let r = correlation::nearest_correlation(&large_correlation(k), k, 100, 1e-10).unwrap();

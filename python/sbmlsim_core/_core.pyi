@@ -967,7 +967,9 @@ def stats_unit_points(
     `unit_points` of `sbmlsim.uncertainty.draws` on the streams of sbmlsim-core: `sobol`
     (the scrambled Sobol' sequence, from the point `start`), `lhs` (a Latin hypercube) or
     `random` (xoshiro256++, from the point `start`). Raises `ValueError` for another design,
-    a Latin hypercube after `start` and a negative seed.
+    a Latin hypercube after `start`, a negative seed, `d` or `n` with the messages of scipy
+    and numpy and a negative `start` of random points, `OverflowError` for a negative
+    `start` of the Sobol' sequence, as scipy does.
     """
 
 def stats_copula(
@@ -1009,7 +1011,7 @@ def stats_validate_covariance(
     matrix: numpy.typing.ArrayLike,
     *,
     kind: str = "covariance",
-    units: Sequence[str | None] | None = None,
+    units: Iterable[str | None] | None = None,
 ) -> None:
     """Check the matrix of a `Covariance` of the targets, `Covariance._validate` (since 0.40.0).
 
