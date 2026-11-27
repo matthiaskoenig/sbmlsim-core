@@ -20,13 +20,13 @@
 
 use crate::numpy::{numpy_mean, numpy_quantile_sorted, numpy_var};
 use crate::python::{
-    DIVISION_BY_ZERO, MATH_RANGE, POWER_OVERFLOW, math_exp, math_expm1, python_div, python_max,
-    python_max_of, python_min, python_pow, python_repr, python_sum,
+    DIVISION_BY_ZERO, FLOAT_INFINITY, MATH_RANGE, POWER_OVERFLOW, math_exp, math_expm1, python_div,
+    python_max, python_max_of, python_min, python_pow, python_repr, python_sum,
 };
 use crate::{Result, StatsError, special};
 
 /// The message numpy refuses a probability of a quantile outside `[0, 1]` with.
-const QUANTILES_RANGE: &str = "Quantiles must be in the range [0, 1]";
+pub(crate) const QUANTILES_RANGE: &str = "Quantiles must be in the range [0, 1]";
 
 /// The start of the message of the IndexError of numpy of a boolean mask of another length.
 const BOOLEAN_INDEX: &str = "boolean index did not match indexed array";
@@ -57,11 +57,12 @@ impl Exception {
     }
 }
 
-/// The class of the exception the python raised for an error of a function of this module.
+/// The class of the exception the python raised for an error of a function of this module or
+/// of [`crate::testing`].
 #[must_use]
 pub fn exception(error: &StatsError) -> Exception {
     match error.0.as_str() {
-        POWER_OVERFLOW | MATH_RANGE => Exception::Overflow,
+        POWER_OVERFLOW | MATH_RANGE | FLOAT_INFINITY => Exception::Overflow,
         DIVISION_BY_ZERO => Exception::ZeroDivision,
         message if message.starts_with(BOOLEAN_INDEX) => Exception::Index,
         _ => Exception::Value,

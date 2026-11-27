@@ -3,7 +3,7 @@
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from os import PathLike
 from pathlib import Path
-from typing import Any, SupportsFloat
+from typing import Any, Literal, SupportsFloat
 
 import numpy
 import numpy.typing
@@ -1016,6 +1016,102 @@ def stats_validate_covariance(
     """Check the matrix of a `Covariance` of the targets, `Covariance._validate` (since 0.40.0).
 
     Raises `ValueError` with the message of the python for a matrix which is not valid.
+    """
+
+STATS_MARGIN: float
+"""The margin of a threshold by default, `MARGIN` of `sbmlsim.uncertainty.testing`, 0.05
+(since 0.40.0)."""
+
+STATS_MAX_NEEDED: int
+"""The most draws `stats_needed` searches, `MAX_NEEDED`, 2**26 (since 0.40.0)."""
+
+STATS_BISECTIONS: int
+"""The bisections of each end of the confidence sequence, `BISECTIONS`, 52 (since 0.40.0)."""
+
+STATS_MIXTURE: tuple[float, float]
+"""The Jeffreys mixture `(a, b)` of the confidence sequence, `MIXTURE`, (0.5, 0.5) (since
+0.40.0)."""
+
+def stats_p_values(
+    satisfied: numpy.typing.ArrayLike,
+    p0: float,
+    side: Literal["greater", "less", "equivalent"],
+    margin: float = 0.05,
+) -> numpy.typing.NDArray[numpy.float64]:
+    """The anytime-valid p-values of a probability after every number of draws (since 0.40.0).
+
+    `_Prefixes.p_values` and `_p_values` of `sbmlsim.uncertainty.testing`, from whether every
+    draw satisfies the hypothesis (`np.asarray(satisfied, dtype=bool)`): `greater` of
+    `P > p0`, `less` of `P < p0` and `equivalent` of `|P - p0| < margin` (the larger p-value
+    of the two one-sided tests of the ends of the margin). Raises `ValueError` for another
+    side.
+    """
+
+def stats_confidence_sequence(
+    satisfied: numpy.typing.ArrayLike, level: float = 0.95
+) -> tuple[float, float]:
+    """The confidence sequence of a probability after the draws (since 0.40.0).
+
+    `confidence_sequence` of `sbmlsim.uncertainty.testing`: the lower and the upper end of the
+    intersection of the confidence sets of every number of draws, `(0, 1)` without draws.
+    Raises the `ZeroDivisionError` and the `ValueError` of `math.log(1 / (1 - level))` of
+    python.
+    """
+
+def stats_decide(p_values: numpy.typing.ArrayLike, alpha: float) -> int | None:
+    """The number of draws at which a p-value first is at most `alpha` (since 0.40.0)."""
+
+def stats_decision(
+    p_greater: numpy.typing.ArrayLike,
+    p_less: numpy.typing.ArrayLike,
+    p_equivalent: numpy.typing.ArrayLike,
+    alpha: float,
+) -> tuple[Literal["accepted", "rejected", "equivalent", "undecided"], int | None]:
+    """The decision of a statement and the draws which first showed it (since 0.40.0).
+
+    `_decide` of `sbmlsim.uncertainty.testing`: the direction shown first, else the
+    equivalence, else `undecided` without a number of draws.
+    """
+
+def stats_needed(
+    estimate: float, n: int, p0: float, margin: float, alpha: float
+) -> int | None:
+    """The draws which decide a statement at its estimate (since 0.40.0).
+
+    `_needed` of `sbmlsim.uncertainty.testing`, `None` beyond `STATS_MAX_NEEDED` and of no
+    draws. Raises the `ValueError` and the `OverflowError` of `round` of python of an
+    estimate which is not finite.
+    """
+
+def stats_family_level(level: float, m: int) -> float:
+    """The level of a statement in a report of `m` of them, Bonferroni (since 0.40.0)."""
+
+def stats_group_means(
+    values: numpy.typing.ArrayLike,
+    size: int,
+    groups: int,
+    *,
+    geometric: bool = False,
+    seed: int,
+) -> numpy.typing.NDArray[numpy.float64]:
+    """The statistic of virtual groups of subjects of the predictions (since 0.40.0).
+
+    `_group_means` of `sbmlsim.fit.variability` on the stream xoshiro256++ of sbmlsim-core:
+    the subjects which are not finite at every data point are removed, groups of one are
+    the subjects themselves, else `groups` groups of `size` subjects drawn with replacement,
+    a row per group, their mean or their geometric mean. Raises `ValueError` for predictions
+    which are not a matrix and numpy's for a negative size or number of groups.
+    """
+
+def stats_bands(
+    distribution: numpy.typing.ArrayLike, qs: numpy.typing.ArrayLike
+) -> numpy.typing.NDArray[numpy.float64]:
+    """The bands of a distribution of groups, a row per data point (since 0.40.0).
+
+    The quantiles of `predictive_check` of `sbmlsim.fit.variability`: numpy's linear
+    quantiles `qs` of the finite values of every column, `nan` of a column without one.
+    Raises `ValueError` for a distribution which is not a matrix and numpy's for a quantile
+    outside `[0, 1]`.
     """
 
 ODE_CONTRACT: str

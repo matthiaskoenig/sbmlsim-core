@@ -17,11 +17,16 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyFloat, PyString};
 use sbmlsim_stats::correlation::{self, Marginal};
 use sbmlsim_stats::draws::{self, Design};
+use sbmlsim_stats::testing::{self, Decision, Side};
 use sbmlsim_stats::uncertainty::{self, Exception};
-use sbmlsim_stats::{Scale, StatsError, fisher, linalg, metrics, posterior};
+use sbmlsim_stats::{Scale, StatsError, fisher, linalg, metrics, posterior, variability};
 
 /// The array of values of numpy the functions take, of any shape.
 type Values<'py> = PyArrayLikeDyn<'py, f64, AllowTypeChange>;
+
+/// The array of booleans of numpy the functions take, of any shape, as `np.asarray(values,
+/// dtype=bool)` converts it: a value which is not zero, a not a number included, is true.
+type Booleans<'py> = PyArrayLikeDyn<'py, bool, AllowTypeChange>;
 
 /// The lower and the upper bounds of intervals.
 type Bounds<'py> = (Bound<'py, PyArray1<f64>>, Bound<'py, PyArray1<f64>>);
@@ -857,6 +862,172 @@ pub(crate) fn stats_validate_covariance(
     .map_err(value_error)
 }
 
+/// The booleans of an array in the order numpy ravels it, `np.asarray(x, dtype=bool).ravel()`.
+fn booleans<'a>(array: &'a Booleans<'_>) -> Cow<'a, [bool]> {
+    let view = array.as_array();
+    match view.to_slice() {
+        Some(slice) => Cow::Borrowed(slice),
+        None => Cow::Owned(view.iter().copied().collect()),
+    }
+}
+
+/// The alternative of a p-value: `greater`, `less` or `equivalent`.
+pub(crate) struct SideArg(Side);
+
+impl<'a, 'py> FromPyObject<'a, 'py> for SideArg {
+    type Error = PyErr;
+
+    fn extract(object: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+        match object.extract::<String>().ok().as_deref() {
+            Some("greater") => Ok(Self(Side::Greater)),
+            Some("less") => Ok(Self(Side::Less)),
+            Some("equivalent") => Ok(Self(Side::Equivalent)),
+            _ => Err(PyValueError::new_err(format!(
+                "The side {} is none of 'greater', 'less' and 'equivalent'.",
+                object.repr()?
+            ))),
+        }
+    }
+}
+
+/// The anytime-valid p-values of the side `greater` (`P > p0`), `less` (`P < p0`) or
+/// `equivalent` (`|P - p0| < margin`) of a probability after every number of draws, from
+/// whether every draw satisfies the hypothesis, `_Prefixes.p_values` and `_p_values`.
+#[pyfunction]
+#[pyo3(signature = (satisfied, p0, side, margin = testing::MARGIN))]
+pub(crate) fn stats_p_values<'py>(
+    py: Python<'py>,
+    satisfied: Booleans<'py>,
+    p0: f64,
+    side: SideArg,
+    margin: f64,
+) -> Bound<'py, PyArray1<f64>> {
+    PyArray1::from_vec(
+        py,
+        testing::p_values(&booleans(&satisfied), p0, side.0, margin),
+    )
+}
+
+/// The confidence sequence of a probability after the draws at the level, its lower and its
+/// upper end, `confidence_sequence`.
+#[pyfunction]
+#[pyo3(signature = (satisfied, level = 0.95))]
+pub(crate) fn stats_confidence_sequence(
+    satisfied: Booleans<'_>,
+    level: f64,
+) -> PyResult<(f64, f64)> {
+    testing::confidence_sequence(&booleans(&satisfied), 1.0 - level).map_err(uncertainty_error)
+}
+
+/// The number of draws at which a p-value first is at most `alpha`, `None` if it never is.
+#[pyfunction]
+pub(crate) fn stats_decide(p_values: Values<'_>, alpha: f64) -> Option<usize> {
+    testing::decide(&values(&p_values), alpha)
+}
+
+/// The decision of a statement from its p-values after every number of draws and the draws at
+/// which it was first shown, `_decide`: `accepted`, `rejected`, `equivalent` or `undecided`
+/// (without a number of draws).
+#[pyfunction]
+pub(crate) fn stats_decision(
+    p_greater: Values<'_>,
+    p_less: Values<'_>,
+    p_equivalent: Values<'_>,
+    alpha: f64,
+) -> (&'static str, Option<usize>) {
+    let (decision, n) = testing::decision(
+        &values(&p_greater),
+        &values(&p_less),
+        &values(&p_equivalent),
+        alpha,
+    );
+    let name = match decision {
+        Decision::Accepted => "accepted",
+        Decision::Rejected => "rejected",
+        Decision::Equivalent => "equivalent",
+        Decision::Undecided => "undecided",
+    };
+    (name, n)
+}
+
+/// The draws which decide a statement at its estimate, `_needed`: `None` beyond `MAX_NEEDED`.
+#[pyfunction]
+pub(crate) fn stats_needed(
+    estimate: f64,
+    n: u64,
+    p0: f64,
+    margin: f64,
+    alpha: f64,
+) -> PyResult<Option<u64>> {
+    testing::needed(estimate, n, p0, margin, alpha).map_err(uncertainty_error)
+}
+
+/// The level of a statement with a threshold in a report of `m` of them (Bonferroni),
+/// `family_level`.
+#[pyfunction]
+pub(crate) fn stats_family_level(level: f64, m: i64) -> f64 {
+    testing::family_level(level, m)
+}
+
+/// The statistic of virtual groups of `size` subjects of the predictions (a row per subject, a
+/// column per data point), `_group_means`: the finite subjects themselves for groups of one,
+/// else `groups` groups resampled with replacement from the stream of the seed, their mean or
+/// their geometric mean.
+#[pyfunction]
+#[pyo3(signature = (values, size, groups, *, geometric = false, seed))]
+pub(crate) fn stats_group_means<'py>(
+    py: Python<'py>,
+    values: Values<'py>,
+    size: i64,
+    groups: i64,
+    geometric: bool,
+    seed: Seed,
+) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    let &[subjects, points] = values.shape() else {
+        return Err(PyValueError::new_err(format!(
+            "The predictions must be a matrix of the subjects by the data points, not of the \
+             shape {}.",
+            shape_text(values.shape())
+        )));
+    };
+    // `rng.integers(0, n, size=(groups, size))` of numpy, which a group of one does not call
+    if size != 1 && (size < 0 || groups < 0) {
+        return Err(PyValueError::new_err("negative dimensions are not allowed"));
+    }
+    let (statistics, rows) = variability::group_means(
+        &self::values(&values),
+        subjects,
+        points,
+        size.unsigned_abs() as usize,
+        groups.unsigned_abs() as usize,
+        geometric,
+        seed.0,
+    )
+    .map_err(value_error)?;
+    Ok(rectangle(py, statistics, rows, points))
+}
+
+/// The bands of a distribution of groups (a row per group, a column per data point): the
+/// quantiles `qs` of the finite values of every data point, numpy's linear ones, a row per
+/// data point.
+#[pyfunction]
+pub(crate) fn stats_bands<'py>(
+    py: Python<'py>,
+    distribution: Values<'py>,
+    qs: Values<'py>,
+) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    let &[rows, cols] = distribution.shape() else {
+        return Err(PyValueError::new_err(format!(
+            "The distribution must be a matrix of the groups by the data points, not of the \
+             shape {}.",
+            shape_text(distribution.shape())
+        )));
+    };
+    let qs = values(&qs);
+    let bands = variability::bands(&values(&distribution), rows, cols, &qs).map_err(value_error)?;
+    Ok(rectangle(py, bands, cols, qs.len()))
+}
+
 /// Adds the functions and the constants of the statistics to the module, by the names
 /// `stats_<name>` and `STATS_<NAME>`.
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -870,6 +1041,18 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     )?;
     m.add("STATS_PSD_RTOL", correlation::PSD_RTOL)?;
     m.add("STATS_EPS", draws::EPS)?;
+    m.add("STATS_MARGIN", testing::MARGIN)?;
+    m.add("STATS_MAX_NEEDED", testing::MAX_NEEDED)?;
+    m.add("STATS_BISECTIONS", testing::BISECTIONS)?;
+    m.add("STATS_MIXTURE", testing::MIXTURE)?;
+    m.add_function(wrap_pyfunction!(stats_p_values, m)?)?;
+    m.add_function(wrap_pyfunction!(stats_confidence_sequence, m)?)?;
+    m.add_function(wrap_pyfunction!(stats_decide, m)?)?;
+    m.add_function(wrap_pyfunction!(stats_decision, m)?)?;
+    m.add_function(wrap_pyfunction!(stats_needed, m)?)?;
+    m.add_function(wrap_pyfunction!(stats_family_level, m)?)?;
+    m.add_function(wrap_pyfunction!(stats_group_means, m)?)?;
+    m.add_function(wrap_pyfunction!(stats_bands, m)?)?;
     m.add_function(wrap_pyfunction!(stats_unit_points, m)?)?;
     m.add_function(wrap_pyfunction!(stats_copula, m)?)?;
     m.add_function(wrap_pyfunction!(stats_normal_score_rho, m)?)?;

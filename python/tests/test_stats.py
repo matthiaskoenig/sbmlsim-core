@@ -4,6 +4,7 @@ which `crates/stats/oracles/make_oracles.py` computed once with the functions of
 the bindings replace. A call of the python which raised a ValueError is its message there,
 and a binding raises a ValueError with the same one."""
 
+import builtins
 import enum
 import json
 import math
@@ -1174,3 +1175,258 @@ def test_strided_integer_and_fortran_matrices_of_the_correlations() -> None:
     strided = numpy.zeros((8, 6))
     strided[:, ::2] = u
     assert numpy.array_equal(stats.copula(strided[:, ::2], r), stats.copula(u, r))
+
+
+# --- tests and variability ---------------------------------------------------------------------
+
+TESTING = cases("testing", "")
+
+
+def of_testing(prefix: str) -> list[tuple[str, dict[str, Any]]]:
+    """The cases of `testing.json` whose names start with `prefix`, as test parameters."""
+    return [(name, case) for name, case in TESTING.items() if name.startswith(prefix)]
+
+
+def satisfied_of(inputs: dict[str, Any]) -> numpy.ndarray:
+    """The draws of a case of `sequence/`: its booleans or the formula of `pattern`."""
+    if "satisfied" in inputs:
+        return numpy.asarray(inputs["satisfied"], dtype=bool)
+    i = numpy.arange(inputs["n"])
+    return ((i * inputs["step"] + inputs["shift"]) % inputs["period"]) < inputs["ones"]
+
+
+def strided(values: numpy.ndarray, stride: int) -> numpy.ndarray:
+    """Every `stride`-th value from the first and the last value, as the fixture."""
+    indices = list(range(0, values.size, stride))
+    if values.size and indices[-1] != values.size - 1:
+        indices.append(values.size - 1)
+    return values[indices]
+
+
+def test_the_constants_of_the_tests_are_the_ones_of_sbmlsim() -> None:
+    expected = TESTING["constants"]["expected"]
+    assert expected["margin"] == stats.MARGIN
+    assert expected["max_needed"] == stats.MAX_NEEDED
+    assert expected["bisections"] == stats.BISECTIONS
+    assert stats.MIXTURE == (0.5, 0.5)
+
+
+@pytest.mark.parametrize(("name", "case"), of_testing("sequence/"))
+def test_the_statements_of_draws_are_the_ones_of_sbmlsim(
+    name: str, case: dict[str, Any]
+) -> None:
+    inputs, expected = case["inputs"], case["expected"]
+    x = satisfied_of(inputs)
+    p0, margin, alpha = inputs["p0"], inputs["margin"], inputs["alpha"]
+    found = {}
+    for side in ("greater", "less", "equivalent"):
+        p = stats.p_values(x, p0, side, margin)
+        assert p.shape == x.shape
+        wanted = numpy.asarray(expected[f"p_{side}"])
+        numpy.testing.assert_allclose(
+            strided(p, inputs["stride"]), wanted, rtol=KERNEL, atol=0.0
+        )
+        found[side] = p
+    decision, n_decided = stats.decision(
+        found["greater"], found["less"], found["equivalent"], alpha
+    )
+    assert (decision, n_decided) == (expected["decision"], expected["n_decided"])
+    if decision != "undecided":
+        side = {"accepted": "greater", "rejected": "less"}.get(decision, "equivalent")
+        assert stats.decide(found[side], alpha) == n_decided
+    low, high = stats.confidence_sequence(x, 1.0 - alpha)
+    numpy.testing.assert_allclose(
+        [low, high], [expected["low"], expected["high"]], rtol=KERNEL, atol=0.0
+    )
+    if x.size:
+        needed = stats.needed(x.mean(), x.size, p0, margin, alpha)
+        assert needed == expected["needed"]
+
+
+@pytest.mark.parametrize(("name", "case"), of_testing("sequence_alpha/"))
+def test_the_confidence_sequence_refuses_a_level_as_sbmlsim(
+    name: str, case: dict[str, Any]
+) -> None:
+    inputs, expected = case["inputs"], case["expected"]
+    level = 1.0 - inputs["alpha"]
+    if isinstance(expected, dict):
+        with pytest.raises(getattr(builtins, expected["exception"])) as raised:
+            stats.confidence_sequence(inputs["satisfied"], level)
+        assert str(raised.value) == expected["error"]
+    else:
+        found = stats.confidence_sequence(inputs["satisfied"], level)
+        numpy.testing.assert_allclose(found, expected, rtol=KERNEL, atol=0.0)
+
+
+def test_the_draws_needed_are_the_ones_of_sbmlsim() -> None:
+    case = TESTING["needed"]
+    inputs = case["inputs"]
+    found = [
+        stats.needed(*arguments)
+        for arguments in zip(
+            inputs["estimate"],
+            inputs["n"],
+            inputs["p0"],
+            inputs["margin"],
+            inputs["alpha"],
+            strict=True,
+        )
+    ]
+    assert found == case["expected"]
+    assert stats.needed(0.5, 0, 0.5, 0.05, 0.05) is None
+
+
+@pytest.mark.parametrize(("name", "case"), of_testing("needed_error/"))
+def test_the_draws_needed_refuse_an_estimate_as_sbmlsim(
+    name: str, case: dict[str, Any]
+) -> None:
+    inputs, expected = case["inputs"], case["expected"]
+    arguments = [inputs[key] for key in ("estimate", "n", "p0", "margin", "alpha")]
+    if isinstance(expected, dict):
+        with pytest.raises(getattr(builtins, expected["exception"])) as raised:
+            stats.needed(*arguments)
+        assert str(raised.value) == expected["error"]
+    else:
+        assert stats.needed(*arguments) == expected
+
+
+def test_the_family_level_is_the_one_of_sbmlsim() -> None:
+    case = TESTING["family_level"]
+    found = [
+        stats.family_level(level, m)
+        for level, m in zip(case["inputs"]["level"], case["inputs"]["m"], strict=True)
+    ]
+    assert found == case["expected"]
+
+
+def test_the_draws_are_read_as_numpy_reads_them_as_booleans() -> None:
+    x = numpy.array([1, 0, 2, 0, 1, 1, 0, 1])
+    expected = stats.p_values(x.astype(bool), 0.3, "greater")
+    # an integer, a float (a not a number is true), a list and a strided array
+    assert numpy.array_equal(stats.p_values(x, 0.3, "greater"), expected)
+    floats = numpy.where(x > 0, numpy.nan, 0.0)
+    assert numpy.array_equal(stats.p_values(floats, 0.3, "greater"), expected)
+    assert numpy.array_equal(
+        stats.p_values(x.astype(bool).tolist(), 0.3, "greater"), expected
+    )
+    wide = numpy.zeros(16, dtype=bool)
+    wide[::2] = x > 0
+    assert numpy.array_equal(stats.p_values(wide[::2], 0.3, "greater"), expected)
+    assert stats.confidence_sequence(wide[::2]) == stats.confidence_sequence(x)
+    assert stats.confidence_sequence([]) == (0.0, 1.0)
+    assert stats.p_values([], 0.3, "less").shape == (0,)
+    # the margin by default
+    assert numpy.array_equal(
+        stats.p_values(x, 0.3, "equivalent"),
+        stats.p_values(x, 0.3, "equivalent", stats.MARGIN),
+    )
+    with pytest.raises(ValueError, match="'both' is none of 'greater', 'less'"):
+        stats.p_values(x, 0.3, "both")  # ty: ignore[invalid-argument-type]
+    assert stats.decide([1.0, 0.5, 0.01, 0.0], 0.05) == 3
+    assert stats.decide([], 0.05) is None
+    assert stats.decision([1.0], [1.0], [1.0], 0.05) == ("undecided", None)
+
+
+@pytest.mark.parametrize(("name", "case"), of_testing("bands/"))
+def test_the_bands_are_the_quantiles_of_numpy_of_the_finite_values(
+    name: str, case: dict[str, Any]
+) -> None:
+    inputs, expected = case["inputs"], case["expected"]
+    rows, cols = inputs["rows"], inputs["cols"]
+    distribution = numpy.asarray(inputs["distribution"], dtype=float).reshape(
+        rows, cols
+    )
+    if isinstance(expected, dict):
+        with pytest.raises(ValueError) as raised:
+            stats.bands(distribution, inputs["qs"])
+        assert str(raised.value) == expected["error"]
+        return
+    found = stats.bands(distribution, inputs["qs"])
+    assert found.shape == (cols, len(inputs["qs"]))
+    numpy.testing.assert_allclose(
+        found.ravel(), numpy.asarray(expected, dtype=float), rtol=KERNEL, atol=0.0
+    )
+
+
+def test_the_bands_read_strided_and_integer_distributions() -> None:
+    distribution = numpy.arange(24).reshape(8, 3)
+    expected = stats.bands(distribution.astype(float), [0.1, 0.9])
+    assert numpy.array_equal(
+        stats.bands(distribution, numpy.array([0.1, 0.9])), expected
+    )
+    wide = numpy.zeros((8, 6))
+    wide[:, ::2] = distribution
+    assert numpy.array_equal(stats.bands(wide[:, ::2], [0.1, 0.9]), expected)
+    with pytest.raises(ValueError, match="matrix of the groups by the data points"):
+        stats.bands([1.0, 2.0], [0.5])
+
+
+def predictions(subjects: int, points: int) -> numpy.ndarray:
+    """Positive predictions of subjects at data points, of a formula of integers."""
+    s, j = numpy.indices((subjects, points))
+    return 1.0 + ((s * 7 + j * 3) % 11) / 4.0 + j
+
+
+def test_a_group_of_one_subject_is_the_subject_itself() -> None:
+    values = predictions(13, 4)
+    values[2, 1] = numpy.nan
+    values[5, 3] = numpy.inf
+    found = stats.group_means(values, 1, 500, seed=7)
+    finite = numpy.all(numpy.isfinite(values), axis=1)
+    assert numpy.array_equal(found, values[finite])
+    assert numpy.array_equal(
+        stats.group_means(values, 1, 500, geometric=True, seed=7), found
+    )
+
+
+def test_the_group_means_have_the_mean_of_the_subjects_and_the_variance_of_a_mean() -> (
+    None
+):
+    subjects, size, groups = 200, 5, 20000
+    values = predictions(subjects, 3)
+    means = stats.group_means(values, size, groups, seed=11)
+    assert means.shape == (groups, 3)
+    mean, variance = values.mean(axis=0), values.var(axis=0)
+    se = numpy.sqrt(variance / (size * groups))
+    assert numpy.all(numpy.abs(means.mean(axis=0) - mean) < 4.0 * se)
+    ratio = means.var(axis=0) / (variance / size)
+    assert numpy.all(numpy.abs(ratio - 1.0) < 0.05)
+
+
+def test_the_geometric_mean_of_a_group_is_at_most_its_mean() -> None:
+    values = predictions(200, 3)
+    geometric = stats.group_means(values, 4, 20000, geometric=True, seed=5)
+    arithmetic = stats.group_means(values, 4, 20000, geometric=False, seed=5)
+    assert numpy.all(geometric <= arithmetic * (1.0 + 1e-15))
+    logs = numpy.log(values)
+    se = numpy.sqrt(logs.var(axis=0) / (4 * 20000))
+    found = numpy.log(geometric).mean(axis=0)
+    assert numpy.all(numpy.abs(found - logs.mean(axis=0)) < 4.0 * se)
+
+
+def test_a_seed_gives_the_same_groups_and_the_groups_refuse_as_numpy() -> None:
+    values = predictions(30, 2)
+    a = stats.group_means(values, 3, 100, seed=42)
+    assert numpy.array_equal(a, stats.group_means(values, 3, 100, seed=42))
+    assert not numpy.array_equal(a, stats.group_means(values, 3, 100, seed=43))
+    strided = numpy.zeros((30, 4))
+    strided[:, ::2] = values
+    assert numpy.array_equal(stats.group_means(strided[:, ::2], 3, 100, seed=42), a)
+    integers = numpy.arange(12).reshape(6, 2)
+    assert numpy.array_equal(
+        stats.group_means(integers, 2, 10, seed=1),
+        stats.group_means(integers.astype(float), 2, 10, seed=1),
+    )
+    for size, groups in [(-1, 10), (2, -1)]:
+        with pytest.raises(ValueError) as raised:
+            stats.group_means(values, size, groups, seed=1)
+        assert str(raised.value) == "negative dimensions are not allowed"
+    with pytest.raises(ValueError) as raised:
+        stats.group_means(values, 2, 10, seed=-1)
+    assert str(raised.value) == "expected non-negative integer"
+    with pytest.raises(ValueError, match="matrix of the subjects by the data points"):
+        stats.group_means([1.0, 2.0], 2, 10, seed=1)
+    assert stats.group_means(numpy.full((3, 2), numpy.nan), 2, 10, seed=1).shape == (
+        0,
+        2,
+    )

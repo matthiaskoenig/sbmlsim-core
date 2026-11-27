@@ -18,18 +18,19 @@ modules take two:
       uv run --no-project --with numpy --with scipy \
           python crates/stats/oracles/make_oracles.py
 
-- `metrics`, `fisher`, `uncertainty` and `draws` call the functions of sbmlsim itself
-  (`sbmlsim.fit.metrics`, `sbmlsim.fit.evaluation`, `sbmlsim.fit.fisher`,
+- `metrics`, `fisher`, `uncertainty`, `draws` and `testing` call the functions of sbmlsim
+  itself (`sbmlsim.fit.metrics`, `sbmlsim.fit.evaluation`, `sbmlsim.fit.fisher`,
   `sbmlsim.fit.posterior`, `sbmlsim.uncertainty.statistics`, `_precise` of
   `sbmlsim.uncertainty.propagation`, `Uncertain.interval`,
-  `sbmlsim.uncertainty.covariance` and `sbmlsim.uncertainty.draws`), so their environment has
-  sbmlsim as well, with the python and the package index of libroadrunner sbmlsim needs:
+  `sbmlsim.uncertainty.covariance`, `sbmlsim.uncertainty.draws` and
+  `sbmlsim.uncertainty.testing`), so their environment has sbmlsim as well, with the
+  python and the package index of libroadrunner sbmlsim needs:
 
       uv run --no-project --python 3.14 \
           --index https://matthiaskoenig.github.io/roadrunner-wheels/simple/ \
           --index-strategy unsafe-best-match \
           --with sbmlsim==0.53.0 --with numpy --with scipy \
-          python crates/stats/oracles/make_oracles.py metrics fisher uncertainty draws
+          python crates/stats/oracles/make_oracles.py metrics fisher uncertainty draws testing
 
 Modules given as arguments write only their fixtures (`... make_oracles.py special`); a
 module of sbmlsim in an environment without it stops before any fixture is written.
@@ -1648,6 +1649,246 @@ def draws() -> dict[str, Any]:
     return cases
 
 
+# --- testing ---------------------------------------------------------------------------------
+
+
+def pattern(n: int, period: int, ones: int, step: int, shift: int) -> list[bool]:
+    """Get `n` draws of a formula of integers, whether every draw satisfies a hypothesis.
+
+    `((i * step + shift) % period) < ones` of the draw `i`: with `step` coprime to `period`
+    every period has `ones` draws which satisfy it, spread over the period; `step = 1` and
+    `period > n` gives `ones` draws which satisfy it first and none after them. The tests
+    compute the draws from the formula, so the fixture holds the formula, not the draws.
+    """
+    return [((i * step + shift) % period) < ones for i in range(n)]
+
+
+#: the draws of the cases of `testing`, by name: a list of booleans or the arguments of
+#: `pattern` (n, period, ones, step, shift)
+SEQUENCES: dict[str, Any] = {
+    "empty": [],
+    "one_true": [True],
+    "one_false": [False],
+    "short": [True, False, True, True, False, True],
+    "true_5": (5, 1, 1, 1, 0),
+    "true_40": (40, 1, 1, 1, 0),
+    "true_500": (500, 1, 1, 1, 0),
+    "false_5": (5, 1, 0, 1, 0),
+    "false_40": (40, 1, 0, 1, 0),
+    "false_500": (500, 1, 0, 1, 0),
+    "p70_2": (2, 10, 7, 3, 1),
+    "p70_7": (7, 10, 7, 3, 1),
+    "p70_50": (50, 10, 7, 3, 1),
+    "p50_500": (500, 100, 50, 37, 11),
+    "p52_500": (500, 100, 52, 37, 3),
+    "p90_500": (500, 100, 90, 37, 5),
+    "p97_300": (300, 100, 97, 37, 2),
+    "p10_200": (200, 100, 10, 37, 7),
+    # every draw of the first 30 satisfies the hypothesis, none after: the confidence sets
+    # of the first and of the last draws exclude each other
+    "contradicting": (530, 10**6, 30, 1, 0),
+}
+
+#: the thresholds, margins and alphas of the cases of every sequence
+THRESHOLDS: list[tuple[float, float, float]] = [
+    (0.5, 0.05, 0.05),
+    (0.9, 0.05, 0.05),
+    (0.0, 0.05, 0.05),
+    (1.0, 0.05, 0.05),
+    (0.03, 0.05, 0.01),
+    (0.97, 0.2, 0.05 / 3),
+]
+
+#: the thresholds of some sequences only: outside of [0, 1], not a number, no margin
+EXTRA_THRESHOLDS: dict[str, list[tuple[float, float, float]]] = {
+    "short": [(-0.2, 0.05, 0.05), (1.5, 0.05, 0.05), (math.nan, 0.05, 0.05)],
+    "p50_500": [(0.5, 0.0, 0.05), (0.45, 0.0, 0.01), (0.6, 0.2, 0.05)],
+    "p52_500": [(0.5, 0.0, 0.05), (0.55, 0.05, 0.05)],
+    "contradicting": [(0.06, 0.05, 0.05)],
+}
+
+
+def _draws_of(spec: Any) -> list[bool]:
+    """The draws of a sequence of `SEQUENCES`."""
+    return list(spec) if isinstance(spec, list) else pattern(*spec)
+
+
+def _strided(values: np.ndarray, stride: int) -> list[float]:
+    """Every `stride`-th value from the first and the last value."""
+    indices = list(range(0, values.size, stride))
+    if values.size and indices[-1] != values.size - 1:
+        indices.append(values.size - 1)
+    return values[indices].tolist()
+
+
+def _bands(distribution: np.ndarray, qs: list[float]) -> np.ndarray:
+    """The bands of a distribution of groups, the lines of `predictive_check`.
+
+    A column per data point: the quantiles `qs` of its finite values (`np.quantile`,
+    linear), `nan` of a column without one. A copy of the lines of the python, which is
+    not a function of its own.
+    """
+    bands = np.full((distribution.shape[1], len(qs)), np.nan)
+    for j in range(distribution.shape[1]):
+        column = distribution[:, j]
+        column = column[np.isfinite(column)]
+        if column.size:
+            bands[j] = np.quantile(column, qs)
+    return bands
+
+
+def testing() -> dict[str, Any]:
+    """The cases of `testing` and `variability`: `sbmlsim.uncertainty.testing` and the bands.
+
+    The p-values of `P >= p0`, `P < p0` and of the equivalence (`_p_values`, every value of
+    the first 60 draws and every 17th after, the last included), the decision and the draws
+    which first showed it (`_decide`), the confidence sequence (`_sequence`, the ends of the
+    intersection of the sets, of the last draws whose sets intersect for sets which exclude
+    each other) and the draws an undecided statement needs (`_needed`) of draws of all,
+    none and some of the draws satisfying the hypothesis, of 0 to 500 draws, at degenerate
+    thresholds (0, 1, outside, a margin past an end) as well; the errors of the sequence and
+    of `_needed`; `family_level`; and the bands of `predictive_check` (numpy's quantiles of
+    the finite values of every column).
+    """
+    from sbmlsim.uncertainty import testing as tests
+
+    assert tests.MIXTURE == (0.5, 0.5)
+    cases: dict[str, Any] = {
+        "constants": {
+            "inputs": {},
+            "expected": {
+                "margin": tests.MARGIN,
+                "max_needed": tests.MAX_NEEDED,
+                "bisections": tests.BISECTIONS,
+            },
+        }
+    }
+    for name, spec in SEQUENCES.items():
+        x = np.asarray(_draws_of(spec), dtype=bool)
+        n, k = x.size, int(np.count_nonzero(x))
+        stride = 1 if n <= 60 else 17
+        drawn = (
+            {"satisfied": spec}
+            if isinstance(spec, list)
+            else dict(zip(("n", "period", "ones", "step", "shift"), spec, strict=True))
+        )
+        for i, (p0, margin, alpha) in enumerate(
+            THRESHOLDS + EXTRA_THRESHOLDS.get(name, [])
+        ):
+            prefixes = tests._Prefixes.of(x)
+            p_greater, p_less, p_equivalent = tests._p_values(prefixes, p0, margin)
+            decision, n_decided = tests._decide(
+                p_greater, p_less, p_equivalent, prefixes.m, alpha
+            )
+            low, high = tests._sequence(prefixes, alpha)
+            cases[f"sequence/{name}/{i}"] = {
+                "inputs": {
+                    **drawn,
+                    "p0": p0,
+                    "margin": margin,
+                    "alpha": alpha,
+                    "stride": stride,
+                },
+                "expected": {
+                    "p_greater": _strided(p_greater, stride),
+                    "p_less": _strided(p_less, stride),
+                    "p_equivalent": _strided(p_equivalent, stride),
+                    "decision": decision,
+                    "n_decided": n_decided,
+                    "low": low,
+                    "high": high,
+                    "needed": (
+                        tests._needed(k / n, n, p0, margin, alpha) if n else None
+                    ),
+                },
+            }
+
+    # the errors of the sequence of three draws: the logarithm of 1 / alpha
+    for i, alpha in enumerate([0.0, -0.5, math.inf, -math.inf, 1.0, 2.0, math.nan]):
+        prefixes = tests._Prefixes.of([True, False, True])
+        cases[f"sequence_alpha/{i}"] = {
+            "inputs": {"satisfied": [True, False, True], "alpha": alpha},
+            "expected": raised(lambda p=prefixes, a=alpha: list(tests._sequence(p, a))),
+        }
+
+    inputs = {"estimate": [], "n": [], "p0": [], "margin": [], "alpha": []}
+    for estimate in [0.0, 0.3, 0.5, 0.52, 0.9, 0.97, 1.0, 1 / 3]:
+        for n in [1, 3, 100, 2**25 + 1, 2**26]:
+            for p0, margin in [(0.5, 0.05), (0.9, 0.05), (0.5, 0.0), (0.95, 0.2)]:
+                for key, value in zip(
+                    inputs, (estimate, n, p0, margin, 0.05), strict=True
+                ):
+                    inputs[key].append(value)
+    cases["needed"] = {
+        "inputs": inputs,
+        "expected": [
+            tests._needed(*arguments)
+            for arguments in zip(*inputs.values(), strict=True)
+        ],
+    }
+    for i, (estimate, n) in enumerate(
+        [(math.nan, 3), (math.inf, 3), (-math.inf, 3), (math.nan, 2**26)]
+    ):
+        cases[f"needed_error/{i}"] = {
+            "inputs": {
+                "estimate": estimate,
+                "n": n,
+                "p0": 0.5,
+                "margin": 0.05,
+                "alpha": 0.05,
+            },
+            "expected": raised(tests._needed, estimate, n, 0.5, 0.05, 0.05),
+        }
+
+    levels, ms = [0.95, 0.9, 0.99], [-1, 0, 1, 2, 3, 7, 1000]
+    inputs = {"level": [], "m": []}
+    for level in levels:
+        for m in ms:
+            inputs["level"].append(level)
+            inputs["m"].append(m)
+    cases["family_level"] = {
+        "inputs": inputs,
+        "expected": [
+            tests.family_level(level, m)
+            for level, m in zip(inputs["level"], inputs["m"], strict=True)
+        ],
+    }
+
+    rng = np.random.default_rng(20261128)
+    gappy = rng.lognormal(size=(40, 6))
+    gappy[3, 0] = math.nan
+    gappy[7, 0] = math.inf
+    gappy[11, 1] = -math.inf
+    gappy[:, 2] = math.nan
+    gappy[:39, 3] = math.nan
+    gappy[5:9, 4] = math.nan
+    distributions = {
+        "finite": (rng.normal(size=(25, 4)), [0.05, 0.5, 0.95]),
+        "gappy": (gappy, [0.05, 0.5, 0.95]),
+        "ends": (rng.normal(size=(9, 3)), [0.0, 0.025, 0.975, 1.0]),
+        "one_row": (rng.normal(size=(1, 3)), [0.05, 0.95]),
+        "ties": (np.repeat([[1.0, -2.0], [3.0, -2.0]], 5, axis=0), [0.1, 0.5, 0.9]),
+        "empty_rows": (np.zeros((0, 3)), [0.05, 0.95]),
+        "no_columns": (np.zeros((4, 0)), [0.05, 0.95]),
+        "outside": (rng.normal(size=(5, 2)), [0.05, 1.5]),
+        "nan_q": (rng.normal(size=(5, 2)), [0.05, math.nan]),
+        # an invalid quantile of no finite value: numpy is never called
+        "outside_unused": (np.full((3, 2), math.nan), [-0.5, 0.5]),
+    }
+    for name, (distribution, qs) in distributions.items():
+        rows, cols = distribution.shape
+        cases[f"bands/{name}"] = {
+            "inputs": {
+                "rows": rows,
+                "cols": cols,
+                "distribution": distribution.ravel(),
+                "qs": qs,
+            },
+            "expected": raised(lambda d=distribution, q=qs: _bands(d, q).ravel()),
+        }
+    return cases
+
+
 GENERATORS: dict[str, Callable[[], dict[str, Any]]] = {
     "special": special,
     "linalg": linalg,
@@ -1655,10 +1896,11 @@ GENERATORS: dict[str, Callable[[], dict[str, Any]]] = {
     "fisher": fisher,
     "uncertainty": uncertainty,
     "draws": draws,
+    "testing": testing,
 }
 
 #: the modules whose fixture is of the functions of sbmlsim, whose version it records
-OF_SBMLSIM = {"metrics", "fisher", "uncertainty", "draws"}
+OF_SBMLSIM = {"metrics", "fisher", "uncertainty", "draws", "testing"}
 
 
 def main(modules: list[str]) -> None:

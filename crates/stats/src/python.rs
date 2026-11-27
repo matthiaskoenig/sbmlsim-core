@@ -112,6 +112,12 @@ pub(crate) const MATH_RANGE: &str = "math range error";
 /// The message of the ZeroDivisionError of a division of floats by zero (python 3.14).
 pub(crate) const DIVISION_BY_ZERO: &str = "division by zero";
 
+/// The message of the ValueError of `round` of a float which is not a number.
+pub(crate) const FLOAT_NAN: &str = "cannot convert float NaN to integer";
+
+/// The message of the OverflowError of `round` of an infinite float.
+pub(crate) const FLOAT_INFINITY: &str = "cannot convert float infinity to integer";
+
 /// The sum of floats of python, `sum` of an iterable of floats from the start 0: the first
 /// value, then the improved Kahan-Babuska sum of Neumaier (python 3.12 and later), the
 /// compensation added at the end where it is finite and not zero, so an infinite or
@@ -181,6 +187,18 @@ fn checked_range(x: f64, value: f64) -> Result<f64> {
         return Err(StatsError(MATH_RANGE.to_owned()));
     }
     Ok(value)
+}
+
+/// `math.log`: the error of the ValueError of python of an argument which is not positive
+/// (python 3.14), `nan` of a not a number and infinity of infinity.
+pub(crate) fn math_log(x: f64) -> Result<f64> {
+    if x <= 0.0 {
+        return Err(StatsError(format!(
+            "expected a positive input, got {}",
+            python_repr(x)
+        )));
+    }
+    Ok(libm::log(x))
 }
 
 /// The quotient of floats as python divides them: the error of the ZeroDivisionError by zero.

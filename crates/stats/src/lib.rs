@@ -28,6 +28,13 @@
 //! - [`draws`]: the points of the unit cube of the designs of the draws (Sobol', Latin
 //!   hypercube, random) and the Gaussian copula which correlates them, as
 //!   `sbmlsim.uncertainty.draws` gives them, the streams of sbmlsim-core rather than scipy's.
+//! - [`testing`]: the probability statements about predictions, robust to the number of draws:
+//!   the anytime-valid p-values and the confidence sequence of the beta-binomial mixture, the
+//!   decision of a statement and the draws an undecided one needs, as
+//!   `sbmlsim.uncertainty.testing` gives them.
+//! - [`variability`]: the virtual groups of subjects and the bands of the visual predictive
+//!   check, as `predictive_check` of `sbmlsim.fit.variability` gives them, the groups resampled
+//!   from the streams of sbmlsim-core rather than numpy's.
 //!
 //! Every transcendental function comes from the crate libm, so one input gives the same bits
 //! on every target, natively and in wasm. The tests hold every function to the values of numpy
@@ -43,7 +50,9 @@ mod numpy;
 pub mod posterior;
 mod python;
 pub mod special;
+pub mod testing;
 pub mod uncertainty;
+pub mod variability;
 
 /// An error of the arguments of a function.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
