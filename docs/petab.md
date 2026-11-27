@@ -1,6 +1,6 @@
 # PEtab
 
-[PEtab](https://petab.readthedocs.io) describes a parameter estimation problem as tables: the conditions an experiment applies at its times, the observables and the noise of the measurements, the measurements themselves and the parameters to estimate with their bounds and priors. sbmlsim-core reads a problem of PEtab v2, simulates it, evaluates its likelihood and fits it in Rust (the crate `sbmlsim-petab`), with no python and no sympy on the way: the math of the tables is read by the parser of the crate into the math of SBML, which the compiler and the engine evaluate as they evaluate a model.
+[PEtab](https://petab.readthedocs.io) describes a parameter estimation problem as tables: the conditions an experiment applies at its times, the observables and the noise of the measurements, the measurements themselves and the parameters to estimate with their bounds and priors. sbmlsim-core reads a problem of PEtab v2 (since 0.38.0), simulates it, evaluates its likelihood and fits it in Rust (the crate `sbmlsim-petab`), with no python and no sympy on the way: the math of the tables is read by the parser of the crate into the math of SBML, which the compiler and the engine evaluate as they evaluate a model.
 
 ## Running a problem
 

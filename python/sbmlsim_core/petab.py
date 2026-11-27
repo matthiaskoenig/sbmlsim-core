@@ -1,4 +1,6 @@
-"""PEtab v2 problems read, simulated and fitted in Rust (the crate `sbmlsim-petab`).
+"""PEtab v2 problems read, simulated and fitted in Rust (since 0.38.0).
+
+The crate `sbmlsim-petab` reads, simulates and fits them.
 
 A problem is read from its YAML file and its tables, the math of its observables, noise
 formulas and conditions is compiled into its model, every experiment is one simulation of the
