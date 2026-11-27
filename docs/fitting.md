@@ -90,6 +90,7 @@ The conditions:
 | `request` | the simulation, a request of `simulation/1` whose output is the times of the data of its curves |
 | `model` | the id of the model the condition simulates, one of the models of the fit; absent for a fit of one model, which every condition simulates (see below) |
 | `derived` | the values of the condition which follow the parameters of the fit, each a linear form over them, absent for a condition of numbers alone (see below) |
+| `pinned` | the parameters of the fit whose targets the condition holds at a value of its own, each the `parameter` (its position in `parameters`) and its `value`; absent for a condition every parameter reaches (see [the points of a scan](#the-points-of-a-scan)) |
 
 A fit of one model needs no `model` of its conditions, and a fit of several, e.g. of the data
 of two builds of a model or of a model of two species, names the model of every condition:
@@ -135,7 +136,7 @@ The curves:
 | field | what it holds |
 |---|---|
 | `id` | a name of the curve for an error message (optional) |
-| `condition` | the `id` of the condition it measures |
+| `condition` | the `id` of the condition it measures; none for a curve over a `dimension` |
 | `column` | the selection of that condition it measures; the condition has to select it |
 | `times` | the times of the measurements, every one an output time of the condition (within 1e-9 relative). A fit interpolates nothing: the condition is asked for the times of its data |
 | `values` | the measurements, one per time |
@@ -143,6 +144,7 @@ The curves:
 | `likelihood` | which likelihood the curve is, below; absent is the weighted least squares of `noise`. A curve with one has **two** residuals per measurement |
 | `weight` | a weight of the whole curve, 1 by default; a residual is multiplied by its square root, so a weight of 4 counts the curve four times |
 | `reduction` | a value of the whole column the measurements are compared with instead of the column at their rows, below; absent for a curve of rows |
+| `dimension` | the points of a dimension of a scan the curve interpolates over, each a condition, see [the points of a scan](#the-points-of-a-scan); absent for a curve of its `condition` |
 | `after_change` | whether a measurement reads the state after a change of its condition rather than the one before it, one flag per time in their order; every measurement reads the state before a change when it is absent. The output of a condition has two rows of the time of a change after its start, the state before the change and the state after it, and a measurement reads the first of them unless its flag says otherwise. A chain of a change and the events it fired has more than two rows of that time, of which a true flag reads the last, the state after the whole chain. This is the `after` of the measurements of PEtab, which a problem read without an extension of its own uses |
 
 The cost of a point of the search space is half the sum of the squares of its residuals, and a
@@ -173,6 +175,45 @@ The rows of a curve of a reduction are not resolved when the problem is built, s
 The jacobian of a reduction is the reduction of the forward sensitivities of the column: the sensitivity at the row of the extremum of `max` and `min` (the first of a tie), the trapezoid mean of the sensitivities, the sensitivities interpolated with the weights of `at`. The analysis of `pk` is no linear function of the column, so its row of the jacobian is the central difference of the analysis along the sensitivity of every parameter, `(P(c + h s) - P(c - h s)) / 2h`, with a step `h` which moves the column by `1e-6` of its largest absolute value: two analyses per parameter and no simulation, where a difference quotient of the condition costs a simulation per parameter. On the steps of the integrator a sensitivity is the better derivative of the two, since the steps move with the parameters, which a difference of the residuals sees as well.
 
 `sbmlsim_core.FIT_REDUCTIONS` names the kinds a build fits. A release before 0.32.0 has no such constant and does not deny the field, so it would read the column at the rows of the times instead: a host reads the constant before it sends a reduction.
+
+### The points of a scan
+
+A host fits a scan as one condition per point, and two things of a scan are no curve of one condition.
+
+The data of a study is not always measured at a point of a scan: the cmax of a dose between two doses of a scan, the amount in the urine of a subject whose renal function lies between two points of a scan of the renal function. sbmlsim compares such a measurement with the line between the values of the two points at the x of the measurement, `numpy.interp`, and a curve over a `dimension` is that line between two conditions:
+
+```json
+{
+  "column": "C",
+  "values": [2.1, 3.0, 4.4],
+  "noise": [0.1, 0.1, 0.2],
+  "reduction": { "kind": "max" },
+  "dimension": {
+    "conditions": ["dose 50", "dose 100", "dose 200"],
+    "values": [50.0, 100.0, 200.0],
+    "x": [75.0, 100.0, 150.0]
+  }
+}
+```
+
+| field | what it holds |
+|---|---|
+| `conditions` | the `id` of the condition of every point, in the order of their values; at least two, every one of them once |
+| `values` | the value of the dimension at every point, finite and strictly increasing |
+| `x` | the value of the dimension of every measurement, between the first and the last of `values` |
+| `reductions` | the reduction of the curve in the condition of every point, one per point, for a curve whose reduction is not the same at every point, e.g. a `pk` whose batch carries the dose of the point; the curve then carries no `reduction` of its own. Absent, every point reads the `reduction` of the curve, or its column at the rows of its `times` |
+
+A measurement between two points is compared with `slope * (x - x0) + y0` of the slope `(y1 - y0) / (x1 - x0)` of what the curve reads in the conditions of the two points, the arithmetic of `numpy.interp` operation for operation, so the residuals of a host which interpolates with numpy are the ones of the engine bitwise. A measurement at the value of a point, and one at the last point, is compared with what the curve reads in the condition of that point alone. What a curve reads in a condition is what a curve of that condition alone would read: the column at the row of the time of a measurement, or its reduction. The row of the jacobian of a measurement is the same line between the derivatives of the two points. A curve over a dimension names no `condition` and carries no `noise_column`, which is a value of one condition; the conditions of the points are only the points a curve reads, and two points next to each other on the dimension stay next to each other among them.
+
+A dimension of a scan may set the target of a parameter of the fit. The engine sets a parameter on its target in every condition, over the values of the request of the condition, while a host whose dimension wins over the parameter, as sbmlsim's does, simulates the point with the value of the point. Such a condition pins the parameter:
+
+```json
+{ "id": "rate 0.2", "request": { "...": "..." }, "pinned": [{ "parameter": 0, "value": 0.2 }] }
+```
+
+The target of a pinned parameter holds the `value` of the pin in that condition, on the linear scale, so the parameter has no effect on the condition and its column of the jacobian of the curves of the condition is zero. A parameter is pinned at most once per condition, at a finite value. A `derived` value of the condition reads the value of the parameter and not the pin.
+
+`sbmlsim_core.FIT_FIELDS` names the fields a build reads which an older release would not refuse: `"curve.dimension"` and `"condition.pinned"`. A release before them has no such constant, does not deny `pinned` and would set the parameter over the value of the point, and refuses a curve without a `condition` like any other request: a host reads the constant before it sends either field.
 
 ### The likelihood of a curve
 

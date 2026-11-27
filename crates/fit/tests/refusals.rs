@@ -40,6 +40,7 @@ fn curve() -> Curve {
         after_change: None,
         likelihood: None,
         reduction: None,
+        dimension: None,
     }
 }
 

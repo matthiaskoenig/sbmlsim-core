@@ -85,6 +85,7 @@ fn condition(id: Option<&str>) -> Condition {
         request: request(),
         model: id.map(str::to_string),
         derived: Vec::new(),
+        pinned: Vec::new(),
     }
 }
 
@@ -105,6 +106,7 @@ fn definition(start: f64, models: &[(String, Arc<LoadedModel>)]) -> Definition {
                 after_change: None,
                 likelihood: None,
                 reduction: None,
+                dimension: None,
             }
         })
         .collect();
@@ -237,6 +239,7 @@ fn a_condition_of_a_fit_of_one_model_needs_no_model() {
             after_change: None,
             likelihood: None,
             reduction: None,
+            dimension: None,
         }],
     };
 

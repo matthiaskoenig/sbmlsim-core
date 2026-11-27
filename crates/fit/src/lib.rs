@@ -43,18 +43,18 @@ mod problem;
 mod reduction;
 
 pub use contract::{
-    ConditionRequest, CorrelationRequest, CurveRequest, FIT_CONTRACT, FitAnswer, FitRequest,
-    FittedParameter, Identifiability, LikelihoodRequest, OnRun, ParameterRequest, PriorRequest,
-    RunAnswer, fit, fit_models, fit_reporting, fit_reporting_models, fit_with, problem_of,
-    problem_of_models,
+    ConditionRequest, CorrelationRequest, CurveRequest, DimensionRequest, FIELDS, FIT_CONTRACT,
+    FitAnswer, FitRequest, FittedParameter, Identifiability, LikelihoodRequest, OnRun,
+    ParameterRequest, PinnedRequest, PriorRequest, RunAnswer, fit, fit_models, fit_reporting,
+    fit_reporting_models, fit_with, problem_of, problem_of_models,
 };
 pub use identifiability::{
     DELTA_95, Fisher, Profile, ProfilePoint, Walk, fisher, profile, profiles,
 };
 pub use optimize::{Algorithm, Evolution, Fit, Settings, Stop};
 pub use problem::{
-    Condition, Correlation, Curve, DEFAULT_MODEL, DIFF_STEP, Definition, Derived, FAILED_RESIDUAL,
-    FitError, JacobianChoice, LIKELIHOOD_OFFSET, LN_2, LN_2PI_HALF, Likelihood, NoiseKind,
-    Parameter, Prior, PriorKind, Problem, Scale, Term,
+    Condition, Correlation, Curve, DEFAULT_MODEL, DIFF_STEP, Definition, Derived, Dimension,
+    FAILED_RESIDUAL, FitError, JacobianChoice, LIKELIHOOD_OFFSET, LN_2, LN_2PI_HALF, Likelihood,
+    NoiseKind, Parameter, Pinned, Prior, PriorKind, Problem, Scale, Term,
 };
 pub use reduction::{MIN_PADDED_LENGTH, PK_STEP, PkReduction, REDUCTIONS, Reduction};

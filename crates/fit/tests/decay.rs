@@ -345,6 +345,7 @@ fn at_the_change(value: f64, after: Option<Vec<bool>>) -> Problem {
         after_change: after,
         likelihood: None,
         reduction: None,
+        dimension: None,
     }];
     Problem::new(definition, model(), 1).unwrap()
 }
@@ -406,6 +407,7 @@ fn a_curve_of_more_flags_than_times_is_refused() {
         after_change: Some(vec![true, false]),
         likelihood: None,
         reduction: None,
+        dimension: None,
     }];
 
     let error = Problem::new(definition, model(), 1).unwrap_err();
@@ -439,6 +441,7 @@ fn the_jacobian_of_a_measurement_after_a_change_is_the_one_of_the_row_it_reads()
             after_change: flags,
             likelihood: None,
             reduction: None,
+            dimension: None,
         }];
         let problem = Problem::new(definition, model(), 1).unwrap();
         let x = problem.start();

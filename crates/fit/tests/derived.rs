@@ -66,6 +66,7 @@ fn condition() -> Condition {
                 factor: FACTOR,
             }],
         }],
+        pinned: Vec::new(),
     }
 }
 
@@ -94,6 +95,7 @@ fn definition(start: f64) -> Definition {
             after_change: None,
             likelihood: None,
             reduction: None,
+            dimension: None,
         }],
     }
 }

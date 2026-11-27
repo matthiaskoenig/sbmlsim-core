@@ -708,6 +708,64 @@ pub struct Curve {
     /// ([`Curve::after_change`]) and no noise of a column ([`Likelihood::noise_column`]),
     /// which are values at a row.
     pub reduction: Option<Reduction>,
+    /// The points of a dimension of a scan the curve interpolates over, whose x every
+    /// measurement has, see [`Dimension`]; `None` for a curve of one condition.
+    ///
+    /// The [`Curve::condition`] of a curve over a dimension is the first condition of its
+    /// dimension.
+    pub dimension: Option<Dimension>,
+}
+
+/// The points of a dimension of a scan, every one of them a condition, which a curve
+/// interpolates over.
+///
+/// A scan is a condition per point, and the data of a study is not always measured at a
+/// point: a measurement between two points is compared with the line between what the curve
+/// reads in the conditions of the two, at the x of the measurement, which is the linear
+/// interpolation of sbmlsim (`numpy.interp`) operation for operation. A measurement at a
+/// point is compared with what the curve reads in its condition alone. What a curve reads in
+/// a condition is what a curve of that condition alone would read: the column at the row of
+/// a measurement, or its [`Curve::reduction`].
+///
+/// The row of the jacobian of a measurement is the same interpolation of the derivatives of
+/// what the curve reads in the two conditions.
+#[derive(Clone, Debug)]
+pub struct Dimension {
+    /// The conditions of the points, by their index in [`Definition::conditions`], in the
+    /// order of their values; at least two, every one of them once.
+    pub conditions: Vec<usize>,
+    /// The value of the dimension at every point, finite and strictly increasing.
+    pub values: Vec<f64>,
+    /// The value of the dimension of every measurement, between the first and the last of
+    /// [`Dimension::values`].
+    pub x: Vec<f64>,
+    /// The reduction of the curve in the condition of every point, one per point, for a curve
+    /// whose reduction is not the same at every point, e.g. the analysis of a parameter of
+    /// the non-compartmental analysis whose doses are the ones of the point; empty for a
+    /// curve which reads its [`Curve::reduction`], or its column at its rows, at every point.
+    pub reductions: Vec<Reduction>,
+}
+
+impl Curve {
+    /// Whether the curve reads its column at the rows of its measurements, a curve which
+    /// reduces it neither in its condition nor in the conditions of the points of its
+    /// dimension.
+    fn rowed(&self) -> bool {
+        self.reduction.is_none()
+            && self
+                .dimension
+                .as_ref()
+                .is_none_or(|dimension| dimension.reductions.is_empty())
+    }
+
+    /// Whether the curve reads the condition at this index: its condition, or a condition of
+    /// a point of its dimension.
+    fn reads(&self, condition: usize) -> bool {
+        match &self.dimension {
+            None => self.condition == condition,
+            Some(dimension) => dimension.conditions.contains(&condition),
+        }
+    }
 }
 
 /// A fit as a host hands it over: the parameters, the conditions, the data and the priors.
@@ -742,6 +800,25 @@ pub struct Condition {
     /// The values which follow the parameters of the fit, set on their targets before every
     /// simulation, see [`Derived`]; empty for a condition of numbers alone.
     pub derived: Vec<Derived>,
+    /// The parameters of the fit whose targets the condition holds at a value of its own, see
+    /// [`Pinned`]; empty for a condition every parameter reaches.
+    pub pinned: Vec<Pinned>,
+}
+
+/// A parameter of a fit whose target a condition holds at a value of its own.
+///
+/// The target of a parameter is set to the value the optimizer is at in every condition,
+/// over the values of the request of the condition. A condition whose own value wins, e.g.
+/// the point of a scan whose dimension sets the target of a parameter of the fit, pins it:
+/// the target takes the value of the pin there, so the parameter has no effect on that
+/// condition and its column of the jacobian of the curves of the condition is zero. A
+/// [`Derived`] value of the condition reads the value of the parameter and not the pin.
+#[derive(Clone, Copy, Debug)]
+pub struct Pinned {
+    /// The position of the parameter in the parameters of the fit.
+    pub parameter: usize,
+    /// The value its target holds in the condition, on the linear scale.
+    pub value: f64,
 }
 
 /// A value of a condition which follows the parameters of a fit, `constant + Σ factor * p`.
@@ -769,6 +846,7 @@ impl From<SimulationRequest> for Condition {
             request,
             model: None,
             derived: Vec::new(),
+            pinned: Vec::new(),
         }
     }
 }
@@ -905,6 +983,32 @@ impl Resolved {
         }
     }
 
+    /// The derivatives of the reduction of the curve in every varying target, `targets` per
+    /// measurement, out of the sensitivities of its column (`derivatives` of a row and a
+    /// column); `None` for a curve which reads its column at its rows, whose derivatives are
+    /// the sensitivities of those rows themselves.
+    fn reduced_derivatives<'a>(
+        &self,
+        table: &SimulationResult,
+        columns: usize,
+        targets: usize,
+        derivatives: &impl Fn(usize, usize) -> &'a [f64],
+    ) -> Result<Option<Vec<f64>>, EngineError> {
+        let Some(reduction) = &self.reduction else {
+            return Ok(None);
+        };
+        reduction
+            .derivatives(
+                &self.column_of(table, columns, reduction.time_shift()),
+                &self.grid,
+                self.values.len(),
+                targets,
+                |row| derivatives(row, self.column),
+            )
+            .map(Some)
+            .map_err(EngineError::Internal)
+    }
+
     /// The two residual rows of the measurement `at` of a curve of the likelihood, without
     /// the weight of the curve, `None` for a measurement whose standard deviation is none
     /// ([`FAILED_RESIDUAL`] for both of them).
@@ -937,41 +1041,46 @@ impl Resolved {
             Some(column) => table.values[self.rows[at] * columns + column],
             None => self.noise[at],
         };
-        if !usable_sigma(sigma) {
-            return None;
-        }
-        let kind = likelihood.distribution;
-        let value = self.values[at];
-        // the difference is divided by the standard deviation and not multiplied by its
-        // reciprocal, which rounds once more, as the residual of a least squares is
-        let r = (prediction - value) / sigma;
-        let deviation_root = (2.0 * r.abs()).sqrt();
-        let data = if kind.laplace() {
-            r.signum() * deviation_root
-        } else {
-            r
-        };
-        let term = sigma.ln() + if kind.logarithmic() { value } else { 0.0 } + kind.constant();
-        let offset = LIKELIHOOD_OFFSET
-            + if kind.logarithmic() {
-                (-2.0 * value).max(0.0)
-            } else {
-                0.0
-            };
-        Some(Rows {
-            sigma,
-            r,
-            data,
-            deviation_root,
-            // the scale of a measurement which carries no information says nothing, where
-            // the term of an infinite standard deviation would be an infinity
-            scale_root: if sigma.is_finite() {
-                (2.0 * term + offset).max(0.0).sqrt()
-            } else {
-                0.0
-            },
-        })
+        measurement_rows(likelihood.distribution, sigma, self.values[at], prediction)
     }
+}
+
+/// The two residual rows of a measurement of a curve of a likelihood of the noise `kind`
+/// and the standard deviation `sigma`, see [`Resolved::rows_of`]; `None` for a standard
+/// deviation which is none.
+fn measurement_rows(kind: NoiseKind, sigma: f64, value: f64, prediction: f64) -> Option<Rows> {
+    if !usable_sigma(sigma) {
+        return None;
+    }
+    // the difference is divided by the standard deviation and not multiplied by its
+    // reciprocal, which rounds once more, as the residual of a least squares is
+    let r = (prediction - value) / sigma;
+    let deviation_root = (2.0 * r.abs()).sqrt();
+    let data = if kind.laplace() {
+        r.signum() * deviation_root
+    } else {
+        r
+    };
+    let term = sigma.ln() + if kind.logarithmic() { value } else { 0.0 } + kind.constant();
+    let offset = LIKELIHOOD_OFFSET
+        + if kind.logarithmic() {
+            (-2.0 * value).max(0.0)
+        } else {
+            0.0
+        };
+    Some(Rows {
+        sigma,
+        r,
+        data,
+        deviation_root,
+        // the scale of a measurement which carries no information says nothing, where
+        // the term of an infinite standard deviation would be an infinity
+        scale_root: if sigma.is_finite() {
+            (2.0 * term + offset).max(0.0).sqrt()
+        } else {
+            0.0
+        },
+    })
 }
 
 /// One condition of the fit: what to simulate and which residuals its table carries.
@@ -994,31 +1103,95 @@ struct Point {
     /// The values of the condition which follow the parameters, in the order they were
     /// appended to its varying targets, see [`Derived`]; empty for a condition of numbers.
     derived: Vec<Derived>,
+    /// The parameters whose targets the condition holds at a value of its own, see
+    /// [`Pinned`].
+    pinned: Vec<Pinned>,
+    /// What the curves over a dimension read off its table, one entry per curve and point of
+    /// its dimension which is this condition, see [`Interpolated`]: the predictions of such a
+    /// curve follow the residuals of the condition in its output.
+    nodes: Vec<Resolved>,
+    /// Where the predictions of every node begin after the residuals of the condition, in
+    /// measurements.
+    node_starts: Vec<usize>,
+}
+
+/// The values of the varying targets of a condition at the values of the parameters: the
+/// parameters themselves, the pins of the condition in their place, and then the linear forms
+/// of its derived values, which read the parameters and not the pins.
+///
+/// A condition without derived values and pins hands the values of the parameters through,
+/// so the common fit allocates nothing per simulation.
+fn varying_values<'a>(
+    derived: &[Derived],
+    pinned: &[Pinned],
+    parameters: &'a [f64],
+) -> Cow<'a, [f64]> {
+    if derived.is_empty() && pinned.is_empty() {
+        return Cow::Borrowed(parameters);
+    }
+    let mut values = Vec::with_capacity(parameters.len() + derived.len());
+    values.extend_from_slice(parameters);
+    for pin in pinned {
+        values[pin.parameter] = pin.value;
+    }
+    values.extend(derived.iter().map(|value| value.value(parameters)));
+    Cow::Owned(values)
 }
 
 impl Point {
-    /// The values of the varying targets of the condition at the values of the parameters:
-    /// the parameters themselves and then the linear forms of its derived values, which is
-    /// the order [`Problem::new`] prepared its varying targets in.
-    ///
-    /// A condition without derived values hands the values of the parameters through, so the
-    /// common fit allocates nothing per simulation.
+    /// The values of the varying targets of the condition at the values of the parameters,
+    /// in the order [`Problem::new`] prepared them in, see [`varying_values`].
     fn values<'a>(&self, parameters: &'a [f64]) -> Cow<'a, [f64]> {
-        if self.derived.is_empty() {
-            return Cow::Borrowed(parameters);
-        }
-        let mut values = Vec::with_capacity(parameters.len() + self.derived.len());
-        values.extend_from_slice(parameters);
-        values.extend(self.derived.iter().map(|value| value.value(parameters)));
-        Cow::Owned(values)
+        varying_values(&self.derived, &self.pinned, parameters)
     }
 
-    /// The residuals of the curves of the condition, in the order of the curves.
+    /// The factors of the jacobian of the condition, `factors` of [`Point::block`] without the
+    /// targets it pins, whose values do not follow a parameter here.
+    fn factors_of<'a>(
+        &self,
+        factors: &'a [Option<(usize, f64)>],
+    ) -> Cow<'a, [Option<(usize, f64)>]> {
+        if self.pinned.is_empty() {
+            return Cow::Borrowed(factors);
+        }
+        let mut own = factors.to_vec();
+        for pin in &self.pinned {
+            own[pin.parameter] = None;
+        }
+        Cow::Owned(own)
+    }
+
+    /// The length of the output of the condition: its residuals and the predictions of its
+    /// nodes.
+    fn n_outputs(&self) -> usize {
+        self.n_residuals
+            + self
+                .nodes
+                .iter()
+                .map(|node| node.values.len())
+                .sum::<usize>()
+    }
+
+    /// The predictions of a node of the condition in its output, see [`Point::residuals`].
+    fn node_output<'a>(&self, output: &'a [f64], node: usize) -> &'a [f64] {
+        &output[self.n_residuals + self.node_starts[node]..][..self.nodes[node].values.len()]
+    }
+
+    /// The prediction and its derivatives of every measurement of a node of the condition in
+    /// its block of the jacobian, `k + 1` values per measurement, see [`Point::block`].
+    fn node_block<'a>(&self, block: &'a [f64], node: usize, k: usize) -> &'a [f64] {
+        &block[self.n_residuals * k + self.node_starts[node] * (k + 1)..]
+            [..self.nodes[node].values.len() * (k + 1)]
+    }
+
+    /// The output of the condition: the residuals of its curves, in the order of the curves,
+    /// and then what every node reads, its predictions, which the curves over a dimension
+    /// interpolate ([`Interpolated`]).
     ///
     /// The rows of a curve of a likelihood are the residuals of its data and then the ones of
     /// the scale of their noise, which is the layout of its block of the jacobian as well.
     fn residuals(&self, table: &SimulationResult) -> Result<Vec<f64>, EngineError> {
-        let mut out = Vec::with_capacity(self.n_residuals);
+        let mut out = Vec::with_capacity(self.n_outputs());
         for curve in &self.curves {
             if curve.likelihood.is_none() && curve.reduction.is_none() {
                 for ((row, value), noise) in curve
@@ -1059,6 +1232,9 @@ impl Point {
                 out.push(rows.map_or(FAILED_RESIDUAL, |rows| rows.scale_root * curve.weight));
             }
         }
+        for node in &self.nodes {
+            out.extend(node.predictions(table, self.columns)?);
+        }
         Ok(out)
     }
 
@@ -1088,7 +1264,8 @@ impl Point {
             ));
         };
         let targets = sensitivities.parameters.len();
-        let mut out = vec![0.0; self.n_residuals * k];
+        let mut out =
+            vec![0.0; self.n_residuals * k + (self.n_outputs() - self.n_residuals) * (k + 1)];
         let derivatives = |row: usize, column: usize| {
             &sensitivities.values[(row * self.columns + column) * targets..][..targets]
         };
@@ -1096,20 +1273,7 @@ impl Point {
         for curve in &self.curves {
             // the derivative of what every measurement is compared with in every target: the
             // sensitivities of the column at its row, or their reduction
-            let reduced = match &curve.reduction {
-                None => None,
-                Some(reduction) => Some(
-                    reduction
-                        .derivatives(
-                            &curve.column_of(table, self.columns, reduction.time_shift()),
-                            &curve.grid,
-                            curve.values.len(),
-                            targets,
-                            |row| derivatives(row, curve.column),
-                        )
-                        .map_err(EngineError::Internal)?,
-                ),
-            };
+            let reduced = curve.reduced_derivatives(table, self.columns, targets, &derivatives)?;
             let dprediction = |point: usize| -> &[f64] {
                 match &reduced {
                     Some(values) => &values[point * targets..][..targets],
@@ -1177,6 +1341,26 @@ impl Point {
             }
             at += 2 * n;
         }
+        // what every node reads and its derivatives in the parameters of the search space,
+        // which a curve over a dimension interpolates, see `Interpolated::write_block`
+        let mut at = self.n_residuals * k;
+        for node in &self.nodes {
+            let predictions = node.predictions(table, self.columns)?;
+            let reduced = node.reduced_derivatives(table, self.columns, targets, &derivatives)?;
+            for (point, prediction) in predictions.iter().enumerate() {
+                let values = match &reduced {
+                    Some(values) => &values[point * targets..][..targets],
+                    None => derivatives(node.rows[point], node.column),
+                };
+                out[at] = *prediction;
+                for (value, factor) in values.iter().zip(factors) {
+                    if let Some((parameter, factor)) = factor {
+                        out[at + 1 + parameter] = value * factor;
+                    }
+                }
+                at += k + 1;
+            }
+        }
         Ok(out)
     }
 
@@ -1192,6 +1376,14 @@ impl Point {
         }
     }
 
+    /// Writes [`FAILED_RESIDUAL`] for every residual of the condition into the vector of the
+    /// fit, the residuals of a condition whose integration failed.
+    fn write_failed(&self, into: &mut [f64]) {
+        for curve in &self.curves {
+            into[curve.offset..curve.offset + curve.n_rows()].fill(FAILED_RESIDUAL);
+        }
+    }
+
     /// Writes the residuals of the condition into the vector of the fit.
     fn write(&self, into: &mut [f64], residuals: &[f64]) {
         let mut at = 0;
@@ -1199,6 +1391,211 @@ impl Point {
             let n = curve.n_rows();
             into[curve.offset..curve.offset + n].copy_from_slice(&residuals[at..at + n]);
             at += n;
+        }
+    }
+}
+
+/// A curve over the points of a dimension, resolved: every measurement is compared with the
+/// interpolation of what the curve reads in the conditions of the points around its x, see
+/// [`Dimension`].
+///
+/// What the curve reads in the condition of a point is a node of that condition
+/// ([`Point::nodes`]), which is computed on the thread of the condition as its residuals are,
+/// so a table never leaves its thread; the residuals of the curve are made from the nodes
+/// once every condition of the evaluation is done.
+#[derive(Debug)]
+struct Interpolated {
+    /// Where the residuals of the curve start in the vector of the residuals.
+    offset: usize,
+    /// The measurements.
+    values: Vec<f64>,
+    /// The standard deviation of every measurement, which its residual is divided by.
+    noise: Vec<f64>,
+    /// The weight of the curve, which every residual of it is multiplied by.
+    weight: f64,
+    /// The distribution of the noise of a curve of a likelihood, whose standard deviations
+    /// are the numbers of its request; `None` for the weighted least squares.
+    likelihood: Option<NoiseKind>,
+    /// The value of the dimension at every point.
+    at: Vec<f64>,
+    /// The x of every measurement and the points around it.
+    brackets: Vec<Bracket>,
+    /// The node of every point: the index of its condition and of the node there.
+    nodes: Vec<(usize, usize)>,
+}
+
+/// The points a measurement of a curve over a dimension is interpolated between.
+#[derive(Clone, Copy, Debug)]
+struct Bracket {
+    /// The x of the measurement.
+    x: f64,
+    /// The last point whose value is at most `x`.
+    lower: usize,
+    /// The point after it, `None` for a measurement at the value of `lower` or at the last
+    /// point, which is compared with what the curve reads at `lower` alone.
+    upper: Option<usize>,
+}
+
+impl Bracket {
+    /// The points around `x` in strictly increasing values which cover it, as `numpy.interp`
+    /// finds them: the last point at or below `x`, and the one after it unless `x` is its
+    /// value or it is the last.
+    fn of(x: f64, at: &[f64]) -> Bracket {
+        let lower = at.partition_point(|value| *value <= x).saturating_sub(1);
+        let upper = (lower + 1 < at.len() && at[lower] != x).then_some(lower + 1);
+        Bracket { x, lower, upper }
+    }
+}
+
+/// The value at `x` of the line through `(x0, y0)` and `(x1, y1)`, `y0` without the second
+/// point: the arithmetic of `numpy.interp` operation for operation, its slope first and then
+/// the step from the lower point, and from the upper one where that is `NaN` (an infinite
+/// value of a point), so a curve over a dimension is the interpolation of sbmlsim bitwise.
+fn interpolate(x: f64, (x0, y0): (f64, f64), upper: Option<(f64, f64)>) -> f64 {
+    let Some((x1, y1)) = upper else {
+        return y0;
+    };
+    let slope = (y1 - y0) / (x1 - x0);
+    let value = slope * (x - x0) + y0;
+    if !value.is_nan() {
+        return value;
+    }
+    let value = slope * (x - x1) + y1;
+    if value.is_nan() && y0 == y1 {
+        y0
+    } else {
+        value
+    }
+}
+
+impl Interpolated {
+    /// The number of rows of the curve in the residuals of the fit: one per measurement, and
+    /// one more per measurement for the scale of the noise of a likelihood.
+    fn n_rows(&self) -> usize {
+        self.values.len() * if self.likelihood.is_some() { 2 } else { 1 }
+    }
+
+    /// What every measurement is compared with, the interpolation of the predictions of the
+    /// nodes in the outputs of the conditions of an evaluation; `None` when the integration of
+    /// a condition of a point failed.
+    fn predictions(&self, points: &[Point], outputs: &[Option<Vec<f64>>]) -> Option<Vec<f64>> {
+        let reads = self
+            .nodes
+            .iter()
+            .map(|(point, node)| {
+                outputs[*point]
+                    .as_deref()
+                    .map(|output| points[*point].node_output(output, *node))
+            })
+            .collect::<Option<Vec<&[f64]>>>()?;
+        Some(
+            self.brackets
+                .iter()
+                .enumerate()
+                .map(|(at, bracket)| {
+                    interpolate(
+                        bracket.x,
+                        (self.at[bracket.lower], reads[bracket.lower][at]),
+                        bracket
+                            .upper
+                            .map(|upper| (self.at[upper], reads[upper][at])),
+                    )
+                })
+                .collect(),
+        )
+    }
+
+    /// Writes the residuals of the curve into the vector of the fit, [`FAILED_RESIDUAL`] for
+    /// every one of them when a condition of a point failed.
+    fn write(&self, into: &mut [f64], predictions: Option<&[f64]>) {
+        let n = self.values.len();
+        let rows = &mut into[self.offset..self.offset + self.n_rows()];
+        let Some(predictions) = predictions else {
+            rows.fill(FAILED_RESIDUAL);
+            return;
+        };
+        for (at, ((prediction, value), noise)) in predictions
+            .iter()
+            .zip(self.values.iter())
+            .zip(self.noise.iter())
+            .enumerate()
+        {
+            let Some(kind) = self.likelihood else {
+                rows[at] = (prediction - value) / noise * self.weight;
+                continue;
+            };
+            match measurement_rows(kind, *noise, *value, *prediction) {
+                Some(measured) => {
+                    rows[at] = measured.data * self.weight;
+                    rows[n + at] = measured.scale_root * self.weight;
+                }
+                None => {
+                    rows[at] = FAILED_RESIDUAL;
+                    rows[n + at] = FAILED_RESIDUAL;
+                }
+            }
+        }
+    }
+
+    /// Writes the rows of the curve into the jacobian of the fit: the interpolation of the
+    /// derivatives of the nodes, through the chain rule of its residuals. A row of the scale
+    /// of a noise is zero, since the standard deviation of a measurement is a number here,
+    /// and so is every row of the curve when a condition of a point failed.
+    fn write_block(
+        &self,
+        into: &mut [f64],
+        points: &[Point],
+        blocks: &[Option<Vec<f64>>],
+        k: usize,
+    ) {
+        let Some(reads) = self
+            .nodes
+            .iter()
+            .map(|(point, node)| {
+                blocks[*point]
+                    .as_deref()
+                    .map(|block| points[*point].node_block(block, *node, k))
+            })
+            .collect::<Option<Vec<&[f64]>>>()
+        else {
+            return;
+        };
+        for (at, bracket) in self.brackets.iter().enumerate() {
+            let lower = &reads[bracket.lower][at * (k + 1)..][..k + 1];
+            let upper = bracket
+                .upper
+                .map(|upper| (self.at[upper], &reads[upper][at * (k + 1)..][..k + 1]));
+            let x0 = self.at[bracket.lower];
+            let value = |column: usize| {
+                interpolate(
+                    bracket.x,
+                    (x0, lower[column]),
+                    upper.map(|(x1, row)| (x1, row[column])),
+                )
+            };
+            let noise = self.noise[at];
+            // the derivative of the residual of the data in the interpolated prediction
+            let scale = match self.likelihood {
+                None => self.weight / noise,
+                Some(kind) => {
+                    let Some(rows) = measurement_rows(kind, noise, self.values[at], value(0))
+                    else {
+                        continue;
+                    };
+                    if !kind.laplace() {
+                        self.weight / rows.sigma
+                    } else if rows.r == 0.0 {
+                        // the root of a Laplace kind has no derivative at its minimum
+                        0.0
+                    } else {
+                        self.weight / rows.sigma / rows.deviation_root
+                    }
+                }
+            };
+            let row = &mut into[(self.offset + at) * k..][..k];
+            for (parameter, derivative) in row.iter_mut().enumerate() {
+                *derivative = value(1 + parameter) * scale;
+            }
         }
     }
 }
@@ -1225,6 +1622,9 @@ pub struct Problem {
     /// The conditions of the fit and the curves they carry, shared with the problems which
     /// fix a parameter of it.
     points: Arc<Vec<Point>>,
+    /// The curves over a dimension, which interpolate between the nodes of the conditions of
+    /// their points, shared with those problems as well.
+    interpolated: Arc<Vec<Interpolated>>,
     /// The priors of the parameters, whose rows come after every row of the curves, shared
     /// with those problems as well: the prior of a parameter a profile holds at a value is
     /// read where it is held.
@@ -1328,6 +1728,7 @@ impl Problem {
         let mut varyings = Vec::with_capacity(conditions.len());
         for (at, condition) in conditions.iter().enumerate() {
             varyings.push(check_derived(at, condition, &varying)?);
+            check_pinned(at, condition, parameters.len())?;
         }
         let derived = conditions.iter().any(|c| !c.derived.is_empty());
         let ats = models_of(&models, &conditions)?;
@@ -1344,9 +1745,7 @@ impl Problem {
         {
             // the rows of a curve of a reduction are not resolved, so a condition whose
             // curves are all reductions may output the steps of the integrator
-            let rowed = curves
-                .iter()
-                .any(|curve| curve.condition == at && curve.reduction.is_none());
+            let rowed = curves.iter().any(|curve| curve.reads(at) && curve.rowed());
             if rowed && matches!(condition.request.output, Output::IntegratorSteps) {
                 return Err(FitError::Condition {
                     at,
@@ -1398,22 +1797,52 @@ impl Problem {
                     curves: Vec::new(),
                     n_residuals: 0,
                     derived: condition.derived.clone(),
+                    pinned: condition.pinned.clone(),
+                    nodes: Vec::new(),
+                    node_starts: Vec::new(),
                 },
             )
             .collect();
         let mut n_residuals = 0;
+        let mut interpolated = Vec::new();
         for (at, curve) in curves.iter().enumerate() {
-            let point = points
-                .get_mut(curve.condition)
-                .ok_or_else(|| FitError::Curve {
-                    at,
-                    message: format!(
-                        "reads the condition {}, which the fit has not",
-                        curve.condition
-                    ),
-                })?;
+            let fault = |message: String| FitError::Curve { at, message };
+            if curve.condition >= points.len() {
+                return Err(fault(format!(
+                    "reads the condition {}, which the fit has not",
+                    curve.condition
+                )));
+            }
+            if let Some(dimension) = &curve.dimension {
+                let mut over = resolve_dimension(at, curve, dimension, &tables, n_residuals)?;
+                for (index, (node, condition)) in
+                    over.nodes.iter_mut().zip(&dimension.conditions).enumerate()
+                {
+                    // what the curve reads in the condition of the point, which is what a
+                    // curve of that condition alone would read, with the reduction of the
+                    // point where the points have their own
+                    let resolved = match dimension.reductions.get(index) {
+                        None => resolve(at, curve, &tables[*condition], 0)?,
+                        Some(reduction) => {
+                            let mut own = curve.clone();
+                            own.reduction = Some(reduction.clone());
+                            resolve(at, &own, &tables[*condition], 0)?
+                        }
+                    };
+                    let point = &mut points[*condition];
+                    *node = (*condition, point.nodes.len());
+                    point
+                        .node_starts
+                        .push(point.nodes.iter().map(|node| node.values.len()).sum());
+                    point.nodes.push(resolved);
+                }
+                n_residuals += over.n_rows();
+                interpolated.push(over);
+                continue;
+            }
             let resolved = resolve(at, curve, &tables[curve.condition], n_residuals)?;
             n_residuals += resolved.n_rows();
+            let point = &mut points[curve.condition];
             point.n_residuals += resolved.n_rows();
             point.curves.push(resolved);
         }
@@ -1430,6 +1859,7 @@ impl Problem {
                 .collect(),
             free: parameters,
             points: Arc::new(points),
+            interpolated: Arc::new(interpolated),
             priors: Arc::new(priors),
             n_residuals,
             jacobian,
@@ -1505,6 +1935,7 @@ impl Problem {
             free,
             slots,
             points: self.points.clone(),
+            interpolated: self.interpolated.clone(),
             priors: self.priors.clone(),
             n_residuals: self.n_residuals,
             jacobian: self.jacobian,
@@ -1603,14 +2034,28 @@ impl Problem {
                 values: &values,
             })
             .collect();
-        let points = self.run(&shots)?;
+        let outputs = self.run(&shots)?;
         let mut residuals = vec![0.0; self.n_residuals];
-        for (shot, point) in shots.iter().zip(points.iter()) {
-            shot.point.write(&mut residuals, point);
-        }
+        self.write_evaluation(&mut residuals, &outputs);
         let at = self.priors_at();
         self.priors.write(&mut residuals[at..], &values);
         Ok(residuals)
+    }
+
+    /// Writes the rows of the curves of one evaluation, the outputs of every condition in the
+    /// order of the conditions (`None` for a failed integration), into the residuals of the
+    /// fit: the rows of the curves of every condition and then the ones of the curves over a
+    /// dimension, which interpolate between the outputs of several conditions.
+    fn write_evaluation(&self, into: &mut [f64], outputs: &[Option<Vec<f64>>]) {
+        for (point, output) in self.points.iter().zip(outputs) {
+            match output {
+                Some(output) => point.write(into, output),
+                None => point.write_failed(into),
+            }
+        }
+        for curve in self.interpolated.iter() {
+            curve.write(into, curve.predictions(&self.points, outputs).as_deref());
+        }
     }
 
     /// Where the rows of the priors begin in the residuals of the fit: after every row of
@@ -1762,24 +2207,33 @@ impl Problem {
                         "a condition of the fit carries no sensitivities".to_string(),
                     ));
                 };
-                let table = instance.simulate_prepared(prepared, shot.values)?;
-                shot.point.block(&table, &factors, k)
+                let values = shot.point.values(shot.values);
+                let table = instance.simulate_prepared(prepared, &values)?;
+                shot.point
+                    .block(&table, &shot.point.factors_of(&factors), k)
             },
         );
         let mut jacobian = vec![0.0; self.n_residuals * k];
         let at = self.priors_at();
         self.priors
             .write_block(&mut jacobian[at * k..], &values, &factors, k);
+        let mut blocks = Vec::with_capacity(shots.len());
         for (shot, outcome) in shots.iter().zip(outcomes) {
-            match outcome {
-                Ok(block) => shot.point.write_block(&mut jacobian, &block, k),
+            blocks.push(match outcome {
+                Ok(block) => {
+                    shot.point.write_block(&mut jacobian, &block, k);
+                    Some(block)
+                }
                 // a failed integration is a point of the search space the fit may not take:
                 // its residuals are `FAILED_RESIDUAL` and its block of the jacobian says
                 // nothing, so the optimizer rejects the step by its cost
-                Err(PointFailure::Engine(EngineError::Integration { .. })) => {}
+                Err(PointFailure::Engine(EngineError::Integration { .. })) => None,
                 Err(PointFailure::Engine(err)) => return Err(FitError::Engine(err)),
                 Err(PointFailure::Internal(message)) => return Err(FitError::Point(message)),
-            }
+            });
+        }
+        for curve in self.interpolated.iter() {
+            curve.write_block(&mut jacobian, &self.points, &blocks, k);
         }
         Ok(jacobian)
     }
@@ -1818,14 +2272,12 @@ impl Problem {
         }
         let g = self.points.len();
         let n = self.n_residuals;
-        let points = self.run(&shots)?;
+        let outputs = self.run(&shots)?;
         // the residuals of the base point and of every column of the difference, one after
         // the other: the points of a column are the conditions of one evaluation
         let mut residuals = vec![0.0; (k + 1) * n];
-        for (at, (shot, point)) in shots.iter().zip(points.iter()).enumerate() {
-            let column = at / g;
-            shot.point
-                .write(&mut residuals[column * n..(column + 1) * n], point);
+        for (column, outputs) in outputs.chunks(g).enumerate() {
+            self.write_evaluation(&mut residuals[column * n..(column + 1) * n], outputs);
         }
         // the rows of the priors are rows of the residuals, so the difference of a column
         // differences them as well
@@ -1847,11 +2299,13 @@ impl Problem {
         Ok(jacobian)
     }
 
-    /// Runs the points of a batch and reduces every one of them on the thread of the point.
+    /// Runs the points of a batch and reduces every one of them on the thread of the point to
+    /// its output ([`Point::residuals`]).
     ///
-    /// The residuals of a point whose integration failed are [`FAILED_RESIDUAL`]; any other
-    /// failure of the engine is an error of the fit.
-    fn run(&self, shots: &[Shot<'_>]) -> Result<Vec<Vec<f64>>, FitError> {
+    /// The output of a point whose integration failed is `None`, whose residuals are
+    /// [`FAILED_RESIDUAL`] ([`Problem::write_evaluation`]); any other failure of the engine
+    /// is an error of the fit.
+    fn run(&self, shots: &[Shot<'_>]) -> Result<Vec<Option<Vec<f64>>>, FitError> {
         self.simulations
             .fetch_add(shots.len() as u64, Ordering::Relaxed);
         let outcomes = self.workers.map_at(
@@ -1864,13 +2318,11 @@ impl Problem {
             },
         );
         let mut residuals = Vec::with_capacity(shots.len());
-        for (shot, outcome) in shots.iter().zip(outcomes) {
+        for outcome in outcomes {
             residuals.push(match outcome {
-                Ok(residuals) => residuals,
+                Ok(residuals) => Some(residuals),
                 // a failed integration is a point of the search space the fit may not take
-                Err(PointFailure::Engine(EngineError::Integration { .. })) => {
-                    vec![FAILED_RESIDUAL; shot.point.n_residuals]
-                }
+                Err(PointFailure::Engine(EngineError::Integration { .. })) => None,
                 Err(PointFailure::Engine(err)) => return Err(FitError::Engine(err)),
                 Err(PointFailure::Internal(message)) => return Err(FitError::Point(message)),
             });
@@ -1974,6 +2426,145 @@ fn sensitive_conditions(
     Ok(prepared)
 }
 
+/// Checks the pins of a condition: a parameter of the fit, pinned once, at a finite value.
+fn check_pinned(at: usize, condition: &Condition, parameters: usize) -> Result<(), FitError> {
+    let mut seen = vec![false; parameters];
+    for pin in &condition.pinned {
+        let fault = if pin.parameter >= parameters {
+            Some(format!(
+                "pins the parameter {} of a fit of {parameters} parameters",
+                pin.parameter
+            ))
+        } else if std::mem::replace(&mut seen[pin.parameter], true) {
+            Some(format!("pins the parameter {} twice", pin.parameter))
+        } else if !pin.value.is_finite() {
+            Some(format!(
+                "pins the parameter {} at {}, which is not finite",
+                pin.parameter, pin.value
+            ))
+        } else {
+            None
+        };
+        if let Some(message) = fault {
+            return Err(FitError::Condition { at, message });
+        }
+    }
+    Ok(())
+}
+
+/// Resolves a curve over a dimension: its points, their values and the bracket of every
+/// measurement, with its nodes still to be placed in the conditions of its points.
+fn resolve_dimension(
+    at: usize,
+    curve: &Curve,
+    dimension: &Dimension,
+    tables: &[SimulationResult],
+    offset: usize,
+) -> Result<Interpolated, FitError> {
+    let fault = |message: String| FitError::Curve { at, message };
+    let Dimension {
+        conditions,
+        values,
+        x,
+        reductions,
+    } = dimension;
+    if conditions.len() < 2 {
+        return Err(fault(format!(
+            "interpolates over {} points of a dimension, and a curve of one point is a curve \
+             of its condition",
+            conditions.len()
+        )));
+    }
+    if values.len() != conditions.len() {
+        return Err(fault(format!(
+            "has {} conditions and {} values of its dimension",
+            conditions.len(),
+            values.len()
+        )));
+    }
+    if let Some(condition) = conditions.iter().find(|c| **c >= tables.len()) {
+        return Err(fault(format!(
+            "reads the condition {condition}, which the fit has not"
+        )));
+    }
+    if curve.condition != conditions[0] {
+        return Err(fault(format!(
+            "reads the condition {} and a dimension whose first condition is {}",
+            curve.condition, conditions[0]
+        )));
+    }
+    for (index, condition) in conditions.iter().enumerate() {
+        if conditions[..index].contains(condition) {
+            return Err(fault(format!(
+                "has the condition {condition} twice in its dimension"
+            )));
+        }
+    }
+    if !values.iter().all(|value| value.is_finite())
+        || values.windows(2).any(|pair| pair[0] >= pair[1])
+    {
+        return Err(fault(format!(
+            "has the values {values:?} of its dimension, which do not increase strictly or \
+             are not finite"
+        )));
+    }
+    if !reductions.is_empty() && reductions.len() != conditions.len() {
+        return Err(fault(format!(
+            "has {} conditions and {} reductions of its dimension",
+            conditions.len(),
+            reductions.len()
+        )));
+    }
+    if !reductions.is_empty() && curve.reduction.is_some() {
+        return Err(fault(
+            "carries a reduction and the reductions of the points of its dimension: a \
+             point reads one of them"
+                .to_string(),
+        ));
+    }
+    if x.len() != curve.values.len() {
+        return Err(fault(format!(
+            "has {} values and {} x of its dimension",
+            curve.values.len(),
+            x.len()
+        )));
+    }
+    let (first, last) = (values[0], values[values.len() - 1]);
+    if let Some(outside) = x.iter().find(|x| !(**x >= first && **x <= last)) {
+        return Err(fault(format!(
+            "measures at the x {outside}, which is outside of its dimension [{first}, {last}]"
+        )));
+    }
+    if curve
+        .likelihood
+        .as_ref()
+        .is_some_and(|likelihood| likelihood.noise_column.is_some())
+    {
+        return Err(fault(
+            "carries a 'noise_column' and a dimension: the noise of a column is a value of one \
+             condition, which a curve over a dimension interpolates between"
+                .to_string(),
+        ));
+    }
+    // the noise of every measurement is checked with the nodes, see `resolve`
+    Ok(Interpolated {
+        offset,
+        values: curve.values.clone(),
+        noise: curve
+            .noise
+            .clone()
+            .unwrap_or_else(|| vec![1.0; curve.values.len()]),
+        weight: curve.weight,
+        likelihood: curve
+            .likelihood
+            .as_ref()
+            .map(|likelihood| likelihood.distribution),
+        at: values.clone(),
+        brackets: x.iter().map(|x| Bracket::of(*x, values)).collect(),
+        nodes: vec![(0, 0); conditions.len()],
+    })
+}
+
 /// Checks the derived values of a condition and gets its varying targets.
 ///
 /// The varying targets of a condition are the parameters of the fit and then the targets of
@@ -2040,13 +2631,7 @@ fn simulate(
         .zip(conditions.iter())
         .zip(ats.iter())
         .map(|((prepared, condition), model)| {
-            let values = if condition.derived.is_empty() {
-                Cow::Borrowed(values)
-            } else {
-                let mut all = values.to_vec();
-                all.extend(condition.derived.iter().map(|value| value.value(values)));
-                Cow::Owned(all)
-            };
+            let values = varying_values(&condition.derived, &condition.pinned, values);
             (*model, prepared, values)
         })
         .collect();

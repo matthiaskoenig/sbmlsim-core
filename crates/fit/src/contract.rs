@@ -14,9 +14,9 @@ use sbmlsim_host::LoadedModel;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Condition, Correlation, Curve, DEFAULT_MODEL, Definition, Derived, Fisher, Fit, FitError,
-    JacobianChoice, Likelihood, NoiseKind, Parameter, Prior, PriorKind, Problem, Profile,
-    Reduction, Scale, Settings, Stop, Term, Walk, fisher, profiles,
+    Condition, Correlation, Curve, DEFAULT_MODEL, Definition, Derived, Dimension, Fisher, Fit,
+    FitError, JacobianChoice, Likelihood, NoiseKind, Parameter, Pinned, Prior, PriorKind, Problem,
+    Profile, Reduction, Scale, Settings, Stop, Term, Walk, fisher, profiles,
 };
 
 /// Whether the jacobian of a request is the one of [`JacobianChoice::Auto`], which its
@@ -27,6 +27,17 @@ fn is_auto(choice: &JacobianChoice) -> bool {
 
 /// The contract of a fit: the version of the schema of a request and of its answer.
 pub const FIT_CONTRACT: &str = "fit/1";
+
+/// The additive fields of `fit/1` this build reads which a release before them would not
+/// refuse, or would refuse with an error a host cannot tell from another: a host reads them
+/// before it sends such a field, as it reads [`crate::REDUCTIONS`] before it sends a
+/// reduction.
+///
+/// - `"curve.dimension"`: a curve over the points of a dimension of a scan, which
+///   interpolates between their conditions ([`CurveRequest::dimension`]);
+/// - `"condition.pinned"`: a parameter whose target a condition holds at a value of its own
+///   ([`ConditionRequest::pinned`]).
+pub const FIELDS: &[&str] = &["curve.dimension", "condition.pinned"];
 
 /// A start of a fit: the values of its parameters as a caller gave them and the point of the
 /// search space they are.
@@ -280,6 +291,32 @@ pub struct ConditionRequest {
     /// Absent, which is the request every release before 0.17.0 reads, there are none.
     #[serde(default)]
     pub derived: Option<Vec<DerivedRequest>>,
+    /// The parameters of the fit whose targets the condition holds at a value of its own.
+    ///
+    /// The engine sets the target of every parameter to the value the optimizer is at, over
+    /// the values of the request of a condition. A condition whose own value of such a target
+    /// wins, e.g. the point of a scan whose dimension sets the target of a parameter of the
+    /// fit before the simulation, pins the parameter: its target takes the value of the pin
+    /// in this condition, the parameter has no effect on the condition and its column of the
+    /// jacobian of the curves of the condition is zero. A derived value of the condition
+    /// reads the value of the parameter and not the pin.
+    ///
+    /// Absent, which is every request written before the field existed, there are none. A
+    /// release before it does not deny the field and would set the parameter over the value
+    /// of the condition, so a host sends it only to a build which names `"condition.pinned"`
+    /// in [`crate::FIELDS`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pinned: Option<Vec<PinnedRequest>>,
+}
+
+/// A parameter of a fit whose target a condition holds at a value of its own, see
+/// [`ConditionRequest::pinned`].
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct PinnedRequest {
+    /// The position of the parameter in the parameters of the fit.
+    pub parameter: usize,
+    /// The value its target holds in the condition, on the linear scale.
+    pub value: f64,
 }
 
 /// A value of a condition which follows the parameters of a fit, `constant + Σ factor * p`.
@@ -311,7 +348,9 @@ pub struct CurveRequest {
     /// The id of the curve, which the answer names it by.
     #[serde(default)]
     pub id: Option<String>,
-    /// The id of the condition the curve is read from.
+    /// The id of the condition the curve is read from; none for a curve over a
+    /// [`CurveRequest::dimension`], which reads the conditions of its points.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub condition: String,
     /// The column of the simulation of that condition the curve is read from.
     pub column: String,
@@ -381,6 +420,44 @@ pub struct CurveRequest {
     /// version of the engine it speaks to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reduction: Option<Reduction>,
+    /// The points of a dimension of a scan the curve interpolates over, every one of them a
+    /// condition, and the x of every measurement on that dimension, see
+    /// [`crate::Dimension`]. A measurement between two points is compared with the line
+    /// between what the curve reads in their two conditions at its x, the interpolation of
+    /// `numpy.interp`, and one at a point with what it reads in the condition of that point;
+    /// what the curve reads in a condition is its column at the row of the time of the
+    /// measurement or its reduction, as for a curve of that condition alone. A curve over a
+    /// dimension names no `condition` and carries no `noise_column`, which is a value of one
+    /// condition.
+    ///
+    /// Absent, which is every request written before the field existed, the curve reads its
+    /// `condition`. A release before it requires the `condition` of a curve and refuses such
+    /// a request; a host sends it to a build which names `"curve.dimension"` in
+    /// [`crate::FIELDS`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dimension: Option<DimensionRequest>,
+}
+
+/// The points of a dimension of a scan a curve interpolates over, see
+/// [`CurveRequest::dimension`].
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct DimensionRequest {
+    /// The ids of the conditions of the points, in the order of their values; at least two,
+    /// every one of them once.
+    pub conditions: Vec<String>,
+    /// The value of the dimension at every point, finite and strictly increasing.
+    pub values: Vec<f64>,
+    /// The value of the dimension of every measurement of the curve, between the first and
+    /// the last of `values`.
+    pub x: Vec<f64>,
+    /// The reduction of the curve in the condition of every point, one per point, in place of
+    /// the `reduction` of the curve, which a curve that carries them carries none of: the
+    /// reduction of a point which is not the one of every other point, e.g. the analysis of
+    /// a parameter of the non-compartmental analysis whose batch carries the dose of the
+    /// point. Empty, which is what an absent field is, every point reads the `reduction` of
+    /// the curve, or its column at the rows of its times.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reductions: Vec<Reduction>,
 }
 
 /// The noise distribution of the measurements of a curve, see [`CurveRequest::likelihood`].
@@ -745,16 +822,42 @@ fn definition_of(request: &FitRequest) -> Result<Definition, FitError> {
     }
     let mut curves = Vec::with_capacity(request.curves.len());
     for (at, curve) in request.curves.iter().enumerate() {
-        let condition = *at_of.get(curve.condition.as_str()).ok_or_else(|| {
-            FitError::Request(format!(
-                "has the curve {at}{}, which reads the condition '{}' it has not",
-                curve
-                    .id
-                    .as_ref()
-                    .map_or(String::new(), |id| format!(" ('{id}')")),
-                curve.condition
-            ))
-        })?;
+        let name = curve
+            .id
+            .as_ref()
+            .map_or(String::new(), |id| format!(" ('{id}')"));
+        let condition_of = |id: &str| {
+            at_of.get(id).copied().ok_or_else(|| {
+                FitError::Request(format!(
+                    "has the curve {at}{name}, which reads the condition '{id}' it has not"
+                ))
+            })
+        };
+        let dimension = match &curve.dimension {
+            None => None,
+            Some(_) if !curve.condition.is_empty() => {
+                return Err(FitError::Request(format!(
+                    "has the curve {at}{name}, which reads the condition '{}' and a \
+                     dimension: a curve over a dimension reads the conditions of its points",
+                    curve.condition
+                )));
+            }
+            Some(dimension) => Some(Dimension {
+                conditions: dimension
+                    .conditions
+                    .iter()
+                    .map(|id| condition_of(id))
+                    .collect::<Result<_, _>>()?,
+                values: dimension.values.clone(),
+                x: dimension.x.clone(),
+                reductions: dimension.reductions.clone(),
+            }),
+        };
+        let condition = match &dimension {
+            // a dimension of no point is refused with the problem, see `Problem::new`
+            Some(dimension) => dimension.conditions.first().copied().unwrap_or(usize::MAX),
+            None => condition_of(&curve.condition)?,
+        };
         curves.push(Curve {
             condition,
             column: curve.column.clone(),
@@ -768,6 +871,7 @@ fn definition_of(request: &FitRequest) -> Result<Definition, FitError> {
                 noise_column: likelihood.noise_column.clone(),
             }),
             reduction: curve.reduction.clone(),
+            dimension,
         });
     }
     Ok(Definition {
@@ -810,6 +914,15 @@ fn definition_of(request: &FitRequest) -> Result<Definition, FitError> {
                             .collect()
                     })
                     .unwrap_or_default(),
+                pinned: condition
+                    .pinned
+                    .iter()
+                    .flatten()
+                    .map(|pin| Pinned {
+                        parameter: pin.parameter,
+                        value: pin.value,
+                    })
+                    .collect(),
             })
             .collect(),
         curves,
