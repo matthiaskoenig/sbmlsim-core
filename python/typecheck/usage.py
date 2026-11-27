@@ -1,5 +1,8 @@
 """The API of sbmlsim_core used as a caller uses it, which `ty` checks against the stub.
 
+The chart builder `sbmlsim_core.chart` is pure python with type hints, which `ty` checks
+the calls against as well.
+
 The file is checked and never run (`ty check python/typecheck`, the job `python bindings`).
 A line which must be refused carries an ignore of its rule: with `error-on-warning` the
 ignore of a line which is accepted is a diagnostic, so the signatures are held in both
@@ -32,6 +35,17 @@ from sbmlsim_core import (
     SimulationError,
     SimulationOutput,
     UnsupportedError,
+)
+from sbmlsim_core.chart import (
+    LEGEND_LOCS,
+    MARKERS,
+    Chart,
+    ChartAxis,
+    ChartPlot,
+    axis_label,
+    color_alpha,
+    normalize_color,
+    short_unit,
 )
 
 
@@ -216,3 +230,28 @@ def the_figures(values: list[float]) -> None:
     mono: float = sbmlsim_core.text_width("AUC", 12.0, family="monospace")
     sbmlsim_core.text_width("x")  # ty: ignore[missing-argument]
     print(contract, svg, png, default_png, geometry, hit, colors, names, width, mono)
+
+
+def the_chart_builder(values: list[float], path: Path) -> None:
+    """A chart of `sbmlsim_core.chart`: its plots, elements, spec and files."""
+    chart = Chart(400, 300, title="decay", rows=1, columns=2, thinning=None)
+    plot: ChartPlot = chart.plot(0, 1, x=ChartAxis(label="time", unit="hr"))
+    element: str = plot.curve(values, values, label="A", marker="circle")
+    band: str = plot.band(values, values, values)
+    spec: dict[str, Any] = chart.spec()
+    text: str = chart.to_json()
+    svg: str = chart.svg()
+    png: bytes = chart.png(dpi=72.0)
+    saved: Path = chart.save(path)
+    label: str = axis_label("time", "hr")
+    short: str = short_unit("nanogram / milliliter")
+    color: str | None = normalize_color("tab:red")
+    alpha: tuple[str | None, float] = color_alpha((1.0, 0.0, 0.0, 0.5))
+    locs: tuple[str, ...] = LEGEND_LOCS
+    markers: tuple[str, ...] = MARKERS
+    Chart("400")  # ty: ignore[invalid-argument-type]
+    chart.plot(x="time")  # ty: ignore[invalid-argument-type]
+    chart.save(1)  # ty: ignore[invalid-argument-type]
+    short_unit(1)  # ty: ignore[invalid-argument-type]
+    print(element, band, spec, text, svg, png, saved, label, short, color, alpha)
+    print(locs, markers)
