@@ -104,6 +104,7 @@ fn definition(start: f64, models: &[(String, Arc<LoadedModel>)]) -> Definition {
                 weight: 1.0,
                 after_change: None,
                 likelihood: None,
+                reduction: None,
             }
         })
         .collect();
@@ -235,6 +236,7 @@ fn a_condition_of_a_fit_of_one_model_needs_no_model() {
             weight: 1.0,
             after_change: None,
             likelihood: None,
+            reduction: None,
         }],
     };
 

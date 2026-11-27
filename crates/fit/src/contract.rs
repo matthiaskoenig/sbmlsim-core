@@ -15,8 +15,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     Condition, Correlation, Curve, DEFAULT_MODEL, Definition, Derived, Fisher, Fit, FitError,
-    JacobianChoice, Likelihood, NoiseKind, Parameter, Prior, PriorKind, Problem, Profile, Scale,
-    Settings, Stop, Term, Walk, fisher, profiles,
+    JacobianChoice, Likelihood, NoiseKind, Parameter, Prior, PriorKind, Problem, Profile,
+    Reduction, Scale, Settings, Stop, Term, Walk, fisher, profiles,
 };
 
 /// Whether the jacobian of a request is the one of [`JacobianChoice::Auto`], which its
@@ -315,7 +315,10 @@ pub struct CurveRequest {
     pub condition: String,
     /// The column of the simulation of that condition the curve is read from.
     pub column: String,
-    /// The times of the measurements, which have to be output times of the condition.
+    /// The times of the measurements, which have to be output times of the condition; for a
+    /// curve of a [`CurveRequest::reduction`], the times its column is interpolated at
+    /// ([`Reduction::At`]) and none for every other kind, which is what an absent field is.
+    #[serde(default)]
     pub times: Vec<f64>,
     /// The measurements, one per time.
     pub values: Vec<f64>,
@@ -365,6 +368,19 @@ pub struct CurveRequest {
     /// Absent, which is every request written before the block existed, there is none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub likelihood: Option<LikelihoodRequest>,
+    /// The reduction of the column the measurements are compared with, a value of the whole
+    /// column over the time of the simulation: its largest or its smallest value, its mean
+    /// over the time, its value interpolated at the times of the curve, or a parameter of the
+    /// non-compartmental analysis of pkpdutils, see [`Reduction`]. A curve of a reduction
+    /// carries no `after_change` and no `noise_column`, which are values at a row, and its
+    /// condition may output the steps of the integrator when every curve of it is one.
+    ///
+    /// Absent, which is every request written before 0.32.0, the curve reads the column at
+    /// the row of every measurement. A release before 0.32.0 does not deny the field and
+    /// would read the column at the rows of the times of the curve, so a host gates it on the
+    /// version of the engine it speaks to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reduction: Option<Reduction>,
 }
 
 /// The noise distribution of the measurements of a curve, see [`CurveRequest::likelihood`].
@@ -751,6 +767,7 @@ fn definition_of(request: &FitRequest) -> Result<Definition, FitError> {
                 distribution: likelihood.distribution,
                 noise_column: likelihood.noise_column.clone(),
             }),
+            reduction: curve.reduction.clone(),
         });
     }
     Ok(Definition {

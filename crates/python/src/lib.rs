@@ -100,6 +100,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("MODEL_CONTRACT", MODEL_CONTRACT)?;
     m.add("SIMULATION_CONTRACT", SIMULATION_CONTRACT)?;
     m.add("FIT_CONTRACT", sbmlsim_fit::FIT_CONTRACT)?;
+    m.add("FIT_REDUCTIONS", sbmlsim_fit::REDUCTIONS.to_vec())?;
     m.add("FIGURE_CONTRACT", sbmlsim_plot::FIGURE_CONTRACT)?;
     m.add("COLOR_SCALES", sbmlsim_plot::COLOR_SCALES.to_vec())?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;

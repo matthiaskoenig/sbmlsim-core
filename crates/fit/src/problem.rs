@@ -11,6 +11,8 @@ use sbmlsim_host::{LoadedModel, NativeInstance, PreparedSimulation};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::reduction::{Column, Reduction};
+
 /// The residual of a point whose simulation failed, the one sbmlsim scores a failed
 /// evaluation with (`LIKELIHOOD_FAILURE_RESIDUAL`): a large finite number, so that the step
 /// of an optimizer which reaches it is rejected and the fit goes on, where an infinite
@@ -695,6 +697,17 @@ pub struct Curve {
     /// two per measurement, the one of its data and the one of the scale of its noise. The
     /// weighted least squares of [`Curve::noise`] when it is absent.
     pub likelihood: Option<Likelihood>,
+    /// The reduction of the column the measurements are compared with, a value of the whole
+    /// column over the time of the simulation, see [`Reduction`]; the column at the row of
+    /// every measurement when it is absent.
+    ///
+    /// The `times` of a curve of a reduction are the times of an interpolation
+    /// ([`Reduction::At`]) and none for every other kind, whose measurements are all
+    /// compared with the one reduced value. Its rows are not resolved, so its condition may
+    /// output the steps of the integrator; it reads no state after a change
+    /// ([`Curve::after_change`]) and no noise of a column ([`Likelihood::noise_column`]),
+    /// which are values at a row.
+    pub reduction: Option<Reduction>,
 }
 
 /// A fit as a host hands it over: the parameters, the conditions, the data and the priors.
@@ -797,6 +810,13 @@ struct Resolved {
     /// The noise model of the curve, resolved against the table of its condition; `None` for
     /// the weighted least squares of a curve without one.
     likelihood: Option<ResolvedLikelihood>,
+    /// The reduction of the column the measurements are compared with, `None` for a curve
+    /// which reads the column at its [`Resolved::rows`], which a curve of a reduction has none
+    /// of.
+    reduction: Option<Reduction>,
+    /// The times of the measurements of a reduction which interpolates, in the time of the
+    /// reduction ([`Reduction::At`]); empty for every other curve.
+    grid: Vec<f64>,
 }
 
 /// The noise model of a curve, with the column of its standard deviation resolved.
@@ -841,7 +861,48 @@ impl Resolved {
     /// The number of rows of the curve in the residuals of the fit: one per measurement, and
     /// one more per measurement for the scale of the noise of a likelihood.
     fn n_rows(&self) -> usize {
-        self.rows.len() * if self.likelihood.is_some() { 2 } else { 1 }
+        self.values.len() * if self.likelihood.is_some() { 2 } else { 1 }
+    }
+
+    /// The rows of the column of the curve in a table, with their times in the time of a
+    /// reduction.
+    fn column_of<'a>(&self, table: &'a SimulationResult, columns: usize, shift: f64) -> Column<'a> {
+        Column {
+            times: (0..table.n_rows)
+                .map(|row| table.values[row * columns] + shift)
+                .collect(),
+            values: &table.values,
+            columns,
+            column: self.column,
+        }
+    }
+
+    /// What every measurement of the curve is compared with: the column at its row, or the
+    /// reduction of the column.
+    ///
+    /// # Errors
+    ///
+    /// If the analysis of a [`Reduction::Pk`] fails, which the start of the fit has shown it
+    /// does not for the table of the condition.
+    fn predictions(
+        &self,
+        table: &SimulationResult,
+        columns: usize,
+    ) -> Result<Vec<f64>, EngineError> {
+        match &self.reduction {
+            None => Ok(self
+                .rows
+                .iter()
+                .map(|row| table.values[row * columns + self.column])
+                .collect()),
+            Some(reduction) => reduction
+                .values(
+                    &self.column_of(table, columns, reduction.time_shift()),
+                    &self.grid,
+                    self.values.len(),
+                )
+                .map_err(EngineError::Internal),
+        }
     }
 
     /// The two residual rows of the measurement `at` of a curve of the likelihood, without
@@ -869,10 +930,11 @@ impl Resolved {
         columns: usize,
         likelihood: ResolvedLikelihood,
         at: usize,
+        prediction: f64,
     ) -> Option<Rows> {
-        let row = self.rows[at];
+        // a curve of a reduction has no row and no noise column, see `resolve`
         let sigma = match likelihood.noise_column {
-            Some(column) => table.values[row * columns + column],
+            Some(column) => table.values[self.rows[at] * columns + column],
             None => self.noise[at],
         };
         if !usable_sigma(sigma) {
@@ -882,7 +944,7 @@ impl Resolved {
         let value = self.values[at];
         // the difference is divided by the standard deviation and not multiplied by its
         // reciprocal, which rounds once more, as the residual of a least squares is
-        let r = (table.values[row * columns + self.column] - value) / sigma;
+        let r = (prediction - value) / sigma;
         let deviation_root = (2.0 * r.abs()).sqrt();
         let data = if kind.laplace() {
             r.signum() * deviation_root
@@ -955,10 +1017,10 @@ impl Point {
     ///
     /// The rows of a curve of a likelihood are the residuals of its data and then the ones of
     /// the scale of their noise, which is the layout of its block of the jacobian as well.
-    fn residuals(&self, table: &SimulationResult) -> Vec<f64> {
+    fn residuals(&self, table: &SimulationResult) -> Result<Vec<f64>, EngineError> {
         let mut out = Vec::with_capacity(self.n_residuals);
         for curve in &self.curves {
-            let Some(likelihood) = curve.likelihood else {
+            if curve.likelihood.is_none() && curve.reduction.is_none() {
                 for ((row, value), noise) in curve
                     .rows
                     .iter()
@@ -974,19 +1036,30 @@ impl Point {
                     out.push(residual * curve.weight);
                 }
                 continue;
+            }
+            let predictions = curve.predictions(table, self.columns)?;
+            let Some(likelihood) = curve.likelihood else {
+                for ((prediction, value), noise) in predictions
+                    .iter()
+                    .zip(curve.values.iter())
+                    .zip(curve.noise.iter())
+                {
+                    out.push((prediction - value) / noise * curve.weight);
+                }
+                continue;
             };
             // the rows of a measurement are made in both loops, which costs a division and
             // a root and holds no buffer of the rows of the scales while the data is pushed
-            for at in 0..curve.rows.len() {
-                let rows = curve.rows_of(table, self.columns, likelihood, at);
+            for (at, prediction) in predictions.iter().enumerate() {
+                let rows = curve.rows_of(table, self.columns, likelihood, at, *prediction);
                 out.push(rows.map_or(FAILED_RESIDUAL, |rows| rows.data * curve.weight));
             }
-            for at in 0..curve.rows.len() {
-                let rows = curve.rows_of(table, self.columns, likelihood, at);
+            for (at, prediction) in predictions.iter().enumerate() {
+                let rows = curve.rows_of(table, self.columns, likelihood, at, *prediction);
                 out.push(rows.map_or(FAILED_RESIDUAL, |rows| rows.scale_root * curve.weight));
             }
         }
-        out
+        Ok(out)
     }
 
     /// The block of the jacobian of the condition out of the sensitivities of its table: the
@@ -1021,25 +1094,56 @@ impl Point {
         };
         let mut at = 0;
         for curve in &self.curves {
+            // the derivative of what every measurement is compared with in every target: the
+            // sensitivities of the column at its row, or their reduction
+            let reduced = match &curve.reduction {
+                None => None,
+                Some(reduction) => Some(
+                    reduction
+                        .derivatives(
+                            &curve.column_of(table, self.columns, reduction.time_shift()),
+                            &curve.grid,
+                            curve.values.len(),
+                            targets,
+                            |row| derivatives(row, curve.column),
+                        )
+                        .map_err(EngineError::Internal)?,
+                ),
+            };
+            let dprediction = |point: usize| -> &[f64] {
+                match &reduced {
+                    Some(values) => &values[point * targets..][..targets],
+                    None => derivatives(curve.rows[point], curve.column),
+                }
+            };
+            let n = curve.values.len();
             let Some(likelihood) = curve.likelihood else {
-                for (row, noise) in curve.rows.iter().zip(curve.noise.iter()) {
+                for (point, noise) in curve.noise.iter().enumerate() {
                     let scale = curve.weight / noise;
-                    let values = derivatives(*row, curve.column);
+                    let values = dprediction(point);
                     for (value, factor) in values.iter().zip(factors) {
                         if let Some((parameter, factor)) = factor {
-                            out[at * k + parameter] = value * scale * factor;
+                            out[(at + point) * k + parameter] = value * scale * factor;
                         }
                     }
-                    at += 1;
                 }
+                at += n;
                 continue;
             };
-            let n = curve.rows.len();
+            let predictions = match &curve.reduction {
+                None => Vec::new(),
+                Some(_) => curve.predictions(table, self.columns)?,
+            };
             for point in 0..n {
-                let Some(rows) = curve.rows_of(table, self.columns, likelihood, point) else {
+                let prediction = match &curve.reduction {
+                    None => table.values[curve.rows[point] * self.columns + curve.column],
+                    Some(_) => predictions[point],
+                };
+                let Some(rows) = curve.rows_of(table, self.columns, likelihood, point, prediction)
+                else {
                     continue;
                 };
-                let dcolumn = derivatives(curve.rows[point], curve.column);
+                let dcolumn = dprediction(point);
                 let dnoise = likelihood
                     .noise_column
                     .map(|column| derivatives(curve.rows[point], column));
@@ -1238,11 +1342,17 @@ impl Problem {
             .zip(varyings.iter())
             .zip(ats.iter())
         {
-            if matches!(condition.request.output, Output::IntegratorSteps) {
+            // the rows of a curve of a reduction are not resolved, so a condition whose
+            // curves are all reductions may output the steps of the integrator
+            let rowed = curves
+                .iter()
+                .any(|curve| curve.condition == at && curve.reduction.is_none());
+            if rowed && matches!(condition.request.output, Output::IntegratorSteps) {
                 return Err(FitError::Condition {
                     at,
                     message: "outputs the steps of the integrator, whose times depend on the \
-                              parameters: a fit needs the times of its data or a uniform grid"
+                              parameters: a fit needs the times of its data or a uniform \
+                              grid, unless every curve of it is a reduction"
                         .to_string(),
                 });
             }
@@ -1750,7 +1860,7 @@ impl Problem {
             |instance, shot| {
                 let values = shot.point.values(shot.values);
                 let table = instance.simulate_prepared(&shot.point.prepared, &values)?;
-                Ok(shot.point.residuals(&table))
+                shot.point.residuals(&table)
             },
         );
         let mut residuals = Vec::with_capacity(shots.len());
@@ -2210,14 +2320,20 @@ fn resolve(
     offset: usize,
 ) -> Result<Resolved, FitError> {
     let fault = |message: String| FitError::Curve { at, message };
-    if curve.times.len() != curve.values.len() {
-        return Err(fault(format!(
-            "has {} times and {} values",
-            curve.times.len(),
-            curve.values.len()
-        )));
+    match &curve.reduction {
+        Some(reduction) => reduction
+            .check(&curve.times, curve.values.len())
+            .map_err(fault)?,
+        None if curve.times.len() != curve.values.len() => {
+            return Err(fault(format!(
+                "has {} times and {} values",
+                curve.times.len(),
+                curve.values.len()
+            )));
+        }
+        None => {}
     }
-    if curve.times.is_empty() {
+    if curve.values.is_empty() {
         return Err(fault("has no measurement".to_string()));
     }
     if !curve.weight.is_finite() || curve.weight <= 0.0 {
@@ -2289,12 +2405,44 @@ fn resolve(
                         })?,
                 ),
             };
+            if column.is_some() && curve.reduction.is_some() {
+                return Err(fault(
+                    "carries a 'noise_column' and a reduction: the noise of a column is a \
+                     value at the row of a measurement, which a reduction has none of"
+                        .to_string(),
+                ));
+            }
             Some(ResolvedLikelihood {
                 distribution: likelihood.distribution,
                 noise_column: column,
             })
         }
     };
+    if !curve.values.iter().all(|value| value.is_finite()) {
+        return Err(fault("has a measurement which is not finite".to_string()));
+    }
+    if let Some(reduction) = &curve.reduction {
+        if curve.after_change.is_some() {
+            return Err(fault(
+                "carries the flags of the state after a change and a reduction: a reduction \
+                 reads the whole column, an interpolation its flags of the state before a jump"
+                    .to_string(),
+            ));
+        }
+        let resolved = Resolved {
+            offset,
+            column,
+            rows: Vec::new(),
+            values: curve.values.clone(),
+            noise,
+            weight: curve.weight,
+            likelihood,
+            reduction: Some(reduction.clone()),
+            grid: curve.times.clone(),
+        };
+        check_reduction(&resolved, reduction, table).map_err(fault)?;
+        return Ok(resolved);
+    }
     let after = match &curve.after_change {
         None => vec![false; curve.times.len()],
         Some(after) if after.len() == curve.times.len() => after.clone(),
@@ -2311,9 +2459,6 @@ fn resolve(
         .collect();
     let mut rows = Vec::with_capacity(curve.times.len());
     for (time, after) in curve.times.iter().zip(after.iter()) {
-        if !curve.values.iter().all(|value| value.is_finite()) {
-            return Err(fault("has a measurement which is not finite".to_string()));
-        }
         rows.push(row_of(*time, &times, *after).ok_or_else(|| {
             fault(format!(
                 "measures at t = {time}, which is no output time of its condition"
@@ -2328,7 +2473,47 @@ fn resolve(
         noise,
         weight: curve.weight,
         likelihood,
+        reduction: None,
+        grid: Vec::new(),
     })
+}
+
+/// Checks a curve of a reduction against the table of its condition at the start of the fit:
+/// the times of an interpolation are within the rows of the simulation, whose rows are the
+/// same span of time at every point of the search, and the analysis of a parameter of the
+/// non-compartmental analysis runs and has that parameter.
+fn check_reduction(
+    resolved: &Resolved,
+    reduction: &Reduction,
+    table: &SimulationResult,
+) -> Result<(), String> {
+    let column = resolved.column_of(table, table.columns.len(), reduction.time_shift());
+    match reduction {
+        Reduction::At { .. } => {
+            let finite = column.times.iter().copied().filter(|time| time.is_finite());
+            let (first, last) = finite.fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), t| {
+                (a.min(t), b.max(t))
+            });
+            if let Some(time) = resolved
+                .grid
+                .iter()
+                .find(|time| **time < first || **time > last)
+            {
+                return Err(format!(
+                    "interpolates at t = {time}, which is outside of the simulation of its \
+                     condition [{first}, {last}] in the time of the reduction"
+                ));
+            }
+        }
+        Reduction::Pk(pk) if !pk.derives(&column)? => {
+            return Err(format!(
+                "reads the parameter '{}', which the analysis of its column does not derive",
+                pk.parameter
+            ));
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 /// The row of an output time, the nearest one within the resolution of the time.

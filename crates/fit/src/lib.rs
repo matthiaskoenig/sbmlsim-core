@@ -21,6 +21,10 @@
 //! - [`Problem::optimize`] runs the optimizers of [basin](https://basin.rs) over it: trust
 //!   region reflective and the bounded Levenberg-Marquardt of a least squares fit, and the
 //!   differential evolution of its global search.
+//! - [`Reduction`] is what a curve of a value per simulation reads: the largest, the smallest
+//!   or the mean value of a column, its value at a time, or a parameter of the
+//!   non-compartmental analysis of pkpdutils, with the reduction of the sensitivities of the
+//!   column as its row of the jacobian.
 //! - [`fit`] runs a fit of the contract [`FIT_CONTRACT`], which is a definition, its
 //!   optimizer and its starts as a file: what a host hands over and reads back.
 //! - [`profile`] and [`fisher`] say how well the data determines the optimum a fit found: the
@@ -36,6 +40,7 @@ mod contract;
 mod identifiability;
 mod optimize;
 mod problem;
+mod reduction;
 
 pub use contract::{
     ConditionRequest, CorrelationRequest, CurveRequest, FIT_CONTRACT, FitAnswer, FitRequest,
@@ -52,3 +57,4 @@ pub use problem::{
     FitError, JacobianChoice, LIKELIHOOD_OFFSET, LN_2, LN_2PI_HALF, Likelihood, NoiseKind,
     Parameter, Prior, PriorKind, Problem, Scale, Term,
 };
+pub use reduction::{MIN_PADDED_LENGTH, PK_STEP, PkReduction, REDUCTIONS, Reduction};

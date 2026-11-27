@@ -1947,6 +1947,34 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 
 [[package]]
+name = "pkpdutils-abi"
+version = "0.7.0"
+source = "git+https://github.com/matthiaskoenig/pkpdutils-core?tag=v0.7.0#fbb62a3f0115a546401291a88169d3e63888e4ab"
+dependencies = [
+ "bitflags",
+ "serde",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "pkpdutils-core"
+version = "0.7.0"
+source = "git+https://github.com/matthiaskoenig/pkpdutils-core?tag=v0.7.0#fbb62a3f0115a546401291a88169d3e63888e4ab"
+dependencies = [
+ "pkpdutils-abi",
+ "pkpdutils-units",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "pkpdutils-units"
+version = "0.7.0"
+source = "git+https://github.com/matthiaskoenig/pkpdutils-core?tag=v0.7.0#fbb62a3f0115a546401291a88169d3e63888e4ab"
+dependencies = [
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "png"
 version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2538,6 +2566,7 @@ name = "sbmlsim-fit"
 version = "0.31.1"
 dependencies = [
  "basin",
+ "pkpdutils-core",
  "rayon",
  "sbmlsim-abi",
  "sbmlsim-batch",
