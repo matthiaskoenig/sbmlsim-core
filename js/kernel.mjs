@@ -1,4 +1,4 @@
-// The batched kernel of sbmlsim-core in a JavaScript host: instantiates `kernel.wasm` (the
+// The batched kernel of sbmlsim-core in a JavaScript host (since 0.41.0): instantiates `kernel.wasm` (the
 // contract `kernel/1`, a model with its RODAS4 integrator in one module, which
 // `compiler.compileKernel` of `compile.mjs` and `sbmlsim-core compile --kernel` write) with
 // mathlib and a memory of the caller, which holds every array of the points.

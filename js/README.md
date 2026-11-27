@@ -7,6 +7,7 @@ Simulate SBML models in browsers and in Node. [sbmlsim-core](https://matthiaskoe
 | `loader.mjs` | `sbmlsim-core` | runs `engine.wasm`, `mathlib.wasm` and a compiled `model.wasm` |
 | `compile.mjs` | `sbmlsim-core/compile` | compiles SBML text into `model.wasm` and its description with `compiler.wasm` |
 | `petab.mjs` (since 0.39.0) | `sbmlsim-core/petab` | a problem of PEtab v2 read, simulated and evaluated (log-likelihood, `chi2`, priors, simulation table) |
+| `kernel.mjs` (since 0.41.0) | `sbmlsim-core/kernel` | instantiates the batched kernel of a model (`compiler.compileKernel`), which advances many instances of it per call |
 | `pool.mjs` (with `worker.mjs`) | `sbmlsim-core/pool` | a pool of Web Workers (worker threads in Node) which run the loader off the main thread |
 | `panels.mjs` | `sbmlsim-core/panels` | the routes of the panel service of sbmlsim, answered inside a page from an exported bundle |
 | `simulate.mjs` | the command `sbmlsim-core-simulate` | the CSV of a simulation in Node |
@@ -22,7 +23,7 @@ npm install sbmlsim-core
 or import the modules from a CDN, which serves them with the headers every origin may read:
 
 ```js
-import { createPanelEndpoint } from "https://cdn.jsdelivr.net/npm/sbmlsim-core@0.40.0/panels.mjs";
+import { createPanelEndpoint } from "https://cdn.jsdelivr.net/npm/sbmlsim-core@0.41.0/panels.mjs";
 ```
 
 A pool started from a module of another origin starts its workers through a module of the page's own origin, so the CDN works for the workers as well. The engine needs fixed-width SIMD of WebAssembly: Chrome 91, Firefox 89, Safari 16.4 or newer, Node 20 or newer.
@@ -151,7 +152,7 @@ A spec the renderer refuses raises a `PlotError` whose message is `path: what is
 <!-- the IIFE build of sbmlsim-web, a release with registerEndpoint -->
 <script src="sbmlsim-web.iife.js"></script>
 <script type="module">
-  import { createPanelEndpoint } from "https://cdn.jsdelivr.net/npm/sbmlsim-core@0.40.0/panels.mjs";
+  import { createPanelEndpoint } from "https://cdn.jsdelivr.net/npm/sbmlsim-core@0.41.0/panels.mjs";
 
   sbmlsimWeb.registerEndpoint(
     "local:glimepiride",

@@ -112,7 +112,7 @@ An `<apply>` whose only child is an `<apply>` is read as that child, as libSBML 
 
 ## A batched kernel
 
-`--kernel` compiles the batched kernel of a model instead: the model of ordinary differential equations together with its integrator in one WebAssembly module (the contract `kernel/1`), for a caller which advances many instances of one model at once, the cells of a tissue in a page, say, where a call per cell and step into `engine.wasm` would cost more than the step itself:
+`--kernel` (since 0.41.0) compiles the batched kernel of a model instead: the model of ordinary differential equations together with its integrator in one WebAssembly module (the contract `kernel/1`), for a caller which advances many instances of one model at once, the cells of a tissue in a page, say, where a call per cell and step into `engine.wasm` would cost more than the step itself:
 
 ```bash
 sbmlsim-core compile model.xml --kernel -o kernel-dir   # kernel.wasm and kernel.json
@@ -167,6 +167,6 @@ const compiler = await createCompiler({ compiler: compilerWasm });
 const { wasm, description } = compiler.compile(sbmlText);
 ```
 
-`compiler.compileKernel(sbmlText)` gives the [batched kernel](#a-batched-kernel) of the model, the bytes of `sbmlsim-core compile --kernel`, which `sbmlsim-core/kernel` instantiates ([JavaScript](javascript.md#the-batched-kernel)).
+`compiler.compileKernel(sbmlText)` (since 0.41.0) gives the [batched kernel](#a-batched-kernel) of the model, the bytes of `sbmlsim-core compile --kernel`, which `sbmlsim-core/kernel` instantiates ([JavaScript](javascript.md#the-batched-kernel)).
 
 A page compiles a model of any level and version this way and runs it with the engine, so a model which a reader brings needs no server. The module is `sbmlsim-core/runtime/compiler.wasm` of the npm package, `compiler.wasm` of `sbmlsim-core runtime -o DIR` and the key `compiler` of `sbmlsim_core.runtime_wasm()` of the python package. The [live simulation](javascript.md#a-live-simulation-in-this-page) of this documentation compiles its SBML with it.
