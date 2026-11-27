@@ -2643,6 +2643,7 @@ dependencies = [
  "sbmlsim-host",
  "sbmlsim-ode",
  "sbmlsim-petab",
+ "sbmlsim-sbml",
  "serde",
  "serde_json",
  "toml",

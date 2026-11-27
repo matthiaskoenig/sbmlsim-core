@@ -654,3 +654,81 @@ fn a_scale_of_the_extension_which_is_none_is_refused() {
         "{refusal}"
     );
 }
+
+#[test]
+fn a_measurement_at_inf_without_an_experiment_is_the_steady_state_of_the_model() {
+    // the steady state of the conversion from `A(0) = 1`, `B(0) = 0` is `A = k2 / (k1 + k2)`;
+    // without an experiment the model is simulated as it is, from the time 0, and a
+    // measurement at `inf` reads the steady state it reaches (`Blasi_CellSystems2016`)
+    let mut files = files(PARAMETERS, &exact(0.8, 0.6, 2.0));
+    files.insert(
+        "measurements.tsv".to_string(),
+        b"observableId\ttime\tmeasurement\nobs_a\tinf\t0.4\nobs_a\t0\t1\n".to_vec(),
+    );
+    let problem = PetabProblem::read("problem.yaml", &files).unwrap();
+    let plan = Plan::new(&problem, &Options::default()).unwrap();
+    let executor = Executor::new(plan).unwrap();
+    let evaluation = executor.evaluate(&executor.plan().nominal());
+    assert!(evaluation.failures.is_empty(), "{:?}", evaluation.failures);
+    assert!(
+        (evaluation.simulated[0] - 0.6 / 1.4).abs() < 1e-6,
+        "{:?}",
+        evaluation.simulated
+    );
+    assert_eq!(evaluation.simulated[1], 1.0);
+    // and alone, a request of the single time 0 and the steady state after it
+    files.insert(
+        "measurements.tsv".to_string(),
+        b"observableId\ttime\tmeasurement\nobs_a\tinf\t0.4\n".to_vec(),
+    );
+    let problem = PetabProblem::read("problem.yaml", &files).unwrap();
+    let executor = Executor::new(Plan::new(&problem, &Options::default()).unwrap()).unwrap();
+    let evaluation = executor.evaluate(&executor.plan().nominal());
+    assert!(
+        (evaluation.simulated[0] - 0.6 / 1.4).abs() < 1e-6,
+        "{:?}",
+        evaluation.simulated
+    );
+}
+
+#[test]
+fn a_composed_model_is_read_with_its_external_documents() {
+    // the model of the problem instantiates the model of a document beside it, named relative
+    // to the model, which is read through the files of the problem
+    let mut files = files(PARAMETERS, &exact(0.8, 0.6, 2.0));
+    files.insert(
+        "problem.yaml".to_string(),
+        YAML.replace("location: model.xml", "location: models/composed.xml")
+            .into_bytes(),
+    );
+    files.insert(
+        "models/composed.xml".to_string(),
+        br#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" xmlns:comp="http://www.sbml.org/sbml/level3/version1/comp/version1" level="3" version="2" comp:required="true">
+  <model id="composed">
+    <listOfParameters><parameter id="extra" value="1" constant="true"/></listOfParameters>
+    <comp:listOfSubmodels><comp:submodel comp:id="sub" comp:modelRef="conversion"/></comp:listOfSubmodels>
+  </model>
+  <comp:listOfExternalModelDefinitions>
+    <comp:externalModelDefinition comp:id="conversion" comp:source="conversion.xml"/>
+  </comp:listOfExternalModelDefinitions>
+</sbml>"#
+            .to_vec(),
+    );
+    files.insert(
+        "models/conversion.xml".to_string(),
+        MODEL.as_bytes().to_vec(),
+    );
+    let problem = PetabProblem::read("problem.yaml", &files).unwrap();
+    let document = sbmlsim_sbml::read(&problem.models[0].sbml).unwrap();
+    let ids: Vec<&str> = document
+        .model
+        .species
+        .iter()
+        .map(|s| s.id.as_str())
+        .collect();
+    assert_eq!(ids, ["sub__A", "sub__B"]);
+    // a missing document is an error of the model
+    files.remove("models/conversion.xml");
+    let error = PetabProblem::read("problem.yaml", &files).unwrap_err();
+    assert!(error.to_string().contains("conversion.xml"), "{error}");
+}

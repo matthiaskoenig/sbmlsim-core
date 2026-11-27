@@ -30,12 +30,16 @@
 //! the document, so the position of an element is its index in its list (an event without an id
 //! is named by its position). A number keeps the double of its text.
 //!
-//! Missing math: an element without a `<math>` child (a rule, an initial assignment, a trigger, an event assignment, a kinetic law, a function definition) has its math absent, a `<delay>` or `<priority>` without one is read as absent, an event without a `<trigger>` has its trigger absent, and a `<math>` without an element in it is [`math::Node::Empty`]. What they mean is the compiler's decision.
+//! Missing math: an element without a `<math>` child (a rule, an initial assignment, a trigger, an event assignment, a kinetic law, a function definition) has its math absent, a `<delay>` or `<priority>` without one is read as absent, an event without a `<trigger>` has its trigger absent, and a `<math>` without an element in it is [`math::Node::Empty`]. What they mean is the compiler's decision. An `<apply>` whose only child is an `<apply>` is that child, as libSBML reads it; an `<apply>` whose operator is an `<apply>` with arguments is refused.
 //!
-//! Packages: a package whose `required` attribute on `<sbml>` is `"true"` is refused with
-//! [`ReadError::Package`] (the package name is read from its namespace URI, e.g. `comp`; comp
-//! must be flattened before, a model read without its submodels is another model); a package
-//! with `required="false"` (layout, render, fbc annotations, ...) is ignored. A required
+//! Packages: a composed model of the package `comp` is flattened into the model of SBML core it
+//! means, as the specification of the package and libSBML flatten it, the elements of a
+//! submodel named with its id as prefix (`submodel__id`), see [`read_with`] and
+//! [`flatten_comp`] for the documents of external model definitions. Any other package whose
+//! `required` attribute on `<sbml>` is `"true"` is refused with [`ReadError::Package`] (the
+//! package name is read from its namespace URI, e.g. `spatial`), a model read without what the
+//! package computes being another model; a package with `required="false"` (layout, render, fbc
+//! annotations, ...) is ignored. A required
 //! package which annotates and computes nothing is read as well and its elements are ignored,
 //! so far `distrib`: a `<distrib:uncertainty>` of a parameter is the uncertainty of the fit
 //! which gave its value, and the mathematics of the model is the same without it; such a
@@ -49,6 +53,7 @@
 //!
 //! Units pass through as text and nothing is computed with them. A unit definition becomes a unit expression a unit registry such as pint parses, the units joined by `*`; a unit is `(multiplier * 10^scale * kind)^exponent`, written as `kind`, `factor*kind`, `kind**e` or `(factor*kind)**e` where the factor is the double of the text `{multiplier}e{scale}`, e.g. `mmol/min` as `0.001*mole*(60*second)**-1`.
 
+mod comp;
 mod model;
 
 pub mod formula;
@@ -99,7 +104,80 @@ pub fn read(sbml: &str) -> Result<Document, ReadError> {
             "the document is nested deeper than {MAX_XML_DEPTH} elements"
         )));
     }
-    model::read_document(sbml)
+    model::read_document(sbml, None)
+}
+
+/// Reads the text of an SBML document as [`read`] does, with the documents of its external model
+/// definitions.
+///
+/// A composed model (the package `comp`) may instantiate a model of another document, an
+/// `<comp:externalModelDefinition>` whose `comp:source` names it. `sources` gives the text of
+/// such a document by its source, joined to the directory of the document which names it: the
+/// source `enzyme.xml` of the document which is read is `enzyme.xml`, and the source
+/// `../other.xml` of a document `models/enzyme.xml` is `other.xml`; a source which is an URI with
+/// a scheme or an absolute path is given as it is. [`read`] reads a composed model whose model
+/// definitions are in the document and refuses an external one.
+///
+/// ```
+/// let main = r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core"
+///     xmlns:comp="http://www.sbml.org/sbml/level3/version1/comp/version1"
+///     level="3" version="2" comp:required="true">
+///   <model id="main">
+///     <comp:listOfSubmodels>
+///       <comp:submodel comp:id="A" comp:modelRef="decay"/>
+///     </comp:listOfSubmodels>
+///   </model>
+///   <comp:listOfExternalModelDefinitions>
+///     <comp:externalModelDefinition comp:id="decay" comp:source="decay.xml"/>
+///   </comp:listOfExternalModelDefinitions>
+/// </sbml>"#;
+/// let decay = r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2">
+///   <model id="decay">
+///     <listOfParameters><parameter id="k" value="0.1" constant="true"/></listOfParameters>
+///   </model>
+/// </sbml>"#;
+/// let document = sbmlsim_sbml::read_with(main, &|source: &str| match source {
+///     "decay.xml" => Ok(decay.to_string()),
+///     other => Err(format!("no document {other}")),
+/// })?;
+/// assert_eq!(document.model.parameters[0].id, "A__k");
+/// # Ok::<(), sbmlsim_sbml::ReadError>(())
+/// ```
+pub fn read_with(
+    sbml: &str,
+    sources: &dyn Fn(&str) -> Result<String, String>,
+) -> Result<Document, ReadError> {
+    if deeper_than(sbml, MAX_XML_DEPTH).is_some() {
+        return Err(ReadError::Xml(format!(
+            "the document is nested deeper than {MAX_XML_DEPTH} elements"
+        )));
+    }
+    model::read_document(sbml, Some(sources))
+}
+
+/// Flattens a composed model (the package `comp`) into the text of a document of SBML core, the
+/// one [`read_with`] reads, with the documents of its external model definitions from `sources`
+/// as there. A document which does not use the package is given back as it is.
+///
+/// The flattened document is a document for any reader of SBML core, e.g. one which simulates
+/// it with the C target or another tool, and the one to keep where the external documents are
+/// not at hand.
+pub fn flatten_comp(
+    sbml: &str,
+    sources: &dyn Fn(&str) -> Result<String, String>,
+) -> Result<String, ReadError> {
+    if deeper_than(sbml, MAX_XML_DEPTH).is_some() {
+        return Err(ReadError::Xml(format!(
+            "the document is nested deeper than {MAX_XML_DEPTH} elements"
+        )));
+    }
+    let doc = roxmltree::Document::parse(sbml)
+        .map_err(|e| ReadError::Xml(format!("invalid XML: {e}")))?;
+    if doc.root_element().tag_name().name() == "sbml" && comp::uses_comp(&doc) {
+        comp::flatten(&doc, Some(sources))
+    } else {
+        Ok(sbml.to_string())
+    }
 }
 
 /// The deepest nesting of elements a document may have: the structure of SBML around a math

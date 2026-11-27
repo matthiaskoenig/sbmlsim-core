@@ -24,13 +24,16 @@ sbmlsim-core testsuite testdata/cases --no-optimize            # without the opt
 sbmlsim-core testsuite testdata/cases --write-baseline         # the baseline from a run
 sbmlsim-core testsuite testdata/cases --model-code c           # the C target (--features native)
 sbmlsim-core testsuite testdata/cases --model-code c --write-baseline  # its pinned refusals
+sbmlsim-core testsuite testdata/cases --comp                   # the composed models of comp
 ```
+
+The preparation flattens a model of the package `comp` with libsbml into `model.xml`, and writes its composed model as well, `comp/model.xml` with the documents of its external model definitions beside it. `--comp` runs the 125 cases of the package from their composed models, which the reader of the core flattens (see [Compiling a model](compiling.md)), against the same baseline; all of them pass, with every Jacobian, without the optimizer and with the C target (`--model-code c --comp`).
 
 `--cases 00001-00100` runs some cases, `--jobs` sets the threads, `--json` writes the result of every case and `--export DIR` writes every passing case for the JavaScript tests, which compare the CSV of Node with the one of wasmtime byte for byte. In every mode each passing case is simulated again to check that it repeats bitwise; a case which passes or fails otherwise than the baseline says fails the run.
 
 `--model-code c` simulates every case on the native engine with the native model code of the [C target](rust.md#the-c-target) instead of `model.wasm`, against the same baseline: a case the C target refuses (a delay) is `refused`, listed in the summary with its feature. The refusals are pinned with their features in `testdata/testsuite_refused_c.json` (`--refused`): a pinned refusal is no difference, while a case refused which is not pinned (or for another feature) and a pinned case which is no longer refused are differences which fail the run, so the set changes only deliberately; `--write-baseline --model-code c` writes it from a run of every case. Of the 1789 cases, 1701 pass, 35 are not compiled as in the baseline and 53 are refused, all for a delay.
 
-CI runs the whole suite in the three modes (the job `testsuite-parity`), with the C target (`testsuite-c-target`) and the parity of Node with wasmtime over every passing case (`same_bits_as_wasmtime`).
+CI runs the whole suite in the three modes and the cases of `comp` from their composed models (the job `testsuite-parity`), with the C target, of both models of the cases of `comp` (`testsuite-c-target`) and the parity of Node with wasmtime over every passing case (`same_bits_as_wasmtime`).
 
 The grid above is written from a run and committed, it is not built from a live run of the documentation:
 

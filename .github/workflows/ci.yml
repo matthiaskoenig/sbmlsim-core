@@ -193,6 +193,8 @@ jobs:
         run: target/release/sbmlsim-core testsuite testdata/cases --jacobian difference
       - name: testsuite parity (without the optimizer)
         run: target/release/sbmlsim-core testsuite testdata/cases --no-optimize
+      - name: testsuite parity (the composed models of comp, flattened by the reader of the core)
+        run: target/release/sbmlsim-core testsuite testdata/cases --comp
   testsuite-c-target:
     # the whole SBML Test Suite on the native engine with the model code of the C target, against
     # the baseline of model.wasm: every case of it passes but those the C target refuses (the
@@ -228,6 +230,10 @@ jobs:
       - run: cargo build --release -p sbmlsim-cli --features native
       - name: testsuite with the model code of the C target
         run: target/release/sbmlsim-core testsuite testdata/cases --model-code c
+        env:
+          SBMLSIM_C_CACHE: ${{ runner.temp }}/sbmlsim-c
+      - name: testsuite with the model code of the C target (the composed models of comp)
+        run: target/release/sbmlsim-core testsuite testdata/cases --model-code c --comp
         env:
           SBMLSIM_C_CACHE: ${{ runner.temp }}/sbmlsim-c
   testsuite-cases:

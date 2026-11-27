@@ -1015,8 +1015,22 @@ fn package_name(uri: &str, prefix: Option<&str>) -> String {
     }
 }
 
-pub(crate) fn read_document(sbml: &str) -> Result<Document, ReadError> {
+pub(crate) fn read_document(
+    sbml: &str,
+    sources: Option<crate::comp::Sources>,
+) -> Result<Document, ReadError> {
     let doc = roxmltree::Document::parse(sbml).map_err(|e| err(format!("invalid XML: {e}")))?;
+    if doc.root_element().tag_name().name() == "sbml" && crate::comp::uses_comp(&doc) {
+        // a composed model is read as the model of SBML core it flattens into
+        let flat = crate::comp::flatten(&doc, sources)?;
+        let doc = roxmltree::Document::parse(&flat)
+            .map_err(|e| err(format!("the flattened model is no XML: {e}")))?;
+        return read_parsed(&doc);
+    }
+    read_parsed(&doc)
+}
+
+fn read_parsed(doc: &roxmltree::Document) -> Result<Document, ReadError> {
     let root = doc.root_element();
     if root.tag_name().name() != "sbml" {
         return Err(err(format!(

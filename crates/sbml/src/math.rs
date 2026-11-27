@@ -13,10 +13,10 @@ use roxmltree::Node as X;
 /// The MathML namespace.
 pub const MATHML_NS: &str = "http://www.w3.org/1998/Math/MathML";
 
-const TIME_URL: &str = "http://www.sbml.org/sbml/symbols/time";
+pub(crate) const TIME_URL: &str = "http://www.sbml.org/sbml/symbols/time";
 const AVOGADRO_URL: &str = "http://www.sbml.org/sbml/symbols/avogadro";
-const DELAY_URL: &str = "http://www.sbml.org/sbml/symbols/delay";
-const RATEOF_URL: &str = "http://www.sbml.org/sbml/symbols/rateOf";
+pub(crate) const DELAY_URL: &str = "http://www.sbml.org/sbml/symbols/delay";
+pub(crate) const RATEOF_URL: &str = "http://www.sbml.org/sbml/symbols/rateOf";
 
 /// An operator or function.
 #[derive(Debug, Clone, PartialEq)]
@@ -397,6 +397,21 @@ fn apply(n: X) -> Result<Node, ReadError> {
     let head = kids.next().ok_or_else(|| err("empty <apply>".into()))?;
     check_ns(head)?;
     let hname = head.tag_name().name();
+    if hname == "apply" {
+        // an `<apply>` whose only child is an `<apply>` is that child, as libSBML reads it
+        // (`Beer_MolBioSystems2014` of the PEtab benchmark collection): the outer one applies
+        // no operator and only groups. An `<apply>` as the operator of arguments is a function
+        // of higher order, which the MathML of SBML has not and libSBML reads differently by
+        // the operator of the inner one, so it is refused
+        if elements(n).nth(1).is_some() {
+            return Err(err(
+                "an <apply> whose first child is an <apply> takes no arguments, the MathML of \
+                 SBML has no function of higher order"
+                    .into(),
+            ));
+        }
+        return apply(head);
+    }
     let op = match hname {
         "ci" => Op::Function(text(head)),
         "csymbol" => match head.attribute("definitionURL") {
