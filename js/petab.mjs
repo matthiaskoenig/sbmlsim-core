@@ -1,4 +1,5 @@
-// PEtab v2 in a JavaScript host (since 0.39.0): a problem read, simulated and evaluated in a page.
+// PEtab v2 in a JavaScript host (since 0.39.0): a problem read, simulated, evaluated and (since
+// 0.40.0) fitted in a page.
 //
 // Plain ECMAScript without dependencies and without APIs of Node, so it runs in browsers as well:
 //
@@ -10,7 +11,7 @@
 //   const problem = await openPetab({ compiler, runtime, files }); // {name: text or bytes}
 //   const { llh, chi2, logPrior, simulationTable } = await problem.evaluate(); // the nominal values
 //   const simulations = await problem.simulations(x); // the results of the requests at x
-//   const { x: optimum, objective } = await problem.fit({ starts: 4 }); // the fit, ask/tell
+//   const { x: optimum, objective } = await problem.fit({ starts: 4 }); // the fit (since 0.40.0)
 //   problem.close();
 //
 // What a problem is, its plan and its likelihood are the Rust of `sbmlsim-petab` in
@@ -21,7 +22,7 @@
 // of the caller or the workers of `pool.mjs`. Since that engine is `engine.wasm`, which the
 // command line runs as well, an evaluation in a page gives the bits of the command line.
 //
-// A fit is the optimizer of `sbmlsim-fit` in `compiler.wasm` (`petab_fit_open`,
+// A fit (since 0.40.0) is the optimizer of `sbmlsim-fit` in `compiler.wasm` (`petab_fit_open`,
 // `petab_fit_ask`, `petab_fit_tell`, `petab_fit_stop` and `petab_fit_close`), driven ask/tell:
 // it asks for the simulations of its next evaluations (the `k + 1` evaluations of the finite
 // differences of a jacobian, the members of a generation), this module simulates them on the

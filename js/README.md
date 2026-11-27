@@ -22,7 +22,7 @@ npm install sbmlsim-core
 or import the modules from a CDN, which serves them with the headers every origin may read:
 
 ```js
-import { createPanelEndpoint } from "https://cdn.jsdelivr.net/npm/sbmlsim-core@0.39.0/panels.mjs";
+import { createPanelEndpoint } from "https://cdn.jsdelivr.net/npm/sbmlsim-core@0.40.0/panels.mjs";
 ```
 
 A pool started from a module of another origin starts its workers through a module of the page's own origin, so the CDN works for the workers as well. The engine needs fixed-width SIMD of WebAssembly: Chrome 91, Firefox 89, Safari 16.4 or newer, Node 20 or newer.
@@ -111,12 +111,12 @@ problem.parameters; // the estimated parameters, with problem.nominal, problem.l
 const evaluation = await problem.evaluate();
 const atX = await problem.evaluate([0.5, 0.4, 3]);
 const simulations = await problem.simulations(); // [{ model, request, result }], the time courses
-// the fit of the command line (`sbmlsim-core petab --fit`): x, objective, status, runs, ...
+// since 0.40.0, the fit of the command line (`sbmlsim-core petab --fit`): x, objective, status, runs, ...
 const fit = await problem.fit({ starts: 4, signal, onStep: ({ step }) => {} });
 problem.close();
 ```
 
-The problem is read, planned and evaluated by `compiler.wasm` (the Rust of the command line `sbmlsim-core petab` and of `sbmlsim_core.petab` in python), and its simulations run on `engine.wasm`, on the thread of the caller with a `runtime` or on the workers of a `pool`. Both hosts run the same engine, so a page gives the log-likelihood and the simulation table of the command line bit for bit. A problem which is not read or planned raises a `PetabError` with the reason; a simulation which fails is a failure of the evaluation (`failures`) and a log-likelihood of `NaN`. A fit runs the optimizer of `sbmlsim-fit` in `compiler.wasm`, which asks for the simulations of every step and gets them from the engine of the page, so it finds the optimum of the command line; its jacobian is the finite differences of the simulations.
+The problem is read, planned and evaluated by `compiler.wasm` (the Rust of the command line `sbmlsim-core petab` and of `sbmlsim_core.petab` in python), and its simulations run on `engine.wasm`, on the thread of the caller with a `runtime` or on the workers of a `pool`. Both hosts run the same engine, so a page gives the log-likelihood and the simulation table of the command line bit for bit. A problem which is not read or planned raises a `PetabError` with the reason; a simulation which fails is a failure of the evaluation (`failures`) and a log-likelihood of `NaN`. A fit (since 0.40.0) runs the optimizer of `sbmlsim-fit` in `compiler.wasm`, which asks for the simulations of every step and gets them from the engine of the page, so it finds the optimum of the command line; its jacobian is the finite differences of the simulations.
 
 ## Draw a figure
 
@@ -151,7 +151,7 @@ A spec the renderer refuses raises a `PlotError` whose message is `path: what is
 <!-- the IIFE build of sbmlsim-web, a release with registerEndpoint -->
 <script src="sbmlsim-web.iife.js"></script>
 <script type="module">
-  import { createPanelEndpoint } from "https://cdn.jsdelivr.net/npm/sbmlsim-core@0.39.0/panels.mjs";
+  import { createPanelEndpoint } from "https://cdn.jsdelivr.net/npm/sbmlsim-core@0.40.0/panels.mjs";
 
   sbmlsimWeb.registerEndpoint(
     "local:glimepiride",

@@ -79,7 +79,7 @@ The parameters:
 |---|---|
 | `id` | the id of the parameter, a target a request can set (`preinit`): a parameter of the model, the amount of a species, a compartment |
 | `start` | where the fit starts, between the bounds |
-| `lower`, `upper` | the bounds, which every point of the search stays inside. A bound may be infinite (`-inf`, `inf`, which a host of python or Rust passes; JSON has no infinity), a parameter which is not bounded on that side: the least squares optimizers search such a space as they search a box, and a differential evolution, which draws its population in the box, refuses it |
+| `lower`, `upper` | the bounds, which every point of the search stays inside. A bound may be infinite (since 0.40.0; `-inf`, `inf`, which a host of python or Rust passes; JSON has no infinity), a parameter which is not bounded on that side: the least squares optimizers search such a space as they search a box, and a differential evolution, which draws its population in the box, refuses it |
 | `scale` | `"lin"` (the default), `"log"` or `"log10"`: the space the optimizer searches in. A parameter of a concentration, a rate or a volume is fitted on a logarithmic scale, where a step is a share of the value and not an absolute amount; its lower bound must not be negative and its start positive, and a lower bound of zero is a search space which is not bounded below, the logarithm maps the positive values onto the real line. A point of the search space at a bound is the bound itself in the model, the way back from the logarithm is not exact |
 
 The conditions:
@@ -299,7 +299,7 @@ is a function of the values of the parameters alone, so none of these rows costs
 | field | what it holds |
 |---|---|
 | `parameter` | the position of the parameter in `parameters`, which carries at most one prior and must be no member of `prior_correlation` |
-| `kind` | one of the eleven of PEtab v2: `"normal"`, `"log-normal"`, `"uniform"`, `"log-uniform"`, `"laplace"`, `"log-laplace"`, `"cauchy"`, `"gamma"`, `"chisquare"`, `"exponential"` and `"rayleigh"` |
+| `kind` | one of the eleven of PEtab v2: `"normal"`, `"log-normal"`, `"uniform"`, `"log-uniform"`, `"laplace"`, `"log-laplace"`, `"cauchy"`, `"gamma"`, `"chisquare"`, `"exponential"` and `"rayleigh"` (the last five since 0.40.0) |
 | `parameters` | the numbers of PEtab for that kind, two of them or one of `chisquare`, `exponential` and `rayleigh`, below |
 | `offset` | the `c` of the row, the constant the host wants the cost measured from. Twice the largest log density between the bounds makes the row zero at the mode of the prior, where it is a distance from the mode, which a least squares optimizer steps to as it steps to the optimum of a curve |
 | `normalizer` | the log of the mass of the prior between `lower` and `upper`, which the engine subtracts from the density of the kind to get the truncated one; `0` for a prior the host does not truncate. The engine integrates nothing: a truncation is this one number |
@@ -663,7 +663,7 @@ threads, and the answer is the same one on one thread and on twenty.
 
 ### A fit whose host simulates
 
-All of the above is the feature `native` of `sbmlsim-fit`, the default: the engine of
+All of the above is the feature `native` of `sbmlsim-fit` (since 0.40.0), the default: the engine of
 `sbmlsim-host` (wasmtime and the native engine) and the threads of the batch. Without it the
 crate builds for `wasm32-unknown-unknown`, where a host simulates itself, e.g. a page on the
 workers of JavaScript ([PEtab in a page](javascript.md#the-fit-of-a-problem)). The objective is
