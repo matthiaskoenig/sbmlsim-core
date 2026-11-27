@@ -12,7 +12,7 @@ sbmlsim-core petab problem.yaml --fit --threads 8
 ```
 
 ```
-777 measurements, 59 simulations of 1 models: llh 1.6202615719e3, chi2 1.6960511165e2, log prior -1.3803541367e1 (read and compiled in 0.078 s, evaluated in 0.038 s)
+777 measurements, 59 simulations of 1 models: llh 1.6202615718892766e3, chi2 1.6960511165260075e2, log prior -1.380354136700037e1 (read and compiled in 0.078 s, evaluated in 0.038 s)
 ```
 
 The command is part of the build with the native engine (`cargo build -p sbmlsim-cli --features native`). In python, `sbmlsim_core.petab.Problem` is the same problem:
@@ -134,12 +134,23 @@ At the tolerances of the problem the two differ by the error of their integrator
 
 ## In a browser
 
-The reader, the plan and the evaluation are pure Rust without a file system, which builds for `wasm32-unknown-unknown` (`sbmlsim-petab` without its feature `native`). `compiler.wasm` built with the feature `petab` of `sbmlsim-wasm` carries them as `petab_open` (the problem from the JSON `{"yaml": name, "files": {name: text}}`, with the summary of its parameters), `petab_model` (a model of the plan compiled as `compile` compiles one), `petab_requests` (the requests of the simulations at a point), `petab_evaluate` (the evaluation from the results the host simulated) and `petab_close`, which `crates/wasm/tests/petab.rs` drives with the results of a host. The module of the npm package is built without the feature until the host of JavaScript drives them.
+The reader, the plan and the evaluation are pure Rust without a file system, which builds for `wasm32-unknown-unknown` (`sbmlsim-petab` without its feature `native`). `compiler.wasm` carries them (the feature `petab` of `sbmlsim-wasm`, on by default) as `petab_open` (the problem from the JSON `{"yaml": name, "files": {name: text}}`, with the summary of its parameters), `petab_model` (a model of the plan compiled as `compile` compiles one), `petab_requests` (the requests of the simulations at a point), `petab_evaluate` (the evaluation from the results the host simulated, their values as the bytes of their `f64`s) and `petab_close`, which `crates/wasm/tests/petab.rs` drives with the results of a host.
+
+`js/petab.mjs` is the host of JavaScript of these calls, which simulates the requests with `engine.wasm` under the loader or on the workers of a pool, so a page evaluates a problem with the bits of the command line:
+
+```js
+import { openPetab } from "sbmlsim-core/petab";
+
+const problem = await openPetab({ compiler, runtime, files }); // {name: text or bytes}
+const { llh, chi2, logPrior, simulationTable } = await problem.evaluate();
+```
+
+See [JavaScript](javascript.md#petab-problems) for its interface, the sizes and the times of the fit of hydrochlorothiazide in Node and in a browser.
 
 ## Not supported yet
 
 - models of other languages than SBML (the PySB cases of the test suite), and a problem of PEtab v1, which is converted first (`petab.v2.petab1to2`),
 - the fit of the problems listed under [the fit](#the-fit),
-- the host of JavaScript of a problem (`js/`), and `compiler.wasm` with the feature `petab` in the npm package,
+- the fit of a problem in a page: `js/petab.mjs` evaluates a problem, and the optimizers are `sbmlsim-fit`, which runs on the native host and its batch of threads ([#147](https://github.com/matthiaskoenig/sbmlsim-core/issues/147)),
 - the problems of the [PEtab benchmark collection](https://github.com/Benchmarking-Initiative/Benchmark-Models-PEtab), which sbmlsim runs in python and which are not run in Rust yet,
 - PEtab SciML.

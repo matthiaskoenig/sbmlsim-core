@@ -28,6 +28,13 @@ export { FigureHandle, attachFigure, formatValue } from "./figure.mjs";
 // the page script of a static report, `sbmlsimCore.hydrateFigures(document, { wasm })`
 export { hydrateFigures } from "./hydrate.mjs";
 
+// a problem of PEtab v2 in a page: `sbmlsimCore.openPetab({ compiler, runtime, files })` with
+// `sbmlsimCore.createCompiler({ compiler })` and `sbmlsimCore.createRuntime({ engine, mathlib })`
+// of the bytes of `sbmlsim_core.runtime_wasm()`
+export { CompileError, createCompiler } from "./compile.mjs";
+export { createRuntime } from "./loader.mjs";
+export { PetabError, openPetab } from "./petab.mjs";
+
 /** The source of the worker of the pool as one classic script, embedded by the build. */
 // eslint-disable-next-line no-undef
 export const WORKER_SOURCE = __SBMLSIM_CORE_WORKER__;

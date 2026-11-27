@@ -2,7 +2,7 @@
 //! a host (here a table of known values) and evaluated.
 #![cfg(feature = "petab")]
 
-use sbmlsim_abi::{ModelDescription, Output, SimulationRequest, SimulationResult};
+use sbmlsim_abi::{ModelDescription, Output, SimulationRequest};
 use serde_json::{Value, json};
 
 const MODEL: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -90,16 +90,11 @@ fn a_page_evaluates_a_problem_from_the_results_of_its_host() {
         values.push(*time);
         values.extend((1..width).map(|k| 1.0 + k as f64));
     }
-    let result = SimulationResult {
-        columns: request.selections.clone(),
-        n_rows: rows.len(),
-        values,
-        sensitivities: None,
-        local_errors: None,
-    };
-    let input = json!({ "x": x, "results": [serde_json::to_value(&result).unwrap()] });
+    let shape = json!({ "columns": request.selections, "n_rows": rows.len() });
+    let input = json!({ "x": x, "results": [shape] });
+    let bytes: Vec<u8> = values.iter().flat_map(|v| v.to_le_bytes()).collect();
     let evaluation: Value = serde_json::from_str(
-        &sbmlsim_wasm::petab::evaluate(handle, input.to_string().as_bytes()).unwrap(),
+        &sbmlsim_wasm::petab::evaluate(handle, input.to_string().as_bytes(), &bytes).unwrap(),
     )
     .unwrap();
     // obs_a is the first column (2), obs_b the second (3), of the noises 0.5 and 0.2
@@ -117,13 +112,39 @@ fn a_page_evaluates_a_problem_from_the_results_of_its_host() {
             .starts_with("observableId")
     );
 
+    // values which are not those of the tables are refused
+    for wrong in [
+        &bytes[..bytes.len() - 8],
+        &[bytes.as_slice(), &[0; 8]].concat(),
+        &bytes[1..],
+    ] {
+        let error =
+            sbmlsim_wasm::petab::evaluate(handle, input.to_string().as_bytes(), wrong).unwrap_err();
+        assert!(error.contains("values"), "{error}");
+    }
+
+    // a value which is no number crosses as one: its measurement is simulated as NaN
+    let mut nan = values.clone();
+    nan[1] = f64::NAN;
+    let nan: Vec<u8> = nan.iter().flat_map(|v| v.to_le_bytes()).collect();
+    let evaluation: Value = serde_json::from_str(
+        &sbmlsim_wasm::petab::evaluate(handle, input.to_string().as_bytes(), &nan).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(evaluation["simulated"][0], "NaN", "{evaluation}");
+    assert_eq!(evaluation["llh"], "NaN", "{evaluation}");
+
     // a failed simulation is a log-likelihood of no number
     let input = json!({ "results": [{ "error": "the integration failed" }] });
     let evaluation: Value = serde_json::from_str(
-        &sbmlsim_wasm::petab::evaluate(handle, input.to_string().as_bytes()).unwrap(),
+        &sbmlsim_wasm::petab::evaluate(handle, input.to_string().as_bytes(), &[]).unwrap(),
     )
     .unwrap();
-    assert!(evaluation["llh"].is_null(), "{evaluation}");
+    assert_eq!(evaluation["llh"], "NaN", "{evaluation}");
+    assert_eq!(
+        evaluation["failures"],
+        json!([[0, "the integration failed"]])
+    );
     sbmlsim_wasm::petab::close(handle);
     assert!(sbmlsim_wasm::petab::requests(handle, b"").is_err());
 }

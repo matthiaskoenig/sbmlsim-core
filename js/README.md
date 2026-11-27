@@ -6,6 +6,7 @@ Simulate SBML models in browsers and in Node. [sbmlsim-core](https://matthiaskoe
 |---|---|---|
 | `loader.mjs` | `sbmlsim-core` | runs `engine.wasm`, `mathlib.wasm` and a compiled `model.wasm` |
 | `compile.mjs` | `sbmlsim-core/compile` | compiles SBML text into `model.wasm` and its description with `compiler.wasm` |
+| `petab.mjs` | `sbmlsim-core/petab` | a problem of PEtab v2 read, simulated and evaluated (log-likelihood, `chi2`, priors, simulation table) |
 | `pool.mjs` (with `worker.mjs`) | `sbmlsim-core/pool` | a pool of Web Workers (worker threads in Node) which run the loader off the main thread |
 | `panels.mjs` | `sbmlsim-core/panels` | the routes of the panel service of sbmlsim, answered inside a page from an exported bundle |
 | `simulate.mjs` | the command `sbmlsim-core-simulate` | the CSV of a simulation in Node |
@@ -94,6 +95,24 @@ const instance = await runtime.instantiate(wasm, description);
 `compiler.wasm` is the compiler of the command line built for `wasm32-unknown-unknown`: the same reader of SBML, the same model representation and the same code generation, so the module and the description are the ones of `sbmlsim-core compile`. It reads no file and imports nothing of the host, so a page compiles a model a visitor drops into it without a server.
 
 `compile` is synchronous and takes a few milliseconds for a model of the size of the repressilator; a model which the compiler refuses raises a `CompileError` with its message. `optimize: false` leaves the optimizer of the compiler out (the results are the same) and `jacobian` is `"auto"`, `"difference-quotient"` or `"analytic"`, as the command line takes them. One compiler compiles any number of models, one after the other.
+
+## Evaluate a PEtab problem
+
+```js
+import { openPetab } from "sbmlsim-core/petab";
+
+// the files of the problem by their names: the YAML file, the tables and the SBML of its
+// models, as text or bytes
+const problem = await openPetab({ compiler, runtime, files }); // or { compiler, pool, files }
+problem.parameters; // the estimated parameters, with problem.nominal, problem.lower, problem.upper
+// at the nominal values: llh, chi2, logPrior, unnormLogPosterior, simulationTable, ...
+const evaluation = await problem.evaluate();
+const atX = await problem.evaluate([0.5, 0.4, 3]);
+const simulations = await problem.simulations(); // [{ model, request, result }], the time courses
+problem.close();
+```
+
+The problem is read, planned and evaluated by `compiler.wasm` (the Rust of the command line `sbmlsim-core petab` and of `sbmlsim_core.petab` in python), and its simulations run on `engine.wasm`, on the thread of the caller with a `runtime` or on the workers of a `pool`. Both hosts run the same engine, so a page gives the log-likelihood and the simulation table of the command line bit for bit. A problem which is not read or planned raises a `PetabError` with the reason; a simulation which fails is a failure of the evaluation (`failures`) and a log-likelihood of `NaN`. The fit of a problem is not part of the page yet.
 
 ## Draw a figure
 
