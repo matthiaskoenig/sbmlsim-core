@@ -18,14 +18,28 @@
 //!    and are not written into JSON and parsed again,
 //! 5. [`close`] drops the problem.
 //!
+//! A fit of the problem runs the same way, ask/tell ([`sbmlsim_fit::Asking`]): the optimizer is
+//! the one of the command line, in this module, and the page simulates what it asks for.
+//!
+//! 1. [`fit_open`] starts a fit of an open problem with the settings of `sbmlsim-fit`,
+//! 2. [`fit_ask`] answers the requests of the simulations the optimizer needs next, each with
+//!    the index of its model, or the fit once it is done,
+//! 3. [`fit_tell`] takes their results, as [`evaluate`] takes them,
+//! 4. [`fit_stop`] stops it at its next step, and [`fit_close`] drops it.
+//!
 //! The C ABI of the module carries the same calls as `petab_open`, `petab_model`,
-//! `petab_requests`, `petab_evaluate` and `petab_close`, every text as UTF-8 JSON in the
+//! `petab_requests`, `petab_evaluate`, `petab_close`, `petab_fit_open`, `petab_fit_ask`,
+//! `petab_fit_tell`, `petab_fit_stop` and `petab_fit_close`, every text as UTF-8 JSON in the
 //! buffers of [`crate::allocate`].
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 
+#[cfg(feature = "fit")]
+use sbmlsim_abi::EngineError;
 use sbmlsim_abi::{IntegratorSettings, SimulationResult, Tolerance};
+#[cfg(feature = "fit")]
+use sbmlsim_fit::{Ask, Asking, Opening, Settings};
 use sbmlsim_petab::{DataAtChange, ExtensionPolicy, Options, PetabProblem, Plan};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -35,6 +49,17 @@ use crate::{Compiled, give};
 thread_local! {
     /// The open problems, by their handle, their index.
     static PROBLEMS: RefCell<Vec<Option<Plan>>> = const { RefCell::new(Vec::new()) };
+    /// The fits of the open problems, by their handle, their index.
+    #[cfg(feature = "fit")]
+    static FITS: RefCell<Vec<Option<RunningFit>>> = const { RefCell::new(Vec::new()) };
+}
+
+/// A fit of a problem: its optimizer and what its cost carries on top of the objective of
+/// PEtab ([`Plan::cost_offset`]).
+#[cfg(feature = "fit")]
+struct RunningFit {
+    asking: Asking,
+    offset: f64,
 }
 
 /// A problem a page opens: the name of the YAML file and the text of every file by its name.
@@ -69,8 +94,18 @@ struct PlannedRequest {
 #[derive(Deserialize)]
 #[serde(untagged)]
 enum HostResult {
-    Table { columns: Vec<String>, n_rows: usize },
-    Failure { error: String },
+    Table {
+        columns: Vec<String>,
+        n_rows: usize,
+    },
+    Failure {
+        error: String,
+        /// The kind of the error of the engine, `integration` for an integration which
+        /// failed: a fit reads a failed integration as a point it may not take, and any other
+        /// failure as its own.
+        #[serde(default)]
+        kind: Option<String>,
+    },
 }
 
 /// What [`evaluate`] reads: the values of the estimated parameters (their nominal values when
@@ -282,42 +317,222 @@ pub fn evaluate(handle: usize, input: &[u8], values: &[u8]) -> Result<String, St
                 input.results.len()
             ));
         }
-        let (chunks, rest) = values.as_chunks::<8>();
-        if !rest.is_empty() {
-            return Err(format!(
-                "the values are {} bytes, no whole number of f64",
-                values.len()
-            ));
-        }
-        let mut values = chunks.iter().map(|bytes| f64::from_le_bytes(*bytes));
-        let mut results = Vec::with_capacity(input.results.len());
-        for result in input.results {
-            results.push(match result {
-                HostResult::Table { columns, n_rows } => {
-                    let n = n_rows
-                        .checked_mul(columns.len())
-                        .ok_or("a table of more values than an address")?;
-                    let table: Vec<f64> = values.by_ref().take(n).collect();
-                    if table.len() != n {
-                        return Err("the values end before the tables of the results".to_string());
-                    }
-                    Ok(SimulationResult {
-                        columns,
-                        n_rows,
-                        values: table,
-                        sensitivities: None,
-                        local_errors: None,
-                    })
-                }
-                HostResult::Failure { error } => Err(error),
-            });
-        }
-        if values.next().is_some() {
-            return Err("the values are more than the tables of the results".to_string());
-        }
+        let results: Vec<Result<SimulationResult, String>> = tables(input.results, values)?
+            .into_iter()
+            .map(|result| result.map_err(|(error, _)| error))
+            .collect();
         let evaluation = plan.evaluate(&x, &results);
         Ok(evaluation_answer(plan, &evaluation).to_string())
     })
+}
+
+/// A result of a host: its table, or the message and the kind of its failure.
+type Told = Result<SimulationResult, (String, Option<String>)>;
+
+/// The results of a host with the values of their tables, the little-endian bytes of their
+/// `f64`s one table after the other.
+fn tables(results: Vec<HostResult>, values: &[u8]) -> Result<Vec<Told>, String> {
+    let (chunks, rest) = values.as_chunks::<8>();
+    if !rest.is_empty() {
+        return Err(format!(
+            "the values are {} bytes, no whole number of f64",
+            values.len()
+        ));
+    }
+    let mut values = chunks.iter().map(|bytes| f64::from_le_bytes(*bytes));
+    let mut tables = Vec::with_capacity(results.len());
+    for result in results {
+        tables.push(match result {
+            HostResult::Table { columns, n_rows } => {
+                let n = n_rows
+                    .checked_mul(columns.len())
+                    .ok_or("a table of more values than an address")?;
+                let table: Vec<f64> = values.by_ref().take(n).collect();
+                if table.len() != n {
+                    return Err("the values end before the tables of the results".to_string());
+                }
+                Ok(SimulationResult {
+                    columns,
+                    n_rows,
+                    values: table,
+                    sensitivities: None,
+                    local_errors: None,
+                })
+            }
+            HostResult::Failure { error, kind } => Err((error, kind)),
+        });
+    }
+    if values.next().is_some() {
+        return Err("the values are more than the tables of the results".to_string());
+    }
+    Ok(tables)
+}
+
+/// What [`fit_open`] reads: the settings of the optimizer of `sbmlsim-fit` (the command line
+/// fits with their defaults) and the values of the estimated parameters it starts from, their
+/// nominal values when absent.
+#[cfg(feature = "fit")]
+#[derive(Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct FitRequest {
+    settings: Settings,
+    start: Option<Vec<f64>>,
+}
+
+/// What [`fit_tell`] reads: the result of every simulation of the last [`fit_ask`], in its
+/// order, as [`evaluate`] reads the results of the requests of a problem.
+#[cfg(feature = "fit")]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TellRequest {
+    results: Vec<HostResult>,
+}
+
+#[cfg(feature = "fit")]
+fn with_fit<T>(
+    fit: usize,
+    work: impl FnOnce(&mut RunningFit) -> Result<T, String>,
+) -> Result<T, String> {
+    FITS.with(|fits| {
+        let mut fits = fits.borrow_mut();
+        let running = fits
+            .get_mut(fit)
+            .and_then(Option::as_mut)
+            .ok_or_else(|| format!("there is no open fit {fit}"))?;
+        work(running)
+    })
+}
+
+/// Starts a fit of an open problem from the JSON `{"settings": {...}, "start": [...]}` (both
+/// optional; the settings of `sbmlsim_fit::Settings`, whose `max_seconds` the host measures)
+/// and gives the JSON `{"fit": handle, "offset": number}`: the handle the other calls of a
+/// fit take and what its cost carries on top of the objective of PEtab.
+///
+/// The fit is the one of `Executor::fit` of the command line: the same definition, the same
+/// optimizer and, when the host simulates with `engine.wasm`, the same evaluations.
+///
+/// # Errors
+///
+/// A handle of no open problem, an input which is no such JSON, a start which is not one value
+/// per estimated parameter, and a problem whose fit the engine does not carry.
+#[cfg(feature = "fit")]
+pub fn fit_open(handle: usize, input: &[u8]) -> Result<String, String> {
+    let request: FitRequest = if input.is_empty() {
+        FitRequest::default()
+    } else {
+        serde_json::from_slice(input).map_err(|err| err.to_string())?
+    };
+    let (asking, offset) = with_plan(handle, |plan| {
+        let start = point(plan, request.start)?;
+        let definition = plan.definition(&start).map_err(|err| err.to_string())?;
+        let offset = plan.cost_offset().map_err(|err| err.to_string())?;
+        let models: Vec<String> = plan.models.iter().map(|model| model.id.clone()).collect();
+        let opening = Opening::new(definition, &models).map_err(|err| err.to_string())?;
+        Ok((Asking::open(opening, request.settings), offset))
+    })?;
+    let fit = FITS.with(|fits| {
+        let mut fits = fits.borrow_mut();
+        fits.push(Some(RunningFit { asking, offset }));
+        fits.len() - 1
+    });
+    Ok(json!({ "fit": fit, "offset": number(offset) }).to_string())
+}
+
+/// What a fit needs next, as JSON: `{"simulate": [{"model": k, "request": {...}}, ...]}`, the
+/// requests of `simulation/1` of the simulations its optimizer needs, which [`fit_tell`]
+/// answers in their order, or `{"done": {...}}`, the fit: the values of the estimated
+/// parameters at the optimum (`x`), the `objective` of PEtab there (the negative log posterior,
+/// the negative log-likelihood of a problem without priors), the `cost` of `sbmlsim-fit`, the
+/// `iterations`, the `evaluations` and the `jacobians` the optimizer took and its `status`.
+///
+/// # Errors
+///
+/// A handle of no open fit and a failure of the optimizer.
+#[cfg(feature = "fit")]
+pub fn fit_ask(fit: usize) -> Result<String, String> {
+    with_fit(fit, |running| {
+        match running.asking.ask().map_err(|err| err.to_string())? {
+            Ask::Simulate(simulations) => {
+                let requests: Vec<PlannedRequest> = simulations
+                    .into_iter()
+                    .map(|simulation| PlannedRequest {
+                        model: simulation.model,
+                        request: simulation.request,
+                    })
+                    .collect();
+                Ok(json!({ "simulate": requests }).to_string())
+            }
+            Ask::Done(fit) => Ok(json!({
+                "done": {
+                    "x": fit.values.iter().copied().map(number).collect::<Vec<_>>(),
+                    "objective": number(fit.cost - running.offset),
+                    "cost": number(fit.cost),
+                    "iterations": fit.iterations,
+                    "evaluations": fit.evaluations,
+                    "jacobians": fit.jacobians,
+                    "status": fit.status,
+                }
+            })
+            .to_string()),
+        }
+    })
+}
+
+/// Takes the results of the simulations of the last [`fit_ask`]: the JSON `{"results": [...]}`
+/// of the shape of a table or `{"error": message, "kind": kind}` per simulation and the values
+/// of the tables as the bytes of [`evaluate`]. An integration which failed (`kind`
+/// `integration`) is a point the fit may not take; any other failure ends the fit with an
+/// error.
+///
+/// # Errors
+///
+/// A handle of no open fit, an input which is no such JSON, results which are not one per
+/// simulation asked for, values which are not those of the tables, and a failure of the
+/// engine which is no failed integration.
+#[cfg(feature = "fit")]
+pub fn fit_tell(fit: usize, input: &[u8], values: &[u8]) -> Result<String, String> {
+    let input: TellRequest = serde_json::from_slice(input).map_err(|err| err.to_string())?;
+    let results = tables(input.results, values)?
+        .into_iter()
+        .map(|result| {
+            result.map_err(|(message, kind)| match kind.as_deref() {
+                Some("integration") => EngineError::Integration {
+                    flag: 0,
+                    time: f64::NAN,
+                    message,
+                },
+                Some("request") => EngineError::Request(message),
+                Some("unsupported") => EngineError::Unsupported(message),
+                _ => EngineError::Internal(message),
+            })
+        })
+        .collect();
+    with_fit(fit, |running| {
+        running
+            .asking
+            .tell(results)
+            .map_err(|err| err.to_string())?;
+        Ok(String::new())
+    })
+}
+
+/// Stops a fit at its next step: its next ask gives the best point it reached.
+#[cfg(feature = "fit")]
+pub fn fit_stop(fit: usize) {
+    let _ = with_fit(fit, |running| {
+        running.asking.stop();
+        Ok(())
+    });
+}
+
+/// Drops a fit; a handle of none is ignored.
+#[cfg(feature = "fit")]
+pub fn fit_close(fit: usize) {
+    FITS.with(|fits| {
+        if let Some(slot) = fits.borrow_mut().get_mut(fit) {
+            *slot = None;
+        }
+    });
 }
 
 /// Drops an open problem; a handle of none is ignored.
@@ -443,4 +658,71 @@ pub unsafe extern "C" fn petab_evaluate(
 #[unsafe(no_mangle)]
 pub extern "C" fn petab_close(handle: usize) {
     close(handle);
+}
+
+/// [`fit_open`] of the C ABI, with the two words of [`petab_open`] at `out`.
+///
+/// # Safety
+///
+/// As [`petab_open`].
+#[cfg(feature = "fit")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn petab_fit_open(
+    handle: usize,
+    pointer: *const u8,
+    len: usize,
+    out: *mut usize,
+) -> u32 {
+    // SAFETY: the buffers are the caller's, as documented
+    unsafe { answer(fit_open(handle, bytes(pointer, len)), out) }
+}
+
+/// [`fit_ask`] of the C ABI, with the two words of [`petab_open`] at `out`.
+///
+/// # Safety
+///
+/// `out` is two words of the caller.
+#[cfg(feature = "fit")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn petab_fit_ask(fit: usize, out: *mut usize) -> u32 {
+    // SAFETY: the buffer is the caller's, as documented
+    unsafe { answer(fit_ask(fit), out) }
+}
+
+/// [`fit_tell`] of the C ABI, with the buffers of [`petab_evaluate`].
+///
+/// # Safety
+///
+/// As [`petab_evaluate`].
+#[cfg(feature = "fit")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn petab_fit_tell(
+    fit: usize,
+    pointer: *const u8,
+    len: usize,
+    values: *const u8,
+    values_len: usize,
+    out: *mut usize,
+) -> u32 {
+    // SAFETY: the buffers are the caller's, as documented
+    unsafe {
+        answer(
+            fit_tell(fit, bytes(pointer, len), bytes(values, values_len)),
+            out,
+        )
+    }
+}
+
+/// [`fit_stop`] of the C ABI.
+#[cfg(feature = "fit")]
+#[unsafe(no_mangle)]
+pub extern "C" fn petab_fit_stop(fit: usize) {
+    fit_stop(fit);
+}
+
+/// [`fit_close`] of the C ABI.
+#[cfg(feature = "fit")]
+#[unsafe(no_mangle)]
+pub extern "C" fn petab_fit_close(fit: usize) {
+    fit_close(fit);
 }

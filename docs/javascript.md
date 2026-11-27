@@ -6,7 +6,7 @@
 |---|---|---|
 | `loader.mjs` | `.` | runs `engine.wasm`, `mathlib.wasm` and a `model.wasm` with the bits of wasmtime |
 | `compile.mjs` | `./compile` | compiles an SBML document into `model.wasm` and its description with `compiler.wasm` |
-| `petab.mjs` (since 0.39.0) | `./petab` | a problem of [PEtab v2](petab.md) read, simulated and evaluated in a page |
+| `petab.mjs` (since 0.39.0) | `./petab` | a problem of [PEtab v2](petab.md) read, simulated, evaluated and fitted in a page |
 | `pool.mjs` (with `worker.mjs`) | `./pool` | a pool of workers which run the loader off the main thread |
 | `panels.mjs` | `./panels` | the routes of the panel service of sbmlsim, answered inside a page from a bundle |
 | `plot.mjs` | `./plot` | draws the figures of sbmlsim with `plot.wasm`, see [Figures](plot.md) |
@@ -409,9 +409,10 @@ The engine of the page is `engine.wasm`, which the command line runs as well, an
 | `models`, `parameters`, `nominal`, `lower`, `upper` | the ids of the models and of the estimated parameters, in the order of a point, their nominal values and their bounds (`Float64Array`s) |
 | `nSimulations`, `nMeasurements` | the simulations of an evaluation, one per experiment of a model, and the measurements |
 | `requests(x)` | the requests of `simulation/1` of the simulations at a point, `[{ model, request }]` |
-| `simulations(x, { signal })` | the simulations at a point, `[{ model, request, result }]`, the result `{ columns, nRows, values }` of the loader or `{ error }` of a simulation which failed |
+| `simulations(x, { signal })` | the simulations at a point, `[{ model, request, result }]`, the result `{ columns, nRows, values }` of the loader or `{ error, kind }` of a simulation which failed, `kind` the one of the `EngineError` |
 | `evaluate(x, { simulations, signal })` | `llh`, `chi2`, `logPrior`, `logPriors` (by parameter), `unnormLogPosterior`, `simulated` and `sigma` (per measurement, `Float64Array`s), `failures` (`[{ simulation, message }]`) and `simulationTable`, the text of the simulation table of PEtab; from the `simulations` of `simulations(x)` when given |
 | `evaluateSimulations(x, simulations)` | the same, synchronous, from simulations which are given |
+| `fit({ starts, seed, algorithm, maxIterations, gradientTolerance, stepTolerance, costTolerance, maxSeconds, signal, onStep })` | the fit of the estimated parameters, see [the fit of a problem](#the-fit-of-a-problem) |
 | `close()` | drops the problem |
 
 A point `x` is a value per estimated parameter, the nominal values without one. A simulation which fails is in `failures` and gives `NaN` for its measurements, so a log-likelihood of `NaN`, as PEtab asks; a log prior outside of the support of its prior is `-Infinity`.
@@ -426,17 +427,60 @@ The fit of the pharmacokinetics of hydrochlorothiazide of pkdb_models ([A fit of
 | Chrome (headless), a pool of the default workers | 180 ms | 45 ms |
 | the command line (`sbmlsim-core petab`, wasmtime on the threads of rayon) | 40 ms (the modules of wasmtime cached) | 30 ms |
 
-`compiler.wasm` carries PEtab in every build since 0.39.0: the feature `petab` of `sbmlsim-wasm` is on by default and adds 340 kB to the 3.07 MB of the compiler alone (112 kB of 1.10 MB gzipped). A module of its own would have been larger in all: `petab_model` compiles the models of a plan, so a `petab.wasm` holds the whole compiler again (3.41 MB), and the package, the python wheels and the command line would carry both. `cargo build -p sbmlsim-wasm --no-default-features` builds the compiler alone. The inline build of the python package (`sbmlsim_core.web.script()`) carries the module as well (since 0.39.0), `sbmlsimCore.openPetab` with `sbmlsimCore.createCompiler` and `sbmlsimCore.createRuntime`, for a page of one file which evaluates a problem with the bytes of `sbmlsim_core.runtime_wasm()`.
+`compiler.wasm` carries PEtab in every build since 0.39.0: the feature `petab` of `sbmlsim-wasm` is on by default and adds 340 kB to the 3.07 MB of the compiler alone (112 kB of 1.10 MB gzipped), and the fit of a problem 408 kB more, see [the fit of a problem](#the-fit-of-a-problem). A module of its own would have been larger in all: `petab_model` compiles the models of a plan, so a `petab.wasm` holds the whole compiler again (3.41 MB), and the package, the python wheels and the command line would carry both. `cargo build -p sbmlsim-wasm --no-default-features` builds the compiler alone. The inline build of the python package (`sbmlsim_core.web.script()`) carries the module as well (since 0.39.0), `sbmlsimCore.openPetab` with `sbmlsimCore.createCompiler` and `sbmlsimCore.createRuntime`, for a page of one file which evaluates a problem with the bytes of `sbmlsim_core.runtime_wasm()`.
 
-A fit of a problem in a page is not supported yet: the optimizers of the engine are `sbmlsim-fit`, which runs on the native host and its batch of threads, see [PEtab](petab.md#not-supported-yet).
+### The fit of a problem
+
+`fit` fits the estimated parameters of a problem in the page: the maximum likelihood estimate, or the maximum a posteriori estimate of a problem whose parameters carry priors. The optimizer is the one of `sbmlsim-core petab --fit`, `sbmlsim-fit` in `compiler.wasm`, and its simulations run on the engine of the problem:
+
+```js
+const fit = await problem.fit(); // from the nominal values, as `sbmlsim-core petab --fit`
+fit.x;          // the values of the estimated parameters at the optimum (Float64Array)
+fit.objective;  // the negative log-likelihood there (the negative log posterior with priors)
+
+const best = await problem.fit({
+  starts: 8, seed: 1,             // the nominal values and 7 points drawn in the box
+  maxIterations: 200,
+  signal: controller.signal,       // stops every fit at its next step, with its best point
+  onStep: ({ start, step, simulations, seconds }) => {},
+});
+best.runs;      // every fit, in the order of the starts; `best` is the one of the lowest objective
+```
+
+| option | what it is |
+| --- | --- |
+| `starts` | the points the fits start from (each a value per estimated parameter), or their number: the nominal values and points drawn uniformly in the space the optimizer searches, `log10` of a parameter of positive bounds, with `seed`; the nominal values alone without it |
+| `algorithm` | `"trustRegion"` (trust region reflective, the default), `"levenbergMarquardt"` or `{ differentialEvolution: { seed, population, f, cr, polish } }`, the [optimizers](fitting.md#the-optimizer) of the command line |
+| `maxIterations`, `gradientTolerance`, `stepTolerance`, `costTolerance` | what an optimizer may spend and when it stops, `max_iterations` (100) and the tolerances of [the optimizer](fitting.md#the-optimizer) |
+| `maxSeconds`, `signal` | the time the fits may take on the clock of the page, and an `AbortSignal`: either stops the fits at their next step, with the best point they reached (`status` `UserRequested`) |
+| `onStep` | called after the simulations of every step of every fit, with the index of its `start`, the `step`, the `simulations` it ran and the `seconds` since the fits began |
+
+The answer carries `x`, `objective`, `cost` (the cost of `sbmlsim-fit`, the objective plus the constant `offset` of [the fit](petab.md#the-fit)), `iterations`, `evaluations`, `jacobians`, `status` (the termination of the optimizer, e.g. `NumericalNoProgress` or `SolverConverged`), `simulations` (the simulations the page ran), `start`, `seconds` and `runs`.
+
+A fit in a page cannot call its simulations, which run on the workers of the page and answer later, so the optimizer is driven ask/tell ([`sbmlsim_fit::Asking`](fitting.md#a-fit-whose-host-simulates)): `petab_fit_ask` runs the optimizer in `compiler.wasm` until it needs evaluations the page has not given and answers the requests of their simulations, which `fit` simulates (next to each other on the workers of a pool) and hands to `petab_fit_tell`, as `evaluate` hands its results to `petab_evaluate`. A step asks for everything it needs at once: the residuals of a trial point, the `k + 1` evaluations of the finite differences of a jacobian, the members of a generation. The page yields to its events between the steps, so a fit on the loader does not freeze a page and a click on stop is heard.
+
+The jacobian is the forward differences of the simulations, which is what `sbmlsim-core petab --fit` takes as well (`JacobianChoice::Auto`): `engine.wasm` writes no sensitivities into its output (the native engine of the command line computes them, for `JacobianChoice::Sensitivities`). The sensitivities in a page need a format of the output of `engine.wasm` with room for them, their transfer by the loader and the pool, and the block of the jacobian of a condition read off them in `compiler.wasm`, which the batch already does natively ([#156](https://github.com/matthiaskoenig/sbmlsim-core/issues/156)).
+
+The fit of a page is the fit of the command line: the same definition, the same optimizer and the same evaluations, so the two differ only where `engine.wasm` and the native engine of the command line differ in the last bits of a double. `js/test/petab-fit.test.mjs` holds the page to the command line on the problem of the demo below and on the 49 cases of the PEtab test suite whose fit the engine carries: 29 are the same to the bit and the objectives of the others agree to `1e-14`, but for two whose objective has no minimum (a noise which is estimated runs to zero, `SolverFailed` in both), which end where their rounding takes them; where the paths of the two optimizers part at their last iterations, the optima agree to `1e-4` or are two points of the same valley of the likelihood (a parameter the data does not determine). On the native engine (`crates/petab/tests/asking.rs`) the fit driven ask/tell is the fit of `Executor::fit` to the bit, on every one of them.
+
+The fit of the pharmacokinetics of hydrochlorothiazide of pkdb_models (6 parameters, 59 simulations, 777 measurements, from the nominal values with the default settings) finds the optimum of the command line, the objective `-1631.5231473` (the command line `-1631.5231468`) and the parameters to `1e-6`, after 41 evaluations and 8 iterations, 6136 simulations:
+
+| host | the fit |
+| --- | --- |
+| Node 24, the runtime on the main thread | 6.4 s |
+| Node 24, a pool of 8 workers | 2.1 s |
+| the command line (`sbmlsim-core petab --fit`, the native engine on 20 threads) | 0.85 s |
+
+`compiler.wasm` carries the fit by default: the feature `fit` of `sbmlsim-wasm` (the optimizers of basin, the objective of `sbmlsim-fit` and the non-compartmental analysis of pkpdutils-core a curve may read) adds 408 kB to the 3.41 MB of the compiler with PEtab, 3.82 MB in all (144 kB of 1.24 MB gzipped). `cargo build -p sbmlsim-wasm --no-default-features --features petab` builds a module which evaluates a problem and fits none, and `fit` then says so. The module imports nothing: basin reads the clock of its time limit from web-time, which is JavaScript through wasm-bindgen in `wasm32-unknown-unknown`, so the workspace replaces web-time with the time of the standard library (`crates/web-time`), and a fit in a page reads the clock of the page.
 
 ### A problem evaluated in this page
 
-A small problem of PEtab v2 runs below, with the `petab.mjs`, `compiler.wasm` and `engine.wasm` of the npm package. Its model converts A into B (`k1`) and B back into A (`k2`), an experiment starts with A at 1 and doses one more unit of A at time 5, and A and B are measured twelve times each, with a normal noise of 0.04 (the data are drawn at `k1 = 0.6` and `k2 = 0.25`, the nominal values of the problem). Move the slider: the problem is evaluated again at the new `k1` and the nominal `k2`, which gives the log-likelihood `llh` and `chi2` of PEtab and the simulated value of every measurement.
+A small problem of PEtab v2 runs below, with the `petab.mjs`, `compiler.wasm` and `engine.wasm` of the npm package. Its model converts A into B (`k1`) and B back into A (`k2`), an experiment starts with A at 1 and doses one more unit of A at time 5, and A and B are measured twelve times each, with a normal noise of 0.04 (the data are drawn at `k1 = 0.6` and `k2 = 0.25`, the nominal values of the problem). Move the slider: the problem is evaluated again at the new `k1` and the nominal `k2`, which gives the log-likelihood `llh` and `chi2` of PEtab and the simulated value of every measurement. With a package which carries [the fit](#the-fit-of-a-problem) the button **fit k1 and k2** fits both in the page, from the nominal values, and shows the problem at the optimum; the slider then moves `k1` at the `k2` of the fit.
 
 <div class="pt" data-base="../demo/">
 <div class="pt-head">
 <label class="pt-knob">rate constant <b>k1</b><input class="pt-range" name="rate-constant-k1" type="range" min="0.2" max="1.5" step="0.01" value="0.6" aria-label="rate constant k1"><output class="pt-value">0.60</output></label>
+<button class="pt-fit md-button" type="button" hidden>fit k1 and k2</button>
 </div>
 <p class="pt-stats"><span>llh <b class="pt-llh">-</b></span><span>chi2 <b class="pt-chi2">-</b></span><span class="pt-nominal"></span></p>
 <p class="pt-state">loading the compiler, the engine and the problem ...</p>
@@ -472,6 +516,8 @@ const { llh, chi2, simulated } = await problem.evaluate([1.2, problem.nominal[1]
 .pt-knob { display: flex; align-items: center; gap: .6rem; font-size: .82rem; white-space: nowrap; }
 .pt-range { width: 15rem; max-width: 40vw; accent-color: var(--pt-a); }
 .pt-value { font-variant-numeric: tabular-nums; font-weight: 600; min-width: 2.6rem; }
+.pt .pt-fit { margin: 0; padding: .3em 1.1em; font-size: .76rem; }
+.pt .pt-fit:disabled { opacity: .5; cursor: progress; }
 .pt-stats { display: flex; flex-wrap: wrap; align-items: baseline; gap: .2rem 1.4rem; margin: 0 0 .2rem;
   font-size: .82rem; font-variant-numeric: tabular-nums; }
 .pt-stats b { display: inline-block; min-width: 4.4rem; margin-left: .35rem; }
@@ -501,6 +547,7 @@ if (root) {
   const llhOut = root.querySelector(".pt-llh");
   const chi2Out = root.querySelector(".pt-chi2");
   const nominalOut = root.querySelector(".pt-nominal");
+  const fitButton = root.querySelector(".pt-fit");
   const table = root.querySelector(".pt-table div");
   const NAMES = ["problem.yaml", "model.xml", "conditions.tsv", "experiments.tsv",
     "observables.tsv", "measurements.tsv", "parameters.tsv"];
@@ -636,7 +683,8 @@ if (root) {
       return { observable, time: Number(time), value: Number(value) };
     });
     const k1Nominal = problem.nominal[problem.parameters.indexOf("k1")];
-    const k2 = problem.nominal[problem.parameters.indexOf("k2")];
+    // the k2 of the evaluations: the nominal one, and the one of a fit after it
+    let k2 = problem.nominal[problem.parameters.indexOf("k2")];
     const nominal = await problem.evaluate();
     nominalOut.textContent = "llh " + nominal.llh.toFixed(2) + " at the nominal k1 = " + k1Nominal.toFixed(2);
     let busy = false, again = false;
@@ -670,6 +718,35 @@ if (root) {
       });
     });
     await run();
+    // the fit, with a package whose petab.mjs and compiler.wasm carry it
+    if (typeof problem.fit === "function" && compiler.exports?.petab_fit_open !== undefined) {
+      fitButton.hidden = false;
+      fitButton.addEventListener("click", async () => {
+        fitButton.disabled = true;
+        range.disabled = true;
+        try {
+          const fit = await problem.fit({
+            onStep: ({ step, simulations }) => {
+              state.textContent = "fitting in this page: step " + step + ", " + simulations + " simulations";
+            },
+          });
+          const at = (id) => fit.x[problem.parameters.indexOf(id)];
+          k2 = at("k2");
+          range.value = String(at("k1"));
+          await run();
+          nominalOut.textContent = "the fit: k1 = " + at("k1").toFixed(3) + ", k2 = " + k2.toFixed(3) +
+            ", llh " + (-fit.objective).toFixed(2) + " after " + fit.iterations + " iterations";
+          state.textContent = "fitted in this page in " + (1000 * fit.seconds).toFixed(0) + " ms, " +
+            fit.simulations + " simulations of the problem (" + fit.status + ")";
+        } catch (error) {
+          state.classList.add("pt-failed");
+          state.textContent = "The fit failed: " + error.message;
+        } finally {
+          fitButton.disabled = false;
+          range.disabled = false;
+        }
+      });
+    }
   } catch (error) {
     state.classList.add("pt-failed");
     state.textContent = "The demo could not run in this browser: " + error.message;

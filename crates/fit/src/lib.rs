@@ -36,18 +36,36 @@
 //! parameter whose bounds span decades, which is what a fit of a PBPK model does, and the
 //! model always sees the value itself.
 
+//!
+//! The feature `native` (the default) is all of the above. Without it the crate builds for
+//! `wasm32-unknown-unknown`, where no engine of its own simulates and no thread runs a point:
+//! a host resolves the definition against the tables it simulated at the start
+//! ([`Opening`]), and [`Asking`] drives the same optimizers ask/tell, asking for the points of
+//! a step (the simulations of an evaluation, the `k + 1` evaluations of the finite differences
+//! of a jacobian, the members of a generation) and taking their tables back, which is the fit
+//! of a page whose simulations run on the workers of JavaScript.
+
+mod ask;
+#[cfg(feature = "native")]
 mod contract;
+#[cfg(feature = "native")]
 mod identifiability;
 mod optimize;
+// the jacobian of the sensitivities is the batch's alone: a table a host hands in carries none
+#[cfg_attr(not(feature = "native"), allow(dead_code))]
 mod problem;
+#[cfg_attr(not(feature = "native"), allow(dead_code))]
 mod reduction;
 
+pub use ask::{Ask, Asking};
+#[cfg(feature = "native")]
 pub use contract::{
     ConditionRequest, CorrelationRequest, CurveRequest, DimensionRequest, FIELDS, FIT_CONTRACT,
     FitAnswer, FitRequest, FittedParameter, Identifiability, LikelihoodRequest, OnRun,
     ParameterRequest, PinnedRequest, PriorRequest, RunAnswer, fit, fit_models, fit_reporting,
     fit_reporting_models, fit_with, problem_of, problem_of_models,
 };
+#[cfg(feature = "native")]
 pub use identifiability::{
     DELTA_95, Fisher, Profile, ProfilePoint, Walk, fisher, profile, profiles,
 };
@@ -55,6 +73,7 @@ pub use optimize::{Algorithm, Evolution, Fit, Settings, Stop};
 pub use problem::{
     Condition, Correlation, Curve, DEFAULT_MODEL, DIFF_STEP, Definition, Derived, Dimension,
     FAILED_RESIDUAL, FitError, Form, JacobianChoice, LIKELIHOOD_OFFSET, LN_2, LN_2PI_HALF,
-    Likelihood, NoiseKind, Parameter, Pinned, Prior, PriorKind, Problem, Scale, Term,
+    Likelihood, NoiseKind, Opening, Parameter, Pinned, Prior, PriorKind, Problem, Scale,
+    Simulation, Term, with_values,
 };
 pub use reduction::{MIN_PADDED_LENGTH, PK_STEP, PkReduction, REDUCTIONS, Reduction};

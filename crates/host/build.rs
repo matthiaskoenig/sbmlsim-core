@@ -72,6 +72,9 @@ fn main() {
         "ode",
         "plot",
         "plot-wasm",
+        "petab",
+        "fit",
+        "web-time",
     ] {
         let dir = workspace.join("crates").join(crate_dir);
         for part in ["src", "csrc", "templates", "Cargo.toml", "build.rs"] {

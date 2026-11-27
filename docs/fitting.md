@@ -661,6 +661,45 @@ What a fit holds next to each other on that pool nests: the starts of a fit, the
 a profile and the profiles of the parameters each fan their own evaluations out over the same
 threads, and the answer is the same one on one thread and on twenty.
 
+### A fit whose host simulates
+
+All of the above is the feature `native` of `sbmlsim-fit`, the default: the engine of
+`sbmlsim-host` (wasmtime and the native engine) and the threads of the batch. Without it the
+crate builds for `wasm32-unknown-unknown`, where a host simulates itself, e.g. a page on the
+workers of JavaScript ([PEtab in a page](javascript.md#the-fit-of-a-problem)). The objective is
+separated from the batch there: `Opening::new` checks a definition against the ids of its
+models, the host simulates `Opening::simulations` (the request of every condition at the start,
+the values of its varying targets as pre-initialization values, which is what the prepared
+request of the batch executes) and `Opening::resolve` resolves the curves against its tables.
+`Asking` drives the optimizers of basin over that problem ask/tell, without basin's feature
+`parallel`:
+
+```rust
+use sbmlsim_fit::{Ask, Asking, Opening, Settings};
+
+let mut asking = Asking::open(Opening::new(definition, &["model".to_string()])?, Settings::default());
+let fit = loop {
+    match asking.ask()? {
+        // the requests of `simulation/1` of the evaluations the optimizer misses
+        Ask::Simulate(simulations) => asking.tell(simulate(&simulations))?,
+        Ask::Done(fit) => break fit,
+    }
+};
+```
+
+An ask is every simulation of the evaluations a step needs at once: the residuals of a point,
+the `k + 1` evaluations of the finite differences of its jacobian (a table of a host carries no
+sensitivities), the members of a generation of a differential evolution, so the host runs
+them next to each other. A step which misses an evaluation is abandoned and run again once the
+host told it: the trust region from a clone of its state before the step, the
+Levenberg-Marquardt and the evolution, whose solvers do not clone, from their start, which
+repeats the arithmetic of the optimizer and no simulation. The loop of a step is the one of the
+executor of basin (whose time limit reads a clock `wasm32-unknown-unknown` has not), so a host
+which simulates as the batch does gets the fit of `Problem::optimize` to the bit, its optimum,
+its cost and its counts: `crates/fit/tests/asking.rs` holds the three optimizers to it on the
+native engine, and `crates/petab/tests/asking.rs` the fits of the PEtab test suite and of the
+problem of the live demo.
+
 ## What a fit costs
 
 One Jacobian of a fit of hydrochlorothiazide (28 states, 20 conditions, 10 parameters, 220

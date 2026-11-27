@@ -155,11 +155,13 @@ const problem = await openPetab({ compiler, runtime, files }); // {name: text or
 const { llh, chi2, logPrior, simulationTable } = await problem.evaluate();
 ```
 
-See [JavaScript](javascript.md#petab-problems) for its interface, the sizes and the times of the fit of hydrochlorothiazide in Node and in a browser.
+A page fits a problem as well, `problem.fit()`: the definition of the fit (`Plan::definition`, the one of `Executor::fit`) and the optimizers of `sbmlsim-fit` are in `compiler.wasm` (the feature `fit` of `sbmlsim-wasm`, on by default), which ask for the simulations of every step (`petab_fit_open`, `petab_fit_ask`, `petab_fit_tell`, `petab_fit_stop` and `petab_fit_close`), and the page simulates them on its engine, see [`sbmlsim_fit::Asking`](fitting.md#a-fit-whose-host-simulates). Its jacobian is the finite differences of the command line.
+
+See [JavaScript](javascript.md#petab-problems) for its interface, the sizes and the times of the evaluation and of the fit of hydrochlorothiazide in Node and in a browser.
 
 ## Not supported yet
 
 - models of other languages than SBML (the PySB cases of the test suite), and a problem of PEtab v1, which is converted first (`petab.v2.petab1to2`),
 - the fit of a posterior which has no largest value, see [the fit](#the-fit),
-- the fit of a problem in a page: `js/petab.mjs` evaluates a problem, and the optimizers are `sbmlsim-fit`, which runs on the native host and its batch of threads ([#147](https://github.com/matthiaskoenig/sbmlsim-core/issues/147)),
+- the sensitivities in a page: `engine.wasm` writes no sensitivities into its output, so the fit of a page takes the finite differences, as the fit of the command line does by default ([#156](https://github.com/matthiaskoenig/sbmlsim-core/issues/156)),
 - PEtab SciML.

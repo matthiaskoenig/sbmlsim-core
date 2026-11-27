@@ -6,7 +6,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use sbmlsim_abi::{EngineError, Output, SimulationRequest, SimulationResult};
+#[cfg(feature = "native")]
 use sbmlsim_batch::{BatchError, PointFailure, Workers};
+#[cfg(feature = "native")]
 use sbmlsim_host::{LoadedModel, NativeInstance, PreparedSimulation};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -89,6 +91,7 @@ pub enum FitError {
     #[error("the correlation of the priors {0}")]
     Correlation(String),
     /// The pool of the batch was refused, e.g. for its number of threads.
+    #[cfg(feature = "native")]
     #[error("the pool of the batch: {0}")]
     Pool(#[from] BatchError),
     /// The engine refused a request or failed in itself; a failed integration is no error of
@@ -1236,14 +1239,21 @@ fn measurement_rows(kind: NoiseKind, sigma: f64, value: f64, prediction: f64) ->
 /// One condition of the fit: what to simulate and which residuals its table carries.
 #[derive(Debug)]
 struct Point {
-    /// The request of the condition, with the parameters of the fit and then the targets of its
-    /// derived values as its varying targets.
-    prepared: PreparedSimulation,
-    /// The model of the condition, its index in the models of the pool of the problem.
+    /// The request of the condition, whose varying targets are [`Point::varying`].
+    request: SimulationRequest,
+    /// The parameters of the fit and then the targets of its derived values, the varying
+    /// targets of the request, see [`Point::values`].
+    varying: Vec<String>,
+    /// The request prepared with those varying targets on the batch; `None` for a problem whose
+    /// tables a host hands in ([`Opening::resolve`]).
+    #[cfg(feature = "native")]
+    prepared: Option<PreparedSimulation>,
+    /// The model of the condition, its index in the models of the problem.
     model: usize,
     /// The same condition with the forward sensitivities of all of those targets, which give
     /// the block of the jacobian of the condition in one simulation ([`Point::links`]); `None`
     /// for a fit of the differences.
+    #[cfg(feature = "native")]
     sensitive: Option<PreparedSimulation>,
     /// The number of columns of its table, for the index of a value.
     columns: usize,
@@ -1799,6 +1809,7 @@ impl Interpolated {
 }
 
 /// One point of a batch: a condition and the values of the parameters to simulate it at.
+#[cfg(feature = "native")]
 struct Shot<'a> {
     point: &'a Point,
     values: &'a [f64],
@@ -1836,8 +1847,10 @@ pub struct Problem {
     /// so that a profile counts the simulations of its fits as well.
     simulations: Arc<AtomicU64>,
     /// The pool of the batch, shared with those problems as well: the instance of a thread is
-    /// made once, whatever is fitted on it.
-    workers: Arc<Workers>,
+    /// made once, whatever is fitted on it; `None` for a problem whose tables a host hands in
+    /// ([`Opening::resolve`]), which evaluates nothing itself.
+    #[cfg(feature = "native")]
+    workers: Option<Arc<Workers>>,
 }
 
 /// Where a varying target of the prepared requests takes its value from.
@@ -1860,52 +1873,42 @@ impl std::fmt::Debug for Problem {
                 &self.points.iter().map(|p| p.curves.len()).sum::<usize>(),
             )
             .field("residuals", &self.n_residuals)
-            .field("threads", &self.workers.threads())
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
-impl Problem {
-    /// Resolves a definition against a model and the pool of its batch.
-    ///
-    /// Every condition is prepared with the parameters of the fit as its varying targets and
-    /// simulated once at the start, which gives the columns and the output times its curves
-    /// are resolved against.
+/// A definition checked against the ids of its models, before the tables of its conditions at
+/// the start resolve its curves.
+///
+/// [`Problem::of_models`] opens a definition, prepares and simulates its conditions on the
+/// batch and resolves the definition against their tables. A host which simulates elsewhere,
+/// the workers of a page, opens it, simulates [`Opening::simulations`] itself and resolves it
+/// with the tables it got ([`Opening::resolve`]): a problem without the batch, whose
+/// evaluations are computed from the tables the host hands in, see [`crate::Asking`].
+#[derive(Debug)]
+pub struct Opening {
+    parameters: Vec<Parameter>,
+    conditions: Vec<Condition>,
+    curves: Vec<Curve>,
+    priors: Priors,
+    jacobian: JacobianChoice,
+    /// The varying targets of every condition: the parameters and then the targets of its
+    /// derived values.
+    varyings: Vec<Vec<String>>,
+    /// The model of every condition, its index in the models of the fit.
+    models: Vec<usize>,
+}
+
+impl Opening {
+    /// Checks a definition against the ids of its models, in the order of the models of the
+    /// problem.
     ///
     /// # Errors
     ///
     /// If the definition is empty, if a parameter cannot be fitted (its bounds, its scale or
-    /// its start), if a condition cannot be prepared or simulated at the start, or if a curve
-    /// does not fit the table of its condition (its column, its times or its noise).
-    pub fn new(
-        definition: Definition,
-        model: Arc<LoadedModel>,
-        threads: usize,
-    ) -> Result<Problem, FitError> {
-        Problem::of_models(
-            definition,
-            vec![(DEFAULT_MODEL.to_string(), model)],
-            threads,
-        )
-    }
-
-    /// Resolves a definition against several models, each with the id its conditions name it
-    /// by, and the pool of its batch.
-    ///
-    /// This is [`Problem::new`] of a fit of more than one model, e.g. of data which is the
-    /// data of two builds of a model: the condition of every simulation names the model it
-    /// simulates, a condition of a fit of one model needs no name, and a thread of the pool
-    /// holds an instance of every model its points met.
-    ///
-    /// # Errors
-    ///
-    /// As [`Problem::new`], and if the models are empty, if two of them share an id, or if a
-    /// condition names a model the fit has not or names none although the fit has several.
-    pub fn of_models(
-        definition: Definition,
-        models: Vec<(String, Arc<LoadedModel>)>,
-        threads: usize,
-    ) -> Result<Problem, FitError> {
+    /// its start), if a prior or a derived value does not fit the parameters, or if a
+    /// condition names a model the fit has not or outputs the steps of the integrator.
+    pub fn new(definition: Definition, models: &[String]) -> Result<Opening, FitError> {
         let Definition {
             parameters,
             conditions,
@@ -1928,18 +1931,8 @@ impl Problem {
             varyings.push(check_derived(at, condition, &varying)?);
             check_pinned(at, condition, parameters.len())?;
         }
-        let ats = models_of(&models, &conditions)?;
-        let workers = Workers::of_models(
-            models.into_iter().map(|(_, model)| model).collect(),
-            threads,
-        )?;
-        let mut prepared = Vec::with_capacity(conditions.len());
-        for (((at, condition), varying), model) in conditions
-            .iter()
-            .enumerate()
-            .zip(varyings.iter())
-            .zip(ats.iter())
-        {
+        let ats = models_of(models, &conditions)?;
+        for (at, condition) in conditions.iter().enumerate() {
             // the rows of a curve of a reduction are not resolved, so a condition whose
             // curves are all reductions may output the steps of the integrator
             let rowed = curves.iter().any(|curve| curve.reads(at) && curve.rowed());
@@ -1952,54 +1945,138 @@ impl Problem {
                         .to_string(),
                 });
             }
-            prepared.push(
-                workers.models()[*model]
-                    .prepare(&condition.request, varying)
-                    .map_err(|err| FitError::Condition {
-                        at,
-                        message: format!("cannot be prepared: {err}"),
-                    })?,
-            );
         }
-        // the sensitivities of a condition are the ones of all of its varying targets, the
-        // targets of its derived values among them, whose columns the chain rule over their
-        // terms maps onto the parameters, see `Point::links`
-        let (sensitive, jacobian) = if jacobian == JacobianChoice::Sensitivities {
-            let prepared = sensitive_conditions(&workers, &conditions, &ats, &varyings)?;
-            (prepared, JacobianChoice::Sensitivities)
-        } else {
-            (
-                conditions.iter().map(|_| None).collect(),
-                JacobianChoice::DifferenceQuotient,
-            )
-        };
-        // the table of every condition at the start, which the curves are resolved against
-        let start: Vec<f64> = parameters
+        Ok(Opening {
+            parameters,
+            conditions,
+            curves,
+            priors,
+            jacobian,
+            varyings,
+            models: ats,
+        })
+    }
+
+    /// The values of the parameters at the start, on the linear scale, through the scale of
+    /// every parameter and back, as an optimizer which starts there sets them.
+    fn start(&self) -> Vec<f64> {
+        self.parameters
             .iter()
             .map(|p| p.scale.to_model(p.scale.to_search(p.start)))
-            .collect();
-        let tables = simulate(&workers, &prepared, &conditions, &ats, &start)?;
-        let mut points: Vec<Point> = prepared
-            .into_iter()
-            .zip(sensitive)
-            .zip(tables.iter())
+            .collect()
+    }
+
+    /// The simulations of the conditions at the start of the fit, one per condition in their
+    /// order, whose tables [`Opening::resolve`] resolves the definition against.
+    #[must_use]
+    pub fn simulations(&self) -> Vec<Simulation> {
+        let start = self.start();
+        self.conditions
+            .iter()
+            .zip(&self.varyings)
+            .zip(&self.models)
+            .enumerate()
+            .map(|(at, ((condition, varying), model))| Simulation {
+                condition: at,
+                model: *model,
+                request: with_values(
+                    &condition.request,
+                    varying,
+                    &varying_values(&condition.derived, &condition.pinned, &start),
+                ),
+            })
+            .collect()
+    }
+
+    /// The problem of the definition, its curves resolved against the tables of
+    /// [`Opening::simulations`], one per condition in their order, without the batch: its
+    /// evaluations are computed from the tables a host hands in ([`crate::Asking`]), and its
+    /// jacobian is the one of the finite differences.
+    ///
+    /// # Errors
+    ///
+    /// If the tables are not one per condition, if the definition asks for the jacobian of the
+    /// sensitivities, which a table a host hands in does not carry, or if a curve does not fit
+    /// the table of its condition (its column, its times or its noise).
+    pub fn resolve(self, tables: &[SimulationResult]) -> Result<Problem, FitError> {
+        if tables.len() != self.conditions.len() {
+            return Err(FitError::Request(format!(
+                "has {} conditions and {} tables at the start",
+                self.conditions.len(),
+                tables.len()
+            )));
+        }
+        if self.jacobian == JacobianChoice::Sensitivities {
+            return Err(FitError::Request(
+                "asks for the sensitivities, which the tables of a host do not carry: a fit \
+                 whose simulations a host runs takes the finite differences"
+                    .to_string(),
+            ));
+        }
+        self.assemble(tables, JacobianChoice::DifferenceQuotient, None)
+    }
+
+    /// The problem of the definition, its curves resolved against the tables of its
+    /// conditions at the start, on the batch of `batch` or, without it, on the tables of a
+    /// host.
+    fn assemble(
+        self,
+        tables: &[SimulationResult],
+        jacobian: JacobianChoice,
+        batch: Option<Batch>,
+    ) -> Result<Problem, FitError> {
+        let Opening {
+            parameters,
+            conditions,
+            curves,
+            priors,
+            varyings,
+            models: ats,
+            ..
+        } = self;
+        #[cfg(not(feature = "native"))]
+        let None = batch;
+        #[cfg(feature = "native")]
+        let (workers, mut prepared, mut sensitive) = match batch {
+            Some(Batch {
+                workers,
+                prepared,
+                sensitive,
+            }) => (
+                Some(Arc::new(workers)),
+                prepared.into_iter().map(Some).collect::<Vec<_>>(),
+                sensitive,
+            ),
+            None => (
+                None,
+                conditions.iter().map(|_| None).collect(),
+                conditions.iter().map(|_| None).collect(),
+            ),
+        };
+        let mut points: Vec<Point> = Vec::with_capacity(conditions.len());
+        for (at, ((table, condition), varying)) in tables
+            .iter()
             .zip(conditions.iter())
-            .zip(ats.iter())
-            .map(
-                |((((prepared, sensitive), table), condition), model)| Point {
-                    prepared,
-                    model: *model,
-                    sensitive,
-                    columns: table.columns.len(),
-                    curves: Vec::new(),
-                    n_residuals: 0,
-                    derived: condition.derived.clone(),
-                    pinned: condition.pinned.clone(),
-                    nodes: Vec::new(),
-                    node_starts: Vec::new(),
-                },
-            )
-            .collect();
+            .zip(varyings)
+            .enumerate()
+        {
+            points.push(Point {
+                request: condition.request.clone(),
+                varying,
+                #[cfg(feature = "native")]
+                prepared: prepared[at].take(),
+                model: ats[at],
+                #[cfg(feature = "native")]
+                sensitive: sensitive[at].take(),
+                columns: table.columns.len(),
+                curves: Vec::new(),
+                n_residuals: 0,
+                derived: condition.derived.clone(),
+                pinned: condition.pinned.clone(),
+                nodes: Vec::new(),
+                node_starts: Vec::new(),
+            });
+        }
         let mut n_residuals = 0;
         let mut interpolated = Vec::new();
         for (at, curve) in curves.iter().enumerate() {
@@ -2011,7 +2088,7 @@ impl Problem {
                 )));
             }
             if let Some(dimension) = &curve.dimension {
-                let mut over = resolve_dimension(at, curve, dimension, &tables, n_residuals)?;
+                let mut over = resolve_dimension(at, curve, dimension, tables, n_residuals)?;
                 for (index, (node, condition)) in
                     over.nodes.iter_mut().zip(&dimension.conditions).enumerate()
                 {
@@ -2061,8 +2138,167 @@ impl Problem {
             n_residuals,
             jacobian,
             simulations: Arc::new(AtomicU64::new(0)),
-            workers: Arc::new(workers),
+            #[cfg(feature = "native")]
+            workers,
         })
+    }
+}
+
+/// The batch of a problem: its pool and every condition prepared on it, with and without its
+/// sensitivities.
+#[cfg(feature = "native")]
+struct Batch {
+    workers: Workers,
+    prepared: Vec<PreparedSimulation>,
+    sensitive: Vec<Option<PreparedSimulation>>,
+}
+
+/// No batch: a build without the feature `native` resolves a problem on the tables of a host
+/// alone.
+#[cfg(not(feature = "native"))]
+enum Batch {}
+
+/// A simulation a host runs for a fit whose tables it hands in: the request of a condition at
+/// the values of the parameters of a point.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Simulation {
+    /// The condition, its index in the definition.
+    pub condition: usize,
+    /// The model it simulates, its index in the models of the fit.
+    pub model: usize,
+    /// The request of the condition with the values of its varying targets as
+    /// pre-initialization values, see [`with_values`].
+    pub request: SimulationRequest,
+}
+
+/// The request a prepared request of its varying targets executes at their values, as a
+/// request of its own: the request of `simulation/1` a host which has no prepared requests
+/// simulates instead.
+///
+/// The engine prepares a request ([`sbmlsim_core_engine::Engine::prepare`]) by joining the
+/// pre-initialization of its steady state to its own and by setting every varying target in
+/// that list, where the list holds it, or appending it: this is the same list, so the request
+/// initializes the model as the prepared one does, value by value and in the same order. A
+/// varying target is found by its id.
+#[must_use]
+pub fn with_values(
+    request: &SimulationRequest,
+    varying: &[String],
+    values: &[f64],
+) -> SimulationRequest {
+    let mut request = request.clone();
+    if let Some(steady) = request.steady_state.as_mut() {
+        request.preinit.append(&mut steady.preinit);
+    }
+    for (target, value) in varying.iter().zip(values) {
+        match request.preinit.iter_mut().find(|(id, _)| id == target) {
+            Some(entry) => entry.1 = *value,
+            None => request.preinit.push((target.clone(), *value)),
+        }
+    }
+    request
+}
+
+impl Problem {
+    /// Resolves a definition against a model and the pool of its batch.
+    ///
+    /// Every condition is prepared with the parameters of the fit as its varying targets and
+    /// simulated once at the start, which gives the columns and the output times its curves
+    /// are resolved against.
+    ///
+    /// # Errors
+    ///
+    /// If the definition is empty, if a parameter cannot be fitted (its bounds, its scale or
+    /// its start), if a condition cannot be prepared or simulated at the start, or if a curve
+    /// does not fit the table of its condition (its column, its times or its noise).
+    #[cfg(feature = "native")]
+    pub fn new(
+        definition: Definition,
+        model: Arc<LoadedModel>,
+        threads: usize,
+    ) -> Result<Problem, FitError> {
+        Problem::of_models(
+            definition,
+            vec![(DEFAULT_MODEL.to_string(), model)],
+            threads,
+        )
+    }
+
+    /// Resolves a definition against several models, each with the id its conditions name it
+    /// by, and the pool of its batch.
+    ///
+    /// This is [`Problem::new`] of a fit of more than one model, e.g. of data which is the
+    /// data of two builds of a model: the condition of every simulation names the model it
+    /// simulates, a condition of a fit of one model needs no name, and a thread of the pool
+    /// holds an instance of every model its points met.
+    ///
+    /// # Errors
+    ///
+    /// As [`Problem::new`], and if the models are empty, if two of them share an id, or if a
+    /// condition names a model the fit has not or names none although the fit has several.
+    #[cfg(feature = "native")]
+    pub fn of_models(
+        definition: Definition,
+        models: Vec<(String, Arc<LoadedModel>)>,
+        threads: usize,
+    ) -> Result<Problem, FitError> {
+        let ids: Vec<String> = models.iter().map(|(id, _)| id.clone()).collect();
+        let opening = Opening::new(definition, &ids)?;
+        let workers = Workers::of_models(
+            models.into_iter().map(|(_, model)| model).collect(),
+            threads,
+        )?;
+        let mut prepared = Vec::with_capacity(opening.conditions.len());
+        for (at, ((condition, varying), model)) in opening
+            .conditions
+            .iter()
+            .zip(opening.varyings.iter())
+            .zip(opening.models.iter())
+            .enumerate()
+        {
+            prepared.push(
+                workers.models()[*model]
+                    .prepare(&condition.request, varying)
+                    .map_err(|err| FitError::Condition {
+                        at,
+                        message: format!("cannot be prepared: {err}"),
+                    })?,
+            );
+        }
+        // the sensitivities of a condition are the ones of all of its varying targets, the
+        // targets of its derived values among them, whose columns the chain rule over their
+        // terms maps onto the parameters, see `Point::links`
+        let (sensitive, jacobian) = if opening.jacobian == JacobianChoice::Sensitivities {
+            let prepared = sensitive_conditions(
+                &workers,
+                &opening.conditions,
+                &opening.models,
+                &opening.varyings,
+            )?;
+            (prepared, JacobianChoice::Sensitivities)
+        } else {
+            (
+                opening.conditions.iter().map(|_| None).collect(),
+                JacobianChoice::DifferenceQuotient,
+            )
+        };
+        // the table of every condition at the start, which the curves are resolved against
+        let tables = simulate(
+            &workers,
+            &prepared,
+            &opening.conditions,
+            &opening.models,
+            &opening.start(),
+        )?;
+        opening.assemble(
+            &tables,
+            jacobian,
+            Some(Batch {
+                workers,
+                prepared,
+                sensitive,
+            }),
+        )
     }
 
     /// The same fit with parameters held at a value, which is the problem of a profile.
@@ -2137,6 +2373,7 @@ impl Problem {
             n_residuals: self.n_residuals,
             jacobian: self.jacobian,
             simulations: self.simulations.clone(),
+            #[cfg(feature = "native")]
             workers: self.workers.clone(),
         })
     }
@@ -2154,10 +2391,23 @@ impl Problem {
         self.n_residuals
     }
 
-    /// The threads of the batch of an evaluation.
+    /// The threads of the batch of an evaluation, one for a problem whose tables a host hands
+    /// in.
+    #[cfg(feature = "native")]
     #[must_use]
     pub fn threads(&self) -> usize {
-        self.workers.threads()
+        self.workers.as_ref().map_or(1, |workers| workers.threads())
+    }
+
+    /// The pool of the batch, or the refusal of a problem whose tables a host hands in.
+    #[cfg(feature = "native")]
+    fn workers(&self) -> Result<&Workers, FitError> {
+        self.workers.as_deref().ok_or_else(|| {
+            FitError::Request(
+                "was resolved on the tables of a host, which simulates its evaluations: it has                  no batch of its own"
+                    .to_string(),
+            )
+        })
     }
 
     /// The start of the fit, in the space an optimizer searches.
@@ -2221,6 +2471,7 @@ impl Problem {
     ///
     /// If the engine refuses a request or fails in itself, or if a point of the batch failed
     /// outside the engine; a failed integration is no error.
+    #[cfg(feature = "native")]
     pub fn residuals(&self, x: &[f64]) -> Result<Vec<f64>, FitError> {
         let values = self.values(x);
         let shots: Vec<Shot<'_>> = self
@@ -2232,11 +2483,46 @@ impl Problem {
             })
             .collect();
         let outputs = self.run(&shots)?;
+        Ok(self.residuals_of(&values, &outputs))
+    }
+
+    /// The residuals of the values of the varying targets of a point ([`Problem::values`])
+    /// from the output of every condition there, in the order of the conditions (`None` for a
+    /// failed integration): the rows of the curves and then the rows of the priors.
+    pub(crate) fn residuals_of(&self, values: &[f64], outputs: &[Option<Vec<f64>>]) -> Vec<f64> {
         let mut residuals = vec![0.0; self.n_residuals];
-        self.write_evaluation(&mut residuals, &outputs);
+        self.write_evaluation(&mut residuals, outputs);
         let at = self.priors_at();
-        self.priors.write(&mut residuals[at..], &values);
-        Ok(residuals)
+        self.priors.write(&mut residuals[at..], values);
+        residuals
+    }
+
+    /// The number of conditions of the fit, the simulations of one evaluation.
+    #[must_use]
+    pub fn n_conditions(&self) -> usize {
+        self.points.len()
+    }
+
+    /// The simulation of a condition at the values of the varying targets of a point
+    /// ([`Problem::values`]), which a host whose tables the problem reads simulates.
+    #[must_use]
+    pub fn simulation(&self, condition: usize, values: &[f64]) -> Simulation {
+        let point = &self.points[condition];
+        Simulation {
+            condition,
+            model: point.model,
+            request: with_values(&point.request, &point.varying, &point.values(values)),
+        }
+    }
+
+    /// The output of a condition from its table, what an evaluation reads of it, see
+    /// [`Problem::residuals_of`].
+    pub(crate) fn output_of(
+        &self,
+        condition: usize,
+        table: &SimulationResult,
+    ) -> Result<Vec<f64>, EngineError> {
+        self.points[condition].residuals(table)
     }
 
     /// Writes the rows of the curves of one evaluation, the outputs of every condition in the
@@ -2266,6 +2552,7 @@ impl Problem {
     /// # Errors
     ///
     /// As [`Problem::residuals`].
+    #[cfg(feature = "native")]
     pub fn cost(&self, x: &[f64]) -> Result<f64, FitError> {
         Ok(0.5
             * self
@@ -2280,6 +2567,7 @@ impl Problem {
     /// # Errors
     ///
     /// As [`Problem::residuals`], or if the optimizer refuses the bounds of the fit.
+    #[cfg(feature = "native")]
     pub fn optimize(&self, settings: &crate::Settings) -> Result<crate::Fit, FitError> {
         crate::optimize::run(self, settings, &self.start(), &crate::Stop::new())
     }
@@ -2292,6 +2580,7 @@ impl Problem {
     /// # Errors
     ///
     /// As [`Problem::optimize`], or if the point is not one of the parameters of the fit.
+    #[cfg(feature = "native")]
     pub fn optimize_from(
         &self,
         settings: &crate::Settings,
@@ -2306,6 +2595,7 @@ impl Problem {
     /// # Errors
     ///
     /// As [`Problem::optimize_from`].
+    #[cfg(feature = "native")]
     pub fn optimize_with(
         &self,
         settings: &crate::Settings,
@@ -2315,9 +2605,14 @@ impl Problem {
         crate::optimize::run(self, settings, from, stop)
     }
 
-    /// Runs `work` on the threads of the batch of the problem.
+    /// Runs `work` on the threads of the batch of the problem, or on the thread of the caller
+    /// for a problem whose tables a host hands in.
+    #[cfg(feature = "native")]
     pub(crate) fn install<R: Send>(&self, work: impl FnOnce() -> R + Send) -> R {
-        self.workers.install(work)
+        match &self.workers {
+            Some(workers) => workers.install(work),
+            None => work(),
+        }
     }
 
     /// The step of the finite difference of the parameter `k` at a point of the search space.
@@ -2353,6 +2648,7 @@ impl Problem {
     /// # Errors
     ///
     /// As [`Problem::residuals`].
+    #[cfg(feature = "native")]
     pub fn jacobian(&self, x: &[f64]) -> Result<Vec<f64>, FitError> {
         match self.jacobian {
             JacobianChoice::DifferenceQuotient => self.jacobian_of_differences(x),
@@ -2374,6 +2670,7 @@ impl Problem {
     /// # Errors
     ///
     /// As [`Problem::residuals`].
+    #[cfg(feature = "native")]
     fn jacobian_of_sensitivities(&self, x: &[f64]) -> Result<Vec<f64>, FitError> {
         let k = self.free.len();
         let values = self.values(x);
@@ -2395,7 +2692,7 @@ impl Problem {
             .collect();
         self.simulations
             .fetch_add(shots.len() as u64, Ordering::Relaxed);
-        let outcomes = self.workers.map_at(
+        let outcomes = self.workers()?.map_at(
             &shots,
             |shot| shot.point.model,
             |instance, shot| {
@@ -2450,10 +2747,33 @@ impl Problem {
     /// # Errors
     ///
     /// As [`Problem::residuals`].
+    #[cfg(feature = "native")]
     fn jacobian_of_differences(&self, x: &[f64]) -> Result<Vec<f64>, FitError> {
+        let (steps, moved) = self.differences(x);
+        let mut shots: Vec<Shot<'_>> = Vec::with_capacity(moved.len() * self.points.len());
+        for values in &moved {
+            for point in self.points.iter() {
+                shots.push(Shot { point, values });
+            }
+        }
+        let outputs = self.run(&shots)?;
+        // the residuals of the base point and of every column of the difference, one after
+        // the other: the points of a column are the conditions of one evaluation
+        let residuals: Vec<Vec<f64>> = moved
+            .iter()
+            .zip(outputs.chunks(self.points.len()))
+            .map(|(values, outputs)| self.residuals_of(values, outputs))
+            .collect();
+        Ok(self.difference_quotient(&steps, &residuals))
+    }
+
+    /// The steps of the finite differences of a point of the search space ([`Problem::step`])
+    /// and the values of the varying targets ([`Problem::values`]) of the point itself and then
+    /// of the point moved by the step of every column, whose residuals the difference quotient
+    /// of the jacobian reads ([`Problem::difference_quotient`]).
+    pub(crate) fn differences(&self, x: &[f64]) -> (Vec<f64>, Vec<Vec<f64>>) {
         let k = self.free.len();
         let steps: Vec<f64> = (0..k).map(|column| self.step(column, x)).collect();
-        // the values of the base point and of every column of the difference
         let mut moved: Vec<Vec<f64>> = Vec::with_capacity(k + 1);
         moved.push(self.values(x));
         for (column, step) in steps.iter().enumerate() {
@@ -2461,39 +2781,22 @@ impl Problem {
             ahead[column] += step;
             moved.push(self.values(&ahead));
         }
-        let mut shots: Vec<Shot<'_>> = Vec::with_capacity((k + 1) * self.points.len());
-        for values in &moved {
-            for point in self.points.iter() {
-                shots.push(Shot { point, values });
-            }
-        }
-        let g = self.points.len();
-        let n = self.n_residuals;
-        let outputs = self.run(&shots)?;
-        // the residuals of the base point and of every column of the difference, one after
-        // the other: the points of a column are the conditions of one evaluation
-        let mut residuals = vec![0.0; (k + 1) * n];
-        for (column, outputs) in outputs.chunks(g).enumerate() {
-            self.write_evaluation(&mut residuals[column * n..(column + 1) * n], outputs);
-        }
-        // the rows of the priors are rows of the residuals, so the difference of a column
-        // differences them as well
-        let priors = self.priors_at();
-        for (column, values) in moved.iter().enumerate() {
-            self.priors.write(
-                &mut residuals[column * n + priors..(column + 1) * n],
-                values,
-            );
-        }
+        (steps, moved)
+    }
+
+    /// The jacobian of the finite differences, row major, from the residuals of the points of
+    /// [`Problem::differences`]: the residuals of the point and then the ones of every column.
+    pub(crate) fn difference_quotient(&self, steps: &[f64], residuals: &[Vec<f64>]) -> Vec<f64> {
+        let k = steps.len();
+        let at = &residuals[0];
         let mut jacobian = vec![0.0; self.n_residuals * k];
         for row in 0..self.n_residuals {
-            let at = residuals[row];
             for (column, step) in steps.iter().enumerate() {
-                let ahead = residuals[(column + 1) * self.n_residuals + row];
-                jacobian[row * k + column] = (ahead - at) / step;
+                let ahead = residuals[column + 1][row];
+                jacobian[row * k + column] = (ahead - at[row]) / step;
             }
         }
-        Ok(jacobian)
+        jacobian
     }
 
     /// Runs the points of a batch and reduces every one of them on the thread of the point to
@@ -2502,15 +2805,21 @@ impl Problem {
     /// The output of a point whose integration failed is `None`, whose residuals are
     /// [`FAILED_RESIDUAL`] ([`Problem::write_evaluation`]); any other failure of the engine
     /// is an error of the fit.
+    #[cfg(feature = "native")]
     fn run(&self, shots: &[Shot<'_>]) -> Result<Vec<Option<Vec<f64>>>, FitError> {
         self.simulations
             .fetch_add(shots.len() as u64, Ordering::Relaxed);
-        let outcomes = self.workers.map_at(
+        let outcomes = self.workers()?.map_at(
             shots,
             |shot| shot.point.model,
             |instance, shot| {
+                let Some(prepared) = &shot.point.prepared else {
+                    return Err(EngineError::Internal(
+                        "a condition of the fit is not prepared on the batch".to_string(),
+                    ));
+                };
                 let values = shot.point.values(shot.values);
-                let table = instance.simulate_prepared(&shot.point.prepared, &values)?;
+                let table = instance.simulate_prepared(prepared, &values)?;
                 shot.point.residuals(&table)
             },
         );
@@ -2536,15 +2845,12 @@ pub const DEFAULT_MODEL: &str = "model";
 /// A condition of a fit of one model needs no model of its own, and a condition of a fit of
 /// several names the one it simulates; a name is the id of a model of the fit whatever the
 /// number of models, so a typo is an error and not the first model.
-fn models_of(
-    models: &[(String, Arc<LoadedModel>)],
-    conditions: &[Condition],
-) -> Result<Vec<usize>, FitError> {
+fn models_of(models: &[String], conditions: &[Condition]) -> Result<Vec<usize>, FitError> {
     if models.is_empty() {
         return Err(FitError::Empty("model"));
     }
     let mut by_id: HashMap<&str, usize> = HashMap::with_capacity(models.len());
-    for (at, (id, _)) in models.iter().enumerate() {
+    for (at, id) in models.iter().enumerate() {
         if by_id.insert(id.as_str(), at).is_some() {
             return Err(FitError::Request(format!(
                 "two models of the fit have the id '{id}'"
@@ -2582,6 +2888,7 @@ fn models_of(
 /// sensitivities or the one of the differences, and never a mixture of the two, which would
 /// be a jacobian of two accuracies. So is a condition whose derived value has a target the
 /// sensitivities do not carry, which the fit would otherwise have to difference.
+#[cfg(feature = "native")]
 fn sensitive_conditions(
     workers: &Workers,
     conditions: &[Condition],
@@ -2834,6 +3141,7 @@ fn check_derived(
 }
 
 /// Simulates every prepared condition once at the values of the parameters.
+#[cfg(feature = "native")]
 fn simulate(
     workers: &Workers,
     prepared: &[PreparedSimulation],

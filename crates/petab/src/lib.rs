@@ -34,7 +34,6 @@ mod plan;
 pub mod problem;
 mod tables;
 
-#[cfg(feature = "native")]
 mod execute;
 
 pub use likelihood::{NoiseDistribution, Prior, PriorKind};

@@ -111,10 +111,12 @@ problem.parameters; // the estimated parameters, with problem.nominal, problem.l
 const evaluation = await problem.evaluate();
 const atX = await problem.evaluate([0.5, 0.4, 3]);
 const simulations = await problem.simulations(); // [{ model, request, result }], the time courses
+// the fit of the command line (`sbmlsim-core petab --fit`): x, objective, status, runs, ...
+const fit = await problem.fit({ starts: 4, signal, onStep: ({ step }) => {} });
 problem.close();
 ```
 
-The problem is read, planned and evaluated by `compiler.wasm` (the Rust of the command line `sbmlsim-core petab` and of `sbmlsim_core.petab` in python), and its simulations run on `engine.wasm`, on the thread of the caller with a `runtime` or on the workers of a `pool`. Both hosts run the same engine, so a page gives the log-likelihood and the simulation table of the command line bit for bit. A problem which is not read or planned raises a `PetabError` with the reason; a simulation which fails is a failure of the evaluation (`failures`) and a log-likelihood of `NaN`. The fit of a problem is not part of the page yet.
+The problem is read, planned and evaluated by `compiler.wasm` (the Rust of the command line `sbmlsim-core petab` and of `sbmlsim_core.petab` in python), and its simulations run on `engine.wasm`, on the thread of the caller with a `runtime` or on the workers of a `pool`. Both hosts run the same engine, so a page gives the log-likelihood and the simulation table of the command line bit for bit. A problem which is not read or planned raises a `PetabError` with the reason; a simulation which fails is a failure of the evaluation (`failures`) and a log-likelihood of `NaN`. A fit runs the optimizer of `sbmlsim-fit` in `compiler.wasm`, which asks for the simulations of every step and gets them from the engine of the page, so it finds the optimum of the command line; its jacobian is the finite differences of the simulations.
 
 ## Draw a figure
 

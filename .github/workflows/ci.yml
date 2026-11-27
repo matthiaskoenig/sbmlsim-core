@@ -81,12 +81,17 @@ jobs:
       - run: cargo build -p sbmlsim-sensitivity --target wasm32-unknown-unknown
       # PEtab v2 read, planned and evaluated without an engine, as a page runs it
       - run: cargo build -p sbmlsim-petab --no-default-features --target wasm32-unknown-unknown
-      # `compiler.wasm`, the compiler of `js/compile.mjs` with PEtab of `js/petab.mjs` (the
-      # default feature petab): the module of the npm package
+      # the fit without the batch, whose optimizers a page drives ask/tell
+      - run: cargo clippy -p sbmlsim-fit --no-default-features --target wasm32-unknown-unknown -- -D warnings
+      # `compiler.wasm`, the compiler of `js/compile.mjs` with PEtab of `js/petab.mjs` and its
+      # fit (the default features petab and fit): the module of the npm package
       - run: cargo build -p sbmlsim-wasm --target wasm32-unknown-unknown --profile wasm
-      # the compiler alone
+      - run: cargo clippy -p sbmlsim-wasm --target wasm32-unknown-unknown -- -D warnings
+      # PEtab without the fit, and the compiler alone
+      - run: cargo build -p sbmlsim-wasm --no-default-features --features petab --target wasm32-unknown-unknown --profile wasm
       - run: cargo build -p sbmlsim-wasm --no-default-features --target wasm32-unknown-unknown --profile wasm
       - run: cargo test -p sbmlsim-wasm
+      - run: cargo test -p sbmlsim-wasm --no-default-features --features petab
       - run: cargo test -p sbmlsim-wasm --no-default-features
       - uses: actions/setup-node@v4
         with:

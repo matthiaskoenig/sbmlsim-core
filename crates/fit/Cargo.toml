@@ -9,18 +9,28 @@ license = "MIT AND BSD-3-Clause AND LGPL-2.1-or-later"
 authors.workspace = true
 description = "The parameter fit of sbmlsim-core: the objective of a fit on the batch of the engine, with the optimizers of basin"
 
+[features]
+default = ["native"]
+# the objective on the batch of the engine (wasmtime and the native engine of `sbmlsim-host`,
+# the threads of `sbmlsim-batch`), the contract `fit/1`, the identifiability and the optimizers
+# run to their end; without it the crate builds for `wasm32-unknown-unknown`: the objective of
+# a definition computed from the tables a host hands in and the optimizers driven ask/tell
+# ([`Asking`]), which is the fit of a page
+# `basin/parallel`: the population of a generation of a differential evolution spreads over
+# rayon, which the fit runs on the pool of the batch (`Workers::install`); the same seed gives
+# the same trajectory without it
+native = ["dep:sbmlsim-batch", "dep:sbmlsim-host", "dep:rayon", "basin/parallel"]
+
 [dependencies]
 # the optimizers: trust region reflective and bounded Levenberg-Marquardt for the least
 # squares of a fit, differential evolution for its global search; pure Rust on `Vec<f64>`,
 # no BLAS, see `docs/superpowers/specs` of the design
-# `parallel`: the population of a generation of a differential evolution spreads over
-# rayon, which the fit runs on the pool of the batch (`Workers::install`)
-basin = { version = "3.3", features = ["parallel"] }
+basin = "3.3"
 # the starts of a fit and the profiles of an identifiability, which run next to each other on
 # the pool of the batch
-rayon = "1.10"
+rayon = { version = "1.10", optional = true }
 # the pool of the batch, which an evaluation of the objective fans out on
-sbmlsim-batch = { path = "../batch" }
+sbmlsim-batch = { path = "../batch", optional = true }
 sbmlsim-abi = { path = "../abi" }
 # the non-compartmental analysis of a curve of a `pk` reduction, the kernel the python package
 # of pkpdutils runs as well, which a fit of a parameter of the analysis is held to; the crate is
@@ -31,7 +41,7 @@ pkpdutils-core = { git = "https://github.com/matthiaskoenig/pkpdutils-core", tag
 libm = "0.2"
 # the contract `fit/1`, which a host writes and reads back
 serde.workspace = true
-sbmlsim-host = { path = "../host", features = ["native"] }
+sbmlsim-host = { path = "../host", features = ["native"], optional = true }
 thiserror.workspace = true
 
 [dev-dependencies]
