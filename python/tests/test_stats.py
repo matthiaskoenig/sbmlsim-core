@@ -125,10 +125,20 @@ def test_the_fold_criteria_are_the_ones_of_sbmlsim(
     numpy.testing.assert_array_equal(accepted, expected["accepted"])
 
 
-def test_the_fold_factor_is_twofold_by_default() -> None:
-    y, f = [1.0, 1.0, 1.0], [2.0, 2.5, 0.5]
-    assert stats.fold_counts(y, f) == (2, 3)
-    numpy.testing.assert_array_equal(stats.fold_accepted(y, f), [1.0, 0.0, 1.0])
+def test_the_fold_factor_is_twofold_by_default_and_none_is_refused() -> None:
+    y, f = [1.0, 1.0, 1.0, 4.0], [2.0, 2.5, 0.5, 1.9]
+    assert stats.fold_counts(y, f) == stats.fold_counts(y, f, 2) == (2, 4)
+    numpy.testing.assert_array_equal(
+        stats.fold_accepted(y, f), stats.fold_accepted(y, f, fold=2)
+    )
+    numpy.testing.assert_array_equal(stats.fold_accepted(y, f), [1.0, 0.0, 1.0, 0.0])
+    # as the python, whose fold factor is a float: None is no number
+    with pytest.raises(TypeError):
+        stats.fold_counts(y, f, None)  # ty: ignore[invalid-argument-type]
+    with pytest.raises(TypeError):
+        stats.fold_accepted(y, f, fold=None)  # ty: ignore[invalid-argument-type]
+    with pytest.raises(TypeError):
+        stats.rmse_from_mse(None)  # ty: ignore[invalid-argument-type]
 
 
 @pytest.mark.parametrize(("name", "case"), of("sd/"))

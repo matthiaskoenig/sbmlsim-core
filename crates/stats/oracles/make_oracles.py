@@ -654,7 +654,7 @@ def main(modules: list[str]) -> None:
         sys.exit(
             f"no module {', '.join(unknown)}, the modules are {', '.join(GENERATORS)}"
         )
-    sbmlsim_version = None
+    sbmlsim_version = ""
     if any(module in OF_SBMLSIM for module in modules):
         try:
             import sbmlsim
