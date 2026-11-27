@@ -242,21 +242,19 @@ def _symmetric_case(a: np.ndarray, *, full: bool = True) -> dict[str, Any]:
     """The case of a symmetric matrix: numpy's eigh, pinv, cholesky and draws' factor.
 
     The eigenvalues are written largest first and the eigenvectors in the same order, the
-    columns of a row-major matrix. Not `full` leaves out the eigenvectors, the Cholesky
-    factor and the factor of a large matrix, whose tests use the reconstructions instead.
+    columns of a row-major matrix. Not `full` keeps only the eigenvalues of a large matrix,
+    whose tests check the other outputs by identities (`A A+ A = A`, `L L^T = A`).
     The Cholesky factor is null for a matrix which is not positive definite and left out of
     a singular one, where the rounding decides whether LAPACK finds a positive last pivot.
     """
     k = a.shape[0]
     assert np.array_equal(a, a.T)
     values, vecs = np.linalg.eigh(a)
-    expected: dict[str, Any] = {
-        "eigenvalues": values[::-1],
-        # np.linalg.pinv of sbmlsim.fit.fisher, its default cut 1e-15 times the largest
-        "pinv": np.linalg.pinv(a).ravel(),
-    }
+    expected: dict[str, Any] = {"eigenvalues": values[::-1]}
     if not full:
         return {"inputs": {"k": k, "a": a.ravel()}, "expected": expected}
+    # np.linalg.pinv of sbmlsim.fit.fisher, its default cut 1e-15 times the largest
+    expected["pinv"] = np.linalg.pinv(a).ravel()
     expected["vectors"] = vecs[:, ::-1].ravel()
     smallest = float(values[0])
     if smallest > 1e-8 * float(np.abs(values).max()):

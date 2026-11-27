@@ -771,23 +771,75 @@ fn eigvalsh_is_eigvalsh_of_numpy_and_the_eigenvalues_of_eigh() {
 }
 
 #[test]
-fn pinv_symmetric_is_pinv_of_numpy() {
+fn pinv_symmetric_is_pinv_of_numpy_and_a_moore_penrose_inverse() {
     let fixture = Fixture::load("linalg");
     for name in SYMMETRIC {
         let case = fixture.case(name);
         let (k, a) = (case.input_usize("k"), case.input("a"));
         let found = linalg::pinv_symmetric(&a, k).unwrap();
-        let expected = case.required("pinv");
-        assert_close_to(
-            &format!("{name} pinv"),
-            LINALG,
-            largest(&expected),
-            &found,
-            &expected,
-        );
         // exactly symmetric
         assert_eq!(found, transpose(&found, k, k), "{name}");
+        // numpy's, stored for the small matrices
+        if let Some(Some(expected)) = case.output("pinv") {
+            let scale = largest(&expected);
+            assert_close_to(&format!("{name} pinv"), LINALG, scale, &found, &expected);
+        }
+        // the identities of Moore and Penrose, A A+ A = A and A+ A A+ = A+ (A A+ and A+ A
+        // symmetric follow from the symmetry of both): an error of about the condition times
+        // the rounding of a sum of k products, 7.7e3 * 2.2e-16 * sqrt(200) = 2.4e-11 for the
+        // 200 x 200 matrix
+        let a_pinv = matmul(&a, &found, k, k, k);
+        let back = matmul(&a_pinv, &a, k, k, k);
+        assert_close_to(&format!("{name} A A+ A"), LINALG, largest(&a), &back, &a);
+        let pinv_back = matmul(&matmul(&found, &a, k, k, k), &found, k, k, k);
+        let scale = largest(&found);
+        assert_close_to(
+            &format!("{name} A+ A A+"),
+            LINALG,
+            scale,
+            &pinv_back,
+            &found,
+        );
     }
+}
+
+#[test]
+fn a_subnormal_matrix_is_decomposed_exactly() {
+    // the largest value below the smallest normal double: the scaling of the Jacobi method
+    // by a power of two of more than 1023
+    let tiny = 2f64.powi(-1023);
+    assert!(tiny < f64::MIN_POSITIVE);
+    assert_eq!(linalg::eigh(&[tiny], 1).unwrap(), (vec![tiny], vec![1.0]));
+    assert_eq!(linalg::eigvalsh(&[tiny], 1).unwrap(), vec![tiny]);
+    assert_eq!(
+        linalg::pinv_symmetric(&[tiny], 1).unwrap(),
+        vec![2f64.powi(1023)]
+    );
+    assert_eq!(linalg::eigvalsh(&[1e-310], 1).unwrap(), vec![1e-310]);
+    // [[1, 1/4], [1/4, 1]] times 2^-1023, the eigenvalues 5/4 and 3/4 of it exact, the
+    // eigenvectors those of the normal matrix
+    let unit = [1.0, 0.25, 0.25, 1.0];
+    let a: Vec<f64> = unit.iter().map(|v| v * tiny).collect();
+    let (values, vectors) = linalg::eigh(&a, 2).unwrap();
+    assert_eq!(values, vec![1.25 * tiny, 0.75 * tiny]);
+    assert_eq!(linalg::eigvalsh(&a, 2).unwrap(), values);
+    assert_eq!(vectors, linalg::eigh(&unit, 2).unwrap().1);
+    // the inverse, 2^1023 / (15/16) [[1, -1/4], [-1/4, 1]]
+    let huge = 2f64.powi(1023);
+    let expected = [
+        16.0 / 15.0 * huge,
+        -4.0 / 15.0 * huge,
+        -4.0 / 15.0 * huge,
+        16.0 / 15.0 * huge,
+    ];
+    let found = linalg::pinv_symmetric(&a, 2).unwrap();
+    assert_close_to(
+        "subnormal pinv",
+        4.0 * f64::EPSILON,
+        largest(&expected),
+        &found,
+        &expected,
+    );
 }
 
 #[test]

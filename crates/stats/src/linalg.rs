@@ -39,7 +39,7 @@ const SYMMETRY_TOLERANCE: f64 = 1e-12;
 /// converge in 100 sweeps.
 pub fn eigh(a: &[f64], k: usize) -> Result<(Vec<f64>, Vec<f64>)> {
     let m = symmetric(a, k)?;
-    let (values, vectors) = jacobi(m, k, true)?;
+    let (values, vectors) = jacobi(m, k, true, MAX_SWEEPS)?;
     let order = descending(&values);
     let mut sorted = vec![0.0; k * k];
     for (column, &j) in order.iter().enumerate() {
@@ -67,7 +67,7 @@ pub fn eigh(a: &[f64], k: usize) -> Result<(Vec<f64>, Vec<f64>)> {
 /// As [`eigh`].
 pub fn eigvalsh(a: &[f64], k: usize) -> Result<Vec<f64>> {
     let m = symmetric(a, k)?;
-    let (values, _) = jacobi(m, k, false)?;
+    let (values, _) = jacobi(m, k, false, MAX_SWEEPS)?;
     Ok(descending(&values).iter().map(|&j| values[j]).collect())
 }
 
@@ -239,9 +239,17 @@ fn descending(values: &[f64]) -> Vec<usize> {
 /// sweeps skip the elements below a fifth of the mean, the later ones set an element to zero
 /// which is negligible against both of its diagonal elements. The diagonal is updated by the
 /// sum of the rotations of a sweep, which keeps the small eigenvalues accurate. The matrix is
-/// scaled by a power of two to a largest value of about one first, exactly, so neither the
-/// sum of the off-diagonal elements nor the squares of a rotation overflow or underflow.
-fn jacobi(mut m: Vec<f64>, k: usize, with_vectors: bool) -> Result<(Vec<f64>, Vec<f64>)> {
+/// scaled by a power of two to a largest value in [1/2, 1) first, exactly (`scalbn` of every
+/// value, which steps a power beyond the range of a double, of a subnormal largest value), so
+/// neither the sum of the off-diagonal elements nor the squares of a rotation overflow or
+/// underflow; an eigenvalue is scaled back with one rounding, of a subnormal one. An error
+/// after `max_sweeps` sweeps without convergence.
+fn jacobi(
+    mut m: Vec<f64>,
+    k: usize,
+    with_vectors: bool,
+    max_sweeps: usize,
+) -> Result<(Vec<f64>, Vec<f64>)> {
     let mut v = if with_vectors {
         let mut v = vec![0.0; k * k];
         for i in 0..k {
@@ -256,14 +264,13 @@ fn jacobi(mut m: Vec<f64>, k: usize, with_vectors: bool) -> Result<(Vec<f64>, Ve
         return Ok((vec![0.0; k], v));
     }
     let (_, exponent) = libm::frexp(largest);
-    let scale = libm::scalbn(1.0, -exponent);
-    m.iter_mut().for_each(|x| *x *= scale);
+    m.iter_mut().for_each(|x| *x = libm::scalbn(*x, -exponent));
 
     let mut d: Vec<f64> = (0..k).map(|i| m[i * k + i]).collect();
     let mut b = d.clone();
     let mut z = vec![0.0; k];
     let mut converged = false;
-    for sweep in 1..=MAX_SWEEPS {
+    for sweep in 1..=max_sweeps {
         let mut off = 0.0;
         for p in 0..k {
             for q in p + 1..k {
@@ -333,9 +340,21 @@ fn jacobi(mut m: Vec<f64>, k: usize, with_vectors: bool) -> Result<(Vec<f64>, Ve
     }
     if !converged {
         return Err(StatsError(format!(
-            "The eigendecomposition of the {k} x {k} matrix did not converge in {MAX_SWEEPS} sweeps."
+            "The eigendecomposition of the {k} x {k} matrix did not converge in {max_sweeps} sweeps."
         )));
     }
-    let unscale = libm::scalbn(1.0, exponent);
-    Ok((d.iter().map(|x| x * unscale).collect(), v))
+    Ok((d.iter().map(|&x| libm::scalbn(x, exponent)).collect(), v))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::jacobi;
+
+    #[test]
+    fn a_jacobi_method_which_does_not_converge_in_its_sweeps_is_an_error() {
+        let m = vec![4.0, 1.0, 0.5, 1.0, 3.0, 0.25, 0.5, 0.25, 2.0];
+        let error = jacobi(m.clone(), 3, true, 1).unwrap_err();
+        assert!(error.0.contains("did not converge in 1 sweeps"), "{error}");
+        assert!(jacobi(m, 3, true, super::MAX_SWEEPS).is_ok());
+    }
 }
