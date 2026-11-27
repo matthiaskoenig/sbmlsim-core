@@ -137,6 +137,23 @@ pub fn factor(r: &[f64], k: usize) -> Result<Vec<f64>> {
 /// As [`eigh`].
 pub fn pinv_symmetric(a: &[f64], k: usize) -> Result<Vec<f64>> {
     let (values, vectors) = eigh(a, k)?;
+    Ok(pinv_of_eigh(&values, &vectors, k))
+}
+
+/// The pseudo-inverse of [`pinv_symmetric`] from the eigendecomposition of [`eigh`] (the
+/// eigenvalues and the row-major matrix of the eigenvectors of a `k x k` matrix), for a caller
+/// which needs the eigenvalues as well: the same cut, the same bits.
+///
+/// # Panics
+///
+/// Not `k` eigenvalues and `k * k` values of the eigenvectors.
+pub fn pinv_of_eigh(values: &[f64], vectors: &[f64], k: usize) -> Vec<f64> {
+    assert!(
+        values.len() == k && vectors.len() == k * k,
+        "an eigendecomposition of a {k} x {k} matrix has {k} eigenvalues and {} values of the \
+         eigenvectors",
+        k * k
+    );
     let cut = PINV_RCOND * values.iter().fold(0.0_f64, |m, v| m.max(v.abs()));
     let inverse: Vec<f64> = values
         .iter()
@@ -155,7 +172,7 @@ pub fn pinv_symmetric(a: &[f64], k: usize) -> Result<Vec<f64>> {
             p[l * k + i] = sum;
         }
     }
-    Ok(p)
+    p
 }
 
 /// `JᵀJ` of the row-major `n x k` matrix `j` (a jacobian of `n` residuals and `k`

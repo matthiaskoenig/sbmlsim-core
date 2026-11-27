@@ -1632,11 +1632,6 @@ fn the_statistics_of_the_fisher_information_are_the_ones_of_sbmlsim() {
             if spectrum[k - 1] == 0.0 {
                 assert!(found.condition.is_infinite(), "{name}: {}", found.condition);
             }
-            if k > 5 {
-                // the pseudo-inverse of the null space of a larger matrix is the cut of the
-                // noise, which is not numpy's (the properties above hold)
-                continue;
-            }
         } else {
             assert_close(
                 &format!("{name} condition"),
@@ -1672,6 +1667,87 @@ fn the_statistics_of_the_fisher_information_are_the_ones_of_sbmlsim() {
         );
         for (i, (f, e)) in found.correlation.iter().zip(&corr).enumerate() {
             assert_eq!(f.is_nan(), e.is_nan(), "{name}: the correlation {i}, {f}");
+        }
+    }
+}
+
+/// The jacobian of `large_jacobian` of `oracles/make_oracles.py`, row-major, bit for bit.
+fn large_jacobian(rows: usize, k: usize) -> Vec<f64> {
+    (0..(rows * k) as i64)
+        .map(|x| ((((x * x) % 1_000_003 * 2_654_435_761 + x) % 1_000_003) % 19 - 9) as f64)
+        .collect()
+}
+
+/// The statistics of the case `fisher_large/200` from its jacobian.
+fn large_statistics(case: &Case<'_>) -> fisher::FisherStatistics {
+    let (rows, k) = (case.input_usize("rows"), case.input_usize("k"));
+    let information = linalg::gram(&large_jacobian(rows, k), rows, k);
+    fisher::statistics(
+        &information,
+        k,
+        case.input_f64("cost"),
+        case.input_usize("n"),
+        false,
+        fisher::DEFAULT_RANK_TOLERANCE,
+    )
+    .unwrap()
+}
+
+#[test]
+fn the_statistics_of_an_information_of_200_parameters_are_the_ones_of_sbmlsim() {
+    // the information of integers is exactly numpy's, the statistics compose the
+    // decomposition of a 200 x 200 matrix
+    let fixture = Fixture::load("fisher");
+    let case = fixture.case("fisher_large/200");
+    let k = case.input_usize("k");
+    let found = large_statistics(&case);
+    assert_eq!(found.rank as f64, case.expected_f64("rank"));
+    let scalars = vec![
+        (
+            "sigma2".to_string(),
+            found.sigma2,
+            case.expected_f64("sigma2"),
+        ),
+        (
+            "condition".to_string(),
+            found.condition,
+            case.expected_f64("condition"),
+        ),
+    ];
+    assert_close("fisher_large/200", KERNEL, scalars);
+    let spectrum = case.required("spectrum");
+    assert_close_to(
+        "fisher_large/200 spectrum",
+        KERNEL,
+        largest(&spectrum),
+        &found.spectrum,
+        &spectrum,
+    );
+    let se = case.required("standard_errors");
+    assert_close(
+        "fisher_large/200 standard errors",
+        KERNEL,
+        rows("se", &found.standard_errors, &se),
+    );
+    let (covariance, correlation) = (
+        case.required("covariance_rows"),
+        case.required("correlation_rows"),
+    );
+    for (r, row) in case.input_u64("rows_stored").into_iter().enumerate() {
+        let row = usize::try_from(row).unwrap();
+        for j in 0..k {
+            // relative to sqrt(cov_ii cov_jj), the variances of the standard errors
+            let scale = se[row] * se[j];
+            let (f, e) = (found.covariance[row * k + j], covariance[r * k + j]);
+            assert!(
+                (f - e).abs() <= KERNEL * scale,
+                "covariance[{row}, {j}] = {f:e}, expected {e:e}"
+            );
+            let (f, e) = (found.correlation[row * k + j], correlation[r * k + j]);
+            assert!(
+                (f - e).abs() <= KERNEL,
+                "correlation[{row}, {j}] = {f:e}, expected {e:e}"
+            );
         }
     }
 }
@@ -1960,9 +2036,14 @@ fn the_fisher_statistics_and_the_posterior_give_the_same_bits_on_every_target() 
     for sigma in [0.0, 1e-8, 0.3, 1.0, 2.5] {
         values.push(posterior::lognormal_cv(sigma));
     }
+    let s = large_statistics(&fixture.case("fisher_large/200"));
+    values.extend([s.sigma2, s.condition]);
+    values.extend(s.spectrum);
+    values.extend(s.covariance);
+    values.extend(s.standard_errors);
     assert_eq!(
         hash(&values),
-        0xe4a3_a85d_d419_a441,
+        0x4710_98c5_1004_b448,
         "{} values",
         values.len()
     );

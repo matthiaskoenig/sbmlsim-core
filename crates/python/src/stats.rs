@@ -362,11 +362,14 @@ pub(crate) fn stats_fisher_statistics<'py>(
     py: Python<'py>,
     information: Values<'py>,
     cost: f64,
-    n: usize,
+    n: i64,
     likelihood: bool,
     rank_tolerance: f64,
 ) -> PyResult<Bound<'py, PyDict>> {
     let (information, k) = square(&information, "Fisher information")?;
+    // the python takes any integer, a negative number of points has no degrees of freedom
+    // as zero has (`n <= k`)
+    let n = usize::try_from(n.max(0)).unwrap_or(usize::MAX);
     let s = fisher::statistics(&information, k, cost, n, likelihood, rank_tolerance)
         .map_err(value_error)?;
     let dict = PyDict::new(py);

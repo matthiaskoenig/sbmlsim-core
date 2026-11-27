@@ -413,8 +413,6 @@ def test_the_fisher_statistics_are_the_ones_of_sbmlsim(
         # the smallest eigenvalue is the noise of the rounding, both say rank deficient
         assert found["condition"] >= 1e8
         assert expected["condition"] >= 1e8
-        if k > 5:
-            return
     else:
         numpy.testing.assert_allclose(
             found["condition"], expected["condition"], rtol=KERNEL
@@ -545,6 +543,60 @@ def test_a_singular_information_has_no_errors_of_its_null_space() -> None:
     assert math.isnan(found["standard_errors"][1])
     assert found["standard_errors"][0] == math.sqrt(0.15)
     assert stats.DEFAULT_RANK_TOLERANCE == 1e-8
+
+
+def test_a_number_of_points_without_degrees_of_freedom_has_no_variance() -> None:
+    information = numpy.array([[2.0, 1.0], [1.0, 3.0]])
+    for n in (-3, 0, 2):
+        found = stats.fisher_statistics(information, 1.0, n)
+        assert math.isnan(found["sigma2"])
+        assert numpy.isnan(found["standard_errors"]).all()
+        assert (
+            stats.fisher_statistics(information, 1.0, n, likelihood=True)["sigma2"]
+            == 1.0
+        )
+    assert stats.fisher_statistics(information, 1.0, 3)["sigma2"] == 2.0
+
+
+def large_jacobian(rows: int, k: int) -> numpy.ndarray:
+    """The jacobian of `large_jacobian` of `crates/stats/oracles/make_oracles.py`."""
+    x = numpy.arange(rows * k, dtype=numpy.int64).reshape(rows, k)
+    return ((((x * x) % 1000003 * 2654435761 + x) % 1000003) % 19 - 9).astype(float)
+
+
+def test_the_statistics_of_an_information_of_200_parameters_are_the_ones_of_sbmlsim() -> (
+    None
+):
+    case = FISHER["fisher_large/200"]
+    inputs, expected = case["inputs"], case["expected"]
+    k = inputs["k"]
+    jacobian = large_jacobian(inputs["rows"], k)
+    information = stats.gram(jacobian)
+    numpy.testing.assert_array_equal(information, jacobian.T @ jacobian)
+    found = stats.fisher_statistics(information, inputs["cost"], inputs["n"])
+    assert found["rank"] == expected["rank"] == k
+    numpy.testing.assert_allclose(found["sigma2"], expected["sigma2"], rtol=KERNEL)
+    numpy.testing.assert_allclose(
+        found["condition"], expected["condition"], rtol=KERNEL
+    )
+    spectrum = numpy.asarray(expected["spectrum"])
+    numpy.testing.assert_allclose(
+        found["spectrum"], spectrum, rtol=0.0, atol=KERNEL * spectrum.max()
+    )
+    se = numpy.asarray(expected["standard_errors"])
+    numpy.testing.assert_allclose(found["standard_errors"], se, rtol=KERNEL)
+    stored = inputs["rows_stored"]
+    covariance = numpy.asarray(expected["covariance_rows"]).reshape(len(stored), k)
+    assert numpy.all(
+        numpy.abs(found["covariance"][stored] - covariance)
+        <= KERNEL * numpy.outer(se[stored], se)
+    )
+    numpy.testing.assert_allclose(
+        found["correlation"][stored],
+        numpy.asarray(expected["correlation_rows"]).reshape(len(stored), k),
+        rtol=0.0,
+        atol=KERNEL,
+    )
 
 
 def test_the_shapes_of_the_matrices_are_checked() -> None:

@@ -816,6 +816,23 @@ def _posterior_case(fisher: Any, *, matrix: np.ndarray | None = None) -> dict[st
     return case
 
 
+def large_jacobian(rows: int, k: int) -> np.ndarray:
+    """Get the jacobian `rows x k` of a formula of integers, of the digits -9 to 9.
+
+    With `x = i * k + c`, `J[i, c] = (((x * x % 1000003) * 2654435761 + x) % 1000003) % 19 - 9`
+    (the square, as a congruence linear in `x` gives a jacobian of rank 198): the tests of
+    the Rust and of the python bindings compute it bit for bit as here instead of reading
+    it, and its `J' J` is of integers below 2**53, so exactly numpy's in every order of the
+    sum.
+    """
+    x = np.arange(rows * k, dtype=np.int64).reshape(rows, k)
+    return ((((x * x) % 1000003 * 2654435761 + x) % 1000003) % 19 - 9).astype(float)
+
+
+#: the rows of the covariance and the correlation of the case `fisher_large/200` stored
+LARGE_ROWS = [0, 1, 99, 199]
+
+
 def fisher() -> dict[str, Any]:
     """The cases of `fisher` and `posterior`: `FisherInformation` and `posterior_laplace`.
 
@@ -1022,6 +1039,44 @@ def fisher() -> dict[str, Any]:
             values=positive(3),
         )[1]
     )
+
+    # 200 parameters of 260 data points, identifiable, its condition about 141: the jacobian
+    # of `large_jacobian`, the covariance and the correlation of a few rows
+    from sbmlsim.fit.fisher import FisherInformation
+
+    rows, k = 260, 200
+    large = large_jacobian(rows, k)
+    information = large.T @ large
+    assert np.array_equal(information, information.T)
+    fisher = FisherInformation(
+        opid="op",
+        sid="estimate",
+        pids=[f"p{i}" for i in range(k)],
+        values=np.ones(k),
+        scale=ParameterScaleType.LINEAR,
+        matrix=information,
+        cost=100.0,
+        n=rows,
+    )
+    assert fisher.rank == k
+    cases["fisher_large/200"] = {
+        "inputs": {
+            "rows": rows,
+            "k": k,
+            "cost": 100.0,
+            "n": rows,
+            "rows_stored": LARGE_ROWS,
+        },
+        "expected": {
+            "sigma2": fisher.sigma2,
+            "spectrum": fisher.eigenvalues,
+            "rank": fisher.rank,
+            "condition": fisher.condition_number,
+            "standard_errors": fisher.standard_errors,
+            "covariance_rows": fisher.covariance[LARGE_ROWS].ravel(),
+            "correlation_rows": fisher.correlation.to_numpy()[LARGE_ROWS].ravel(),
+        },
+    }
 
     # the rank correlation of correlations past one and of not a number (a negative variance)
     covariances = {

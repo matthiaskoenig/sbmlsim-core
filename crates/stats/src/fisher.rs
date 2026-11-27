@@ -80,8 +80,9 @@ pub fn statistics(
             "The Fisher information of no parameters has no statistics.".to_string(),
         ));
     }
-    let spectrum = linalg::eigvalsh(information, k)?;
-    let inverse = linalg::pinv_symmetric(information, k)?;
+    // one decomposition for the eigenvalues and the pseudo-inverse, numpy's of both
+    let (spectrum, vectors) = linalg::eigh(information, k)?;
+    let inverse = linalg::pinv_of_eigh(&spectrum, &vectors, k);
     let (first, last) = (spectrum[0], spectrum[k - 1]);
     let condition = if last <= 0.0 {
         f64::INFINITY
