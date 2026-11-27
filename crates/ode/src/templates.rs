@@ -5,6 +5,7 @@ use minijinja::{
     value::{Kwargs, Rest, ValueOrKwargs, from_args},
 };
 use serde_json::json;
+use std::borrow::Cow;
 
 fn plain(v: &Value) -> String {
     if v.is_none() {
@@ -251,20 +252,115 @@ pub(super) fn render_custom(
                 .join("\n")
         },
     );
-    let (name, template) = match fmt {
-        "python" => ("python", include_str!("../templates/python.py.jinja")),
-        "diffrax" => ("diffrax", include_str!("../templates/diffrax.py.jinja")),
-        "julia" => ("julia", include_str!("../templates/julia.jl.jinja")),
-        "r" => ("r", include_str!("../templates/r.R.jinja")),
-        "markdown" => ("markdown", include_str!("../templates/markdown.md.jinja")),
-        "latex" => ("latex", include_str!("../templates/latex.tex.jinja")),
-        "typst" => ("typst", include_str!("../templates/typst.typ.jinja")),
-        _ => return Err(format!("Unknown ODE format '{fmt}'")),
-    };
-    env.add_template(name, template_override.unwrap_or(template))
-        .map_err(|e| format!("{e:#}"))?;
+    let (name, _, template) = TEMPLATES
+        .iter()
+        .find(|(name, _, _)| *name == fmt)
+        .ok_or_else(|| format!("Unknown ODE format '{fmt}'"))?;
+    if template_override.is_some() {
+        for (_, filename, source) in TEMPLATES {
+            env.add_template_owned(filename, canonical_newlines(source))
+                .map_err(|e| format!("{e:#}"))?;
+        }
+    }
+    env.add_template_owned(
+        *name,
+        canonical_newlines(template_override.unwrap_or(template)),
+    )
+    .map_err(|e| format!("{e:#}"))?;
     env.get_template(name)
         .map_err(|e| format!("{e:#}"))?
         .render(minijinja::value::Serde(&context))
         .map_err(|e| format!("{e:#}"))
+}
+
+const TEMPLATES: [(&str, &str, &str); 7] = [
+    (
+        "python",
+        "python.py.jinja",
+        include_str!("../templates/python.py.jinja"),
+    ),
+    (
+        "diffrax",
+        "diffrax.py.jinja",
+        include_str!("../templates/diffrax.py.jinja"),
+    ),
+    (
+        "julia",
+        "julia.jl.jinja",
+        include_str!("../templates/julia.jl.jinja"),
+    ),
+    ("r", "r.R.jinja", include_str!("../templates/r.R.jinja")),
+    (
+        "markdown",
+        "markdown.md.jinja",
+        include_str!("../templates/markdown.md.jinja"),
+    ),
+    (
+        "latex",
+        "latex.tex.jinja",
+        include_str!("../templates/latex.tex.jinja"),
+    ),
+    (
+        "typst",
+        "typst.typ.jinja",
+        include_str!("../templates/typst.typ.jinja"),
+    ),
+];
+
+// MiniJinja preserves source line endings. Normalize text from Windows checkouts
+// and custom templates so native and browser artifacts have identical bytes.
+fn canonical_newlines(source: &str) -> Cow<'_, str> {
+    if source.contains('\r') {
+        Cow::Owned(source.replace("\r\n", "\n").replace('\r', "\n"))
+    } else {
+        Cow::Borrowed(source)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{OdeSystem, RenderOptions};
+
+    #[test]
+    fn windows_templates_preserve_complete_generated_files() {
+        let source = include_bytes!("../../../testdata/ode/events.xml");
+        let system = OdeSystem::read(source).unwrap();
+        let options = RenderOptions::default();
+        for (format, _, template) in TEMPLATES {
+            let windows = template
+                .lines()
+                .map(|line| format!("{line}\r\n"))
+                .collect::<String>();
+            assert_eq!(
+                system
+                    .render_template(format, &options, &windows)
+                    .unwrap()
+                    .content,
+                system.render(format, &options).unwrap().content,
+                "{format}"
+            );
+        }
+        let rendered = system
+            .render_template(
+                "python",
+                &options,
+                "first\r\n{{ model.id }}\r\nlast\rtail\r\n",
+            )
+            .unwrap();
+        assert_eq!(rendered.content, "first\nevents_model\nlast\ntail\n");
+    }
+
+    #[test]
+    fn custom_templates_can_include_embedded_formats() {
+        let system = OdeSystem::read(include_bytes!("../../../testdata/ode/events.xml")).unwrap();
+        let options = RenderOptions::default();
+        let rendered = system
+            .render_template("python", &options, r#"{% include "python.py.jinja" %}"#)
+            .unwrap();
+        assert_eq!(
+            rendered.content,
+            system.render("python", &options).unwrap().content
+        );
+    }
 }
