@@ -2886,7 +2886,46 @@ var sbmlsimCore = (() => {
       if (!parameterJacobian && typeof this.exports.compile_with_options !== "function") {
         throw new Error("compiler.wasm does not support parameterJacobian: false");
       }
-      const { allocate, compile, deallocate } = this.exports;
+      const { compile, compile_with_options } = this.exports;
+      const flag = optimize ? 1 : 0;
+      return this.run(
+        sbml,
+        (input, length, words) => parameterJacobian ? compile(input, length, flag, choice, words) : compile_with_options(input, length, flag, choice, 0, words)
+      );
+    }
+    /**
+     * Compiles an SBML Level 3 Version 2 document into a batched kernel (`kernel/1`): the model
+     * with its RODAS4 integrator in one module, which `kernel.mjs` instantiates and which advances
+     * many points (the cells of a tissue) per call. The bytes and the description are those of
+     * `sbmlsim-core compile --kernel`.
+     *
+     * @param {string} sbml the text of the document
+     * @returns {{wasm: Uint8Array, description: object}} `kernel.wasm` and `kernel.json`
+     * @throws {CompileError} for a document the compiler refuses, e.g. a model with events
+     */
+    compileKernel(sbml) {
+      if (typeof sbml !== "string") {
+        throw new TypeError("the document of a compilation is text");
+      }
+      const { compile_kernel } = this.exports;
+      if (typeof compile_kernel !== "function") {
+        throw new Error("compiler.wasm does not compile kernels");
+      }
+      return this.run(sbml, (input, length, words) => compile_kernel(input, length, words));
+    }
+    /**
+     * Runs a compilation of the module: the document into a buffer, `call(input, length, words)`
+     * of a function which writes its result to four words (the description or the message, and
+     * the module), the result out of the memory and every buffer freed.
+     *
+     * @param {string} sbml the text of the document
+     * @param {(input: number, length: number, words: number) => number} call the compilation,
+     *   1 for a document it compiled
+     * @returns {{wasm: Uint8Array, description: object}} the module and the description
+     * @throws {CompileError} for a document the compiler refuses
+     */
+    run(sbml, call) {
+      const { allocate, deallocate } = this.exports;
       const document_ = new TextEncoder().encode(sbml);
       const input = allocate(document_.length);
       const words = allocate(4 * 4);
@@ -2894,14 +2933,7 @@ var sbmlsimCore = (() => {
         if (document_.length > 0) {
           this.bytes().set(document_, input);
         }
-        const status = parameterJacobian ? compile(input, document_.length, optimize ? 1 : 0, choice, words) : this.exports.compile_with_options(
-          input,
-          document_.length,
-          optimize ? 1 : 0,
-          choice,
-          0,
-          words
-        );
+        const status = call(input, document_.length, words);
         const header = new Uint32Array(this.exports.memory.buffer, words, 4);
         const [textPointer, textLength, wasmPointer, wasmLength] = header;
         try {

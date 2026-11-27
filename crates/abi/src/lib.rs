@@ -1,4 +1,4 @@
-//! The contracts of sbmlsim-core: `model/2` and `simulation/1`.
+//! The contracts of sbmlsim-core: `model/2`, `simulation/1` and `kernel/1`.
 //!
 //! A compiled model is a WebAssembly module which imports its linear memory and exports the
 //! functions below. Every pointer is an `i32` offset into the imported memory and every value
@@ -101,6 +101,63 @@
 //! [`SimulationRequest`] (0.12.0) with the `sensitivities` of a [`SimulationResult`], both
 //! absent by default, which an engine before 0.12.0 refuses the same way.
 //!
+//! A batched kernel (`kernel/1`, [`KERNEL_CONTRACT`]) is a model of ordinary differential
+//! equations together with the Rosenbrock integrator RODAS4 of the QFunction target of the C
+//! target (`sbmlsim-c`) in one WebAssembly module, which advances any number of points (the
+//! cells of a tissue) per call. Its description is a [`KernelDescription`] (`kernel.json`). It
+//! imports the memory of its caller as `env.memory` and the functions of mathlib it calls as
+//! `math.*`, as `model.wasm` does, and has no data segment and no global and never grows the
+//! memory: every array is the caller's, an `i32` byte offset into the memory which is a multiple
+//! of 8, with the values of the points one point after the other (`[point][size]`).
+//!
+//! - `sbmlsim_kernel_init(n, parameters, state) -> i32` initializes `n` points at the time 0.
+//!   The parameters ([`KernelDescription::parameter_ids`]) are read and written: a parameter
+//!   which is NaN is not given and takes its SBML value and, where the model has one, its initial
+//!   assignment or the initial value of its assignment rule; every other parameter is fixed, as
+//!   the pre-initialization values of a simulation are. The states
+//!   ([`KernelDescription::state_ids`]) are written: their SBML values and initial assignments,
+//!   none fixed. The parameters of an initialized engine give its states; NaN but for the
+//!   parameters a caller changes gives also its parameters. It gives 0, and -1 (changing
+//!   nothing) for a negative `n`, a pointer which is not a multiple of 8 or an array past the end
+//!   of the memory.
+//!
+//!   A change of a state (such as `[S_ext]`) is not an argument of `init`: the caller writes the
+//!   state after `init` (as an amount where the state is one, converted with its compartment),
+//!   and the initial assignments which read that state are not evaluated again. A parameter which
+//!   is the target of an assignment rule and is given finite keeps its value in `parameters`, but
+//!   the right hand side computes the rule, so that value does not change the integration.
+//! - `sbmlsim_kernel_advance(n, state, parameters, control, counts, context, scratch) -> i32`
+//!   advances `n` points by step attempts of RODAS4 with the step control of the QFunction:
+//!   `control` holds [`KernelDescription::control`] values per point (`t`, `h`, `done`,
+//!   `failed`), `counts` [`KernelDescription::counts`] (the accepted steps and the rejected step
+//!   attempts, cumulative), `context` the five `f64` of the context of the QFunction (`t1`,
+//!   `rtol`, `atol`, `h_min`, `attempts`) and `scratch` [`KernelDescription::scratch_per_point`]
+//!   `f64` per point, the work of the integrator, which the kernel overwrites. A point which is
+//!   neither done nor failed gets step attempts until it is done or failed, at most `attempts`,
+//!   and the others stay as they are, so the steps of a point depend on nothing but the point
+//!   (not on the other points or how many a call gets). The states, the controls and the counts
+//!   are updated in place. It gives the number of failed points, and -1 (changing nothing) for a
+//!   negative `n`, a pointer which is not a multiple of 8, an array past the end of the memory,
+//!   or a context whose `t1` is not finite, whose tolerances or `h_min` are not finite and
+//!   positive, or whose `attempts` is not a whole number of at least 1. The targets of the
+//!   assignment rules in `parameters` stay as they are: the right hand side computes the rules
+//!   it reads itself.
+//! - `sbmlsim_kernel_assign(n, state, parameters, control) -> i32` evaluates every assignment
+//!   rule of each of `n` points, in their order of dependency, at the time of the point (its
+//!   `t`, the first value of its control) and its states, and writes the value of each target
+//!   into its slot in `parameters` (those of [`KernelDescription::assigned_ids`]), as `model_assign`
+//!   of `model.wasm` writes them after a change: the values an output of a rule target has at
+//!   that time. The other parameters, the states and the controls are only read. The targets of
+//!   assignment rules are parameters of the model representation (a state is integrated, never
+//!   assigned by a rule), so `assign` writes no state. It gives 0, and -1 (changing nothing) for
+//!   a negative `n`, a pointer which is not a multiple of 8 or an array past the end of the
+//!   memory.
+//!
+//! The math of a kernel is the one of `model.wasm` (the programs of the optimizer, with mathlib)
+//! and its integrator the one of `sbmlsim_rosenbrock.h`, so a point agrees with the QFunction
+//! within the tolerances of the integration, not bitwise (the math functions of the C library
+//! against those of mathlib). The kernel advances one point after the other (no SIMD).
+//!
 //! `engine.wasm` carries the custom section [`ENGINE_SECTION`] with the JSON
 //! `{"memory_minimum_pages":n,"output_format":k}`: the minimum of the memory it imports and
 //! [`ENGINE_OUTPUT_FORMAT`], the version of the layout of its output and its counters, which
@@ -119,6 +176,16 @@ pub use request::*;
 pub const MODEL_CONTRACT: &str = "model/2";
 /// The version of the request and the result of a simulation.
 pub const SIMULATION_CONTRACT: &str = "simulation/1";
+
+/// The version of the description and the module of a batched kernel (see the crate
+/// documentation).
+pub const KERNEL_CONTRACT: &str = "kernel/1";
+/// Export name of the initialization of the points of a batched kernel.
+pub const KERNEL_INIT: &str = "sbmlsim_kernel_init";
+/// Export name of the step attempts of the points of a batched kernel.
+pub const KERNEL_ADVANCE: &str = "sbmlsim_kernel_advance";
+/// Export name of the evaluation of the assignment rules of the points of a batched kernel.
+pub const KERNEL_ASSIGN: &str = "sbmlsim_kernel_assign";
 
 /// The custom section of `engine.wasm` with the minimum of the memory it imports and the
 /// version of its output.
@@ -238,6 +305,33 @@ pub struct ModelDescription {
     pub n_constants: u32,
     /// The unit expression of every entity id.
     pub units: BTreeMap<String, String>,
+}
+
+/// The description of a batched kernel (`kernel/1`, see the crate documentation), next to its
+/// WebAssembly module (`kernel.json`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KernelDescription {
+    /// The contract, [`KERNEL_CONTRACT`].
+    pub version: String,
+    /// The states of a point, in their order in the array `state`.
+    pub state_ids: Vec<String>,
+    /// The parameters of a point, in their order in the array `parameters` (without the
+    /// constants behind them, which the kernel computes).
+    pub parameter_ids: Vec<String>,
+    /// The parameters which `sbmlsim_kernel_assign` writes, the targets of the assignment rules,
+    /// in the order of dependency in which it evaluates them (each one of
+    /// [`KernelDescription::parameter_ids`]).
+    pub assigned_ids: Vec<String>,
+    /// The values of the control of a point: `t`, `h`, `done`, `failed` (4).
+    pub control: u32,
+    /// The values of the counts of a point: the accepted steps and the rejected step attempts
+    /// (2).
+    pub counts: u32,
+    /// The `f64` of the scratch of a point.
+    pub scratch_per_point: u32,
+    /// The description of the model, the one of the C target.
+    pub model: ModelDescription,
 }
 
 /// The sizes of a model, which `model_sizes` and `model_event_sizes` write and the

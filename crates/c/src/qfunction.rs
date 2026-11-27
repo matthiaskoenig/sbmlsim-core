@@ -40,14 +40,13 @@
 //! Refused ([`CError::Unsupported`], naming the feature): events, delays, algebraic rules, a
 //! model without states and a model without an analytic Jacobian.
 
-use std::collections::HashMap;
 use std::ffi::c_void;
 use std::fmt::Write as _;
 use std::os::raw::c_int;
 
 use sbmlsim_abi::ModelDescription;
 use sbmlsim_ir::derive;
-use sbmlsim_ir::{Expr, Model, Symbol};
+use sbmlsim_ir::{Model, Symbol};
 
 use crate::emit::{self, Unit, symbol_prefix};
 use crate::{CError, Library};
@@ -214,7 +213,12 @@ pub fn generate_qfunction_model(model: &Model) -> Result<QSource, CError> {
         return Err(unsupported("a model without states"));
     }
     let (plan, description) = emit::prepare(model)?;
-    let dfdt = time_derivatives(model)?;
+    let dfdt = derive::time_derivatives(model).map_err(|op| CError::Unsupported {
+        feature: format!(
+            "a model whose rates depend on the time through an operator without a derivative \
+             ({op:?}) in a QFunction"
+        ),
+    })?;
     let prefix = symbol_prefix(&description.id);
     let function = format!("{prefix}qfunction");
     let n = model.states.len();
@@ -273,14 +277,14 @@ pub fn generate_qfunction_model(model: &Model) -> Result<QSource, CError> {
             b.store(&format!("out[{}]", dense[k as usize]), e)
         });
     });
-    if let Some((rules, rates)) = &dfdt {
+    if let Some(dfdt) = &dfdt {
         unit.function("void", "dfdt", VECTORS, |b| {
             b.line(UNUSED);
             b.assign_locals(model);
-            for (j, d) in rules {
+            for (j, d) in &dfdt.rules {
                 b.let_(Symbol::Derivative(*j), d);
             }
-            for (k, d) in rates.iter().enumerate() {
+            for (k, d) in dfdt.rates.iter().enumerate() {
                 match d {
                     Some(d) => b.store(&format!("out[{k}]"), d),
                     None => b.line(&format!("out[{k}] = 0.0;")),
@@ -342,48 +346,6 @@ void {function}_sizes(CeedInt *out) {{
             .collect(),
         description,
     })
-}
-
-/// The derivatives of the assignment rules in the time (by index of the rule, those which are
-/// not zero, each reading the ones before it as `Symbol::Derivative(index)`) and of the rates,
-/// `None` where every rate is independent of the time.
-#[allow(clippy::type_complexity)]
-fn time_derivatives(
-    model: &Model,
-) -> Result<Option<(Vec<(u32, Expr)>, Vec<Option<Expr>>)>, CError> {
-    let refused = |op: sbmlsim_ir::Op| CError::Unsupported {
-        feature: format!(
-            "a model whose rates depend on the time through an operator without a derivative \
-             ({op:?}) in a QFunction"
-        ),
-    };
-    let mut known: HashMap<Symbol, u32> = HashMap::new();
-    let mut rules = Vec::new();
-    for (j, a) in model.assignment_rules.iter().enumerate() {
-        let wrt = |s: Symbol| derivative_of(s, &known);
-        if let Some(d) = derive::derivative(&a.expr, &wrt).map_err(refused)? {
-            rules.push((j as u32, d));
-            known.insert(a.target, j as u32);
-        }
-    }
-    let wrt = |s: Symbol| derivative_of(s, &known);
-    let rates: Vec<Option<Expr>> = model
-        .rates
-        .iter()
-        .map(|r| derive::derivative(r, &wrt).map_err(refused))
-        .collect::<Result<_, _>>()?;
-    if rates.iter().all(Option::is_none) {
-        return Ok(None);
-    }
-    Ok(Some((rules, rates)))
-}
-
-/// The derivative of a symbol in the time: 1 of the time, that of a rule which depends on it.
-fn derivative_of(s: Symbol, known: &HashMap<Symbol, u32>) -> Option<Expr> {
-    match s {
-        Symbol::Time => Some(Expr::Number(1.0)),
-        _ => known.get(&s).map(|j| Expr::Symbol(Symbol::Derivative(*j))),
-    }
 }
 
 /// The values of the points of a QFunction, every field point by point (`[point][size]`): the

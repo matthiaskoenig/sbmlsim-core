@@ -1,7 +1,9 @@
 //! The command line of sbmlsim-core.
 //!
 //! `sbmlsim-core compile <model.xml> -o <dir>` compiles an SBML file into the directory `dir`
-//! (created when missing): `model.wasm` and `model.json`, the description of the model.
+//! (created when missing): `model.wasm` and `model.json`, the description of the model. With
+//! `--kernel` it compiles the batched kernel of the model instead (`kernel/1`, the model with its
+//! RODAS4 integrator in one module): `kernel.wasm` and `kernel.json`.
 //!
 //! `sbmlsim-core simulate <model-dir> <request.json> [-o out.csv]` simulates a compiled model
 //! (the directory holds `model.wasm` and `model.json`) with a request of the contract
@@ -53,7 +55,7 @@ struct Cli {
 /// The commands.
 #[derive(Subcommand)]
 enum Command {
-    /// Compiles an SBML file into `model.wasm` and `model.json`.
+    /// Compiles an SBML file into `model.wasm` and `model.json` (or a batched kernel).
     Compile {
         /// The SBML file.
         model: PathBuf,
@@ -66,6 +68,10 @@ enum Command {
         /// Omit analytic parameter derivatives and their cached constants.
         #[arg(long)]
         no_parameter_jacobian: bool,
+        /// Write the batched kernel instead: the model with its RODAS4 integrator in one
+        /// module, `kernel.wasm` and `kernel.json` (`kernel/1`).
+        #[arg(long, conflicts_with_all = ["no_optimize", "no_parameter_jacobian"])]
+        kernel: bool,
     },
     /// Export standalone Python, Diffrax, Julia, R, Markdown, LaTeX or Typst from SBML.
     Export {
@@ -154,8 +160,15 @@ fn main() -> ExitCode {
         Command::Compile {
             model,
             output,
+            kernel: true,
+            ..
+        } => compile_kernel(&model, &output).map(|()| true),
+        Command::Compile {
+            model,
+            output,
             no_optimize,
             no_parameter_jacobian,
+            kernel: false,
         } => compile(&model, &output, !no_optimize, !no_parameter_jacobian).map(|()| true),
         Command::Export {
             model,
@@ -255,6 +268,23 @@ fn compile(
         "model.json",
         &testsuite::description_json(&compiled.description)?,
     )
+}
+
+/// The command `compile --kernel`: `kernel.wasm` and `kernel.json`.
+fn compile_kernel(model: &Path, output: &Path) -> anyhow::Result<()> {
+    let sbml =
+        fs::read_to_string(model).with_context(|| format!("cannot read {}", model.display()))?;
+    let compiled = sbmlsim_compiler::compile_kernel(&sbml)
+        .with_context(|| format!("cannot compile the kernel of {}", model.display()))?;
+    fs::create_dir_all(output).with_context(|| format!("cannot create {}", output.display()))?;
+    let write = |name: &str, bytes: &[u8]| {
+        let path = output.join(name);
+        fs::write(&path, bytes).with_context(|| format!("cannot write {}", path.display()))
+    };
+    write("kernel.wasm", &compiled.wasm)?;
+    let mut json = serde_json::to_vec_pretty(&compiled.description)?;
+    json.push(b'\n');
+    write("kernel.json", &json)
 }
 
 /// The command `fit`: the fit of the request against the model of the directory, and its

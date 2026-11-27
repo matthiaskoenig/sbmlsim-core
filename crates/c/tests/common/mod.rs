@@ -1,7 +1,9 @@
-//! The test data which the tests of the C target (`c_target.rs`) and of the stepper of the
-//! engine (`crates/engine/tests/stepper.rs`, which includes this file by its path) share: the
-//! cell model of `testdata/models` with its 50 seeded parameter sets, and the cases of the SBML
-//! Test Suite with events and with an algebraic rule.
+//! The test data which the tests of the C target (`c_target.rs`, `qfunction.rs`), of the stepper
+//! of the engine (`crates/engine/tests/stepper.rs`) and of the batched kernel
+//! (`crates/codegen/tests/kernel.rs`) share, the latter two including this file by its path: the
+//! cell model of `testdata/models` with its 50 seeded parameter sets, the small models of the
+//! integrator (`linear`, `blow_up`, `with_event`), and the cases of the SBML Test Suite with
+//! events and with an algebraic rule.
 //!
 //! The tests over `testdata/cases` need `uv run scripts/prepare_testsuite.py` and skip with a
 //! note when the directory is absent, unless `SBMLSIM_CORE_REQUIRE_CASES` is set (the jobs of
@@ -19,6 +21,9 @@ pub const EVENT_CASES: [&str; 3] = ["00071", "00934", "01506"];
 
 /// The cases with an algebraic rule, which IDA integrates (00039).
 pub const ALGEBRAIC_CASES: [&str; 1] = ["00039"];
+
+/// The namespace declaration of MathML.
+pub const MATH: &str = r#"xmlns="http://www.w3.org/1998/Math/MathML""#;
 
 /// The directory `testdata` of the workspace.
 pub fn testdata() -> PathBuf {
@@ -114,4 +119,32 @@ impl Case {
             relative_tolerance: number("relative_tolerance"),
         }
     }
+}
+
+/// `x' = -x` and `y' = k (cos t - y)` with `k = 1`, `x(0) = 1`, `y(0) = 2`: `x = exp(-t)` and
+/// `y = (cos t + sin t) / 2 + 3/2 exp(-t)`, a rate which depends on the time. (Not the
+/// Prothero-Robinson problem `y' = -k (y - g(t)) + g'(t)` of a large `k`, on which RODAS4, as
+/// every Rosenbrock method of its kind, loses order.)
+pub fn linear() -> String {
+    let time = r#"<csymbol encoding="text" definitionURL="http://www.sbml.org/sbml/symbols/time">t</csymbol>"#;
+    let rate_y = format!(
+        "<apply><times/><ci>k</ci><apply><minus/><apply><cos/>{time}</apply><ci>y</ci></apply></apply>"
+    );
+    format!(
+        r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2"><model id="linear"><listOfParameters><parameter id="k" value="1" constant="true"/><parameter id="x" value="1" constant="false"/><parameter id="y" value="2" constant="false"/></listOfParameters><listOfRules><rateRule variable="x"><math {MATH}><apply><minus/><ci>x</ci></apply></math></rateRule><rateRule variable="y"><math {MATH}>{rate_y}</math></rateRule></listOfRules></model></sbml>"#
+    )
+}
+
+/// A model of `x` with an event which halves it at `x < 0.5`.
+pub fn with_event() -> String {
+    format!(
+        r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2"><model id="event"><listOfParameters><parameter id="x" value="1" constant="false"/></listOfParameters><listOfRules><rateRule variable="x"><math {MATH}><apply><minus/><ci>x</ci></apply></math></rateRule></listOfRules><listOfEvents><event useValuesFromTriggerTime="true"><trigger initialValue="true" persistent="true"><math {MATH}><apply><lt/><ci>x</ci><cn>0.5</cn></apply></math></trigger><listOfEventAssignments><eventAssignment variable="x"><math {MATH}><apply><divide/><ci>x</ci><cn>2</cn></apply></math></eventAssignment></listOfEventAssignments></event></listOfEvents></model></sbml>"#
+    )
+}
+
+/// `y' = a y^2` with `y(0) = 1`: `y = 1 / (1 - a t)`, which grows without bound at `t = 1 / a`.
+pub fn blow_up() -> String {
+    format!(
+        r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2"><model id="blow_up"><listOfParameters><parameter id="a" value="1" constant="true"/><parameter id="y" value="1" constant="false"/></listOfParameters><listOfRules><rateRule variable="y"><math {MATH}><apply><times/><ci>a</ci><ci>y</ci><ci>y</ci></apply></math></rateRule></listOfRules></model></sbml>"#
+    )
 }

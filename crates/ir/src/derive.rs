@@ -602,6 +602,47 @@ fn sqrt(x: Expr) -> Expr {
     Expr::apply(Op::Root, vec![x])
 }
 
+/// The derivatives of the right hand side of a model in the time, which a Rosenbrock method of
+/// a model whose rates depend on the time adds to its stages ([`time_derivatives`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct TimeDerivatives {
+    /// The derivatives of the assignment rules which depend on the time, by the index of the
+    /// rule in their order, each reading the derivatives before it as `Symbol::Derivative`
+    /// of the index of its rule (and the targets of the rules themselves).
+    pub rules: Vec<(u32, Expr)>,
+    /// The derivative of every rate, `None` where it is zero.
+    pub rates: Vec<Option<Expr>>,
+}
+
+/// The derivatives of the rates of `model` in the time, through the assignment rules which
+/// depend on it; `None` where every rate is independent of the time. The error is an operator
+/// without a derivative.
+pub fn time_derivatives(model: &Model) -> Result<Option<TimeDerivatives>, Op> {
+    let derivative_of = |s: Symbol, known: &HashMap<Symbol, u32>| match s {
+        Symbol::Time => Some(Expr::Number(1.0)),
+        _ => known.get(&s).map(|j| Expr::Symbol(Symbol::Derivative(*j))),
+    };
+    let mut known: HashMap<Symbol, u32> = HashMap::new();
+    let mut rules = Vec::new();
+    for (j, a) in model.assignment_rules.iter().enumerate() {
+        let wrt = |s: Symbol| derivative_of(s, &known);
+        if let Some(d) = derivative(&a.expr, &wrt)? {
+            rules.push((index(j), d));
+            known.insert(a.target, index(j));
+        }
+    }
+    let wrt = |s: Symbol| derivative_of(s, &known);
+    let rates: Vec<Option<Expr>> = model
+        .rates
+        .iter()
+        .map(|r| derivative(r, &wrt))
+        .collect::<Result<_, _>>()?;
+    if rates.iter().all(Option::is_none) {
+        return Ok(None);
+    }
+    Ok(Some(TimeDerivatives { rules, rates }))
+}
+
 /// The derivative of `e`, `None` where it is structurally zero; `wrt` gives the derivative of a
 /// symbol. The error is the operator without a derivative.
 pub fn derivative(e: &Expr, wrt: &dyn Fn(Symbol) -> Option<Expr>) -> Result<Option<Expr>, Op> {

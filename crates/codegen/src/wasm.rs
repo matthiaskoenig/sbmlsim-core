@@ -127,6 +127,18 @@ pub(crate) struct ModuleBuilder {
     pub history_slots: u32,
 }
 
+/// The code of a function written as it is ([`ModuleBuilder::raw`]).
+pub(crate) struct RawCode {
+    /// The `i32` locals after the parameters.
+    pub integers: u32,
+    /// The `f64` locals after them.
+    pub floats: u32,
+    /// The code, without the final `end`.
+    pub code: Vec<u8>,
+    /// Its calls of defined functions ([`call_defined`]).
+    pub calls: Vec<(usize, u32)>,
+}
+
 /// A function the module defines: a function of `model/2` it exports, or a helper function of a
 /// split one.
 struct DefinedFunction {
@@ -144,6 +156,14 @@ struct DefinedFunction {
 /// patched when the module is finished (the index of a defined function follows the imports of
 /// mathlib, which are known only then).
 const CALL_INDEX_BYTES: usize = 5;
+
+/// Appends the call of the defined function at the position `callee` to `code`, its index
+/// patched when the module is finished (recorded in `calls`).
+pub(crate) fn call_defined(code: &mut Vec<u8>, calls: &mut Vec<(usize, u32)>, callee: u32) {
+    code.push(0x10);
+    calls.push((code.len(), callee));
+    code.extend_from_slice(&[0; CALL_INDEX_BYTES]);
+}
 
 /// The number of bytes of the unsigned LEB128 of `x`.
 fn leb_len(x: u64) -> usize {
@@ -170,7 +190,7 @@ impl ModuleBuilder {
     }
 
     /// The function index of an import of mathlib, imported at its first call.
-    fn math(&mut self, f: MathFn) -> u32 {
+    pub(crate) fn math(&mut self, f: MathFn) -> u32 {
         if let Some(index) = self.math_index.get(&f) {
             return *index;
         }
@@ -213,6 +233,40 @@ impl ModuleBuilder {
             ctx,
             rules: HashMap::new(),
         }
+    }
+
+    /// The position among the defined functions of the function defined last (of a
+    /// [`ModuleBuilder::sequence`], the function itself after its helpers).
+    pub(crate) fn last_position(&self) -> u32 {
+        self.functions.len() as u32 - 1
+    }
+
+    /// Adds a function of code written as it is (the integrator of a kernel). Its position
+    /// among the defined functions.
+    pub(crate) fn raw(
+        &mut self,
+        export: Option<&'static str>,
+        params: &[ValType],
+        results: &[ValType],
+        raw: RawCode,
+    ) -> u32 {
+        let ty = self.type_index((params.to_vec(), results.to_vec()));
+        let RawCode {
+            integers,
+            floats,
+            mut code,
+            calls,
+        } = raw;
+        InstructionSink::new(&mut code).end();
+        self.functions.push(DefinedFunction {
+            export,
+            ty,
+            locals: floats,
+            integers,
+            code,
+            calls,
+        });
+        self.last_position()
     }
 
     /// The bytes of the module.
@@ -429,9 +483,7 @@ impl Body<'_> {
     }
 
     fn call_defined(&mut self, callee: u32) {
-        self.code.push(0x10);
-        self.calls.push((self.code.len(), callee));
-        self.code.extend_from_slice(&[0; CALL_INDEX_BYTES]);
+        call_defined(&mut self.code, &mut self.calls, callee);
     }
 
     /// `if (local 0 as u32) < k {`, the `i32` index in the local 0; closed by [`Body::end`].
@@ -501,6 +553,24 @@ impl Body<'_> {
             .i32_load8_u(byte(k))
             .i32_eqz()
             .if_(BlockType::Empty);
+    }
+
+    /// `if target != target {` (the value of the symbol in the memory is NaN); closed by
+    /// [`Body::end`].
+    pub(crate) fn if_unset(&mut self, target: Symbol) {
+        let (ptr, i) = self.address(target);
+        self.sink()
+            .local_get(ptr)
+            .f64_load(slot(i))
+            .local_get(ptr)
+            .f64_load(slot(i))
+            .f64_ne()
+            .if_(BlockType::Empty);
+    }
+
+    /// `{` of a block without a condition; closed by [`Body::end`].
+    pub(crate) fn block(&mut self) {
+        self.sink().block(BlockType::Empty);
     }
 
     /// Evaluates an assignment rule into a local, which later expressions read for its target.

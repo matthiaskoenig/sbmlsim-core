@@ -136,8 +136,8 @@ The pool is the one the [Python](python.md) bindings run `simulate_many` and `ba
 
 | crate | what it is |
 |---|---|
-| `sbmlsim-abi` | the contracts `model/2` and `simulation/1` as Rust types |
-| `sbmlsim-compiler` | SBML to `model.wasm` and `model.json` (over `sbml`, `ir` and `codegen`) |
+| `sbmlsim-abi` | the contracts `model/2`, `simulation/1` and `kernel/1` as Rust types |
+| `sbmlsim-compiler` | SBML to `model.wasm` and `model.json` (over `sbml`, `ir` and `codegen`), or to the batched kernel `kernel.wasm` and `kernel.json` |
 | `sbmlsim-engine` | the integrator, compiled to `engine.wasm` (CVODE, KLU) |
 | `sbmlsim-c` | the C target: the model as native code for the engine, compiled with the C compiler of the machine; and the QFunction target: the model with a Rosenbrock integrator as a libCEED QFunction |
 | `sbmlsim-host` | the wasmtime host: `Runtime`, `LoadedModel`, `Instance` |
@@ -242,3 +242,5 @@ On the cell model of `testdata/models` with its 50 parameter sets, 24 intervals 
 A point is a few dozen numbers (its states, parameters, control and counts) against the 19 kB of a stepper. The arithmetic of a point is scalar: the pivoting and the step control of each point take their own branches, so the compiler does not vectorize across the points of a block.
 
 Refused (`CError::Unsupported`, naming the feature): events, delays, algebraic rules, a model without states and a model without an analytic Jacobian; the engine (a `Stepper` per point) integrates those. The discontinuities of the math (a `piecewise` of a state) need no root search: the step control steps across them, at the cost of rejected attempts there.
+
+The same model and integrator as one WebAssembly module, for a page, is the [batched kernel](compiling.md#a-batched-kernel) (`sbmlsim-core compile --kernel`, `sbmlsim_compiler::compile_kernel`): it advances the points of the arrays of its caller by the same steps as the QFunction, within the tolerances of the integration.
