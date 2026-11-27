@@ -637,6 +637,139 @@ def sensitivity_morris_effects(
     `resamples` is given.
     """
 
+STATS_MIN_POINTS_SUBSET_AGREEMENT: int
+"""The points with a ratio `stats_subset_agreement` needs, 10 (since 0.40.0)."""
+
+def stats_sse(residuals: numpy.typing.ArrayLike) -> float:
+    """Sum of Squared Errors (SSE) of the residuals, 0 of none (since 0.40.0).
+
+    `sbmlsim.fit.metrics.sse`: the sum of numpy, pairwise, to the last bits.
+    """
+
+def stats_mse(residuals: numpy.typing.ArrayLike) -> float:
+    """Mean Squared Error (MSE) of the residuals (since 0.40.0).
+
+    Raises `ValueError` without a residual.
+    """
+
+def stats_rmse_from_mse(mse: float) -> float:
+    """Root Mean Squared Error (RMSE) from the mean squared error (since 0.40.0).
+
+    Raises `ValueError` for a negative MSE.
+    """
+
+def stats_aic_from_mse(mse: float, n: int, k: int) -> float:
+    """Akaike Information Criterion of a least squares fit, `n ln(MSE) + 2 k` (since 0.40.0).
+
+    `-inf` for an MSE of 0. Raises `ValueError` for a negative MSE and a number of points
+    which is not positive.
+    """
+
+def stats_bic_from_mse(mse: float, n: int, k: int) -> float:
+    """Bayesian Information Criterion of a least squares fit, `n ln(MSE) + k ln(n)` (since 0.40.0).
+
+    `-inf` for an MSE of 0. Raises `ValueError` for a negative MSE and a number of points
+    which is not positive.
+    """
+
+def stats_r_squared(
+    y_observed: numpy.typing.ArrayLike, y_predicted: numpy.typing.ArrayLike
+) -> float:
+    """Coefficient of determination (R²) of a prediction, `1 - SSE / SST` (since 0.40.0).
+
+    `nan` for fewer than two data points and for data without variance. Raises
+    `ValueError` for another number of predictions than of data points.
+    """
+
+def stats_fold_counts(
+    y_observed: numpy.typing.ArrayLike,
+    y_predicted: numpy.typing.ArrayLike,
+    fold: float = 2.0,
+) -> tuple[int, int]:
+    """The points within the fold factor and the points with a ratio (since 0.40.0).
+
+    A point has a ratio with a positive and finite value and prediction, and is within the
+    fold factor for `y / fold <= f <= y * fold`. Raises `ValueError` for a fold factor which
+    is not larger than 1 and another number of predictions than of data points.
+    """
+
+def stats_fold_accepted(
+    y_observed: numpy.typing.ArrayLike,
+    y_predicted: numpy.typing.ArrayLike,
+    fold: float = 2.0,
+) -> numpy.typing.NDArray[numpy.float64]:
+    """The fold criterion of every point, `Fold(fold).accepted` of sbmlsim (since 0.40.0).
+
+    1 within the fold factor, 0 outside, `nan` for a point without a ratio. Raises
+    `ValueError` as `stats_fold_counts`.
+    """
+
+def stats_sd_accepted(
+    y_observed: numpy.typing.ArrayLike,
+    y_predicted: numpy.typing.ArrayLike,
+    y_sd: numpy.typing.ArrayLike,
+    k: float = 2.0,
+) -> numpy.typing.NDArray[numpy.float64]:
+    """The uncertainty criterion of every point, `Uncertainty(k).accepted` (since 0.40.0).
+
+    1 for `|y - f| <= k sd`, 0 outside, `nan` for a point without a positive and finite
+    standard deviation or with a value or prediction which is not finite. Raises
+    `ValueError` for other numbers of predictions or standard deviations than of values.
+    """
+
+def stats_gmfe(
+    y_observed: numpy.typing.ArrayLike, y_predicted: numpy.typing.ArrayLike
+) -> float:
+    """The geometric mean fold error `10**mean(|log10(f/y)|)` (since 0.40.0).
+
+    Of the points with a ratio, `nan` without one. Raises `ValueError` for another number
+    of predictions than of values.
+    """
+
+def stats_afe(
+    y_observed: numpy.typing.ArrayLike, y_predicted: numpy.typing.ArrayLike
+) -> float:
+    """The average fold error `10**mean(log10(f/y))`, the bias as a fold (since 0.40.0).
+
+    Of the points with a ratio, `nan` without one. Raises `ValueError` for another number
+    of predictions than of values.
+    """
+
+def stats_nrmse(nres: numpy.typing.ArrayLike) -> float:
+    """The root mean square of the normalized residuals (since 0.40.0).
+
+    `nan` without one or with one which is not finite, `evaluation._rms` of sbmlsim.
+    """
+
+def stats_guest_limits(
+    observed: numpy.typing.ArrayLike,
+) -> tuple[numpy.typing.NDArray[numpy.float64], numpy.typing.NDArray[numpy.float64]]:
+    """The limits of the predicted ratios of Guest et al., `delta = 1` (since 0.40.0).
+
+    The lower and the upper limit of every observed ratio, of the shape of the ratios.
+    """
+
+def stats_within_guest(
+    observed: numpy.typing.ArrayLike, predicted: numpy.typing.ArrayLike
+) -> float:
+    """The percentage of the finite predicted ratios within the limits of Guest et al. (since 0.40.0).
+
+    `nan` without a finite predicted ratio. Raises `ValueError` for ratios of other shapes
+    and an observed ratio which is not positive and finite.
+    """
+
+def stats_subset_agreement(
+    y_observed: numpy.typing.ArrayLike, y_predicted: numpy.typing.ArrayLike
+) -> tuple[float, float, float, float] | None:
+    """The agreement of a subset of the points with a ratio, Bland and Altman (since 0.40.0).
+
+    The bias `mean(log10(f/y))`, the half width `1.96 SD` of the limits of agreement and
+    the half widths of the 95% intervals of the bias and of a limit (t quantile of `n - 1`
+    degrees of freedom), in decades; `None` for fewer than
+    `STATS_MIN_POINTS_SUBSET_AGREEMENT` points with a ratio. Raises `ValueError` for
+    another number of predictions than of values.
+    """
+
 ODE_CONTRACT: str
 
 class _EquationSystem:

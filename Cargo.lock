@@ -2831,6 +2831,7 @@ dependencies = [
  "sbmlsim-petab",
  "sbmlsim-plot",
  "sbmlsim-sensitivity",
+ "sbmlsim-stats",
  "sbmlsim-thin",
  "serde",
  "serde_json",

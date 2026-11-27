@@ -10,12 +10,16 @@
 //! - [`linalg`]: the linear algebra of symmetric matrices, the eigendecomposition (cyclic
 //!   Jacobi), the Cholesky factor, the factor of a correlation, the pseudo-inverse and `JᵀJ`
 //!   of a jacobian, as numpy gives them.
+//! - [`metrics`]: the metrics of a fit and the criteria of its evaluation, as
+//!   `sbmlsim.fit.metrics` and `sbmlsim.fit.evaluation` give them, their sums numpy's.
 //!
 //! Every transcendental function comes from the crate libm, so one input gives the same bits
 //! on every target, natively and in wasm. The tests hold every function to the values of numpy
-//! and scipy, computed once by `oracles/make_oracles.py` and stored next to it as JSON.
+//! and scipy, and the metrics to the functions of sbmlsim, computed once by
+//! `oracles/make_oracles.py` and stored next to it as JSON.
 
 pub mod linalg;
+pub mod metrics;
 pub mod special;
 
 /// An error of the arguments of a function.

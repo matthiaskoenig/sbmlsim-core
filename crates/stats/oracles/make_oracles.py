@@ -6,10 +6,22 @@ them as `<module>.json` next to itself:
     {"_versions": {...}, "<case>": {"inputs": {...}, "expected": ...}, ...}
 
 The numbers are written by `repr`, so a double is read back as the double it was; the numbers
-which JSON cannot hold are the strings "nan", "inf" and "-inf". The fixtures are committed, the
-Rust tests read them (`tests/oracle.rs`); the script runs in a throwaway environment:
+which JSON cannot hold are the strings "nan", "inf" and "-inf", and a call which raised is
+`{"error": "<the message>"}`. The fixtures are committed, the Rust tests read them
+(`tests/oracle.rs`), and the tests of the python bindings read the ones of the functions they
+bind (`python/tests/test_stats.py`); the script runs in a throwaway environment:
 
     uv run --no-project --with numpy --with scipy python crates/stats/oracles/make_oracles.py
+
+The fixture of `metrics` calls the functions of sbmlsim itself (`sbmlsim.fit.metrics` and
+`sbmlsim.fit.evaluation`), which the environment then has as well, with the python and the
+package index of libroadrunner sbmlsim needs:
+
+    uv run --no-project --python 3.14 \
+        --index https://matthiaskoenig.github.io/roadrunner-wheels/simple/ \
+        --index-strategy unsafe-best-match \
+        --with sbmlsim==0.53.0 --with numpy --with scipy \
+        python crates/stats/oracles/make_oracles.py metrics
 
 A module given as argument writes only its fixture (`... make_oracles.py special`).
 """
@@ -309,17 +321,296 @@ def linalg() -> dict[str, Any]:
     return cases
 
 
+# --- metrics --------------------------------------------------------------------------------
+
+
+def outcome(function: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    """The value of a call, `{"error": <message>}` for one which raised a ValueError."""
+    try:
+        return function(*args, **kwargs)
+    except ValueError as error:
+        return {"error": str(error)}
+
+
+def _with_specials(values: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+    """The values with a not a number, a zero, a negative and an infinite one at random places."""
+    values = values.copy()
+    places = rng.choice(values.size, size=4, replace=False)
+    values[places] = [np.nan, 0.0, -1.5, np.inf]
+    return values
+
+
+def metrics() -> dict[str, Any]:
+    """The cases of `metrics`: the functions of `sbmlsim.fit.metrics` and `.evaluation`.
+
+    The kernels of the metrics on residuals (`sse`, `mse`, `rmse`, the AIC and the BIC of the
+    MSE, the NRMSE of `evaluation._rms`), the R², the fold criteria, the uncertainty criterion,
+    the fold errors and the agreement of a subset and the criterion of Guest et al., on random
+    inputs of a seed and on the edges: empty, one value, zeros, not a number, infinite,
+    negative, the bounds of a criterion and the arguments the python refuses.
+    """
+    import pandas as pd
+    from sbmlsim.fit import evaluation
+    from sbmlsim.fit import metrics as m
+
+    rng = np.random.default_rng(20261127)
+    cases: dict[str, Any] = {}
+
+    # the metrics of residuals, k = 3 fitted parameters
+    residuals: dict[str, np.ndarray] = {
+        "empty": np.array([]),
+        "one": np.array([0.7]),
+        "zeros": np.zeros(5),
+        "negative_zero": np.array([-0.0]),
+        "not_a_number": np.array([1.0, np.nan, 2.0]),
+        "infinite": np.array([1.0, np.inf]),
+        # the squares overflow to inf and underflow to 0, an MSE of 0
+        "overflow": np.array([1e200, 1e200]),
+        "underflow": np.array([1e-200, 1e-200, 1e-200]),
+        # an array of integers, which the python converts to doubles
+        "integers": np.arange(-3, 6),
+    }
+    for n in (2, 7, 8, 9, 100, 1000):
+        # magnitudes over a few decades, so an order of the sum other than numpy's shows
+        residuals[f"random_{n}"] = rng.standard_normal(n) * np.exp(
+            3.0 * rng.standard_normal(n)
+        )
+    for label, x in residuals.items():
+        mse = outcome(m.mse, x)
+        expected: dict[str, Any] = {
+            "sse": m.sse(x),
+            "mse": mse,
+            "rmse": outcome(m.rmse, x),
+            "aic": outcome(m.aic, x, 3),
+            "bic": outcome(m.bic, x, 3),
+            "nrmse": evaluation._rms(pd.Series(x, dtype=float)),
+        }
+        cases[f"residuals/{label}"] = {"inputs": {"x": x, "k": 3}, "expected": expected}
+
+    # the functions of the MSE over a grid of their arguments, the refused ones included
+    mses = [-1.0, -1e-05, -1e300, -np.inf, -0.0, 0.0, 1e-300, 0.5, 2.0, np.inf, np.nan]
+    ns = [-1, 0, 1, 10, 1000]
+    ks = [0, 3, -2]
+    grid_mse, grid_n, grid_k = (
+        list(axis)
+        for axis in zip(*((a, b, c) for a in mses for b in ns for c in ks), strict=True)
+    )
+    cases["from_mse"] = {
+        "inputs": {"mse": grid_mse, "n": grid_n, "k": grid_k},
+        "expected": {
+            "rmse": [outcome(m.rmse_from_mse, a) for a in grid_mse],
+            "aic": [
+                outcome(m.aic_from_mse, a, b, c)
+                for a, b, c in zip(grid_mse, grid_n, grid_k, strict=True)
+            ],
+            "bic": [
+                outcome(m.bic_from_mse, a, b, c)
+                for a, b, c in zip(grid_mse, grid_n, grid_k, strict=True)
+            ],
+        },
+    }
+
+    # R²
+    y = rng.lognormal(0.0, 1.0, 25)
+    pairs: dict[str, tuple[np.ndarray, np.ndarray]] = {
+        "random": (y, y * rng.lognormal(0.0, 0.2, 25)),
+        "negative": (y, y[::-1].copy()),
+        "perfect": (y, y.copy()),
+        "empty": (np.array([]), np.array([])),
+        "one": (np.array([2.0]), np.array([1.0])),
+        "two": (np.array([2.0, 3.0]), np.array([2.5, 2.5])),
+        "constant": (np.full(4, 3.0), np.array([1.0, 2.0, 3.0, 4.0])),
+        "not_a_number": (np.array([1.0, np.nan, 3.0]), np.array([1.0, 2.0, 3.0])),
+        "lengths": (np.array([1.0, 2.0, 3.0]), np.array([1.0, 2.0])),
+        "integers": (np.array([1, 2, 4, 7]), np.array([2, 2, 3, 9])),
+    }
+    for label, (y_obs, y_pred) in pairs.items():
+        cases[f"r_squared/{label}"] = {
+            "inputs": {"y": y_obs, "f": y_pred},
+            "expected": outcome(m.r_squared, y_obs, y_pred),
+        }
+
+    # the fold criteria: the counts of `fold_counts` and the acceptance of `Fold`
+    y = _with_specials(rng.lognormal(0.0, 1.0, 40), rng)
+    f = _with_specials(y * rng.lognormal(0.0, 0.5, 40), rng)
+    folds: dict[str, tuple[np.ndarray, np.ndarray, float]] = {
+        "random_1.25": (y, f, 1.25),
+        "random_1.5": (y, f, 1.5),
+        "random_2": (y, f, 2.0),
+        # the bounds, inside: twofold exactly, and just outside
+        "bounds": (
+            np.array([3.0, 3.0, 0.1, 0.1, 7.0, 7.0]),
+            np.array([6.0, 1.5, 0.2, 0.05, 14.000000000000002, 3.4999999999999996]),
+            2.0,
+        ),
+        "empty": (np.array([]), np.array([]), 2.0),
+        "fold_one": (y, f, 1.0),
+        "fold_half": (y, f, 0.5),
+        "fold_not_a_number": (y, f, float("nan")),
+        "lengths": (np.array([1.0, 2.0]), np.array([1.0]), 2.0),
+        "integers": (np.array([1, 2, 3, 4, 0, -2]), np.array([2, 2, 9, 1, 1, 1]), 2.0),
+    }
+    for label, (y_obs, y_pred, fold) in folds.items():
+        counts = outcome(m.fold_counts, y_obs, y_pred, fold=fold)
+        if isinstance(counts, dict):
+            accepted = None
+        else:
+            points = pd.DataFrame({"DV": y_obs, "IPRED": y_pred})
+            accepted = np.asarray(evaluation.Fold(fold).accepted(points))
+        cases[f"fold/{label}"] = {
+            "inputs": {"y": y_obs, "f": y_pred, "fold": fold},
+            "expected": {"counts": counts, "accepted": accepted},
+        }
+
+    # the uncertainty criterion of `Uncertainty`
+    y = rng.normal(10.0, 2.0, 40)
+    f = y + rng.normal(0.0, 2.0, 40)
+    sd = np.abs(rng.normal(1.5, 0.5, 40))
+    sd[[0, 1, 2]] = [np.nan, 0.0, -1.0]
+    y[3], f[4], f[5], sd[6] = np.nan, np.inf, np.nan, np.inf
+    sds: dict[str, tuple[np.ndarray, np.ndarray, np.ndarray, float]] = {
+        "random_1": (y, f, sd, 1.0),
+        "random_2": (y, f, sd, 2.0),
+        "random_half": (y, f, sd, 0.5),
+        # |y - f| = k sd exactly, inside
+        "bounds": (
+            np.array([1.0, 1.0]),
+            np.array([3.0, 3.5]),
+            np.array([1.0, 1.0]),
+            2.0,
+        ),
+        "empty": (np.array([]), np.array([]), np.array([]), 2.0),
+    }
+    for label, (y_obs, y_pred, y_sd, k) in sds.items():
+        points = pd.DataFrame({"DV": y_obs, "IPRED": y_pred, "DV_SD": y_sd})
+        cases[f"sd/{label}"] = {
+            "inputs": {"y": y_obs, "f": y_pred, "sd": y_sd, "k": k},
+            "expected": np.asarray(evaluation.Uncertainty(k).accepted(points)),
+        }
+
+    # the fold errors and the agreement of a subset, of the points with a ratio
+    def valid(n: int) -> tuple[np.ndarray, np.ndarray]:
+        y = rng.lognormal(0.0, 1.0, n)
+        return y, y * rng.lognormal(0.1, 0.3, n)
+
+    def invalid() -> tuple[np.ndarray, np.ndarray]:
+        """Three points without a ratio."""
+        return np.array([0.0, np.nan, 2.0]), np.array([1.0, 1.0, -1.0])
+
+    ratio_sets: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+    for n in (1, 2, 9, 10, 50, 1000):
+        y, f = valid(n)
+        y_bad, f_bad = invalid()
+        ratio_sets[f"random_{n}"] = (
+            np.concatenate([y, y_bad]),
+            np.concatenate([f, f_bad]),
+        )
+    ratio_sets["none"] = invalid()
+    ratio_sets["empty"] = (np.array([]), np.array([]))
+    y, f = valid(11)
+    # a ratio which overflows to inf and one which underflows to 0
+    ratio_sets["overflow"] = (np.append(y, 1e-300), np.append(f, 1e300))
+    ratio_sets["underflow"] = (np.append(y, 1e300), np.append(f, 1e-300))
+    with np.errstate(all="ignore"):
+        for label, (y_obs, y_pred) in ratio_sets.items():
+            points = pd.DataFrame({"DV": y_obs, "IPRED": y_pred})
+            cases[f"fold_errors/{label}"] = {
+                "inputs": {"y": y_obs, "f": y_pred},
+                "expected": {
+                    "gmfe": evaluation.gmfe(points),
+                    "afe": evaluation.afe(points),
+                    "subset_agreement": evaluation.subset_agreement(points),
+                },
+            }
+
+    # the limits of Guest et al.
+    ratio = np.array(
+        [
+            0.01,
+            0.1,
+            0.5,
+            0.8,
+            0.999,
+            1.0,
+            1.001,
+            1.25,
+            2.0,
+            5.0,
+            10.0,
+            100.0,
+            1e6,
+            1e300,
+        ]
+    )
+    # the edges: tiny, zero, negative and not finite ratios
+    ratio = np.append(
+        ratio, [1e-300, 5e-324, 0.0, -0.0, -1.0, -0.5, np.nan, np.inf, -np.inf]
+    )
+    with np.errstate(all="ignore"):
+        low, high = evaluation.guest_limits(ratio)
+    cases["guest_limits"] = {
+        "inputs": {"ratio": ratio},
+        "expected": {"low": low, "high": high},
+    }
+
+    obs = 1.0 + rng.lognormal(0.0, 1.0, 30)
+    obs[:10] = 1.0 / obs[:10]
+    pred = obs * rng.lognormal(0.0, 0.4, 30)
+    pred[[3, 7]] = [np.nan, np.inf]
+    limits = np.array([0.5, 2.0, 4.0, 1.0])
+    low, high = evaluation.guest_limits(limits)
+    guests: dict[str, tuple[Any, Any]] = {
+        "random": (obs, pred),
+        "at_the_limits": (
+            np.concatenate([limits, limits]),
+            np.concatenate([low, high]),
+        ),
+        "outside": (limits, high * (1.0 + 1e-9)),
+        "all_not_finite": (np.array([1.5, 2.0]), np.array([np.nan, -np.inf])),
+        "empty": (np.array([]), np.array([])),
+        "observed_zero": (np.array([1.0, 0.0]), np.array([1.0, 1.0])),
+        "observed_not_a_number": (np.array([np.nan, 2.0]), np.array([1.0, 1.0])),
+        "observed_negative": (np.array([-1.5, 2.0]), np.array([1.0, 1.0])),
+        # the numbers of a message as python writes them
+        "observed_repr": (
+            np.array([-1e-05, 1e16, 123456789012345.67, 0.0001, -np.inf, 1e-300]),
+            np.ones(6),
+        ),
+        "lengths": (np.array([1.0, 2.0]), np.array([1.0])),
+        "integers": (np.array([2, 1, 3]), np.array([2, 1, 9])),
+        # a scalar, which the python writes as one in the message (the python bindings only)
+        "scalar": (-1.0, 1.0),
+    }
+    for label, (observed, predicted) in guests.items():
+        cases[f"within_guest/{label}"] = {
+            "inputs": {"observed": observed, "predicted": predicted},
+            "expected": outcome(evaluation.within_guest, observed, predicted),
+        }
+    assert m.sse([]) == 0.0
+    assert evaluation.MIN_POINTS_SUBSET_AGREEMENT == 10
+    return cases
+
+
 GENERATORS: dict[str, Callable[[], dict[str, Any]]] = {
     "special": special,
     "linalg": linalg,
+    "metrics": metrics,
 }
+
+#: the modules whose fixture is of the functions of sbmlsim, whose version it records
+OF_SBMLSIM = {"metrics"}
 
 
 def main(modules: list[str]) -> None:
     """Write the fixtures of `modules`, of every module without one."""
     for module in modules or list(GENERATORS):
         cases = GENERATORS[module]()
-        fixture = {"_versions": {"numpy": np.__version__, "scipy": scipy.__version__}}
+        versions = {"numpy": np.__version__, "scipy": scipy.__version__}
+        if module in OF_SBMLSIM:
+            import sbmlsim
+
+            versions["sbmlsim"] = sbmlsim.__version__
+        fixture = {"_versions": versions}
         fixture.update(cases)
         text = json.dumps(encode(fixture), allow_nan=False, indent=1)
         (HERE / f"{module}.json").write_text(text + "\n")

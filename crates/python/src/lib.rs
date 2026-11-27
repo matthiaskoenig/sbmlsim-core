@@ -80,6 +80,7 @@ mod plot;
 mod runtime;
 mod sensitivity;
 mod simulate;
+mod stats;
 mod thin;
 
 use pyo3::prelude::*;
@@ -151,6 +152,8 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(plot::color_scale, m)?)?;
     m.add_function(wrap_pyfunction!(plot::image_png, m)?)?;
     m.add_function(wrap_pyfunction!(thin::thin_kept_points, m)?)?;
+    // the statistics of the analyses, `sbmlsim_core.stats`
+    stats::register(m)?;
     m.add_function(wrap_pyfunction!(
         sensitivity::sensitivity_sobol_sequence,
         m
