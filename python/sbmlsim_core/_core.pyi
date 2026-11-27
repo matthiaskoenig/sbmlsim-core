@@ -946,6 +946,76 @@ def stats_interval_parameters(
     exponential past the largest double, as the python does.
     """
 
+STATS_PSD_RTOL: float
+"""The tolerance of the smallest eigenvalue of a positive semi-definite matrix relative to the
+largest one, `PSD_RTOL` of `sbmlsim.uncertainty.covariance`, 1e-10 (since 0.40.0)."""
+
+STATS_EPS: float
+"""The distance of the points of the copula from the ends of the unit interval, 1e-12
+(since 0.40.0)."""
+
+def stats_unit_points(
+    d: int,
+    n: int,
+    *,
+    design: str = "sobol",
+    seed: int,
+    start: int = 0,
+) -> numpy.typing.NDArray[numpy.float64]:
+    """`n` points of the unit cube of `d` dimensions, `n` rows of `d` columns (since 0.40.0).
+
+    `unit_points` of `sbmlsim.uncertainty.draws` on the streams of sbmlsim-core: `sobol`
+    (the scrambled Sobol' sequence, from the point `start`), `lhs` (a Latin hypercube) or
+    `random` (xoshiro256++, from the point `start`). Raises `ValueError` for another design,
+    a Latin hypercube after `start` and a negative seed.
+    """
+
+def stats_copula(
+    u: numpy.typing.ArrayLike, r: numpy.typing.ArrayLike
+) -> numpy.typing.NDArray[numpy.float64]:
+    """The Gaussian copula of the correlation `r` on the points `u` (since 0.40.0).
+
+    The copula of `draw` of `sbmlsim.uncertainty.draws`: `Φ(Φ⁻¹(clip(u)) Fᵀ)` with the factor
+    `F` of `r`, the points themselves for a correlation which is the identity. Raises
+    `ValueError` for points which are not a matrix or a correlation of another size.
+    """
+
+def stats_normal_score_rho(
+    m: float,
+    a: tuple[str, float, float],
+    b: tuple[str, float, float],
+    scale: str = "linear",
+) -> float:
+    """The coefficient of the normal scores of the covariance `m` of two marginals (since 0.40.0).
+
+    The marginals are `(family, mean, sd)` of `_moments` of `sbmlsim.uncertainty.draws`,
+    `normal` or `log-normal`, the covariance on the scale `linear` or `log`. Raises
+    `ValueError` of `math.log1p` and `ZeroDivisionError` as the python does.
+    """
+
+def stats_nearest_correlation(
+    matrix: numpy.typing.ArrayLike, max_iterations: int = 100, tol: float = 1e-10
+) -> numpy.typing.NDArray[numpy.float64]:
+    """The nearest correlation matrix in the Frobenius norm, Higham 2002 (since 0.40.0).
+
+    `nearest_correlation` of `sbmlsim.uncertainty.covariance`.
+    """
+
+def stats_is_psd(matrix: numpy.typing.ArrayLike, rtol: float = 1e-10) -> bool:
+    """Whether a symmetric matrix is positive semi-definite, `_is_psd` (since 0.40.0)."""
+
+def stats_validate_covariance(
+    targets: Sequence[object],
+    matrix: numpy.typing.ArrayLike,
+    *,
+    kind: str = "covariance",
+    units: Sequence[str | None] | None = None,
+) -> None:
+    """Check the matrix of a `Covariance` of the targets, `Covariance._validate` (since 0.40.0).
+
+    Raises `ValueError` with the message of the python for a matrix which is not valid.
+    """
+
 ODE_CONTRACT: str
 
 class _EquationSystem:

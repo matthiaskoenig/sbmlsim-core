@@ -13,7 +13,8 @@
 
 use serde_json::Value;
 
-use sbmlsim_stats::{Scale, fisher, linalg, metrics, posterior, special, uncertainty};
+use sbmlsim_stats::correlation::{self, Marginal};
+use sbmlsim_stats::{Scale, draws, fisher, linalg, metrics, posterior, special, uncertainty};
 
 /// The fixture of a module, `oracles/<module>.json`.
 struct Fixture {
@@ -29,6 +30,7 @@ fn source(module: &str) -> &'static str {
         "metrics" => include_str!("../oracles/metrics.json"),
         "fisher" => include_str!("../oracles/fisher.json"),
         "uncertainty" => include_str!("../oracles/uncertainty.json"),
+        "draws" => include_str!("../oracles/draws.json"),
         _ => panic!("no fixture of the module {module}"),
     }
 }
@@ -2361,4 +2363,260 @@ fn more_bins_than_pairs_are_not_a_number_without_a_loop_over_the_bins() {
     let huge: Vec<f64> = x.iter().map(|x| x * 1e300).collect();
     let error = uncertainty::first_order_given_data(&x, &huge, Some(1000)).unwrap_err();
     assert_eq!(error.0, "(34, 'Numerical result out of range')");
+}
+
+// --- draws and correlation --------------------------------------------------------------------
+
+/// The matrix of `large_correlation` of `oracles/make_oracles.py`, of a unit diagonal and the
+/// coefficients `(((i + j) * 7 + i * j) % 19 - 9) / 10`, which are not positive semi-definite.
+fn large_correlation(k: usize) -> Vec<f64> {
+    let mut r = vec![0.0; k * k];
+    for i in 0..k {
+        for j in 0..k {
+            r[i * k + j] = if i == j {
+                1.0
+            } else {
+                ((((i + j) * 7 + i * j) % 19) as f64 - 9.0) / 10.0
+            };
+        }
+    }
+    r
+}
+
+/// The matrix of a case of `nearest/`: its input `m`, or the formula of `large_correlation`.
+fn nearest_input(case: &Case<'_>) -> Vec<f64> {
+    let k = case.input_usize("k");
+    if case.value["inputs"].get("m").is_some() {
+        case.input("m")
+    } else {
+        large_correlation(k)
+    }
+}
+
+/// The nearest correlation of a case of `nearest/`.
+fn nearest_of(case: &Case<'_>) -> Vec<f64> {
+    correlation::nearest_correlation(
+        &nearest_input(case),
+        case.input_usize("k"),
+        case.input_usize("max_iterations"),
+        case.input_f64("tol"),
+    )
+    .unwrap_or_else(|e| panic!("{}: {e}", case.name))
+}
+
+/// The tolerance of the nearest correlation against numpy, relative to the largest value of the
+/// matrix: the eigendecompositions of the iterations are Jacobi's, not LAPACK's.
+const NEAREST: f64 = 1e-12;
+
+#[test]
+fn the_nearest_correlation_is_the_one_of_higham_of_sbmlsim() {
+    let fixture = Fixture::load("draws");
+    let mut rows = Vec::new();
+    for name in fixture.cases("nearest/") {
+        let case = fixture.case(&name);
+        let found = nearest_of(&case);
+        let expected = case.expected();
+        assert_eq!(found.len(), expected.len(), "{name}");
+        // the off-diagonal zeros of numpy are rounding of the order of the largest value, 1
+        for (index, (found, expected)) in found.into_iter().zip(expected).enumerate() {
+            let (found, expected) = if expected.is_finite() && expected.abs() < 1e-3 {
+                (found + 1.0, expected + 1.0)
+            } else {
+                (found, expected)
+            };
+            rows.push((format!("{name}[{index}]"), found, expected));
+        }
+    }
+    assert_close("nearest_correlation", NEAREST, rows);
+}
+
+#[test]
+fn the_nearest_correlation_is_positive_semi_definite_with_a_unit_diagonal() {
+    let k = 50;
+    let r = correlation::nearest_correlation(&large_correlation(k), k, 100, 1e-10).unwrap();
+    assert!(correlation::is_psd(&r, k, correlation::PSD_RTOL));
+    for i in 0..k {
+        assert_eq!(r[i * k + i], 1.0);
+        for j in 0..k {
+            assert_eq!(r[i * k + j], r[j * k + i]);
+        }
+    }
+    // a slice of another size is refused
+    assert!(correlation::nearest_correlation(&[1.0, 0.0, 0.0], 2, 100, 1e-10).is_err());
+}
+
+#[test]
+fn is_psd_is_the_one_of_sbmlsim() {
+    let fixture = Fixture::load("draws");
+    assert_eq!(
+        fixture.case("psd_rtol").value["expected"].as_f64().unwrap(),
+        correlation::PSD_RTOL
+    );
+    for name in fixture.cases("is_psd/") {
+        let case = fixture.case(&name);
+        let found = correlation::is_psd(
+            &case.input("m"),
+            case.input_usize("k"),
+            case.input_f64("rtol"),
+        );
+        assert_eq!(found, case.value["expected"].as_bool().unwrap(), "{name}");
+    }
+}
+
+#[test]
+fn the_validation_of_a_matrix_is_the_one_of_covariance_with_its_messages() {
+    let fixture = Fixture::load("draws");
+    for name in fixture.cases("validate/") {
+        let case = fixture.case(&name);
+        let targets = case.input_strings("targets");
+        let targets: Vec<&str> = targets.iter().map(String::as_str).collect();
+        let shape: Vec<usize> = case
+            .input_u64("shape")
+            .into_iter()
+            .map(|n| usize::try_from(n).unwrap())
+            .collect();
+        let units = case.value["inputs"]["units"]
+            .as_u64()
+            .map(|n| usize::try_from(n).unwrap());
+        let found = correlation::validate(
+            &case.input("matrix"),
+            &shape,
+            &targets,
+            case.input_str("kind") == "correlation",
+            units,
+        );
+        match (&found, case.error()) {
+            (Ok(()), None) => {}
+            (Err(error), Some(message)) => assert_eq!(error.0, message, "{name}"),
+            _ => panic!("{name}: {found:?}, the python {:?}", case.error()),
+        }
+    }
+}
+
+/// The marginal of a case of `rho/`, as `_moments` gives it, on the scale of the covariance.
+fn marginal(value: &Value, scale: &str) -> Marginal {
+    let family = value[0].as_str().unwrap();
+    let (mean, sd) = (number(&value[1]), number(&value[2]));
+    match (family, scale) {
+        ("normal", _) => Marginal::Normal { sd },
+        (_, "log") => Marginal::Log { sd },
+        _ => Marginal::LogNormal { mean, sigma: sd },
+    }
+}
+
+#[test]
+fn the_coefficient_of_the_normal_scores_is_the_one_of_normal_score_correlation() {
+    let fixture = Fixture::load("draws");
+    let mut rows = Vec::new();
+    for name in fixture.cases("rho/") {
+        let case = fixture.case(&name);
+        let scale = case.input_str("scale");
+        let found = correlation::normal_score_rho(
+            case.input_f64("m"),
+            marginal(&case.value["inputs"]["a"], scale),
+            marginal(&case.value["inputs"]["b"], scale),
+        )
+        .map(|rho| vec![rho]);
+        check_values(&mut rows, &name, found, &case.value["expected"]);
+    }
+    assert_close("normal_score_rho", KERNEL, rows);
+    // marginals of two families have no coefficient, the python refuses them before
+    let mixed =
+        correlation::normal_score_rho(0.1, Marginal::Normal { sd: 1.0 }, Marginal::Log { sd: 1.0 });
+    assert!(mixed.is_err());
+}
+
+#[test]
+fn the_exception_of_a_coefficient_is_the_class_python_raised() {
+    let fixture = Fixture::load("draws");
+    for name in fixture.cases("rho/") {
+        let expected = &fixture.value[&name]["expected"];
+        if let Some(class) = expected.get("exception") {
+            let error = sbmlsim_stats::StatsError(expected["error"].as_str().unwrap().into());
+            assert_eq!(
+                uncertainty::exception(&error).name(),
+                class.as_str().unwrap(),
+                "{name}"
+            );
+        }
+    }
+}
+
+/// The points of a case of `copula/` through the copula of its correlation.
+fn copula_of(case: &Case<'_>) -> Vec<f64> {
+    let mut u = case.input("u");
+    draws::copula(
+        &mut u,
+        case.input_usize("n"),
+        case.input_usize("d"),
+        &case.input("r"),
+    )
+    .unwrap_or_else(|e| panic!("{}: {e}", case.name));
+    u
+}
+
+#[test]
+fn the_copula_of_given_points_is_the_one_of_draw() {
+    let fixture = Fixture::load("draws");
+    let mut rows = Vec::new();
+    for name in fixture.cases("copula/") {
+        let case = fixture.case(&name);
+        let found = copula_of(&case);
+        let expected = case.expected();
+        assert_eq!(found.len(), expected.len(), "{name}");
+        for (index, (found, expected)) in found.into_iter().zip(expected).enumerate() {
+            rows.push((format!("{name}[{index}]"), found, expected));
+        }
+    }
+    assert_close("copula", KERNEL, rows);
+}
+
+#[test]
+fn the_copula_of_the_identity_leaves_the_points_unchanged() {
+    let fixture = Fixture::load("draws");
+    for name in ["copula/identity", "copula/near_identity"] {
+        let case = fixture.case(name);
+        let found = copula_of(&case);
+        let u = case.input("u");
+        assert!(
+            found
+                .iter()
+                .zip(&u)
+                .all(|(a, b)| a.to_bits() == b.to_bits()),
+            "{name}"
+        );
+    }
+    // the sizes of the points and of the correlation are checked
+    let mut u = vec![0.5; 6];
+    assert!(draws::copula(&mut u, 2, 3, &[1.0, 0.0, 0.0, 1.0]).is_err());
+    assert!(draws::copula(&mut u, 4, 2, &[1.0, 0.0, 0.0, 1.0]).is_err());
+}
+
+#[test]
+fn the_draws_and_correlations_give_the_same_bits_on_every_target() {
+    let fixture = Fixture::load("draws");
+    let mut values = Vec::new();
+    for name in fixture.cases("nearest/") {
+        values.extend(nearest_of(&fixture.case(&name)));
+    }
+    for name in fixture.cases("copula/") {
+        values.extend(copula_of(&fixture.case(&name)));
+    }
+    for name in fixture.cases("rho/") {
+        let case = fixture.case(&name);
+        let scale = case.input_str("scale");
+        if let Ok(rho) = correlation::normal_score_rho(
+            case.input_f64("m"),
+            marginal(&case.value["inputs"]["a"], scale),
+            marginal(&case.value["inputs"]["b"], scale),
+        ) {
+            values.push(rho);
+        }
+    }
+    assert_eq!(
+        hash(&values),
+        0x4cb5_c456_9ee6_7877,
+        "{} values",
+        values.len()
+    );
 }

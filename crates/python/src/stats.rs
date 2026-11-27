@@ -15,6 +15,8 @@ use numpy::{
 use pyo3::exceptions::{PyIndexError, PyOverflowError, PyValueError, PyZeroDivisionError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyFloat, PyString};
+use sbmlsim_stats::correlation::{self, Marginal};
+use sbmlsim_stats::draws::{self, Design};
 use sbmlsim_stats::uncertainty::{self, Exception};
 use sbmlsim_stats::{Scale, StatsError, fisher, linalg, metrics, posterior};
 
@@ -589,6 +591,236 @@ pub(crate) fn stats_interval_parameters(
     )
 }
 
+/// The `rows x columns` matrix of row-major values as an array of numpy.
+fn rectangle(
+    py: Python<'_>,
+    values: Vec<f64>,
+    rows: usize,
+    columns: usize,
+) -> Bound<'_, PyArray2<f64>> {
+    let matrix =
+        Array2::from_shape_vec((rows, columns), values).expect("rows * columns values of a matrix");
+    PyArray2::from_owned_array(py, matrix)
+}
+
+/// The seed of a stream: a non-negative integer, a negative one refused with the ValueError of
+/// numpy.
+pub(crate) struct Seed(u64);
+
+impl<'a, 'py> FromPyObject<'a, 'py> for Seed {
+    type Error = PyErr;
+
+    fn extract(object: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+        match object.extract::<u64>() {
+            Ok(seed) => Ok(Self(seed)),
+            Err(error) => match object.extract::<i64>() {
+                Ok(seed) if seed < 0 => Err(PyValueError::new_err("expected non-negative integer")),
+                _ => Err(error),
+            },
+        }
+    }
+}
+
+/// A design of the points of the unit cube: `sobol`, `lhs` or `random`; any other object is
+/// the ValueError of the python, raised when the points are drawn, so an explicit `None` is
+/// refused as the python refuses it.
+pub(crate) struct DesignArg(std::result::Result<Design, String>);
+
+impl DesignArg {
+    /// The design without one, the scrambled Sobol' sequence.
+    const SOBOL: Self = Self(Ok(Design::Sobol));
+}
+
+impl<'a, 'py> FromPyObject<'a, 'py> for DesignArg {
+    type Error = PyErr;
+
+    fn extract(object: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+        Ok(Self(match object.extract::<String>().ok().as_deref() {
+            Some("sobol") => Ok(Design::Sobol),
+            Some("lhs") => Ok(Design::Lhs),
+            Some("random") => Ok(Design::Random),
+            _ => Err(format!(
+                "The design {} is none of 'sobol', 'lhs' and 'random'.",
+                object.repr()?
+            )),
+        }))
+    }
+}
+
+/// `n` points of the unit cube of `d` dimensions, `n` rows of `d` columns, of the design
+/// `sobol` (the scrambled Sobol' sequence, from the point `start`), `lhs` (a Latin hypercube,
+/// without a continuation) or `random` (from the point `start`).
+#[pyfunction]
+#[pyo3(signature = (d, n, *, design = DesignArg::SOBOL, seed, start = 0))]
+#[pyo3(text_signature = "(d, n, *, design='sobol', seed, start=0)")]
+pub(crate) fn stats_unit_points(
+    py: Python<'_>,
+    d: usize,
+    n: usize,
+    design: DesignArg,
+    seed: Seed,
+    start: u64,
+) -> PyResult<Bound<'_, PyArray2<f64>>> {
+    let design = design.0.map_err(PyValueError::new_err)?;
+    let points = draws::unit_points(d, n, design, seed.0, start).map_err(value_error)?;
+    Ok(rectangle(py, points, n, d))
+}
+
+/// The Gaussian copula of the correlation `r` of the normal scores on the points `u` of the
+/// unit cube, `n` rows of `d` columns: `Φ(Φ⁻¹(clip(u, EPS, 1 - EPS)) Fᵀ)` with the factor `F`
+/// of `r`, the points themselves for a correlation which is the identity (`np.allclose`).
+#[pyfunction]
+pub(crate) fn stats_copula<'py>(
+    py: Python<'py>,
+    u: Values<'py>,
+    r: Values<'py>,
+) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    let &[n, d] = u.shape() else {
+        return Err(PyValueError::new_err(format!(
+            "The points must be a matrix of the draws by the variables, not of the shape {}.",
+            shape_text(u.shape())
+        )));
+    };
+    let (r, k) = square(&r, "correlation")?;
+    if k != d {
+        return Err(PyValueError::new_err(format!(
+            "The correlation of {k} variables does not fit points of {d} variables."
+        )));
+    }
+    let mut points = values(&u).into_owned();
+    draws::copula(&mut points, n, d, &r).map_err(value_error)?;
+    Ok(rectangle(py, points, n, d))
+}
+
+/// A marginal of a covariance as `_moments` of `sbmlsim.uncertainty.draws` gives it: its
+/// family (`normal` or `log-normal`), its mean and its standard deviation (of the logarithm of
+/// a log-normal).
+pub(crate) struct Moments(String, f64, f64);
+
+impl<'a, 'py> FromPyObject<'a, 'py> for Moments {
+    type Error = PyErr;
+
+    fn extract(object: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+        let (family, mean, sd): (String, f64, f64) = object.extract()?;
+        Ok(Self(family, mean, sd))
+    }
+}
+
+impl Moments {
+    /// The marginal of the crate on the scale of the covariance.
+    fn marginal(&self, scale: &str) -> PyResult<Marginal> {
+        let Self(family, mean, sd) = self;
+        match (family.as_str(), scale) {
+            ("normal", _) => Ok(Marginal::Normal { sd: *sd }),
+            ("log-normal", "log") => Ok(Marginal::Log { sd: *sd }),
+            ("log-normal", _) => Ok(Marginal::LogNormal {
+                mean: *mean,
+                sigma: *sd,
+            }),
+            _ => Err(PyValueError::new_err(format!(
+                "The family {family:?} of a marginal is none of 'normal' and 'log-normal'."
+            ))),
+        }
+    }
+}
+
+/// The coefficient of the normal scores of the covariance `m` of the marginals `a` and `b`
+/// (`(family, mean, sd)` of `_moments`) on the scale `linear` or `log`.
+#[pyfunction]
+#[pyo3(signature = (m, a, b, scale = "linear"))]
+pub(crate) fn stats_normal_score_rho(m: f64, a: Moments, b: Moments, scale: &str) -> PyResult<f64> {
+    correlation::normal_score_rho(m, a.marginal(scale)?, b.marginal(scale)?)
+        .map_err(uncertainty_error)
+}
+
+/// The values of a matrix of the functions of numpy's eigendecompositions, with the
+/// errors numpy raises of another shape: `stacked` is the error of a matrix of two
+/// dimensions which is not square.
+fn eigen_matrix<'a>(
+    array: &'a Values<'_>,
+    not_square: impl FnOnce(usize, usize) -> String,
+) -> PyResult<(Cow<'a, [f64]>, usize)> {
+    match *array.shape() {
+        [rows, columns] if rows == columns => Ok((values(array), rows)),
+        [rows, columns] => Err(PyValueError::new_err(not_square(rows, columns))),
+        ref shape if shape.len() < 2 => Err(PyValueError::new_err(format!(
+            "{}-dimensional array given. Array must be at least two-dimensional",
+            shape.len()
+        ))),
+        ref shape => Err(PyValueError::new_err(format!(
+            "The matrix must be a square matrix, not of the shape {}.",
+            shape_text(shape)
+        ))),
+    }
+}
+
+/// The nearest correlation matrix in the Frobenius norm (Higham 2002), as
+/// `sbmlsim.uncertainty.covariance.nearest_correlation`.
+#[pyfunction]
+#[pyo3(signature = (matrix, max_iterations = correlation::NEAREST_MAX_ITERATIONS as i64, tol = correlation::NEAREST_TOL))]
+#[pyo3(text_signature = "(matrix, max_iterations=100, tol=1e-10)")]
+pub(crate) fn stats_nearest_correlation<'py>(
+    py: Python<'py>,
+    matrix: Values<'py>,
+    max_iterations: i64,
+    tol: f64,
+) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    // `y - correction` and `r + r.T` of the python: numpy broadcasts the shape against its
+    // transpose
+    let (m, k) = eigen_matrix(&matrix, |rows, columns| {
+        format!(
+            "operands could not be broadcast together with shapes ({rows},{columns}) \
+             ({columns},{rows}) "
+        )
+    })?;
+    // `range` of a negative number is no iteration
+    let iterations = usize::try_from(max_iterations).unwrap_or(0);
+    let nearest = correlation::nearest_correlation(&m, k, iterations, tol).map_err(value_error)?;
+    Ok(self::matrix(py, nearest, k))
+}
+
+/// Whether a symmetric matrix is positive semi-definite, `_is_psd`: its smallest eigenvalue at
+/// least `-rtol` times its largest one.
+#[pyfunction]
+#[pyo3(signature = (matrix, rtol = correlation::PSD_RTOL))]
+pub(crate) fn stats_is_psd(matrix: Values<'_>, rtol: f64) -> PyResult<bool> {
+    let (m, k) = eigen_matrix(&matrix, |_, _| {
+        "Last 2 dimensions of the array must be square".to_owned()
+    })?;
+    if k == 0 {
+        return Err(PyValueError::new_err(
+            "zero-size array to reduction operation minimum which has no identity",
+        ));
+    }
+    Ok(correlation::is_psd(&m, k, rtol))
+}
+
+/// Checks the matrix of a `Covariance` of the targets (`kind` `covariance` or `correlation`,
+/// `units` the units of the targets of a covariance), as `Covariance._validate`.
+#[pyfunction]
+#[pyo3(signature = (targets, matrix, *, kind = "covariance", units = None))]
+pub(crate) fn stats_validate_covariance(
+    targets: Vec<Bound<'_, PyAny>>,
+    matrix: Values<'_>,
+    kind: &str,
+    units: Option<Bound<'_, PyAny>>,
+) -> PyResult<()> {
+    let targets = targets
+        .iter()
+        .map(|target| Ok(target.str()?.to_string()))
+        .collect::<PyResult<Vec<String>>>()?;
+    let targets: Vec<&str> = targets.iter().map(String::as_str).collect();
+    let units = units.map(|units| units.len()).transpose()?;
+    correlation::validate(
+        &values(&matrix),
+        matrix.shape(),
+        &targets,
+        kind == "correlation",
+        units,
+    )
+    .map_err(value_error)
+}
+
 /// Adds the functions and the constants of the statistics to the module, by the names
 /// `stats_<name>` and `STATS_<NAME>`.
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -600,6 +832,14 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
         "STATS_DEFAULT_RANK_TOLERANCE",
         fisher::DEFAULT_RANK_TOLERANCE,
     )?;
+    m.add("STATS_PSD_RTOL", correlation::PSD_RTOL)?;
+    m.add("STATS_EPS", draws::EPS)?;
+    m.add_function(wrap_pyfunction!(stats_unit_points, m)?)?;
+    m.add_function(wrap_pyfunction!(stats_copula, m)?)?;
+    m.add_function(wrap_pyfunction!(stats_normal_score_rho, m)?)?;
+    m.add_function(wrap_pyfunction!(stats_nearest_correlation, m)?)?;
+    m.add_function(wrap_pyfunction!(stats_is_psd, m)?)?;
+    m.add_function(wrap_pyfunction!(stats_validate_covariance, m)?)?;
     m.add_function(wrap_pyfunction!(stats_gram, m)?)?;
     m.add_function(wrap_pyfunction!(stats_fisher_statistics, m)?)?;
     m.add_function(wrap_pyfunction!(stats_fisher_intervals, m)?)?;

@@ -23,6 +23,85 @@ pub(crate) fn python_repr(x: f64) -> String {
     }
 }
 
+/// The text python gives a double in the format `%.{precision}g` (`f"{x:.3g}"`): the
+/// double rounded to `precision` significant digits, in decimals for a decimal exponent from
+/// -4 to below `precision` and with an exponent of a sign and two digits at least outside,
+/// without trailing zeros (`-0.8`, `1.23e-05`, `1e+03`, `-0`), `nan`, `inf` and `-inf`.
+pub(crate) fn python_format_g(x: f64, precision: usize) -> String {
+    if x.is_nan() {
+        return "nan".to_owned();
+    }
+    if x.is_infinite() {
+        return if x > 0.0 { "inf" } else { "-inf" }.to_owned();
+    }
+    let precision = precision.max(1);
+    // the exponent of the double rounded to its digits, correctly rounded as C's printf
+    let scientific = format!("{x:.*e}", precision - 1);
+    let (mantissa, exponent) = scientific
+        .split_once('e')
+        .expect("a scientific number has an exponent");
+    let exponent: i64 = exponent.parse().expect("an exponent is an integer");
+    let strip = |text: &str| -> String {
+        if text.contains('.') {
+            text.trim_end_matches('0').trim_end_matches('.').to_owned()
+        } else {
+            text.to_owned()
+        }
+    };
+    if (-4..precision as i64).contains(&exponent) {
+        let decimals = usize::try_from(precision as i64 - 1 - exponent).unwrap_or(0);
+        strip(&format!("{x:.decimals$}"))
+    } else {
+        let sign = if exponent < 0 { '-' } else { '+' };
+        format!("{}e{sign}{:02}", strip(mantissa), exponent.unsigned_abs())
+    }
+}
+
+/// The text python gives a string, `repr`, as it writes it in a list: in single quotes, in
+/// double quotes where it has a single and no double quote, the backslash, the quote and the
+/// control characters escaped (`\n`, `\r`, `\t`, `\xNN`, `\uNNNN`).
+pub(crate) fn python_str_repr(text: &str) -> String {
+    let quote = if text.contains('\'') && !text.contains('"') {
+        '"'
+    } else {
+        '\''
+    };
+    let mut out = String::with_capacity(text.len() + 2);
+    out.push(quote);
+    for c in text.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c == quote => {
+                out.push('\\');
+                out.push(c);
+            }
+            c if c.is_control() => {
+                let code = u32::from(c);
+                if code < 0x100 {
+                    out.push_str(&format!("\\x{code:02x}"));
+                } else {
+                    out.push_str(&format!("\\u{code:04x}"));
+                }
+            }
+            c => out.push(c),
+        }
+    }
+    out.push(quote);
+    out
+}
+
+/// The text python gives a list of strings, `str(list)`: their `repr`s in brackets.
+pub(crate) fn python_str_list<S: AsRef<str>>(items: &[S]) -> String {
+    let items: Vec<String> = items
+        .iter()
+        .map(|item| python_str_repr(item.as_ref()))
+        .collect();
+    format!("[{}]", items.join(", "))
+}
+
 /// The message of the OverflowError of a power of python past the largest double
 /// (`OverflowError(34, 'Numerical result out of range')`, of the errno `ERANGE`).
 pub(crate) const POWER_OVERFLOW: &str = "(34, 'Numerical result out of range')";
@@ -136,6 +215,39 @@ mod tests {
         ] {
             assert_eq!(python_repr(x), text);
         }
+    }
+
+    #[test]
+    fn a_double_is_formatted_as_python_formats_it_with_g() {
+        for (x, precision, text) in [
+            (-0.8, 3, "-0.8"),
+            (1.2345e-5, 3, "1.23e-05"),
+            (123_456.0, 3, "1.23e+05"),
+            (0.000_123_4, 3, "0.000123"),
+            (-0.0, 3, "-0"),
+            (0.0, 3, "0"),
+            (999.5, 3, "1e+03"),
+            (0.95, 3, "0.95"),
+            (2.0, 3, "2"),
+            (-1.27, 3, "-1.27"),
+            (-1e-300, 3, "-1e-300"),
+            (12.5, 6, "12.5"),
+            (1_234_567.0, 6, "1.23457e+06"),
+            (f64::NAN, 3, "nan"),
+            (f64::NEG_INFINITY, 3, "-inf"),
+        ] {
+            assert_eq!(python_format_g(x, precision), text, "{x}");
+        }
+    }
+
+    #[test]
+    fn a_string_is_written_as_python_writes_it_in_a_list() {
+        assert_eq!(
+            python_str_list(&["it's", "say \"x\"", "a\\b", "x\ny", "x'\"", "tab\t", "é"]),
+            r#"["it's", 'say "x"', 'a\\b', 'x\ny', 'x\'"', 'tab\t', 'é']"#
+        );
+        assert_eq!(python_str_list::<&str>(&[]), "[]");
+        assert_eq!(python_str_repr("\u{1}"), "'\\x01'");
     }
 
     #[test]

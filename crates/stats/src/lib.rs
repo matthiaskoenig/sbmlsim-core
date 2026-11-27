@@ -21,12 +21,21 @@
 //!   (the mean, the standard deviation, the quantiles and their intervals, the first-order
 //!   index from given data), the precision of an output and the parameters of a reported
 //!   interval, as `sbmlsim.uncertainty` gives them.
+//! - [`correlation`]: the correlation matrices of an uncertainty analysis, the nearest
+//!   correlation matrix (Higham 2002), the test of positive semi-definiteness, the validation of
+//!   a covariance and the coefficient of the normal scores of a covariance, as
+//!   `sbmlsim.uncertainty.covariance` and `sbmlsim.uncertainty.draws` give them.
+//! - [`draws`]: the points of the unit cube of the designs of the draws (Sobol', Latin
+//!   hypercube, random) and the Gaussian copula which correlates them, as
+//!   `sbmlsim.uncertainty.draws` gives them, the streams of sbmlsim-core rather than scipy's.
 //!
 //! Every transcendental function comes from the crate libm, so one input gives the same bits
 //! on every target, natively and in wasm. The tests hold every function to the values of numpy
 //! and scipy, and the metrics to the functions of sbmlsim, computed once by
 //! `oracles/make_oracles.py` and stored next to it as JSON.
 
+pub mod correlation;
+pub mod draws;
 pub mod fisher;
 pub mod linalg;
 pub mod metrics;

@@ -892,3 +892,220 @@ def test_strided_integer_and_fortran_draws_are_read_as_their_values() -> None:
     assert stats.first_order_given_data(
         integers, integers[::-1]
     ) == stats.first_order_given_data(doubles, doubles[::-1])
+
+
+# --- draws and correlation --------------------------------------------------------------------
+
+DRAWS = cases("draws", "")
+
+
+def of_draws(prefix: str) -> list[tuple[str, dict[str, Any]]]:
+    """The cases of `draws.json` whose names start with `prefix`, as test parameters."""
+    return [(name, case) for name, case in DRAWS.items() if name.startswith(prefix)]
+
+
+def large_correlation(k: int) -> numpy.ndarray:
+    """The matrix of `large_correlation` of `make_oracles.py`, of a formula of integers."""
+    i, j = numpy.indices((k, k))
+    r = (((i + j) * 7 + i * j) % 19 - 9) / 10.0
+    numpy.fill_diagonal(r, 1.0)
+    return r
+
+
+@pytest.mark.parametrize(("name", "case"), of_draws("nearest/"))
+def test_the_nearest_correlation_is_the_one_of_higham_of_sbmlsim(
+    name: str, case: dict[str, Any]
+) -> None:
+    inputs = case["inputs"]
+    k = inputs["k"]
+    m = square(inputs["m"], k) if "m" in inputs else large_correlation(k)
+    found = stats.nearest_correlation(m, inputs["max_iterations"], inputs["tol"])
+    assert found.shape == (k, k)
+    # the zeros of numpy are rounding of the order of the largest value, 1
+    numpy.testing.assert_allclose(
+        found, square(case["expected"], k), rtol=KERNEL, atol=KERNEL
+    )
+
+
+def test_the_nearest_correlation_refuses_the_shapes_numpy_refuses() -> None:
+    with pytest.raises(ValueError) as raised:
+        stats.nearest_correlation(numpy.ones((2, 3)))
+    assert str(raised.value) == (
+        "operands could not be broadcast together with shapes (2,3) (3,2) "
+    )
+    with pytest.raises(ValueError) as raised:
+        stats.nearest_correlation([1.0, 2.0])
+    assert str(raised.value) == (
+        "1-dimensional array given. Array must be at least two-dimensional"
+    )
+    assert stats.nearest_correlation(numpy.zeros((0, 0))).shape == (0, 0)
+
+
+@pytest.mark.parametrize(("name", "case"), of_draws("is_psd/"))
+def test_is_psd_is_the_one_of_sbmlsim(name: str, case: dict[str, Any]) -> None:
+    inputs = case["inputs"]
+    m = square(inputs["m"], inputs["k"])
+    assert stats.is_psd(m, inputs["rtol"]) is case["expected"]
+    assert stats.is_psd(m) is case["expected"]
+
+
+def test_is_psd_refuses_an_empty_matrix_as_numpy() -> None:
+    assert DRAWS["psd_rtol"]["expected"] == stats.PSD_RTOL
+    with pytest.raises(ValueError) as raised:
+        stats.is_psd(numpy.zeros((0, 0)))
+    assert str(raised.value) == (
+        "zero-size array to reduction operation minimum which has no identity"
+    )
+    with pytest.raises(ValueError) as raised:
+        stats.is_psd(numpy.ones((2, 3)))
+    assert str(raised.value) == "Last 2 dimensions of the array must be square"
+
+
+@pytest.mark.parametrize(("name", "case"), of_draws("validate/"))
+def test_the_validation_is_the_one_of_covariance_with_its_messages(
+    name: str, case: dict[str, Any]
+) -> None:
+    inputs = case["inputs"]
+    matrix = numpy.asarray(inputs["matrix"], dtype=float).reshape(inputs["shape"])
+    units = None if inputs["units"] is None else ["mM"] * inputs["units"]
+
+    def call() -> None:
+        stats.validate_covariance(
+            inputs["targets"], matrix, kind=inputs["kind"], units=units
+        )
+
+    if case["expected"] is None:
+        call()
+    else:
+        assert_outcome(call, case["expected"])
+
+
+@pytest.mark.parametrize(("name", "case"), of_draws("rho/"))
+def test_the_coefficient_of_the_normal_scores_is_the_one_of_sbmlsim(
+    name: str, case: dict[str, Any]
+) -> None:
+    inputs = case["inputs"]
+    a, b = tuple(inputs["a"]), tuple(inputs["b"])
+    assert_raised(
+        lambda: stats.normal_score_rho(inputs["m"], a, b, inputs["scale"]),
+        case["expected"],
+    )
+
+
+def test_a_coefficient_of_two_families_or_another_family_is_refused() -> None:
+    with pytest.raises(ValueError, match="one family"):
+        stats.normal_score_rho(
+            0.1, ("normal", 1.0, 1.0), ("log-normal", 1.0, 1.0), "log"
+        )
+    with pytest.raises(ValueError) as raised:
+        stats.normal_score_rho(0.1, ("gamma", 1.0, 1.0), ("normal", 1.0, 1.0))
+    assert str(raised.value) == (
+        "The family \"gamma\" of a marginal is none of 'normal' and 'log-normal'."
+    )
+
+
+@pytest.mark.parametrize(("name", "case"), of_draws("copula/"))
+def test_the_copula_of_given_points_is_the_one_of_draw(
+    name: str, case: dict[str, Any]
+) -> None:
+    inputs = case["inputs"]
+    n, d = inputs["n"], inputs["d"]
+    u = numpy.asarray(inputs["u"], dtype=float).reshape(n, d)
+    found = stats.copula(u, square(inputs["r"], d))
+    assert found.shape == (n, d)
+    expected = numpy.asarray(case["expected"], dtype=float).reshape(n, d)
+    numpy.testing.assert_allclose(found, expected, rtol=KERNEL, atol=0.0)
+    if "identity" in name and "outside" not in name:
+        assert numpy.array_equal(found, u, equal_nan=True)
+
+
+def test_the_copula_checks_its_shapes() -> None:
+    with pytest.raises(ValueError, match="not of the shape \\(3,\\)"):
+        stats.copula([0.5, 0.5, 0.5], numpy.eye(3))
+    with pytest.raises(ValueError, match="does not fit points of 2 variables"):
+        stats.copula(numpy.full((4, 2), 0.5), numpy.eye(3))
+
+
+def test_the_points_of_a_seed_are_the_same_and_of_another_seed_others() -> None:
+    for design in ("sobol", "lhs", "random"):
+        a = stats.unit_points(3, 64, design=design, seed=42)
+        assert a.shape == (64, 3)
+        assert numpy.array_equal(a, stats.unit_points(3, 64, design=design, seed=42))
+        assert not numpy.array_equal(
+            a, stats.unit_points(3, 64, design=design, seed=43)
+        )
+        assert ((a >= 0.0) & (a < 1.0)).all()
+    assert numpy.array_equal(
+        stats.unit_points(2, 8, seed=1), stats.unit_points(2, 8, design="sobol", seed=1)
+    )
+
+
+def test_sobol_and_random_points_continue_from_start() -> None:
+    for design in ("sobol", "random"):
+        long = stats.unit_points(4, 48, design=design, seed=7)
+        tail = stats.unit_points(4, 16, design=design, seed=7, start=32)
+        assert numpy.array_equal(tail, long[32:])
+
+
+def test_the_points_refuse_as_the_python() -> None:
+    with pytest.raises(ValueError) as raised:
+        stats.unit_points(2, 4, design="lhs", seed=1, start=2)
+    assert str(raised.value) == (
+        "A Latin hypercube has no continuation, its points of more draws are another "
+        "hypercube: give the number of draws, or use 'sobol' or 'random' for more draws."
+    )
+    with pytest.raises(ValueError) as raised:
+        stats.unit_points(2, 4, design="x", seed=1)
+    assert str(raised.value) == "The design 'x' is none of 'sobol', 'lhs' and 'random'."
+    with pytest.raises(ValueError) as raised:
+        stats.unit_points(2, 4, design=None, seed=1)  # ty: ignore[invalid-argument-type]
+    assert (
+        str(raised.value) == "The design None is none of 'sobol', 'lhs' and 'random'."
+    )
+    with pytest.raises(ValueError) as raised:
+        stats.unit_points(2, 4, design="random", seed=-1)
+    assert str(raised.value) == "expected non-negative integer"
+    assert stats.unit_points(2, 0, seed=1).shape == (0, 2)
+    assert stats.unit_points(0, 4, design="lhs", seed=1).shape == (4, 0)
+
+
+def test_the_points_are_uniform_and_a_latin_hypercube_stratified() -> None:
+    n = 1000
+    for design in ("sobol", "lhs", "random"):
+        u = stats.unit_points(3, n, design=design, seed=2026)
+        for column in u.T:
+            # the statistic of Kolmogorov and Smirnov, below its 1 % critical value
+            s = numpy.sort(column)
+            i = numpy.arange(n)
+            ks = max((s - i / n).max(), ((i + 1) / n - s).max())
+            assert ks < 1.63 / math.sqrt(n), (design, ks)
+    lhs = stats.unit_points(3, n, design="lhs", seed=3)
+    for column in lhs.T:
+        assert numpy.array_equal(numpy.sort(numpy.floor(column * n)), numpy.arange(n))
+
+
+def test_the_copula_correlates_the_normal_scores_of_the_draws() -> None:
+    from statistics import NormalDist
+
+    r = numpy.array([[1.0, 0.7], [0.7, 1.0]])
+    ppf = numpy.vectorize(NormalDist().inv_cdf)
+    for design in ("sobol", "lhs", "random"):
+        u = stats.copula(stats.unit_points(2, 4096, design=design, seed=5), r)
+        z = ppf(u)
+        assert abs(numpy.corrcoef(z.T)[0, 1] - 0.7) < 0.02, design
+
+
+def test_strided_integer_and_fortran_matrices_of_the_correlations() -> None:
+    m = numpy.asfortranarray(large_correlation(6))
+    expected = stats.nearest_correlation(numpy.ascontiguousarray(m))
+    assert numpy.array_equal(stats.nearest_correlation(m), expected)
+    wide = numpy.zeros((6, 12))
+    wide[:, ::2] = m
+    assert numpy.array_equal(stats.nearest_correlation(wide[:, ::2]), expected)
+    assert stats.is_psd(numpy.eye(3, dtype=int))
+    stats.validate_covariance(["a", "b"], numpy.array([[2, 1], [1, 2]]))
+    u = stats.unit_points(3, 8, seed=1)
+    r = numpy.array([[1.0, 0.5, 0.0], [0.5, 1.0, 0.0], [0.0, 0.0, 1.0]])
+    strided = numpy.zeros((8, 6))
+    strided[:, ::2] = u
+    assert numpy.array_equal(stats.copula(strided[:, ::2], r), stats.copula(u, r))

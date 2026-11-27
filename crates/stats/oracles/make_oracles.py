@@ -18,17 +18,18 @@ modules take two:
       uv run --no-project --with numpy --with scipy \
           python crates/stats/oracles/make_oracles.py
 
-- `metrics`, `fisher` and `uncertainty` call the functions of sbmlsim itself
+- `metrics`, `fisher`, `uncertainty` and `draws` call the functions of sbmlsim itself
   (`sbmlsim.fit.metrics`, `sbmlsim.fit.evaluation`, `sbmlsim.fit.fisher`,
   `sbmlsim.fit.posterior`, `sbmlsim.uncertainty.statistics`, `_precise` of
-  `sbmlsim.uncertainty.propagation` and `Uncertain.interval`), so their environment has
+  `sbmlsim.uncertainty.propagation`, `Uncertain.interval`,
+  `sbmlsim.uncertainty.covariance` and `sbmlsim.uncertainty.draws`), so their environment has
   sbmlsim as well, with the python and the package index of libroadrunner sbmlsim needs:
 
       uv run --no-project --python 3.14 \
           --index https://matthiaskoenig.github.io/roadrunner-wheels/simple/ \
           --index-strategy unsafe-best-match \
           --with sbmlsim==0.53.0 --with numpy --with scipy \
-          python crates/stats/oracles/make_oracles.py metrics fisher uncertainty
+          python crates/stats/oracles/make_oracles.py metrics fisher uncertainty draws
 
 Modules given as arguments write only their fixtures (`... make_oracles.py special`); a
 module of sbmlsim in an environment without it stops before any fixture is written.
@@ -1195,7 +1196,10 @@ def uncertainty() -> dict[str, Any]:
     draws["random_8_not_a_number"] = draws["random_8"].copy()
     draws["random_8_not_a_number"][[2, 5]] = np.nan
     for label, x in draws.items():
-        cases[f"statistics/{label}"] = {"inputs": {"x": x}, "expected": statistics_of(x)}
+        cases[f"statistics/{label}"] = {
+            "inputs": {"x": x},
+            "expected": statistics_of(x),
+        }
     for n in (1000, 100003):
         x = large_residuals(n)
         cases[f"statistics_formula/{n}"] = {
@@ -1358,16 +1362,295 @@ def uncertainty() -> dict[str, Any]:
     return cases
 
 
+# --- draws -----------------------------------------------------------------------------------
+
+
+def large_correlation(k: int) -> np.ndarray:
+    """Get the symmetric `k x k` matrix of a unit diagonal of a formula of integers.
+
+    `r_ij = (((i + j) * 7 + i * j) % 19 - 9) / 10` off the diagonal, a coefficient of
+    -0.9 to 0.9 which is not positive semi-definite; a division by ten is rounded the same
+    by every language, so the tests compute it bit for bit as here.
+    """
+    i, j = np.indices((k, k))
+    r = (((i + j) * 7 + i * j) % 19 - 9) / 10.0
+    np.fill_diagonal(r, 1.0)
+    return r
+
+
+def _validated(
+    targets: list[str],
+    matrix: Any,
+    *,
+    kind: str = "covariance",
+    units: list[str | None] | None = None,
+) -> dict[str, Any]:
+    """The case of the validation of a `Covariance`: null if it is valid, else its error."""
+    from sbmlsim.uncertainty.covariance import Covariance
+
+    array = np.asarray(matrix, dtype=float)
+    try:
+        Covariance(targets, array, units=units, kind=kind)
+        expected: Any = None
+    except ValueError as error:
+        expected = {"error": str(error)}
+    return {
+        "inputs": {
+            "targets": targets,
+            "shape": list(array.shape),
+            "matrix": array.ravel(),
+            "kind": kind,
+            "units": None if units is None else len(units),
+        },
+        "expected": expected,
+    }
+
+
+def _rho(
+    m: float, a: tuple[str, float, float], b: tuple[str, float, float], scale: str
+) -> Any:
+    """The coefficient of the normal scores of a covariance `m` of two marginals.
+
+    The arithmetic of the double loop of `normal_score_correlation`: the marginals as
+    `_moments` gives them (the family, the mean and the standard deviation, of the
+    logarithm for a log-normal), `m` an element of a matrix of numpy.
+    """
+    family = a[0]
+    m = np.float64(m)
+    try:
+        if family == "normal" or scale == "log":
+            return m / (a[2] * b[2])
+        return math.log1p(m / (a[1] * b[1])) / (a[2] * b[2])
+    except (ValueError, ZeroDivisionError) as error:
+        return {"error": str(error), "exception": type(error).__name__}
+
+
+def draws() -> dict[str, Any]:
+    """The cases of `draws` and `correlation`: `sbmlsim.uncertainty.draws` and `.covariance`.
+
+    The nearest correlation matrix (`nearest_correlation`, Higham 2002) of the classical
+    example of Higham, of matrices which are a correlation already, without iterations, of
+    a not a number and of 50 targets; `_is_psd` at its tolerance; the validation of a
+    `Covariance` with every message; the coefficients of the normal scores of
+    `normal_score_correlation`; and the Gaussian copula of `draw` for given points and a
+    positive definite correlation (a singular one has the factor of the eigendecomposition,
+    which is LAPACK's and matches only in distribution).
+    """
+    from sbmlsim.simulation.sampling.distributions import EPS
+    from sbmlsim.uncertainty.covariance import PSD_RTOL, _is_psd, nearest_correlation
+    from sbmlsim.uncertainty.draws import _factor as draws_factor
+
+    rng = np.random.default_rng(20261128)
+    cases: dict[str, Any] = {"psd_rtol": {"inputs": {}, "expected": PSD_RTOL}}
+
+    nearest: dict[str, tuple[np.ndarray, int, float]] = {
+        # Higham (2002), section 4: a tridiagonal matrix of ones
+        "higham": (
+            np.array(
+                [[1, 1, 0, 0], [1, 1, 1, 0], [0, 1, 1, 1], [0, 0, 1, 1]], dtype=float
+            ),
+            100,
+            1e-10,
+        ),
+        # the coefficients of three sources which do not fit together
+        "inconsistent_3": (
+            np.array([[1.0, 0.9, -0.9], [0.9, 1.0, 0.9], [-0.9, 0.9, 1.0]]),
+            100,
+            1e-10,
+        ),
+        "correlation": (
+            np.array([[1.0, 0.5, 0.2], [0.5, 1.0, 0.1], [0.2, 0.1, 1.0]]),
+            100,
+            1e-10,
+        ),
+        "one": (np.array([[1.0]]), 100, 1e-10),
+        "empty": (np.zeros((0, 0)), 100, 1e-10),
+        "no_iterations": (
+            np.array([[1.0, 0.9, -0.9], [0.9, 1.0, 0.9], [-0.9, 0.9, 1.0]]),
+            0,
+            1e-10,
+        ),
+        "few_iterations": (large_correlation(8), 3, 1e-10),
+        "loose": (large_correlation(8), 100, 1e-3),
+        "nan": (np.array([[1.0, np.nan], [np.nan, 1.0]]), 100, 1e-10),
+        "inf": (np.array([[1.0, np.inf], [np.inf, 1.0]]), 100, 1e-10),
+        "large_50": (large_correlation(50), 100, 1e-10),
+    }
+    for name, (m, iterations, tol) in nearest.items():
+        k = m.shape[0]
+        # the large matrix by its formula, so the fixture holds only the result
+        inputs: dict[str, Any] = {"k": k, "max_iterations": iterations, "tol": tol}
+        if not name.startswith("large"):
+            inputs["m"] = m.ravel()
+        cases[f"nearest/{name}"] = {
+            "inputs": inputs,
+            "expected": nearest_correlation(m, iterations, tol).ravel(),
+        }
+
+    psd = {
+        "identity": np.eye(3),
+        "singular": np.array([[1.0, 1.0], [1.0, 1.0]]),
+        # the smallest eigenvalue -1e-11 of the largest 2: within the tolerance
+        "within": np.diag([2.0, 1.0, -1e-11]),
+        "outside": np.diag([2.0, 1.0, -1e-9]),
+        "indefinite": np.array([[1.0, 0.9, -0.9], [0.9, 1.0, 0.9], [-0.9, 0.9, 1.0]]),
+        "negative": np.array([[-1.0]]),
+        "zero": np.zeros((2, 2)),
+        "nan": np.array([[1.0, np.nan], [np.nan, 1.0]]),
+        "inf": np.array([[1.0, np.inf], [np.inf, 1.0]]),
+        # eigvalsh reads the lower triangle
+        "lower": np.array([[1.0, 5.0], [0.5, 1.0]]),
+    }
+    for name, m in psd.items():
+        cases[f"is_psd/{name}"] = {
+            "inputs": {"k": m.shape[0], "m": m.ravel(), "rtol": PSD_RTOL},
+            "expected": _is_psd(m),
+        }
+
+    ab = ["a", "b"]
+    abc = ["a", "b", "c"]
+    validate = {
+        "correlation": _validated(
+            abc, [[1, 0.5, 0.2], [0.5, 1, 0.1], [0.2, 0.1, 1]], kind="correlation"
+        ),
+        "covariance": _validated(ab, [[4.0, 1.0], [1.0, 2.0]], units=["mM", None]),
+        "singular": _validated(ab, [[1.0, 1.0], [1.0, 1.0]], kind="correlation"),
+        "empty": _validated([], np.zeros((0, 0)), kind="correlation"),
+        "empty_vector": _validated([], np.zeros(0), kind="correlation"),
+        "twice": _validated(["b", "a", "b", "a", "c"], np.eye(5), kind="correlation"),
+        # the targets in the list as python writes them, by their repr
+        "quotes": _validated(
+            ["it's", 'say "x"', "a\\b", "x\ny", "x'\"", "tab\t", "é"],
+            np.full((7, 7), np.nan),
+            kind="correlation",
+        ),
+        "quotes_twice": _validated(["it's", "it's"], np.eye(2), kind="correlation"),
+        "not_square": _validated(["a"], np.eye(2), kind="correlation"),
+        "vector": _validated(ab, [1.0, 0.0], kind="correlation"),
+        "scalar": _validated(ab, 1.0, kind="correlation"),
+        "three_dimensions": _validated(ab, np.ones((2, 2, 2)), kind="correlation"),
+        "nan": _validated(ab, [[1, np.nan], [np.nan, 1]], kind="correlation"),
+        "inf": _validated(ab, [[np.inf, 0], [0, 1]]),
+        "not_symmetric": _validated(ab, [[1, 0.9], [0.95, 1]], kind="correlation"),
+        "symmetric_within": _validated(ab, [[1e6, 1.0], [1.0 + 1e-7, 1e6]]),
+        "diagonal": _validated(ab, [[1, 0.5], [0.5, 1 + 1e-9]], kind="correlation"),
+        "diagonal_within": _validated(
+            ab, [[1, 0.5], [0.5, 1 + 1e-13]], kind="correlation"
+        ),
+        "rho_above_one": _validated(
+            abc, [[1, 1.1, 0], [1.1, 1, 0], [0, 0, 1]], kind="correlation"
+        ),
+        "not_psd_correlation": _validated(
+            abc, [[1, 0.9, -0.9], [0.9, 1, 0.9], [-0.9, 0.9, 1]], kind="correlation"
+        ),
+        "not_psd_covariance": _validated(
+            abc, [[4, 1.9, -1.9], [1.9, 1, 0.9], [-1.9, 0.9, 1]]
+        ),
+        "not_psd_negative_largest": _validated(
+            abc, [[1, -0.95, 0.9], [-0.95, 1, 0.0], [0.9, 0.0, 1]], kind="correlation"
+        ),
+        "zero_variance": _validated(ab, [[0, 0], [0, 1]]),
+        "negative_variance": _validated(ab, [[1, 0], [0, -1]]),
+        "units": _validated(ab, [[1, 0], [0, 1]], units=["mM"]),
+        "small_eigenvalue": _validated(ab, [[1e-30, 0.0], [0.0, 1e-30]]),
+        "tiny_not_psd": _validated(ab, [[1e-300, 2e-300], [2e-300, 1e-300]]),
+    }
+    for name, case in validate.items():
+        cases[f"validate/{name}"] = case
+
+    rho = {
+        "normal": (0.3, ("normal", 1.0, 0.5), ("normal", 2.0, 2.0), "linear"),
+        "normal_zero_sd": (0.3, ("normal", 1.0, 0.0), ("normal", 2.0, 2.0), "linear"),
+        "log": (0.02, ("log-normal", 1.0, 0.2), ("log-normal", 3.0, 0.4), "log"),
+        "lognormal": (
+            0.12,
+            ("log-normal", 2.0, 0.2),
+            ("log-normal", 3.0, 0.4),
+            "linear",
+        ),
+        "lognormal_negative": (
+            -0.5,
+            ("log-normal", 2.0, 0.2),
+            ("log-normal", 3.0, 0.4),
+            "linear",
+        ),
+        "lognormal_domain": (
+            -6.0,
+            ("log-normal", 2.0, 0.2),
+            ("log-normal", 3.0, 0.4),
+            "linear",
+        ),
+        "lognormal_below": (
+            -7.5,
+            ("log-normal", 2.0, 0.2),
+            ("log-normal", 3.0, 0.4),
+            "linear",
+        ),
+        "lognormal_zero_sd": (
+            0.1,
+            ("log-normal", 2.0, 0.0),
+            ("log-normal", 3.0, 0.4),
+            "linear",
+        ),
+    }
+    for name, (m, a, b, scale) in rho.items():
+        cases[f"rho/{name}"] = {
+            "inputs": {"m": m, "a": list(a), "b": list(b), "scale": scale},
+            "expected": _rho(m, a, b, scale),
+        }
+
+    def copula(u: np.ndarray, r: np.ndarray) -> np.ndarray:
+        """The copula of `draw` of the points `u` and the correlation `r`."""
+        if not np.allclose(r, np.eye(r.shape[0])):
+            z = stats.norm.ppf(np.clip(u, EPS, 1.0 - EPS)) @ draws_factor(r).T
+            u = stats.norm.cdf(z)
+        return u
+
+    r3 = np.array([[1.0, 0.7, 0.2], [0.7, 1.0, 0.1], [0.2, 0.1, 1.0]])
+    u3 = rng.random((20, 3))
+    # the ends of the unit interval, clipped to EPS
+    u3[0] = [0.0, 0.5, 1.0]
+    u3[1] = [1e-15, 1.0 - 1e-15, 0.5]
+    with_nan = u3[:4].copy()
+    with_nan[2, 1] = np.nan
+    x = rng.standard_normal((8, 12))
+    r8 = np.corrcoef(x)
+    copulas = {
+        "correlated_3": (u3, r3),
+        "identity": (u3, np.eye(3)),
+        # within the tolerances of np.allclose of the identity, 1e-8 + 1e-5 |I|: unchanged
+        "near_identity": (
+            u3,
+            np.array([[1.0 + 5e-6, 5e-9, 0.0], [5e-9, 1.0, 0.0], [0.0, 0.0, 1.0]]),
+        ),
+        "outside_identity": (
+            u3,
+            np.array([[1.0, 2e-8, 0.0], [2e-8, 1.0, 0.0], [0.0, 0.0, 1.0]]),
+        ),
+        "negative": (u3[:, :2], np.array([[1.0, -0.8], [-0.8, 1.0]])),
+        "nan": (with_nan, r3),
+        "eight": (rng.random((16, 8)), (r8 + r8.T) / 2.0),
+    }
+    for name, (u, r) in copulas.items():
+        n, d = u.shape
+        cases[f"copula/{name}"] = {
+            "inputs": {"n": n, "d": d, "u": u.ravel(), "r": r.ravel()},
+            "expected": copula(u, r).ravel(),
+        }
+    return cases
+
+
 GENERATORS: dict[str, Callable[[], dict[str, Any]]] = {
     "special": special,
     "linalg": linalg,
     "metrics": metrics,
     "fisher": fisher,
     "uncertainty": uncertainty,
+    "draws": draws,
 }
 
 #: the modules whose fixture is of the functions of sbmlsim, whose version it records
-OF_SBMLSIM = {"metrics", "fisher", "uncertainty"}
+OF_SBMLSIM = {"metrics", "fisher", "uncertainty", "draws"}
 
 
 def main(modules: list[str]) -> None:
