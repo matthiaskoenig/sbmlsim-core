@@ -11,7 +11,10 @@ use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
 
-use common::{ALGEBRAIC_CASES, Case, EVENT_CASES, Random, cases, cell_model, cell_parameter_sets};
+use common::{
+    ALGEBRAIC_CASES, Case, EVENT_CASES, MATH, Random, blow_up, cases, cell_model,
+    cell_parameter_sets, linear, with_event,
+};
 use sbmlsim_abi::{IntegratorSettings, Tolerance};
 use sbmlsim_c::{
     BuildOptions, CError, CModel, CONTROL, CONTROL_DONE, CONTROL_FAILED, CONTROL_H, CONTROL_T,
@@ -19,8 +22,6 @@ use sbmlsim_c::{
     generate_qfunction, run_points,
 };
 use sbmlsim_engine::Stepper;
-
-const MATH: &str = r#"xmlns="http://www.w3.org/1998/Math/MathML""#;
 
 /// The bound of the states of the QFunction at the tolerances 1e-6 and 1e-9 against the
 /// stepper at 1e-12 and 1e-14: `RELATIVE |y| + ABSOLUTE`, a fifth of the `1e-5 |y| + 1e-8` of
@@ -120,20 +121,6 @@ fn rosenbrock_matches_stepper() {
         steps / (50.0 * 24.0),
         rejected / (50.0 * 24.0)
     );
-}
-
-/// `x' = -x` and `y' = k (cos t - y)` with `k = 1`, `x(0) = 1`, `y(0) = 2`: `x = exp(-t)` and
-/// `y = (cos t + sin t) / 2 + 3/2 exp(-t)`, a rate which depends on the time. (Not the
-/// Prothero-Robinson problem `y' = -k (y - g(t)) + g'(t)` of a large `k`, on which RODAS4, as
-/// every Rosenbrock method of its kind, loses order.)
-fn linear() -> String {
-    let time = r#"<csymbol encoding="text" definitionURL="http://www.sbml.org/sbml/symbols/time">t</csymbol>"#;
-    let rate_y = format!(
-        "<apply><times/><ci>k</ci><apply><minus/><apply><cos/>{time}</apply><ci>y</ci></apply></apply>"
-    );
-    format!(
-        r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2"><model id="linear"><listOfParameters><parameter id="k" value="1" constant="true"/><parameter id="x" value="1" constant="false"/><parameter id="y" value="2" constant="false"/></listOfParameters><listOfRules><rateRule variable="x"><math {MATH}><apply><minus/><ci>x</ci></apply></math></rateRule><rateRule variable="y"><math {MATH}>{rate_y}</math></rateRule></listOfRules></model></sbml>"#
-    )
 }
 
 #[test]
@@ -271,13 +258,6 @@ fn independent_of_blocking() {
     }
 }
 
-/// A model of `x` with an event which halves it at `x < 0.5`.
-fn with_event() -> String {
-    format!(
-        r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2"><model id="event"><listOfParameters><parameter id="x" value="1" constant="false"/></listOfParameters><listOfRules><rateRule variable="x"><math {MATH}><apply><minus/><ci>x</ci></apply></math></rateRule></listOfRules><listOfEvents><event useValuesFromTriggerTime="true"><trigger initialValue="true" persistent="true"><math {MATH}><apply><lt/><ci>x</ci><cn>0.5</cn></apply></math></trigger><listOfEventAssignments><eventAssignment variable="x"><math {MATH}><apply><divide/><ci>x</ci><cn>2</cn></apply></math></eventAssignment></listOfEventAssignments></event></listOfEvents></model></sbml>"#
-    )
-}
-
 fn refused(sbml: &str) -> String {
     match generate_qfunction(sbml) {
         Err(CError::Unsupported { feature }) => feature,
@@ -308,13 +288,6 @@ fn refuses_algebraic_rules_and_delays() {
         let feature = refused(&Case::read(&cases.join(case)).sbml);
         assert!(feature.contains("algebraic rules"), "{case}: {feature}");
     }
-}
-
-/// `y' = a y^2` with `y(0) = 1`: `y = 1 / (1 - a t)`, which grows without bound at `t = 1 / a`.
-fn blow_up() -> String {
-    format!(
-        r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2"><model id="blow_up"><listOfParameters><parameter id="a" value="1" constant="true"/><parameter id="y" value="1" constant="false"/></listOfParameters><listOfRules><rateRule variable="y"><math {MATH}><apply><times/><ci>a</ci><ci>y</ci><ci>y</ci></apply></math></rateRule></listOfRules></model></sbml>"#
-    )
 }
 
 #[test]
