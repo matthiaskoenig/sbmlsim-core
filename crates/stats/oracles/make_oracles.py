@@ -226,8 +226,94 @@ def special() -> dict[str, Any]:
     return cases
 
 
+# --- linalg ---------------------------------------------------------------------------------
+
+
+def _factor(r: np.ndarray) -> np.ndarray:
+    """The factor of `sbmlsim.uncertainty.draws._factor`: Cholesky, else the eigen one."""
+    try:
+        return np.linalg.cholesky(r)
+    except np.linalg.LinAlgError:
+        values, vectors = np.linalg.eigh(r)
+        return vectors * np.sqrt(np.clip(values, 0.0, None))
+
+
+def _symmetric_case(a: np.ndarray, *, full: bool = True) -> dict[str, Any]:
+    """The case of a symmetric matrix: numpy's eigh, pinv, cholesky and draws' factor.
+
+    The eigenvalues are written largest first and the eigenvectors in the same order, the
+    columns of a row-major matrix. Not `full` leaves out the eigenvectors, the Cholesky
+    factor and the factor of a large matrix, whose tests use the reconstructions instead.
+    The Cholesky factor is null for a matrix which is not positive definite and left out of
+    a singular one, where the rounding decides whether LAPACK finds a positive last pivot.
+    """
+    k = a.shape[0]
+    assert np.array_equal(a, a.T)
+    values, vecs = np.linalg.eigh(a)
+    expected: dict[str, Any] = {
+        "eigenvalues": values[::-1],
+        # np.linalg.pinv of sbmlsim.fit.fisher, its default cut 1e-15 times the largest
+        "pinv": np.linalg.pinv(a).ravel(),
+    }
+    if not full:
+        return {"inputs": {"k": k, "a": a.ravel()}, "expected": expected}
+    expected["vectors"] = vecs[:, ::-1].ravel()
+    smallest = float(values[0])
+    if smallest > 1e-8 * float(np.abs(values).max()):
+        expected["cholesky"] = np.linalg.cholesky(a).ravel()
+    elif smallest < -1e-8 * float(np.abs(values).max()):
+        expected["cholesky"] = None
+    f = _factor(a)
+    expected["factor_product"] = (f @ f.T).ravel()
+    return {"inputs": {"k": k, "a": a.ravel()}, "expected": expected}
+
+
+def linalg() -> dict[str, Any]:
+    """The cases of `linalg`: numpy.linalg on small, singular, indefinite and large matrices."""
+    rng = np.random.default_rng(20261127)
+    cases: dict[str, Any] = {}
+
+    cases["one"] = _symmetric_case(np.array([[2.5]]))
+    cases["two"] = _symmetric_case(np.array([[2.0, 1.0], [1.0, 3.0]]))
+    # rank 2 of 3, distinct eigenvalues: B B^T of integers, exactly symmetric
+    b = np.array([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
+    cases["rank_deficient"] = _symmetric_case(b @ b.T)
+    x = rng.standard_normal((10, 15))
+    a = x @ x.T / 15.0 + 0.1 * np.eye(10)
+    cases["spd_10"] = _symmetric_case((a + a.T) / 2.0)
+    # integers, so the 200 x 200 matrix is short in the fixture; a Wishart matrix of 210
+    # degrees of freedom, its condition about 1e4
+    x = rng.integers(-9, 10, size=(200, 210)).astype(float)
+    cases["spd_200"] = _symmetric_case(x @ x.T, full=False)
+    y = rng.standard_normal((5, 5))
+    a = (y + y.T) / 2.0
+    assert np.linalg.eigvalsh(a)[0] < 0.0
+    cases["indefinite_5"] = _symmetric_case(a)
+
+    j = rng.standard_normal((40, 6))
+    cases["gram"] = {
+        "inputs": {"n": 40, "k": 6, "j": j.ravel()},
+        "expected": {
+            "gram": (j.T @ j).ravel(),
+            "pinv": np.linalg.pinv(j.T @ j).ravel(),
+        },
+    }
+    # a parameter which the data do not tell from another one: a column twice
+    j = rng.standard_normal((30, 4))
+    j[:, 3] = j[:, 1]
+    cases["gram_rank_deficient"] = {
+        "inputs": {"n": 30, "k": 4, "j": j.ravel()},
+        "expected": {
+            "gram": (j.T @ j).ravel(),
+            "pinv": np.linalg.pinv(j.T @ j).ravel(),
+        },
+    }
+    return cases
+
+
 GENERATORS: dict[str, Callable[[], dict[str, Any]]] = {
     "special": special,
+    "linalg": linalg,
 }
 
 

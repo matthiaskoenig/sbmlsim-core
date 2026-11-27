@@ -7,11 +7,15 @@
 //! - [`special`]: the special functions of the distributions, the logarithm of the beta
 //!   function, the regularized incomplete beta function and the distribution functions and
 //!   quantiles of the normal, the Student t and the binomial distribution, as scipy gives them.
+//! - [`linalg`]: the linear algebra of symmetric matrices, the eigendecomposition (cyclic
+//!   Jacobi), the Cholesky factor, the factor of a correlation, the pseudo-inverse and `JᵀJ`
+//!   of a jacobian, as numpy gives them.
 //!
 //! Every transcendental function comes from the crate libm, so one input gives the same bits
 //! on every target, natively and in wasm. The tests hold every function to the values of numpy
 //! and scipy, computed once by `oracles/make_oracles.py` and stored next to it as JSON.
 
+pub mod linalg;
 pub mod special;
 
 /// An error of the arguments of a function.
