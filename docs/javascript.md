@@ -115,7 +115,7 @@ The repressilator (Elowitz and Leibler 2000, [BIOMD0000000012](https://www.ebi.a
 
 <div class="rp" data-base="../demo/">
 <div class="rp-head">
-<label class="rp-knob">Hill coefficient <b>n</b><input class="rp-range" type="range" min="1" max="4" step="0.05" value="2" aria-label="Hill coefficient n"><output class="rp-value">2.00</output></label>
+<label class="rp-knob">Hill coefficient <b>n</b><input class="rp-range" name="hill-coefficient" type="range" min="1" max="4" step="0.05" value="2" aria-label="Hill coefficient n"><output class="rp-value">2.00</output></label>
 <p class="rp-state">loading the compiler and the engine ...</p>
 </div>
 <svg class="rp-plot" viewBox="0 0 660 270" role="img" aria-label="The three repressilator proteins PX, PY and PZ over 200 time units. The same numbers are in the table below the figure."></svg>
