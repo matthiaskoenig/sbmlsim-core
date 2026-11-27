@@ -45,6 +45,9 @@ jobs:
       - run: cargo test -p sbmlsim-mathlib wasm_has_no_imports
       - run: cargo test -p sbmlsim-csolvers --target wasm32-wasip1
       - run: cargo test -p sbmlsim-engine --target wasm32-wasip1
+      # the global sensitivity analysis gives the bits of its native tests in wasm
+      - run: cargo clippy -p sbmlsim-sensitivity --all-targets --target wasm32-wasip1 -- -D warnings
+      - run: cargo test -p sbmlsim-sensitivity --target wasm32-wasip1
   compiler_builds_for_wasm32_unknown_unknown:
     # the compiler (and the crates it is made of) does no file system or OS access, so it runs
     # in a browser as wasm32-unknown-unknown; needs no wasi-sdk
@@ -60,6 +63,7 @@ jobs:
       - run: cargo build -p sbmlsim-codegen --target wasm32-unknown-unknown
       - run: cargo build -p sbmlsim-ode --target wasm32-unknown-unknown
       - run: cargo build -p sbmlsim-compiler --target wasm32-unknown-unknown --release
+      - run: cargo build -p sbmlsim-sensitivity --target wasm32-unknown-unknown
       # `compiler.wasm`, the compiler of `js/compile.mjs`: the module of the npm package
       - run: cargo build -p sbmlsim-wasm --target wasm32-unknown-unknown --profile wasm
       - run: cargo test -p sbmlsim-wasm
@@ -285,6 +289,10 @@ jobs:
         run: |
           uv pip install --python .venv --group ode-tests
           .venv/bin/pytest python/tests/test_ode_exports.py -q
+      - name: The global sensitivity analysis against SALib
+        run: |
+          uv pip install --python .venv --group sensitivity-tests
+          .venv/bin/pytest python/tests/test_sensitivity_salib.py -q
       - name: The type check of the stub and of a caller (python/typecheck)
         # the stub is hand written: the drift test compares names only, this holds the signatures
         run: .venv/bin/ty check python/typecheck

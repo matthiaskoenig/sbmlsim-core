@@ -41,6 +41,8 @@ sbmlsim-plot = { path = "../plot", features = ["png"] }
 sbmlsim-host = { path = "../host", features = ["native"] }
 # the thinning of the lines of the chart builder, `sbmlsim_core.chart.thinning`
 sbmlsim-thin = { path = "../thin" }
+# the designs and the estimators of the global sensitivity analysis, `sbmlsim_core.sensitivity`
+sbmlsim-sensitivity = { path = "../sensitivity" }
 serde_path_to_error = "0.1.20"
 
 # The allocator of the extension module (`src/lib.rs`, where the measurement is), on every

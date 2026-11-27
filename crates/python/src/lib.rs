@@ -77,6 +77,7 @@ mod fit;
 mod ode;
 mod plot;
 mod runtime;
+mod sensitivity;
 mod simulate;
 mod thin;
 
@@ -148,6 +149,19 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(plot::color_scale, m)?)?;
     m.add_function(wrap_pyfunction!(plot::image_png, m)?)?;
     m.add_function(wrap_pyfunction!(thin::thin_kept_points, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        sensitivity::sensitivity_sobol_sequence,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(sensitivity::sensitivity_saltelli, m)?)?;
+    m.add_function(wrap_pyfunction!(sensitivity::sensitivity_fast_sample, m)?)?;
+    m.add_function(wrap_pyfunction!(sensitivity::sensitivity_morris_sample, m)?)?;
+    m.add_function(wrap_pyfunction!(sensitivity::sensitivity_sobol_indices, m)?)?;
+    m.add_function(wrap_pyfunction!(sensitivity::sensitivity_fast_indices, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        sensitivity::sensitivity_morris_effects,
+        m
+    )?)?;
     Ok(())
 }
 

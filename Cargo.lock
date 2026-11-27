@@ -2798,6 +2798,7 @@ dependencies = [
  "sbmlsim-host",
  "sbmlsim-ode",
  "sbmlsim-plot",
+ "sbmlsim-sensitivity",
  "sbmlsim-thin",
  "serde",
  "serde_json",
@@ -2819,6 +2820,14 @@ name = "sbmlsim-sbml"
 version = "0.36.0"
 dependencies = [
  "roxmltree 0.20.0",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "sbmlsim-sensitivity"
+version = "0.36.0"
+dependencies = [
+ "libm",
  "thiserror 2.0.21",
 ]
 

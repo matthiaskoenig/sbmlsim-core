@@ -44,6 +44,8 @@ Repository = "https://github.com/matthiaskoenig/sbmlsim-core"
 [dependency-groups]
 dev = ["pytest>=9.2,<10", "ruff==0.17.4", "ty==0.0.104"]
 ode-tests = ["scipy", "pandas", "jax", "diffrax"]
+# the reference of the designs and the estimators of `sbmlsim_core.sensitivity`
+sensitivity-tests = ["SALib>=1.6"]
 
 [tool.maturin]
 manifest-path = "crates/python/Cargo.toml"
