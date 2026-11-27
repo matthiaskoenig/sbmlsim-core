@@ -101,6 +101,7 @@ struct Kernel {
     memory: Memory,
     init: TypedFunc<(i32, i32, i32), i32>,
     advance: TypedFunc<AdvanceArgs, i32>,
+    assign: TypedFunc<(i32, i32, i32, i32), i32>,
 }
 
 impl Kernel {
@@ -135,12 +136,16 @@ impl Kernel {
         let advance = instance
             .get_typed_func(&mut store, "sbmlsim_kernel_advance")
             .unwrap();
+        let assign = instance
+            .get_typed_func(&mut store, "sbmlsim_kernel_assign")
+            .unwrap();
         Kernel {
             description,
             store,
             memory,
             init,
             advance,
+            assign,
         }
     }
 
@@ -274,6 +279,32 @@ impl Kernel {
     fn advance(&mut self, points: &mut Points, context: &RosenbrockContext) -> i32 {
         let n = points.len();
         self.advance_blocks(points, context, &[(0, n)])[0]
+    }
+
+    /// `sbmlsim_kernel_assign` of the points, written into the memory and read back (the
+    /// states, the parameters and the controls); its result.
+    fn assign(&mut self, points: &mut Points) -> i32 {
+        let layout = self.layout(points.len());
+        self.reserve(layout.end);
+        self.write(layout.state, &points.state);
+        self.write(layout.parameters, &points.parameters);
+        self.write(layout.control, &points.control);
+        let status = self
+            .assign
+            .call(
+                &mut self.store,
+                (
+                    points.len() as i32,
+                    layout.state as i32,
+                    layout.parameters as i32,
+                    layout.control as i32,
+                ),
+            )
+            .unwrap();
+        self.read(layout.state, &mut points.state);
+        self.read(layout.parameters, &mut points.parameters);
+        self.read(layout.control, &mut points.control);
+        status
     }
 
     /// `sbmlsim_kernel_advance` with raw arguments (for the refusals).
@@ -559,6 +590,247 @@ fn kernel_step_size_underflow_flags_failed() {
     assert_eq!(mine, before);
 }
 
+/// `x' = -k x` with the assignment rules `r = x t + c` (a state and the time) and
+/// `s = r^2 + k^0.75` (another rule and a power of a parameter alone, a constant of the
+/// optimizer), `x(0) = x0`.
+fn assigned() -> String {
+    let time = r#"<csymbol encoding="text" definitionURL="http://www.sbml.org/sbml/symbols/time">t</csymbol>"#;
+    format!(
+        r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2"><model id="assigned"><listOfParameters><parameter id="k" value="0.7" constant="true"/><parameter id="c" value="2" constant="true"/><parameter id="x" value="1" constant="false"/><parameter id="r" constant="false"/><parameter id="s" constant="false"/></listOfParameters><listOfRules><rateRule variable="x"><math {MATH}><apply><times/><apply><minus/><ci>k</ci></apply><ci>x</ci></apply></math></rateRule><assignmentRule variable="r"><math {MATH}><apply><plus/><apply><times/><ci>x</ci>{time}</apply><ci>c</ci></apply></math></assignmentRule><assignmentRule variable="s"><math {MATH}><apply><plus/><apply><times/><ci>r</ci><ci>r</ci></apply><apply><power/><ci>k</ci><cn>0.75</cn></apply></apply></math></assignmentRule></listOfRules></model></sbml>"#
+    )
+}
+
+/// The values of the targets of the assignment rules of the engine (`model_assign` of the C
+/// target, the function the engine calls after a change) at the time, the states and the
+/// parameters of a point: the parameters with the targets updated. The constants behind the
+/// parameters depend on no target of a rule, so the second call reads those of the first.
+fn engine_rules(model: &CModel, n_constants: usize, t: f64, y: &[f64], p: &[f64]) -> Vec<f64> {
+    use sbmlsim_engine::ModelFns;
+    let mut y = y.to_vec();
+    let mut full = p.to_vec();
+    full.resize(p.len() + n_constants, 0.0);
+    model.assign(t, &mut y, &mut full);
+    model.assign(t, &mut y, &mut full);
+    full.truncate(p.len());
+    full
+}
+
+#[test]
+fn kernel_assign_matches_engine() {
+    let sbml = assigned();
+    let mut kernel = Kernel::new(&sbml);
+    assert_eq!(kernel.description.state_ids, ["x"]);
+    assert_eq!(kernel.description.parameter_ids, ["k", "c", "r", "s"]);
+    assert_eq!(kernel.description.assigned_ids, ["r", "s"]);
+    let source = generate(&sbml).unwrap();
+    let library = Library::build(&source.code).unwrap();
+    let engine = CModel::new(library, &source.description).unwrap();
+    let n_constants = source.description.n_constants as usize;
+    // 20 points of their own k, NaN but for k
+    let mut random = Random(11);
+    let n = 20;
+    let mut parameters = Vec::new();
+    for _ in 0..n {
+        parameters.extend([random.between(0.1, 2.0), f64::NAN, f64::NAN, f64::NAN]);
+    }
+    let states = kernel.init(&mut parameters);
+    let mut mine = points(states, parameters, n);
+    for t1 in [0.5, 1.7, 4.0] {
+        let t0 = mine.control[CONTROL_T];
+        mine.start(t0);
+        assert_eq!(kernel.advance(&mut mine, &context(t1)), 0);
+        assert!(mine.finished());
+        let before = mine.clone();
+        assert_eq!(kernel.assign(&mut mine), 0);
+        // only the targets of the rules change
+        assert_eq!(mine.state, before.state);
+        assert_eq!(mine.control, before.control);
+        for i in 0..n {
+            let p = &mine.parameters[4 * i..4 * i + 4];
+            assert_eq!(&p[..2], &before.parameters[4 * i..4 * i + 2]);
+            let x = mine.state[i];
+            let t = mine.control[i * CONTROL + CONTROL_T];
+            assert_eq!(t, t1);
+            let expected = engine_rules(
+                &engine,
+                n_constants,
+                t,
+                &[x],
+                &before.parameters[4 * i..4 * i + 4],
+            );
+            for (k, id) in ["r", "s"].iter().enumerate() {
+                let (a, b) = (p[2 + k], expected[2 + k]);
+                assert!(
+                    (a - b).abs() <= 1e-12 * b.abs(),
+                    "point {i}, {id} at {t}: kernel {a}, engine {b}"
+                );
+            }
+            // r = x t + c, not the value of init (c)
+            assert!((p[2] - (x * t + p[1])).abs() <= 1e-12 * p[2].abs());
+            assert_ne!(p[2], p[1]);
+        }
+    }
+}
+
+/// The cell model: `protein`, `SIM_Vmax` and `PEX_Vmax` are rules of the parameters alone, so
+/// `assign` after an advance gives them as `init` did, bit for bit, while `necrosis_trigger`
+/// reads the state `T` and gets the value of the engine at the time of the point. The other
+/// parameters, the states and the controls stay as they are.
+#[test]
+fn kernel_assign_on_the_cell_model() {
+    let sbml = cell_model();
+    let mut kernel = Kernel::new(&sbml);
+    let mut assigned = kernel.description.assigned_ids.clone();
+    assigned.sort();
+    assert_eq!(
+        assigned,
+        ["PEX_Vmax", "SIM_Vmax", "necrosis_trigger", "protein"]
+    );
+    let ids = kernel.description.parameter_ids.clone();
+    let at = |id: &str| ids.iter().position(|p| p == id).unwrap();
+    let trigger = at("necrosis_trigger");
+    let source = generate(&sbml).unwrap();
+    let library = Library::build(&source.code).unwrap();
+    let engine = CModel::new(library, &source.description).unwrap();
+    let n_constants = source.description.n_constants as usize;
+    // the parameters of init from NaN but for the changes of parameters, the states of the
+    // engine (with the change of the state [S_ext], which the caller writes after init)
+    let sets = cell_sets(20, 7, true);
+    let np = ids.len();
+    let mut parameters = Vec::new();
+    for set in &sets {
+        let mut unset = vec![f64::NAN; np];
+        for (id, value) in set.iter().filter(|(id, _)| !id.starts_with('[')) {
+            unset[at(id)] = *value;
+        }
+        // a threshold of T below its concentrations and a wide ramp, so that the trigger
+        // leaves 0 for the polynomial of its ramp
+        unset[at("T_threshold")] = 0.05;
+        unset[at("necrosis_w")] = 4.0;
+        parameters.extend(unset);
+    }
+    kernel.init(&mut parameters);
+    let states = cell_points(&sets).state;
+    let initial = parameters.clone();
+    let mut mine = points(states, parameters, sets.len());
+    let (mut moved, mut ramp) = (0, 0);
+    for t1 in [60.0, 240.0, 1440.0] {
+        let t0 = mine.control[CONTROL_T];
+        mine.start(t0);
+        kernel.advance(&mut mine, &context(t1));
+        assert!(mine.finished());
+        let before = mine.clone();
+        assert_eq!(kernel.assign(&mut mine), 0);
+        assert_eq!(bits(&mine.state), bits(&before.state));
+        assert_eq!(bits(&mine.control), bits(&before.control));
+        let ns = mine.state.len() / sets.len();
+        for i in 0..sets.len() {
+            let p = &mine.parameters[i * np..(i + 1) * np];
+            let expected = engine_rules(
+                &engine,
+                n_constants,
+                t1,
+                &mine.state[i * ns..(i + 1) * ns],
+                &before.parameters[i * np..(i + 1) * np],
+            );
+            for (k, (a, b)) in p.iter().zip(&initial[i * np..(i + 1) * np]).enumerate() {
+                if k == trigger {
+                    let e = expected[k];
+                    assert!(
+                        (a - e).abs() <= 1e-12 * e.abs(),
+                        "point {i} at {t1}: necrosis_trigger kernel {a}, engine {e}"
+                    );
+                    moved += usize::from(a != b);
+                    ramp += usize::from(*a > 0.0 && *a < 1.0);
+                } else {
+                    assert_eq!(a.to_bits(), b.to_bits(), "point {i} at {t1}: {}", ids[k]);
+                }
+            }
+        }
+    }
+    assert!(
+        moved > 0 && ramp > 0,
+        "necrosis_trigger: {moved} moved, {ramp} on the ramp"
+    );
+    eprintln!("cell: necrosis_trigger moved {moved} times, {ramp} times on the ramp");
+}
+
+#[test]
+fn kernel_assign_refuses_invalid_arguments() {
+    let mut kernel = Kernel::new(&assigned());
+    let mut parameters = vec![
+        0.7,
+        f64::NAN,
+        f64::NAN,
+        f64::NAN,
+        1.2,
+        f64::NAN,
+        f64::NAN,
+        f64::NAN,
+    ];
+    let states = kernel.init(&mut parameters);
+    let mut mine = points(states, parameters, 2);
+    mine.start(0.0);
+    kernel.advance(&mut mine, &context(1.0));
+    // the points in the memory: the arrays, then a call of no point
+    let layout = kernel.layout(2);
+    assert_eq!(kernel.assign(&mut mine.clone()), 0);
+    kernel.write(layout.state, &mine.state);
+    kernel.write(layout.parameters, &mine.parameters);
+    kernel.write(layout.control, &mine.control);
+    let base = (
+        2,
+        layout.state as i32,
+        layout.parameters as i32,
+        layout.control as i32,
+    );
+    let size = kernel.memory.data_size(&kernel.store) as i32;
+    for args in [
+        (-1, base.1, base.2, base.3),
+        // a pointer which is not a multiple of 8
+        (base.0, base.1 + 4, base.2, base.3),
+        (base.0, base.1, base.2 + 1, base.3),
+        (base.0, base.1, base.2, base.3 + 2),
+        // arrays past the end of the memory
+        (base.0, size - 8, base.2, base.3),
+        (base.0, base.1, size - 8, base.3),
+        (base.0, base.1, base.2, size - 32),
+        (i32::MAX, base.1, base.2, base.3),
+    ] {
+        assert_eq!(
+            kernel.assign.call(&mut kernel.store, args).unwrap(),
+            -1,
+            "{args:?}"
+        );
+    }
+    // nothing was written
+    let mut read = mine.clone();
+    kernel.read(layout.state, &mut read.state);
+    kernel.read(layout.parameters, &mut read.parameters);
+    kernel.read(layout.control, &mut read.control);
+    assert_eq!(bits(&read.parameters), bits(&mine.parameters));
+    assert_eq!(read.state, mine.state);
+    assert_eq!(read.control, mine.control);
+    // a valid call of the same arrays assigns
+    assert_eq!(kernel.assign.call(&mut kernel.store, base).unwrap(), 0);
+    kernel.read(layout.parameters, &mut read.parameters);
+    let t = mine.control[CONTROL_T];
+    assert!((read.parameters[2] - (mine.state[0] * t + 2.0)).abs() < 1e-12);
+    // no point is a valid call which writes nothing
+    assert_eq!(
+        kernel
+            .assign
+            .call(&mut kernel.store, (0, base.1, base.2, base.3))
+            .unwrap(),
+        0
+    );
+}
+
+/// The bits of the values (NaN compared by its bits).
+fn bits(v: &[f64]) -> Vec<u64> {
+    v.iter().map(|x| x.to_bits()).collect()
+}
+
 /// Whether `a` is within `1e-14` of `b`, relatively (both NaN, or both the same infinity).
 fn close(a: f64, b: f64) -> bool {
     (a.is_nan() && b.is_nan()) || a == b || (a - b).abs() <= 1e-14 * b.abs()
@@ -639,7 +911,6 @@ fn kernel_independent_of_block() {
     assert!(all.control.chunks(CONTROL).all(|c| c[CONTROL_DONE] == 1.0));
     let single: Vec<(usize, usize)> = (0..n).map(|i| (i, 1)).collect();
     let uneven = [(0, 7), (7, 30), (37, n - 37)];
-    let bits = |v: &[f64]| v.iter().map(|x| x.to_bits()).collect::<Vec<u64>>();
     for (name, other) in [
         ("one call per point", run(&single, 1e6)),
         (
@@ -745,7 +1016,14 @@ fn kernel_module_imports_only_memory_and_math() {
         }
         assert_eq!(memory, 1);
         exports.sort();
-        assert_eq!(exports, ["sbmlsim_kernel_advance", "sbmlsim_kernel_init"]);
+        assert_eq!(
+            exports,
+            [
+                "sbmlsim_kernel_advance",
+                "sbmlsim_kernel_assign",
+                "sbmlsim_kernel_init"
+            ]
+        );
     }
 }
 

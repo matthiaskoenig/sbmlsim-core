@@ -21,7 +21,7 @@
 
 use std::collections::HashSet;
 
-use sbmlsim_abi::{KERNEL_ADVANCE, KERNEL_CONTRACT, KERNEL_INIT, KernelDescription};
+use sbmlsim_abi::{KERNEL_ADVANCE, KERNEL_ASSIGN, KERNEL_CONTRACT, KERNEL_INIT, KernelDescription};
 use sbmlsim_ir::derive::{self, JacobianIr};
 use sbmlsim_ir::optimize;
 use sbmlsim_ir::{CompileError, Expr, Model, Symbol};
@@ -203,12 +203,25 @@ pub fn emit_kernel(model: &Model) -> Result<(Vec<u8>, KernelDescription), Compil
     )?;
     let init = m.last_position();
 
+    // assign(t, y, p): every assignment rule as written, in the order of dependency, stored
+    // before the next one reads it; the math as written reads no constant (which `p` of the
+    // caller does not hold), and gives the bits of the programs of the optimizer, whose
+    // rewrites are exact
+    let assign: Vec<Stmt<'_>> = model
+        .assignment_rules
+        .iter()
+        .map(|a| Stmt::Store(a.target, &a.expr))
+        .collect();
+    m.sequence(&internal("assign", &[F64, I32, I32], VECTORS), &assign)?;
+    let assign = m.last_position();
+
     let model_fns = ModelFns {
         constants,
         rhs,
         jac,
         dfdt,
         init,
+        assign,
     };
     let fmax = c_minmax(&mut m, true);
     let fmin = c_minmax(&mut m, false);
@@ -228,6 +241,7 @@ pub fn emit_kernel(model: &Model) -> Result<(Vec<u8>, KernelDescription), Compil
     let attempt = attempt(&mut m, &work, &model_fns, &math, first);
     init_export(&mut m, &work, &model_fns);
     advance_export(&mut m, &work, &model_fns, attempt);
+    assign_export(&mut m, &work, &model_fns);
 
     let kernel = KernelDescription {
         version: KERNEL_CONTRACT.to_string(),
@@ -236,6 +250,14 @@ pub fn emit_kernel(model: &Model) -> Result<(Vec<u8>, KernelDescription), Compil
             .parameters
             .iter()
             .map(|e| e.id.clone())
+            .collect(),
+        assigned_ids: model
+            .assignment_rules
+            .iter()
+            .map(|a| match a.target {
+                Symbol::Param(i) => description.parameters[i as usize].id.clone(),
+                target => unreachable!("an assignment rule of {target:?}, which is no parameter"),
+            })
             .collect(),
         control: CONTROL,
         counts: COUNTS,
@@ -263,6 +285,7 @@ struct ModelFns {
     jac: u32,
     dfdt: Option<u32>,
     init: u32,
+    assign: u32,
 }
 
 /// The positions of the helpers of the integrator (and the index of `pow` of mathlib).
@@ -1568,6 +1591,59 @@ fn init_export(m: &mut ModuleBuilder, work: &Work, model: &ModelFns) {
     );
     c.sink().i32_const(0);
     c.finish(m, Some(KERNEL_INIT), &[I32, I32, I32], &[I32]);
+}
+
+/// The export `sbmlsim_kernel_assign(n, state, parameters, control) -> i32`: the assignment
+/// rules of every point at its time (`control[0]`) and its states, into its parameters.
+fn assign_export(m: &mut ModuleBuilder, work: &Work, model: &ModelFns) {
+    let n_states = u64::from(work.n);
+    let n_parameters = u64::from(work.parameters);
+    let n_control = u64::from(CONTROL);
+    let mut c = Code::new(4);
+    let (count, state, parameters, control) = (0, 1, 2, 3);
+    let i = c.int();
+    c.sink().local_get(count).i32_const(0).i32_lt_s();
+    refuse_if(&mut c);
+    misaligned(&mut c, &[state, parameters, control]);
+    refuse_if(&mut c);
+    out_of_bounds(&mut c, state, count, 8 * n_states);
+    out_of_bounds(&mut c, parameters, count, 8 * n_parameters);
+    c.sink().i32_or();
+    out_of_bounds(&mut c, control, count, 8 * n_control);
+    c.sink().i32_or();
+    refuse_if(&mut c);
+    c.for_range(
+        i,
+        |c| {
+            c.sink().i32_const(0);
+        },
+        |c| {
+            c.sink().local_get(count);
+        },
+        |c| {
+            // assign(control[i][0], state + i, parameters + i)
+            c.sink()
+                .local_get(control)
+                .local_get(i)
+                .i32_const((8 * n_control) as i32)
+                .i32_mul()
+                .i32_add()
+                .f64_load(f64_at(0))
+                .local_get(state)
+                .local_get(i)
+                .i32_const((8 * n_states) as i32)
+                .i32_mul()
+                .i32_add()
+                .local_get(parameters)
+                .local_get(i)
+                .i32_const((8 * n_parameters) as i32)
+                .i32_mul()
+                .i32_add();
+            c.call(model.assign);
+        },
+    );
+    c.sink().i32_const(0);
+    c.finish(m, Some(KERNEL_ASSIGN), &[I32, I32, I32, I32], &[I32]);
 }
 
 /// The export

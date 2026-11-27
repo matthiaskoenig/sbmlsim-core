@@ -139,7 +139,19 @@
 //!   are updated in place. It gives the number of failed points, and -1 (changing nothing) for a
 //!   negative `n`, a pointer which is not a multiple of 8, an array past the end of the memory,
 //!   or a context whose `t1` is not finite, whose tolerances or `h_min` are not finite and
-//!   positive, or whose `attempts` is not a whole number of at least 1.
+//!   positive, or whose `attempts` is not a whole number of at least 1. The targets of the
+//!   assignment rules in `parameters` stay as they are: the right hand side computes the rules
+//!   it reads itself.
+//! - `sbmlsim_kernel_assign(n, state, parameters, control) -> i32` evaluates every assignment
+//!   rule of each of `n` points, in their order of dependency, at the time of the point (its
+//!   `t`, the first value of its control) and its states, and writes the value of each target
+//!   into its slot in `parameters` (those of [`KernelDescription::assigned_ids`]), as `model_assign`
+//!   of `model.wasm` writes them after a change: the values an output of a rule target has at
+//!   that time. The other parameters, the states and the controls are only read. The targets of
+//!   assignment rules are parameters of the model representation (a state is integrated, never
+//!   assigned by a rule), so `assign` writes no state. It gives 0, and -1 (changing nothing) for
+//!   a negative `n`, a pointer which is not a multiple of 8 or an array past the end of the
+//!   memory.
 //!
 //! The math of a kernel is the one of `model.wasm` (the programs of the optimizer, with mathlib)
 //! and its integrator the one of `sbmlsim_rosenbrock.h`, so a point agrees with the QFunction
@@ -172,6 +184,8 @@ pub const KERNEL_CONTRACT: &str = "kernel/1";
 pub const KERNEL_INIT: &str = "sbmlsim_kernel_init";
 /// Export name of the step attempts of the points of a batched kernel.
 pub const KERNEL_ADVANCE: &str = "sbmlsim_kernel_advance";
+/// Export name of the evaluation of the assignment rules of the points of a batched kernel.
+pub const KERNEL_ASSIGN: &str = "sbmlsim_kernel_assign";
 
 /// The custom section of `engine.wasm` with the minimum of the memory it imports and the
 /// version of its output.
@@ -305,6 +319,9 @@ pub struct KernelDescription {
     /// The parameters of a point, in their order in the array `parameters` (without the
     /// constants behind them, which the kernel computes).
     pub parameter_ids: Vec<String>,
+    /// The parameters which `sbmlsim_kernel_assign` writes, the targets of the assignment rules,
+    /// in the order of the rules (each one of [`KernelDescription::parameter_ids`]).
+    pub assigned_ids: Vec<String>,
     /// The values of the control of a point: `t`, `h`, `done`, `failed` (4).
     pub control: u32,
     /// The values of the counts of a point: the accepted steps and the rejected step attempts
