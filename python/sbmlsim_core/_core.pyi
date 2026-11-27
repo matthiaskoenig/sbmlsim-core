@@ -15,6 +15,12 @@ Since 0.30.0: the sequential and the diverging colour maps of matplotlib in lowe
 """
 FIGURE_CONTRACT: str
 FIT_CONTRACT: str
+FIT_REDUCTIONS: list[str]
+"""The kinds of the `reduction` of a curve of `fit/1` this build fits.
+
+Since 0.32.0: `max`, `min`, `mean`, `at` and `pk`. A release before it neither has this
+constant nor denies the field, so a host reads the constant before it sends a reduction.
+"""
 MODEL_CONTRACT: str
 SIMULATION_CONTRACT: str
 THIRD_PARTY: str

@@ -75,6 +75,7 @@ pub fn definition(start: f64, scale: Scale) -> Definition {
             weight: 1.0,
             after_change: None,
             likelihood: None,
+            reduction: None,
         }],
     }
 }
@@ -125,6 +126,7 @@ pub fn pair(k: f64, y: f64, scale: Scale) -> Definition {
             weight: 1.0,
             after_change: None,
             likelihood: None,
+            reduction: None,
         }],
     }
 }

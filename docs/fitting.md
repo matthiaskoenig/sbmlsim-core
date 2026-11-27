@@ -142,6 +142,7 @@ The curves:
 | `noise` | the noise of every measurement, which its residual is divided by; 1 for every one of them when it is absent. It is the standard deviation of the measurement for a curve without a `likelihood` and for the `normal` and `log-normal` kinds, and the scale of its distribution for the `laplace` and `log-laplace` kinds, whose standard deviation is `sqrt(2)` times it. A curve of a concentration and one of a volume are weighted against each other by the deviation of their measurements, and the threshold of an identifiability analysis is a rise of the cost which only means something when the residuals are scaled this way. A positive infinity is a measurement which carries no information (a caller whose weight of a point is 0 gives `reference / sqrt(0)`): its residual is `0.0` and its row of the jacobian is zeros, so the residuals and the jacobian keep the alignment of the problem. Zero, a negative value and `NaN` are refused |
 | `likelihood` | which likelihood the curve is, below; absent is the weighted least squares of `noise`. A curve with one has **two** residuals per measurement |
 | `weight` | a weight of the whole curve, 1 by default; a residual is multiplied by its square root, so a weight of 4 counts the curve four times |
+| `reduction` | a value of the whole column the measurements are compared with instead of the column at their rows, below; absent for a curve of rows |
 | `after_change` | whether a measurement reads the state after a change of its condition rather than the one before it, one flag per time in their order; every measurement reads the state before a change when it is absent. The output of a condition has two rows of the time of a change after its start, the state before the change and the state after it, and a measurement reads the first of them unless its flag says otherwise. A chain of a change and the events it fired has more than two rows of that time, of which a true flag reads the last, the state after the whole chain. This is the `after` of the measurements of PEtab, which a problem read without an extension of its own uses |
 
 The cost of a point of the search space is half the sum of the squares of its residuals, and a
@@ -149,6 +150,29 @@ residual is `(simulated - measured) / noise * sqrt(weight)`. A condition whose i
 fails scores every residual of its curves at 1e3 instead, which is finite and large, so an
 optimizer walks away from a region it cannot integrate instead of ending the fit; a condition
 which cannot be simulated at the start of the fit is an error of the request.
+
+### The reduction of a curve
+
+The data of a study is often a value per simulation rather than a timecourse: the largest concentration, the mean over a dosing interval, the amount at the end of a collection or a parameter of the non-compartmental analysis of a concentration (the area under the curve, the half-life). Such a value depends on every row of the column and on the times of the rows, so a curve which reads it carries a `reduction` and is compared with the reduced column:
+
+```json
+{ "condition": "control", "column": "C", "values": [2.6], "noise": [0.3], "reduction": { "kind": "max" } }
+```
+
+| `kind` | the value | its fields |
+|---|---|---|
+| `max`, `min` | the largest or the smallest value of the column over its rows of a finite time, ignoring `NaN` | `factor` |
+| `mean` | the trapezoid integral of the column over its rows of a finite time divided by the time between the first and the last of them, the value of the last row for a simulation of one time point; the two rows of a change at its time are an interval without time | `factor`, `time_shift` |
+| `at` | the column interpolated linearly at the `times` of the curve, one per measurement, with the jumps of sbmlsim (`grid_weights` of `sbmlsim.result.timecourse`): rows of one time are a jump, a time before a jump is interpolated toward the state before it, a time at a jump sees the state after it unless its flag of `before` says otherwise, and the rows after a jump at most `tolerance` apart are a chain of jumps; a time outside of the rows is refused when the problem is built | `factor`, `time_shift`, `tolerance`, `changes`, `before` |
+| `pk` | the `parameter` of the non-compartmental analysis of pkpdutils (the kernel `pkpdutils-core`, which the python package runs as well) of the column: the `batch` of one sample of its contract `batch/1` with the units, the doses and the route of the analysis, whose time points and values the engine replaces with the rows of every simulation, and the `options` of the analysis; the state before a change at one of `changes` is left out, the sample is padded with `NaN` to the next power of two of its time points and to at least 16, as sbmlsim pads it, and a parameter the analysis does not derive is refused when the problem is built | `factor`, `time_shift`, `changes`, `parameter`, `batch`, `options` |
+
+`factor` multiplies the reduced value (1 when it is absent), as a host multiplies the value of a formula by the factor of the unit it declares. Every time of a reduction is the time of the table plus `time_shift` (0 when it is absent): a host whose data is on a shifted axis reduces on the shifted times, and gives `changes` (the times of the changes after the start), the `times` of `at` and the times of the doses of a `pk` batch on that axis as well. A reduction other than `at` has no `times`, and every one of its measurements is compared with the one reduced value. A curve of a reduction reads no `after_change` and no `noise_column`, which are values at a row, and a request which carries them is refused; a `likelihood` with a `noise` is the likelihood of the reduced value.
+
+The rows of a curve of a reduction are not resolved when the problem is built, so a condition all of whose curves are reductions may output the steps of the integrator, which is the output a host keeps for a reduction: its value depends on the rows it is computed over.
+
+The jacobian of a reduction is the reduction of the forward sensitivities of the column: the sensitivity at the row of the extremum of `max` and `min` (the first of a tie), the trapezoid mean of the sensitivities, the sensitivities interpolated with the weights of `at`. The analysis of `pk` is no linear function of the column, so its row of the jacobian is the central difference of the analysis along the sensitivity of every parameter, `(P(c + h s) - P(c - h s)) / 2h`, with a step `h` which moves the column by `1e-6` of its largest absolute value: two analyses per parameter and no simulation, where a difference quotient of the condition costs a simulation per parameter. On the steps of the integrator a sensitivity is the better derivative of the two, since the steps move with the parameters, which a difference of the residuals sees as well.
+
+`sbmlsim_core.FIT_REDUCTIONS` names the kinds a build fits. A release before 0.32.0 has no such constant and does not deny the field, so it would read the column at the rows of the times instead: a host reads the constant before it sends a reduction.
 
 ### The likelihood of a curve
 

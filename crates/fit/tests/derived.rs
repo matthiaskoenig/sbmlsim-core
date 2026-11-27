@@ -93,6 +93,7 @@ fn definition(start: f64) -> Definition {
             weight: 1.0,
             after_change: None,
             likelihood: None,
+            reduction: None,
         }],
     }
 }

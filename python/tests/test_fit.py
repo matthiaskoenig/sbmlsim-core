@@ -525,3 +525,72 @@ def test_a_fit_of_no_model_is_refused(data):
 def test_the_models_of_a_fit_are_loaded_models(decay, data):
     with pytest.raises(ValueError, match="no loaded model"):
         sbmlsim_core.fit_models({"decay": "a model"}, fit_request(data))
+
+
+def test_a_curve_of_a_reduction_is_fitted_on_the_steps_of_the_integrator(decay):
+    """The largest value, the value at a time and a half-life of the analysis.
+
+    The condition outputs the steps of the integrator, whose rows a reduction reads as
+    they come, and the batch of the analysis carries `NaN` as a float of python, which
+    `pkpdutils.nca.engine.batch_dict` writes for a dose without a duration.
+    """
+    assert set(sbmlsim_core.FIT_REDUCTIONS) == {"max", "min", "mean", "at", "pk"}
+    k = 0.3
+    batch = {
+        "contract": "batch/1",
+        "sample_dims": ["_sim"],
+        "sample_shape": [1],
+        "n_time": 1,
+        "times": [0.0],
+        "values": [1.0],
+        "sd": None,
+        "se": None,
+        "n": None,
+        "nominal_time": None,
+        "lloq": None,
+        "max_doses": 1,
+        "dose_amount": [1.0],
+        "dose_time": [0.0],
+        "dose_duration": [float("nan")],
+        "time_unit": "hr",
+        "unit": "mg/l",
+        "dose_unit": "mg",
+        "substance": "substance",
+        "substances": None,
+        "route": "iv_bolus",
+        "routes": None,
+        "tissue": None,
+        "coords": [],
+    }
+    pk_reduction = {"kind": "pk", "parameter": "thalf", "batch": batch, "options": {}}
+    answer = decay.fit(
+        fit_request(
+            ([], []),
+            condition=request(end=10.0, output="integrator_steps"),
+            curves=[
+                {
+                    "condition": "decay",
+                    "column": "y",
+                    "values": [1.0],
+                    "reduction": {"kind": "max"},
+                },
+                {
+                    "condition": "decay",
+                    "column": "y",
+                    "times": [5.0],
+                    "values": [float(numpy.exp(-5.0 * k))],
+                    "reduction": {"kind": "at"},
+                },
+                {
+                    "condition": "decay",
+                    "column": "y",
+                    "values": [float(numpy.log(2.0) / k)],
+                    "reduction": pk_reduction,
+                },
+            ],
+        ),
+        threads=2,
+    )
+
+    assert answer["parameters"][0]["value"] == pytest.approx(k, rel=1e-3)
+    assert len(answer["residuals"]) == 3
