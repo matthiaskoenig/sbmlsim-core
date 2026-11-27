@@ -6,7 +6,7 @@
 |---|---|---|
 | `loader.mjs` | `.` | runs `engine.wasm`, `mathlib.wasm` and a `model.wasm` with the bits of wasmtime |
 | `compile.mjs` | `./compile` | compiles an SBML document into `model.wasm` and its description with `compiler.wasm` |
-| `petab.mjs` (since 0.39.0) | `./petab` | a problem of [PEtab v2](petab.md) read, simulated, evaluated and fitted in a page |
+| `petab.mjs` (since 0.39.0) | `./petab` | a problem of [PEtab v2](petab.md) read, simulated, evaluated and (since 0.40.0) fitted in a page |
 | `pool.mjs` (with `worker.mjs`) | `./pool` | a pool of workers which run the loader off the main thread |
 | `panels.mjs` | `./panels` | the routes of the panel service of sbmlsim, answered inside a page from a bundle |
 | `plot.mjs` | `./plot` | draws the figures of sbmlsim with `plot.wasm`, see [Figures](plot.md) |
@@ -19,7 +19,7 @@ The package is published to npm as [`sbmlsim-core`](https://www.npmjs.com/packag
 npm install sbmlsim-core
 ```
 
-A page imports the modules from its own files or from a CDN (`https://cdn.jsdelivr.net/npm/sbmlsim-core@0.39.0/panels.mjs`); a pool of a module of another origin starts its workers through a module of the page's own origin, which browsers require of a worker. A checkout serves the files of `js/` with the runtime of a build (`sbmlsim-core runtime -o js/runtime`, see [Installation](installation.md#building)). A release publishes the package from the tag `vX.Y.Z` (`.github/workflows/publish.yml`, trusted publishing with provenance, together with the python package on PyPI); the version of `js/package.json` is the one of the crates and of `CORE_VERSION`, which `npm pack` checks.
+A page imports the modules from its own files or from a CDN (`https://cdn.jsdelivr.net/npm/sbmlsim-core@0.40.0/panels.mjs`); a pool of a module of another origin starts its workers through a module of the page's own origin, which browsers require of a worker. A checkout serves the files of `js/` with the runtime of a build (`sbmlsim-core runtime -o js/runtime`, see [Installation](installation.md#building)). A release publishes the package from the tag `vX.Y.Z` (`.github/workflows/publish.yml`, trusted publishing with provenance, together with the python package on PyPI); the version of `js/package.json` is the one of the crates and of `CORE_VERSION`, which `npm pack` checks.
 
 ## Draw a figure
 
@@ -409,10 +409,10 @@ The engine of the page is `engine.wasm`, which the command line runs as well, an
 | `models`, `parameters`, `nominal`, `lower`, `upper` | the ids of the models and of the estimated parameters, in the order of a point, their nominal values and their bounds (`Float64Array`s) |
 | `nSimulations`, `nMeasurements` | the simulations of an evaluation, one per experiment of a model, and the measurements |
 | `requests(x)` | the requests of `simulation/1` of the simulations at a point, `[{ model, request }]` |
-| `simulations(x, { signal })` | the simulations at a point, `[{ model, request, result }]`, the result `{ columns, nRows, values }` of the loader or `{ error, kind }` of a simulation which failed, `kind` the one of the `EngineError` |
+| `simulations(x, { signal })` | the simulations at a point, `[{ model, request, result }]`, the result `{ columns, nRows, values }` of the loader or `{ error, kind }` of a simulation which failed, `kind` the one of the `EngineError` (since 0.40.0) |
 | `evaluate(x, { simulations, signal })` | `llh`, `chi2`, `logPrior`, `logPriors` (by parameter), `unnormLogPosterior`, `simulated` and `sigma` (per measurement, `Float64Array`s), `failures` (`[{ simulation, message }]`) and `simulationTable`, the text of the simulation table of PEtab; from the `simulations` of `simulations(x)` when given |
 | `evaluateSimulations(x, simulations)` | the same, synchronous, from simulations which are given |
-| `fit({ starts, seed, algorithm, maxIterations, gradientTolerance, stepTolerance, costTolerance, maxSeconds, signal, onStep })` | the fit of the estimated parameters, see [the fit of a problem](#the-fit-of-a-problem) |
+| `fit({ starts, seed, algorithm, maxIterations, gradientTolerance, stepTolerance, costTolerance, maxSeconds, signal, onStep })` | the fit of the estimated parameters (since 0.40.0), see [the fit of a problem](#the-fit-of-a-problem) |
 | `close()` | drops the problem |
 
 A point `x` is a value per estimated parameter, the nominal values without one. A simulation which fails is in `failures` and gives `NaN` for its measurements, so a log-likelihood of `NaN`, as PEtab asks; a log prior outside of the support of its prior is `-Infinity`.
@@ -427,11 +427,11 @@ The fit of the pharmacokinetics of hydrochlorothiazide of pkdb_models ([A fit of
 | Chrome (headless), a pool of the default workers | 180 ms | 45 ms |
 | the command line (`sbmlsim-core petab`, wasmtime on the threads of rayon) | 40 ms (the modules of wasmtime cached) | 30 ms |
 
-`compiler.wasm` carries PEtab in every build since 0.39.0: the feature `petab` of `sbmlsim-wasm` is on by default and adds 340 kB to the 3.07 MB of the compiler alone (112 kB of 1.10 MB gzipped), and the fit of a problem 409 kB more, see [the fit of a problem](#the-fit-of-a-problem). A module of its own would have been larger in all: `petab_model` compiles the models of a plan, so a `petab.wasm` holds the whole compiler again (3.41 MB), and the package, the python wheels and the command line would carry both. `cargo build -p sbmlsim-wasm --no-default-features` builds the compiler alone. The inline build of the python package (`sbmlsim_core.web.script()`) carries the module as well (since 0.39.0), `sbmlsimCore.openPetab` with `sbmlsimCore.createCompiler` and `sbmlsimCore.createRuntime`, for a page of one file which evaluates a problem with the bytes of `sbmlsim_core.runtime_wasm()`.
+`compiler.wasm` carries PEtab in every build since 0.39.0: the feature `petab` of `sbmlsim-wasm` is on by default and adds 340 kB to the 3.07 MB of the compiler alone (112 kB of 1.10 MB gzipped), and the fit of a problem (since 0.40.0) 409 kB more, see [the fit of a problem](#the-fit-of-a-problem). A module of its own would have been larger in all: `petab_model` compiles the models of a plan, so a `petab.wasm` holds the whole compiler again (3.41 MB), and the package, the python wheels and the command line would carry both. `cargo build -p sbmlsim-wasm --no-default-features` builds the compiler alone. The inline build of the python package (`sbmlsim_core.web.script()`) carries the module as well (since 0.39.0), `sbmlsimCore.openPetab` with `sbmlsimCore.createCompiler` and `sbmlsimCore.createRuntime`, for a page of one file which evaluates a problem with the bytes of `sbmlsim_core.runtime_wasm()`.
 
 ### The fit of a problem
 
-`fit` fits the estimated parameters of a problem in the page: the maximum likelihood estimate, or the maximum a posteriori estimate of a problem whose parameters carry priors. The optimizer is the one of `sbmlsim-core petab --fit`, `sbmlsim-fit` in `compiler.wasm`, and its simulations run on the engine of the problem:
+`fit` (since 0.40.0) fits the estimated parameters of a problem in the page: the maximum likelihood estimate, or the maximum a posteriori estimate of a problem whose parameters carry priors. The optimizer is the one of `sbmlsim-core petab --fit`, `sbmlsim-fit` in `compiler.wasm`, and its simulations run on the engine of the problem:
 
 ```js
 const fit = await problem.fit(); // from the nominal values, as `sbmlsim-core petab --fit`
@@ -471,7 +471,7 @@ The fit of the pharmacokinetics of hydrochlorothiazide of pkdb_models (6 paramet
 | Node 24, a pool of 8 workers | 2.1 s |
 | the command line (`sbmlsim-core petab --fit`, the native engine on 20 threads) | 0.85 s |
 
-`compiler.wasm` carries the fit by default: the feature `fit` of `sbmlsim-wasm` (the optimizers of basin, the objective of `sbmlsim-fit` and the non-compartmental analysis of pkpdutils-core a curve may read) adds 409 kB to the 3.42 MB of the compiler with PEtab, 3.83 MB in all (143 kB of 1.25 MB gzipped). `cargo build -p sbmlsim-wasm --no-default-features --features petab` builds a module which evaluates a problem and fits none, and `fit` then says so. The module imports nothing: basin reads the clock of its time limit from web-time, which is JavaScript through wasm-bindgen in `wasm32-unknown-unknown`, so the workspace replaces web-time with the time of the standard library (`crates/web-time`), and a fit in a page reads the clock of the page.
+`compiler.wasm` carries the fit by default since 0.40.0: the feature `fit` of `sbmlsim-wasm` (the optimizers of basin, the objective of `sbmlsim-fit` and the non-compartmental analysis of pkpdutils-core a curve may read) adds 409 kB to the 3.42 MB of the compiler with PEtab, 3.83 MB in all (143 kB of 1.25 MB gzipped). `cargo build -p sbmlsim-wasm --no-default-features --features petab` builds a module which evaluates a problem and fits none, and `fit` then says so. The module imports nothing: basin reads the clock of its time limit from web-time, which is JavaScript through wasm-bindgen in `wasm32-unknown-unknown`, so the workspace replaces web-time with the time of the standard library (`crates/web-time`), and a fit in a page reads the clock of the page.
 
 ### A problem evaluated in this page
 

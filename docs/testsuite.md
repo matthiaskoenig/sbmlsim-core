@@ -27,7 +27,7 @@ sbmlsim-core testsuite testdata/cases --model-code c --write-baseline  # its pin
 sbmlsim-core testsuite testdata/cases --comp                   # the composed models of comp
 ```
 
-The preparation flattens a model of the package `comp` with libsbml into `model.xml`, and writes its composed model as well, `comp/model.xml` with the documents of its external model definitions beside it. `--comp` runs the 125 cases of the package from their composed models, which the reader of the core flattens (see [Compiling a model](compiling.md)), against the same baseline; all of them pass, with every Jacobian, without the optimizer and with the C target (`--model-code c --comp`).
+The preparation flattens a model of the package `comp` with libsbml into `model.xml`, and writes its composed model as well, `comp/model.xml` with the documents of its external model definitions beside it. `--comp` (since 0.40.0) runs the 125 cases of the package from their composed models, which the reader of the core flattens (see [Compiling a model](compiling.md)), against the same baseline; all of them pass, with every Jacobian, without the optimizer and with the C target (`--model-code c --comp`).
 
 `--cases 00001-00100` runs some cases, `--jobs` sets the threads, `--json` writes the result of every case and `--export DIR` writes every passing case for the JavaScript tests, which compare the CSV of Node with the one of wasmtime byte for byte. In every mode each passing case is simulated again to check that it repeats bitwise; a case which passes or fails otherwise than the baseline says fails the run.
 

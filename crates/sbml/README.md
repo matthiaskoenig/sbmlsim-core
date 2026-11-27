@@ -38,7 +38,7 @@ assert_eq!(document.model.rules.len(), 1);
 # Ok::<(), sbmlsim_sbml::ReadError>(())
 ```
 
-A composed model (the package `comp`) is flattened into the model of SBML core it means, with
+A composed model (the package `comp`) is flattened (since 0.40.0) into the model of SBML core it means, with
 the ids libSBML gives the elements of its submodels (`submodel__id`); `read_with` reads the
 documents of its external model definitions through a function of the caller, and
 `flatten_comp` gives the flattened document as text. A document which requires another package
