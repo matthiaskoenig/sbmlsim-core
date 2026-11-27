@@ -134,10 +134,11 @@ pub fn names<'a>(
     target: Target,
 ) -> Result<HashMap<String, String>, String> {
     let mut ordered = Vec::new();
+    let mut seen = HashSet::new();
     let mut taken: HashSet<String> = target.reserved().iter().map(|s| (*s).into()).collect();
     for id in ids {
         crate::latex::symbol(id)?;
-        if !ordered.contains(&id) {
+        if seen.insert(id) {
             ordered.push(id);
         }
         taken.insert(id.into());
