@@ -57,7 +57,8 @@ pub struct ModelFile {
     pub id: String,
     /// The name of its file.
     pub location: String,
-    /// The text of the SBML document.
+    /// The text of the SBML document; a composed model (the package `comp`) flattened with
+    /// the documents of its external model definitions, which are named relative to it.
     pub sbml: String,
 }
 
@@ -286,10 +287,27 @@ impl PetabProblem {
                     model.language
                 )));
             }
+            let path = format!("{base}{}", model.location);
+            // the external documents of a composed model are named relative to the model, and
+            // read through the files of the problem
+            let directory = match path.rfind('/') {
+                Some(k) => &path[..=k],
+                None => "",
+            };
+            let sources = |source: &str| -> Result<String, String> {
+                text(files, &format!("{directory}{source}")).map_err(|err| err.to_string())
+            };
+            let sbml =
+                sbmlsim_sbml::flatten_comp(&text(files, &path)?, &sources).map_err(|err| {
+                    PetabError::Compile {
+                        model: id.clone(),
+                        message: err.to_string(),
+                    }
+                })?;
             models.push(ModelFile {
                 id: id.clone(),
                 location: model.location.clone(),
-                sbml: text(files, &format!("{base}{}", model.location))?,
+                sbml,
             });
         }
         if models.is_empty() {

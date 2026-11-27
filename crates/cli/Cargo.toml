@@ -40,6 +40,8 @@ sbmlsim-engine = { path = "../engine", optional = true }
 # the fit of a model, which needs the native engine of its batch
 sbmlsim-fit = { path = "../fit", optional = true }
 sbmlsim-host = { path = "../host" }
+# the composed models of the cases of `comp`, flattened with their external documents
+sbmlsim-sbml = { path = "../sbml" }
 # the PEtab v2 problems of `sbmlsim-core petab`, which run on the native engine
 sbmlsim-petab = { path = "../petab", optional = true }
 rayon = "1.10"

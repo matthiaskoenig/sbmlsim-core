@@ -41,6 +41,18 @@ jobs:
       # the cases of PEtab v2 and of its math of the PEtab test suite, which the test of
       # crates/petab runs against its baseline (it skips without them)
       - run: python3 scripts/petab_testsuite.py download
+      # the problems of the PEtab benchmark collection, downloaded and converted to PEtab v2 by
+      # sbmlsim, which the test of crates/petab runs against its baseline (it skips without them)
+      - uses: astral-sh/setup-uv@v5
+      - name: Cache the PEtab benchmark collection
+        id: petab-benchmark
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/sbmlsim/petab-benchmark
+          key: petab-benchmark-${{ hashFiles('scripts/petab_benchmark.py') }}
+      - name: Download the PEtab benchmark collection
+        if: steps.petab-benchmark.outputs.cache-hit != 'true'
+        run: uv run scripts/petab_benchmark.py download
       # the tests of sbmlsim-host and sbmlsim-cli build engine.wasm and mathlib.wasm (WASI_SDK_PATH)
       - run: cargo test --all-features
       - run: cargo run -p sbmlsim-cli -- simulate crates/host/tests/decay-model crates/host/tests/decay-model/request.json
@@ -193,6 +205,8 @@ jobs:
         run: target/release/sbmlsim-core testsuite testdata/cases --jacobian difference
       - name: testsuite parity (without the optimizer)
         run: target/release/sbmlsim-core testsuite testdata/cases --no-optimize
+      - name: testsuite parity (the composed models of comp, flattened by the reader of the core)
+        run: target/release/sbmlsim-core testsuite testdata/cases --comp
   testsuite-c-target:
     # the whole SBML Test Suite on the native engine with the model code of the C target, against
     # the baseline of model.wasm: every case of it passes but those the C target refuses (the
@@ -228,6 +242,10 @@ jobs:
       - run: cargo build --release -p sbmlsim-cli --features native
       - name: testsuite with the model code of the C target
         run: target/release/sbmlsim-core testsuite testdata/cases --model-code c
+        env:
+          SBMLSIM_C_CACHE: ${{ runner.temp }}/sbmlsim-c
+      - name: testsuite with the model code of the C target (the composed models of comp)
+        run: target/release/sbmlsim-core testsuite testdata/cases --model-code c --comp
         env:
           SBMLSIM_C_CACHE: ${{ runner.temp }}/sbmlsim-c
   testsuite-cases:

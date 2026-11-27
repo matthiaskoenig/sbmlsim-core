@@ -1553,12 +1553,13 @@ fn run_model<const DAE: bool, H: delay::Mode>(
 
     let with_events = !desc.events.is_empty() || desc.n_roots > 0;
 
-    // At a single time without events, changes or a steady-state calculation, the
-    // requested rows read only the initialized ODE state.
+    // At a single time without events, changes or a steady-state calculation (before the
+    // start or after the end), the requested rows read only the initialized ODE state.
     if !DAE
         && start == end
         && !with_events
         && req.steady_state.is_none()
+        && req.steady_state_after.is_none()
         && changes.time(0).is_none()
     {
         return record_point(

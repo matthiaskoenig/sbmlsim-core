@@ -231,6 +231,13 @@ fn compile(
 ) -> anyhow::Result<()> {
     let sbml =
         fs::read_to_string(model).with_context(|| format!("cannot read {}", model.display()))?;
+    // a composed model reads the documents of its external model definitions beside it
+    let directory = model.parent().unwrap_or(Path::new(""));
+    let sources = |source: &str| {
+        fs::read_to_string(directory.join(source)).map_err(|error| error.to_string())
+    };
+    let sbml = sbmlsim_sbml::flatten_comp(&sbml, &sources)
+        .with_context(|| format!("cannot compile {}", model.display()))?;
     let options = CompileOptions {
         optimize,
         parameter_jacobian,

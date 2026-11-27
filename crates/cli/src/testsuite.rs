@@ -31,6 +31,12 @@
 //! which is no longer refused are, so the set changes only deliberately (`--write-baseline
 //! --model-code c` writes it from a run of every case).
 //!
+//! `--comp` runs the cases of the package `comp` from their composed models instead
+//! (`comp/model.xml`, with the documents of its external model definitions beside it, which
+//! `scripts/prepare_testsuite.py` writes next to the model libSBML flattened): the model is
+//! flattened by the reader of the core (`sbmlsim_sbml::flatten_comp`), and the cases are
+//! compared with the same baseline, as a run of some cases.
+//!
 //! `--export DIR` writes every case which passes as the inputs and the outputs of the wasmtime
 //! host, which `js/test/same_bits.test.mjs` runs in Node and compares byte for byte:
 //! `DIR/engine.wasm` and `DIR/mathlib.wasm` (the ones of the run), and per case
@@ -587,13 +593,24 @@ pub fn case_request(settings: &CaseSettings) -> SimulationRequest {
 }
 
 /// Runs the case in a directory; every failure is the status of the result.
+/// The model of a case which is run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CaseModel {
+    /// `model.xml`, which libSBML flattened.
+    #[default]
+    Flattened,
+    /// `comp/model.xml`, the composed model of a case of the package `comp`, which the reader
+    /// of the core flattens with the documents of its external model definitions in `comp/`.
+    Comp,
+}
+
 pub fn run_case(runtime: &Runtime, dir: &Path) -> CaseResult {
     run_case_with(runtime, dir, &CompileOptions::default())
 }
 
 /// Runs the case in a directory with a model compiled with `options`.
 pub fn run_case_with(runtime: &Runtime, dir: &Path, options: &CompileOptions) -> CaseResult {
-    run_case_exported(runtime, dir, options, None)
+    run_case_exported(runtime, dir, options, None, CaseModel::Flattened)
 }
 
 /// [`run_case_with`], which writes a case which passes into `export` (`--export`).
@@ -602,9 +619,10 @@ pub fn run_case_exported(
     dir: &Path,
     options: &CompileOptions,
     export: Option<&Path>,
+    model: CaseModel,
 ) -> CaseResult {
     guarded(dir, |cid| {
-        run_case_inner(runtime, dir, cid, options, export)
+        run_case_inner(runtime, dir, cid, options, export, model)
     })
 }
 
@@ -612,7 +630,13 @@ pub fn run_case_exported(
 /// (`--model-code c`); a model the C target refuses is [`Status::Refused`].
 #[cfg(feature = "native")]
 pub fn run_case_c(dir: &Path) -> CaseResult {
-    guarded(dir, |cid| run_c(dir, cid))
+    run_case_c_of(dir, CaseModel::Flattened)
+}
+
+/// [`run_case_c`] of a model of the case.
+#[cfg(feature = "native")]
+pub fn run_case_c_of(dir: &Path, model: CaseModel) -> CaseResult {
+    guarded(dir, |cid| run_c(dir, cid, model))
 }
 
 /// `run` of the case in `dir` with its identifier; a panic is a simulation error.
@@ -640,9 +664,10 @@ fn run_case_inner(
     cid: &str,
     options: &CompileOptions,
     export: Option<&Path>,
+    model: CaseModel,
 ) -> CaseResult {
     let compiled = OnceCell::new();
-    let result = run_compiled(runtime, dir, cid, options, &compiled, export);
+    let result = run_compiled(runtime, dir, cid, options, &compiled, export, model);
     CaseResult {
         jacobian: compiled.get().map(|c: &CompiledModel| {
             match c.description.jacobian {
@@ -662,8 +687,9 @@ fn run_compiled(
     options: &CompileOptions,
     cell: &OnceCell<CompiledModel>,
     export: Option<&Path>,
+    model: CaseModel,
 ) -> CaseResult {
-    let (settings, sbml) = match read_case(dir, cid) {
+    let (settings, sbml) = match read_case(dir, cid, model) {
         Ok(case) => case,
         Err(result) => return result,
     };
@@ -699,9 +725,9 @@ fn run_compiled(
 /// The case of the C target: its model compiled to C, loaded, and simulated on the native
 /// engine.
 #[cfg(feature = "native")]
-fn run_c(dir: &Path, cid: &str) -> CaseResult {
+fn run_c(dir: &Path, cid: &str, model: CaseModel) -> CaseResult {
     use sbmlsim_c::CError;
-    let (settings, sbml) = match read_case(dir, cid) {
+    let (settings, sbml) = match read_case(dir, cid, model) {
         Ok(case) => case,
         Err(result) => return result,
     };
@@ -749,7 +775,11 @@ fn simulate_c(
 
 /// The settings and the SBML of the case in `dir`, or the result of a case which cannot be
 /// read or was not converted.
-fn read_case(dir: &Path, cid: &str) -> Result<(CaseSettings, String), CaseResult> {
+fn read_case(
+    dir: &Path,
+    cid: &str,
+    model: CaseModel,
+) -> Result<(CaseSettings, String), CaseResult> {
     let settings: CaseSettings = fs::read(dir.join("case.json"))
         .map_err(anyhow::Error::from)
         .and_then(|b| serde_json::from_slice(&b).map_err(anyhow::Error::from))
@@ -763,9 +793,27 @@ fn read_case(dir: &Path, cid: &str) -> Result<(CaseSettings, String), CaseResult
             format!("not converted: {message}"),
         ));
     }
-    let sbml = fs::read_to_string(dir.join("model.xml")).map_err(|error| {
-        CaseResult::new(cid, Status::SimulationError, format!("model.xml: {error}"))
-    })?;
+    let sbml = match model {
+        CaseModel::Flattened => fs::read_to_string(dir.join("model.xml")).map_err(|error| {
+            CaseResult::new(cid, Status::SimulationError, format!("model.xml: {error}"))
+        })?,
+        CaseModel::Comp => {
+            let comp = dir.join(COMP_DIR);
+            let text = fs::read_to_string(comp.join("model.xml")).map_err(|error| {
+                CaseResult::new(
+                    cid,
+                    Status::SimulationError,
+                    format!("{COMP_DIR}/model.xml: {error}"),
+                )
+            })?;
+            // the external documents are the files beside the model
+            let sources = |source: &str| {
+                fs::read_to_string(comp.join(source)).map_err(|error| error.to_string())
+            };
+            sbmlsim_sbml::flatten_comp(&text, &sources)
+                .map_err(|error| CaseResult::new(cid, Status::NotCompiled, error.to_string()))?
+        }
+    };
     Ok((settings, sbml))
 }
 
@@ -1126,6 +1174,10 @@ pub struct TestsuiteArgs {
     /// with it instead of the baseline.
     #[arg(long, default_value = "testdata/testsuite_refused_c.json")]
     pub refused: PathBuf,
+    /// Run the cases of the package `comp` from their composed models (`comp/model.xml`),
+    /// which the reader of the core flattens, instead of the models libSBML flattened.
+    #[arg(long)]
+    pub comp: bool,
 }
 
 /// The values of `--model-code`.
@@ -1160,12 +1212,23 @@ impl JacobianArg {
     }
 }
 
-/// The case directories of a directory, in the order of their names, filtered by `selection`.
-fn case_dirs(dir: &Path, selection: Option<&[(u32, u32)]>) -> anyhow::Result<Vec<PathBuf>> {
+/// The directory of a case with its composed model and the documents of its external model
+/// definitions, see [`CaseModel::Comp`].
+pub const COMP_DIR: &str = "comp";
+
+/// The case directories of a directory, in the order of their names, filtered by `selection`,
+/// and with `comp` the ones with a composed model alone.
+fn case_dirs(
+    dir: &Path,
+    selection: Option<&[(u32, u32)]>,
+    comp: bool,
+) -> anyhow::Result<Vec<PathBuf>> {
     let mut dirs = Vec::new();
     for entry in fs::read_dir(dir).with_context(|| format!("cannot read {}", dir.display()))? {
         let path = entry?.path();
-        if !path.join("case.json").is_file() {
+        if !path.join("case.json").is_file()
+            || (comp && !path.join(COMP_DIR).join("model.xml").is_file())
+        {
             continue;
         }
         let name = path.file_name().unwrap().to_string_lossy().into_owned();
@@ -1185,9 +1248,14 @@ fn case_dirs(dir: &Path, selection: Option<&[(u32, u32)]>) -> anyhow::Result<Vec
 pub fn run(args: &TestsuiteArgs) -> anyhow::Result<bool> {
     let selection = args.cases.as_deref().map(parse_selection).transpose()?;
     anyhow::ensure!(
-        !(args.write_baseline && selection.is_some()),
-        "--write-baseline needs a run of every case, without --cases"
+        !(args.write_baseline && (selection.is_some() || args.comp)),
+        "--write-baseline needs a run of every case, without --cases and --comp"
     );
+    let model = if args.comp {
+        CaseModel::Comp
+    } else {
+        CaseModel::Flattened
+    };
     if args.model_code == ModelCode::C {
         anyhow::ensure!(
             cfg!(feature = "native"),
@@ -1202,7 +1270,7 @@ pub fn run(args: &TestsuiteArgs) -> anyhow::Result<bool> {
             "--model-code c compiles with the analytic Jacobian and the optimizer"
         );
     }
-    let dirs = case_dirs(&args.cases_dir, selection.as_deref())?;
+    let dirs = case_dirs(&args.cases_dir, selection.as_deref(), args.comp)?;
     anyhow::ensure!(
         !dirs.is_empty(),
         "no case in {}, run scripts/prepare_testsuite.py",
@@ -1252,9 +1320,11 @@ pub fn run(args: &TestsuiteArgs) -> anyhow::Result<bool> {
     let results: Vec<CaseResult> = pool.install(|| {
         dirs.par_iter()
             .map(|dir| match &runtime {
-                Some(runtime) => run_case_exported(runtime, dir, &options, args.export.as_deref()),
+                Some(runtime) => {
+                    run_case_exported(runtime, dir, &options, args.export.as_deref(), model)
+                }
                 #[cfg(feature = "native")]
-                None => run_case_c(dir),
+                None => run_case_c_of(dir, model),
                 #[cfg(not(feature = "native"))]
                 None => unreachable!("--model-code c is refused without the feature native"),
             })
@@ -1336,7 +1406,8 @@ pub fn run(args: &TestsuiteArgs) -> anyhow::Result<bool> {
     }
 
     let baseline = baseline.expect("read above");
-    let found = differences_with(&results, &baseline, refusals.as_ref(), selection.is_none());
+    let full = selection.is_none() && !args.comp;
+    let found = differences_with(&results, &baseline, refusals.as_ref(), full);
     report_differences(&found);
     write_json(args, &baseline.suite_commit, &results, &found)?;
     Ok(found.is_empty())

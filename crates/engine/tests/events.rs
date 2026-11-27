@@ -661,6 +661,30 @@ fn a_steady_state_after_the_end_of_a_model_without_events_continues_from_the_end
 }
 
 #[test]
+fn a_steady_state_after_an_end_at_the_start_is_reached_from_the_initial_state() {
+    // a request of a single time and a steady state after it, a measurement of PEtab at `inf`
+    // without an experiment: the single time reads the initial state and the steady state
+    // follows it, of a model without events and with them
+    let relaxing = EventModel {
+        states: vec![("x", 0.0)],
+        parameters: vec![("k", 0.5), ("target", 7.0)],
+        rhs: |_, y, p, ydot| ydot[0] = p[0] * (p[1] - y[0]),
+        events: vec![],
+        discontinuities: vec![],
+    };
+    for (model, steady) in [(relaxing, 7.0), (relaxation(), 17.0)] {
+        let mut req = request(0.0, 0.0, Output::Times(vec![0.0]), 1);
+        req.selections = vec!["time".into(), "x".into()];
+        req.steady_state_after = Some(after_the_end());
+        let result = run(&model, &req);
+        assert_eq!(column(&result, "time"), [0.0, f64::INFINITY]);
+        let x = column(&result, "x");
+        assert_eq!(x[0], 0.0);
+        assert!((x[1] - steady).abs() < 1e-6, "{x:?}");
+    }
+}
+
+#[test]
 fn a_steady_state_after_the_end_of_a_model_without_events_starts_from_the_state_of_the_end() {
     // `x' = exp(-t)`: the steady state integrates from its `from` 0 again, so it is the state
     // of the end plus 1, `(1 - exp(-1)) + 1`; one which started from the initial state would

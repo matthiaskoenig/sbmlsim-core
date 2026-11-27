@@ -18,7 +18,10 @@
 
 For every timecourse case of the suite at the commit `SUITE_COMMIT` of sbmlsim, the newest
 encoding of the model is flattened (`comp`) and converted to SBML L3V2 with libsbml, and the
-directory `<out>/<cid>/` gets `model.xml`, `case.json` and `expected.csv`. A case libsbml cannot
+directory `<out>/<cid>/` gets `model.xml`, `case.json` and `expected.csv`. A case of the package
+`comp` gets its composed model as well, `comp/model.xml` with the documents of its external model
+definitions beside it, which `sbmlsim-core testsuite --comp` flattens with the reader of the core
+instead of libsbml. A case libsbml cannot
 convert gets a `case.json` with `"not_converted": "<message>"` and no `model.xml`. So does a model
 with a fast reaction: L3V2 has no `fast` attribute, the conversion would drop it and the reaction
 would be simulated as a slow one, while fast reactions are out of scope and refused.
@@ -58,6 +61,30 @@ def fast_reaction(doc: libsbml.SBMLDocument) -> str | None:
         if reaction.isSetFast() and reaction.getFast():
             return reaction.getId()
     return None
+
+
+#: the directory of a case with its composed model, see `write_comp`
+COMP_DIR = "comp"
+
+
+def uses_comp(path: Path) -> bool:
+    """Check whether a model uses the package `comp`."""
+    doc = libsbml.readSBMLFromFile(str(path))
+    return doc.getModel() is not None and doc.isPackageEnabled("comp")
+
+
+def write_comp(case: SemanticCase, target: Path) -> None:
+    """Write the composed model of a case of `comp` with its external documents.
+
+    The model is the one the suite ships, `target/model.xml`, and every other SBML document of
+    the case (the documents its external model definitions name, which are no encoding of the
+    model of the case, `<cid>-sbml-*.xml`) is copied beside it under its own name.
+    """
+    target.mkdir()
+    shutil.copyfile(case.model_path, target / "model.xml")
+    for document in sorted(case.path.glob("*.xml")):
+        if not document.name.startswith(f"{case.cid}-sbml-"):
+            shutil.copyfile(document, target / document.name)
 
 
 def convert(path: Path) -> str:
@@ -139,6 +166,8 @@ def prepare(case: SemanticCase, out: Path) -> str | None:
     message: str | None = None
     try:
         (target / "model.xml").write_text(convert(case.model_path), encoding="utf-8")
+        if uses_comp(case.model_path):
+            write_comp(case, target / COMP_DIR)
     except Exception as err:  # every failure is an outcome of the case
         message = (
             str(err).strip().splitlines()[0][:300] if str(err).strip() else repr(err)

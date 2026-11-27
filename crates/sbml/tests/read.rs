@@ -230,31 +230,11 @@ fn reads_level_2() {
 }
 
 #[test]
-fn refuses_comp_model() {
-    assert_eq!(
-        read(&data("comp.xml")).unwrap_err(),
-        ReadError::Package("comp".into())
-    );
-}
-
-#[test]
-fn refuses_comp_beside_a_read_package() {
-    // comp must be flattened before, whatever else the document declares: a composed model of
-    // pkdb_models declares `comp:required="true" distrib:required="true"`, and in either order
-    // of the declarations the message names comp
-    for required in [
-        r#"comp:required="true" distrib:required="true""#,
-        r#"distrib:required="true" comp:required="true""#,
-    ] {
-        let xml = format!(
-            r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" xmlns:comp="http://www.sbml.org/sbml/level3/version1/comp/version1" xmlns:distrib="http://www.sbml.org/sbml/level3/version1/distrib/version1" level="3" version="2" {required}><model id="m"/></sbml>"#
-        );
-        assert_eq!(
-            read(&xml).unwrap_err(),
-            ReadError::Package("comp".into()),
-            "{required}"
-        );
-    }
+fn reads_a_comp_model() {
+    // a composed model is flattened (`tests/comp.rs`); the document of the fixture has no
+    // submodel, so it is its model
+    let doc = read(&data("comp.xml")).unwrap();
+    assert_eq!(doc.model.id.as_deref(), Some("m"));
 }
 
 #[test]
@@ -864,4 +844,31 @@ fn case_01241_a_delay_or_priority_without_math_is_absent() {
     assert_eq!(e.priority, None);
     // case 01243: an event assignment without math
     assert_eq!(e.assignments[0].math, None);
+}
+
+#[test]
+fn an_apply_whose_only_child_is_an_apply_is_that_child() {
+    // `Beer_MolBioSystems2014` of the PEtab benchmark collection: libSBML reads the outer
+    // `<apply>` as the inner one, nested to any depth
+    let inner = "<apply><times/><ci>a</ci><ci>b</ci></apply>";
+    let expected = math(inner);
+    assert_eq!(math(&format!("<apply>{inner}</apply>")), expected);
+    assert_eq!(
+        math(&format!("<apply><apply>{inner}</apply></apply>")),
+        expected
+    );
+    assert_eq!(
+        math(&format!(
+            "<apply><divide/><apply>{inner}</apply><ci>c</ci></apply>"
+        )),
+        Node::Apply {
+            op: Op::Divide,
+            args: vec![expected, Node::Symbol("c".into())],
+        }
+    );
+    // an `<apply>` applied to arguments is a function of higher order, which SBML has not
+    let ReadError::Xml(m) = bad_math(&format!("<apply>{inner}<ci>c</ci></apply>")) else {
+        panic!()
+    };
+    assert!(m.contains("no function of higher order"), "{m}");
 }
