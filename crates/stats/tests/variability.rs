@@ -236,3 +236,27 @@ fn the_edges_of_the_groups() {
     // values of another size are refused
     assert!(variability::group_means(&values, 3, 2, 2, 3, false, 1).is_err());
 }
+
+#[test]
+fn groups_too_many_to_hold_are_refused_not_wrapped() {
+    let values = predictions(4, 2);
+    // more members than a usize counts
+    let error = variability::group_means(&values, 4, 2, 2, usize::MAX / 2 + 1, false, 1)
+        .unwrap_err()
+        .0;
+    assert!(error.contains("too many"), "{error}");
+    // more statistics than a usize counts, the means and the groups of no subject
+    for size in [0, 3] {
+        let error = variability::group_means(&values, 4, 2, size, usize::MAX / 2 + 1, false, 1)
+            .unwrap_err()
+            .0;
+        assert!(error.contains("too many"), "{error}");
+    }
+    // statistics which a usize counts but whose bytes exceed the address space
+    for size in [0, 2] {
+        let error = variability::group_means(&values, 4, 2, size, usize::MAX / 4 + 1, false, 1)
+            .unwrap_err()
+            .0;
+        assert!(error.contains("too many"), "{error}");
+    }
+}

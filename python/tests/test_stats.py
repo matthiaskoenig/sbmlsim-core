@@ -1430,3 +1430,11 @@ def test_a_seed_gives_the_same_groups_and_the_groups_refuse_as_numpy() -> None:
         0,
         2,
     )
+
+
+def test_groups_too_many_to_hold_raise_a_value_error() -> None:
+    """numpy raises a ValueError or a MemoryError there, the binding a ValueError."""
+    values = predictions(4, 2)
+    for size, groups in [(2, 2**62), (0, 2**62), (2, 2**63 - 1)]:
+        with pytest.raises(ValueError, match="too many"):
+            stats.group_means(values, size, groups, seed=1)

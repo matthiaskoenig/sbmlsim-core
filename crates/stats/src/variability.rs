@@ -33,7 +33,9 @@ use crate::{Result, StatsError};
 ///
 /// # Errors
 ///
-/// For `values` which are not `subjects x points` values.
+/// For `values` which are not `subjects x points` values, and for `groups` whose members
+/// (`groups x size`) a `usize` does not count or whose statistics (`groups x points`) no memory
+/// holds: numpy raises a `ValueError` or a `MemoryError` there, the binding a `ValueError`.
 pub fn group_means(
     values: &[f64],
     subjects: usize,
@@ -60,21 +62,32 @@ pub fn group_means(
     if finite.is_empty() || groups == 0 {
         return Ok((Vec::new(), 0));
     }
+    if groups.checked_mul(size).is_none() {
+        return Err(StatsError(format!(
+            "{groups} groups of {size} subjects are too many members to draw."
+        )));
+    }
+    let statistics_count = groups
+        .checked_mul(points)
+        .ok_or_else(|| too_many(groups, points))?;
+    let mut statistics = Vec::new();
+    statistics
+        .try_reserve_exact(statistics_count)
+        .map_err(|_| too_many(groups, points))?;
     if size == 0 {
         // the mean of numpy of no member
-        return Ok((vec![f64::NAN; groups * points], groups));
+        statistics.resize(statistics_count, f64::NAN);
+        return Ok((statistics, groups));
     }
+    // the members of a group after the ones of the group before, drawn as the group is summed
     let mut stream = Stream::new(seed);
-    let members: Vec<usize> = (0..groups * size)
-        .map(|_| stream.below(finite.len()))
-        .collect();
-    let mut statistics = Vec::with_capacity(groups * points);
     let mut sums = vec![0.0; points];
-    for group in members.chunks(size) {
+    for _ in 0..groups {
         // the sums along the members, in their order, divided by their number
         sums.fill(0.0);
-        for &member in group {
-            for (sum, &x) in sums.iter_mut().zip(finite[member]) {
+        for _ in 0..size {
+            let member = finite[stream.below(finite.len())];
+            for (sum, &x) in sums.iter_mut().zip(member) {
                 *sum += if geometric { libm::log(x) } else { x };
             }
         }
@@ -84,6 +97,14 @@ pub fn group_means(
         }));
     }
     Ok((statistics, groups))
+}
+
+/// The error of statistics of `groups` groups at `points` data points which no memory holds,
+/// where numpy raises its `ValueError` (`array is too big`) or its `MemoryError`.
+fn too_many(groups: usize, points: usize) -> StatsError {
+    StatsError(format!(
+        "The statistics of {groups} groups at {points} data points are too many values to hold."
+    ))
 }
 
 /// The bands of a distribution at every data point, the quantiles of `predictive_check`.
