@@ -102,7 +102,7 @@ fn an_axis_line_may_be_hidden() {
 }
 
 #[test]
-fn error_bars_have_caps_of_their_length() {
+fn error_bars_have_caps_of_matplotlibs_capsize() {
     let element = |cap: &str| {
         format!(
             r#"{{"id": "c", "kind": "curve", "x": [1, 2, 3], "y": [2, 3, 2],
@@ -131,19 +131,24 @@ fn error_bars_have_caps_of_their_length() {
     // 0, which has a bar and no caps
     assert_eq!(x_bars.len(), 9);
     assert_eq!(y_bars.len(), 7);
-    // a cap across an error of y is horizontal and 8 pixels long, at the end of its bar
+    // a cap across an error of y is horizontal and 16 pixels long, matplotlib's `capsize` of 8
+    // to each side of its bar (since 0.37.0), at the end of its bar
     let [x1, y1, x2, y2] = y_bars[1];
-    assert!((y1 - y2).abs() < 0.011 && ((x2 - x1).abs() - 8.0).abs() < 0.011);
+    assert!((y1 - y2).abs() < 0.011 && ((x2 - x1).abs() - 16.0).abs() < 0.011);
+    assert!(
+        ((x1 + x2) / 2.0 - y_bars[0][0]).abs() < 0.011,
+        "centred on its bar"
+    );
     let bar = y_bars[0];
     assert!((y1 - bar[1]).abs() < 0.011, "{y_bars:?}");
     // a cap across an error of x is vertical
     let [x1, y1, x2, y2] = x_bars[1];
-    assert!((x1 - x2).abs() < 0.011 && ((y2 - y1).abs() - 8.0).abs() < 0.011);
+    assert!((x1 - x2).abs() < 0.011 && ((y2 - y1).abs() - 16.0).abs() < 0.011);
     // the caps of horizontal bars are vertical
     let bars = segments(&error_paths(&doc, "b")[0]);
     assert_eq!(bars.len(), 6);
     let [x1, y1, x2, y2] = bars[1];
-    assert!((x1 - x2).abs() < 0.011 && ((y2 - y1).abs() - 8.0).abs() < 0.011);
+    assert!((x1 - x2).abs() < 0.011 && ((y2 - y1).abs() - 16.0).abs() < 0.011);
 }
 
 /// The pixels of one unit of y over the pixels of one unit of x of a plot of a geometry.

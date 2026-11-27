@@ -46,3 +46,46 @@ pub fn assert_golden(name: &str, svg: &str) {
         );
     }
 }
+
+/// One marker drawn in a group (since 0.37.0 a `<use>` of the pieces of its glyph, which are
+/// defined once in the `<defs>` of the figure).
+pub struct UsedMarker<'a, 'input> {
+    /// The `<use>`.
+    pub node: roxmltree::Node<'a, 'input>,
+    /// The piece it uses, centred at the origin.
+    pub shape: roxmltree::Node<'a, 'input>,
+    /// Where it is drawn, in the coordinates of the `<use>`.
+    pub x: f64,
+    pub y: f64,
+}
+
+/// The markers drawn in a node, each piece of a glyph one, in the order of the drawing.
+pub fn used_markers<'a, 'input>(
+    doc: &'a roxmltree::Document<'input>,
+    node: roxmltree::Node<'a, 'input>,
+) -> Vec<UsedMarker<'a, 'input>> {
+    let number = |n: roxmltree::Node, name: &str| -> f64 {
+        n.attribute(name).map_or(0.0, |v| v.parse().unwrap())
+    };
+    node.descendants()
+        .filter(|n| n.has_tag_name("use"))
+        .map(|n| {
+            let href = n.attribute("href").expect("a use names its piece by href");
+            let id = href.strip_prefix('#').expect("a local href");
+            let shape = doc
+                .descendants()
+                .find(|d| d.attribute("id") == Some(id))
+                .unwrap_or_else(|| panic!("no piece {id}"));
+            assert!(
+                shape.ancestors().any(|a| a.has_tag_name("defs")),
+                "the piece {id} is defined in the defs"
+            );
+            UsedMarker {
+                node: n,
+                shape,
+                x: number(n, "x"),
+                y: number(n, "y"),
+            }
+        })
+        .collect()
+}

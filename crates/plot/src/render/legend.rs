@@ -567,7 +567,8 @@ fn swatch(kind: &ElementKind, style: &Style, color: &str, fonts: &Fonts) -> Stri
             };
             let half = ERROR_BAR * fonts.legend / 2.0;
             let mid = SWATCH_WIDTH / 2.0;
-            let cap = error_cap / 2.0;
+            // matplotlib's `capsize`: a cap reaches it to each side of the bar (since 0.37.0)
+            let cap = *error_cap;
             if yerr.is_some() {
                 segment(&mut out, &bar, (mid, -half), (mid, half));
                 if cap > 0.0 {

@@ -219,7 +219,7 @@ pub(crate) struct Bars<'a> {
     pub horizontal: bool,
     /// Width in units of the axis of the positions.
     pub width: Option<f64>,
-    /// The length of the caps of the error bars in pixels, 0 for none.
+    /// How far the caps of the error bars reach to each side of a bar in pixels, 0 for none.
     pub error_cap: f64,
     /// The width of the lines of the error bars in pixels.
     pub error_width: f64,

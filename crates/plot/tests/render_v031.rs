@@ -12,7 +12,7 @@ use sbmlsim_plot::{
     ColorScale, ColorStop, Figure, FontFamily, FontWeight, check_stops, color_scale, geometry,
     parse, render_svg, text_width, text_width_family,
 };
-use support::{assert_golden, spec_text};
+use support::{assert_golden, spec_text, used_markers};
 
 /// Parses a figure of JSON text.
 fn spec(json: &str) -> Figure {
@@ -452,10 +452,10 @@ fn half_filled_markers_draw_both_halves() {
         .descendants()
         .find(|n| n.attribute("data-element") == Some("m"))
         .unwrap();
-    let fills: Vec<&str> = group
-        .descendants()
-        .filter(|n| n.has_tag_name("path"))
-        .filter_map(|n| n.attribute("fill"))
+    let fills: Vec<&str> = used_markers(&doc, group)
+        .iter()
+        .filter(|m| m.shape.has_tag_name("path"))
+        .filter_map(|m| m.shape.attribute("fill"))
         .collect();
     assert_eq!(fills, ["#00aa00", "#ffffff"]);
     assert!(
@@ -474,13 +474,12 @@ fn a_diamond_is_as_wide_as_high() {
         );
         let svg = render_svg(&spec(&figure("{}", "{}", "", &curve)));
         let doc = Document::parse(&svg).unwrap();
-        let d = doc
+        let group = doc
             .descendants()
             .find(|n| n.attribute("data-element") == Some("m"))
-            .unwrap()
-            .descendants()
-            .find(|n| n.has_tag_name("path"))
-            .unwrap()
+            .unwrap();
+        let d = used_markers(&doc, group)[0]
+            .shape
             .attribute("d")
             .unwrap()
             .to_string();

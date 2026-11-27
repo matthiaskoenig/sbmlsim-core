@@ -45,6 +45,7 @@ from sbmlsim_core.chart import (
     Chart,
     ChartAxis,
     ChartPlot,
+    Errors,
     axis_label,
     color_alpha,
     normalize_color,
@@ -259,6 +260,12 @@ def the_chart_builder(values: list[float], path: Path) -> None:
     plot: ChartPlot = chart.plot(0, 1, x=ChartAxis(label="time", unit="hr"))
     element: str = plot.curve(values, values, label="A", marker="circle")
     band: str = plot.band(values, values, values)
+    # errors of two sides: a tuple `(low, high)` or a mapping of `low` and `high`
+    two_sided: Errors = (values, values)
+    sides: str = plot.curve(values, values, yerr=two_sided, error_cap=3.0)
+    tupled: str = plot.curve(values, values, xerr=(values, values))
+    mapped: str = plot.curve(values, values, xerr={"low": values, "high": values})
+    bars: str = plot.bar(values, values, err=(values, values), error_cap=3.0)
     spec: dict[str, Any] = chart.spec()
     text: str = chart.to_json()
     svg: str = chart.svg()
@@ -275,7 +282,7 @@ def the_chart_builder(values: list[float], path: Path) -> None:
     chart.save(1)  # ty: ignore[invalid-argument-type]
     short_unit(1)  # ty: ignore[invalid-argument-type]
     print(element, band, spec, text, svg, png, saved, label, short, color, alpha)
-    print(locs, markers)
+    print(locs, markers, sides, tupled, mapped, bars)
 
 
 def equation_exports(source: Path) -> None:

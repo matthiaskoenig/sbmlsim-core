@@ -11,7 +11,7 @@ mod support;
 use roxmltree::{Document, Node};
 use sbmlsim_plot::{parse, render_svg};
 use serde_json::{Value, json};
-use support::{assert_golden, spec_text};
+use support::{assert_golden, spec_text, used_markers};
 
 /// Renders a figure of JSON.
 fn render(spec: &Value) -> String {
@@ -163,14 +163,14 @@ fn vertices(doc: &Document, id: &str) -> Vec<(f64, f64)> {
         .collect()
 }
 
-/// The markers of an element group: its circles.
+/// The markers of an element group: the uses of its circles.
 fn markers(doc: &Document, id: &str) -> Vec<(f64, f64)> {
-    element(doc, id)
-        .descendants()
-        .filter(|n| n.has_tag_name("circle"))
-        .map(|c| {
-            let (dx, dy) = offset(c);
-            (number(c, "cx") + dx, number(c, "cy") + dy)
+    used_markers(doc, element(doc, id))
+        .iter()
+        .filter(|m| m.shape.has_tag_name("circle"))
+        .map(|m| {
+            let (dx, dy) = offset(m.node);
+            (m.x + dx, m.y + dy)
         })
         .collect()
 }

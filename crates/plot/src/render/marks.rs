@@ -6,8 +6,8 @@
 //! (`ResolvedAxis::u`), a value the axis cannot show splits a line, a band or an area into
 //! runs (one path or polygon per run, never a NaN), a band and an area are closed polygons
 //! (Charton's area has no lower edge), error bars are open paths of one subpath per point (no
-//! caps by default, as matplotlib; with `error_cap` a cap of that length in pixels across each
-//! end, since 0.30.0), and a rule is a line from end to end of the other axis. Every
+//! caps by default, as matplotlib; with `error_cap` a cap across each end reaching that many
+//! pixels to each side, matplotlib's `capsize`, since 0.30.0), and a rule is a line from end to end of the other axis. Every
 //! layer is recorded with the element it draws, so the writer groups the layers of one element.
 //!
 //! The marker of a curve is drawn by the writer at every point Charton places, so every shape of
@@ -273,8 +273,8 @@ pub(crate) fn fill_of(style: &Style, color: &str) -> (String, f64) {
 }
 
 /// The error bars of a curve along one axis: a segment per point from `v - low` to
-/// `v + high`, and with a `cap` a segment across each end which the axis shows, `cap`
-/// coordinates of the other axis long (0 for none).
+/// `v + high`, and with a `cap` a segment across each end which the axis shows, reaching `cap`
+/// coordinates of the other axis to each side, matplotlib's `capsize` (0 for none).
 ///
 /// `along` is the axis of the error, `across` the coordinates of the other axis; an end the axis
 /// cannot show (below 0 on a logarithmic axis) is the lower end of the axis, and has no cap. A
@@ -321,10 +321,9 @@ pub(crate) fn error_runs(
         );
         let capped = |e: f64| !e.is_nan() && (sides || e != 0.0);
         if cap > 0.0 {
-            let half = cap / 2.0;
             for (u, e) in [(a, lo), (b, hi)] {
                 if u.is_finite() && capped(e) {
-                    segment((u, c - half), (u, c + half));
+                    segment((u, c - cap), (u, c + cap));
                 }
             }
         }
@@ -352,9 +351,9 @@ fn domain_span(xa: &ResolvedAxis) -> Span {
 /// The data of a curve: x, y and the errors of x and of y.
 type CurveData<'a> = (&'a [f64], &'a [f64], Option<&'a Errors>, Option<&'a Errors>);
 
-/// The error bars of a curve: the length of their caps in pixels and the panel in pixels.
+/// The error bars of a curve: the size of their caps in pixels and the panel in pixels.
 struct ErrorCaps {
-    /// The length of a cap in pixels, 0 for none.
+    /// How far a cap reaches to each side of its bar in pixels, 0 for none.
     cap: f64,
     /// The width of the lines of the error bars in pixels.
     width: f64,
@@ -616,6 +615,7 @@ pub(crate) fn build(
                     let raw = RawSvg {
                         clipped: svg,
                         unclipped: String::new(),
+                        pieces: Vec::new(),
                     };
                     raw_layer(&mut layers, index, raw, (xa, ya))?;
                 }

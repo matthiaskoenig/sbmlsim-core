@@ -89,6 +89,11 @@ BAND_OPACITY: Final = 0.18
 #: array, see `sbmlsim_core.chart.units`.
 type Values = Any
 
+#: The errors of a curve or of bars: one per value, or the errors below and
+#: above every value apart, a tuple `(low, high)` or a mapping of `low` and
+#: `high` (matplotlib's errors of the shape `(2, n)`), each side `Values`.
+type Errors = Values | tuple[Values, Values] | Mapping[str, Values]
+
 type AxisName = Literal["x", "y", "y2"]
 
 type LineType = Literal["solid", "dashed", "dotted", "dashdot", "none"]
@@ -435,15 +440,15 @@ def _aspect(aspect: Aspect | None) -> str | float | None:
 
 
 def _error_cap(error_cap: float) -> float:
-    """Get the length of the caps of error bars in pixels.
+    """Get the size of the caps of error bars in pixels, matplotlib's `capsize`.
 
     Raises:
-        ValueError: for a length which is negative or not finite.
+        ValueError: for a size which is negative or not finite.
     """
     value = float(error_cap)
     if not math.isfinite(value) or value < 0:
         raise ValueError(
-            f"The caps of error bars are a length in pixels, not {error_cap!r}."
+            f"The caps of error bars are a size in pixels, not {error_cap!r}."
         )
     return value
 
@@ -827,7 +832,7 @@ class ChartPlot:
             return _magnitude(values).ravel()
         return self._on(axis, values)
 
-    def _errors(self, axis: AxisName, err: Values) -> Any:
+    def _errors(self, axis: AxisName, err: Errors) -> Any:
         """Get errors for the spec: one per value, or the sides apart.
 
         Errors of two sides are a mapping of `low` and `high` or a tuple
@@ -895,8 +900,8 @@ class ChartPlot:
         x: Values,
         y: Values,
         *,
-        xerr: Values | None = None,
-        yerr: Values | None = None,
+        xerr: Errors | None = None,
+        yerr: Errors | None = None,
         error_cap: float = 0.0,
         error_width: float | None = None,
         line: LineType = "solid",
@@ -929,8 +934,10 @@ class ChartPlot:
                 `(2, n)`), a value which is not finite a side which is not
                 drawn (a one-sided error bar).
             yerr: the errors of y, as `xerr`.
-            error_cap: the length of the caps across the ends of the error
-                bars in pixels, matplotlib's `capsize`; 0 for none.
+            error_cap: the size of the caps across the ends of the error
+                bars in pixels, matplotlib's `capsize`: a cap reaches that far
+                to each side of its bar, so it is twice as long (since 0.37.0,
+                before as long); 0 for none.
             error_width: the width of the lines of the error bars and their
                 caps in pixels, matplotlib's `elinewidth`; `None` for the 1
                 pixel of the renderer.
@@ -1134,7 +1141,7 @@ class ChartPlot:
         x: Values,
         height: Values,
         *,
-        err: Values | None = None,
+        err: Errors | None = None,
         error_cap: float = 0.0,
         error_width: float | None = None,
         horizontal: bool = False,
@@ -1162,8 +1169,8 @@ class ChartPlot:
             height: the heights, on the x axis for horizontal bars.
             err: the errors of the heights, one per bar or the sides apart,
                 see `curve`.
-            error_cap: the length of the caps across the ends of the error
-                bars in pixels; 0 for none.
+            error_cap: the size of the caps across the ends of the error
+                bars in pixels, as of `curve`; 0 for none.
             error_width: the width of the lines of the error bars in pixels,
                 `None` for the 1 pixel of the renderer.
             horizontal: whether the bars are horizontal.
