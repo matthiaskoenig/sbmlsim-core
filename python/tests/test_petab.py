@@ -114,3 +114,40 @@ def test_a_problem_whose_parts_do_not_fit_is_refused() -> None:
     )
     with pytest.raises(ValueError, match="'unknown'"):
         petab.Problem.from_files(content, "problem.yaml")
+
+
+def test_a_problem_of_a_prior_without_bounds_is_fitted() -> None:
+    """A gamma prior of a rate which is not bounded above, on the scale of the extension."""
+    content = files()
+    content["parameters.tsv"] = (
+        b"parameterId\tlowerBound\tupperBound\tnominalValue\testimate"
+        b"\tpriorDistribution\tpriorParameters\n"
+        b"k\t0\tinf\t0.5\ttrue\tgamma\t2;0.2\n"
+    )
+    content["problem.yaml"] += (
+        b"extensions:\n  sbmlsim:\n    version: 0.5.0\n    required: false\n"
+        b"    parameters:\n      k: {scale: LOG10}\n"
+    )
+    problem = petab.Problem.from_files(content, "problem.yaml")
+    assert problem.bounds == ([0.0], [math.inf])
+    fit_problem = problem.fit_problem(threads=2)
+    cost = fit_problem.cost(fit_problem.start) - problem.cost_offset
+    assert cost == pytest.approx(-problem.evaluate()["unnorm_log_posterior"], rel=1e-9)
+    answer = problem.fit({"max_iterations": 100}, threads=2)
+    # the data of k = 0.3 pulls the rate from the mode of the prior, 0.2
+    assert 0.2 < answer["x"][0] < 0.31
+    posterior = problem.evaluate(answer["x"])["unnorm_log_posterior"]
+    assert answer["objective"] == pytest.approx(-posterior, rel=1e-9)
+
+
+def test_a_prior_whose_density_is_not_bounded_is_refused_in_a_fit() -> None:
+    content = files()
+    content["parameters.tsv"] = (
+        b"parameterId\tlowerBound\tupperBound\tnominalValue\testimate"
+        b"\tpriorDistribution\tpriorParameters\n"
+        b"k\t0\t10\t0.5\ttrue\tgamma\t0.5;1\n"
+    )
+    problem = petab.Problem.from_files(content, "problem.yaml")
+    assert math.isfinite(problem.evaluate()["log_prior"])
+    with pytest.raises(UnsupportedError, match="not bounded"):
+        problem.fit()

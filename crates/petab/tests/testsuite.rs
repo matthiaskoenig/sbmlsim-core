@@ -13,14 +13,19 @@
 //! the tolerances the solution gives. The test fails when a case which the baseline does not
 //! list fails, and when a case which it lists passes: a change which fixes a case updates the
 //! baseline (`SBMLSIM_PETAB_BASELINE=write cargo test -p sbmlsim-petab --test testsuite`).
+//!
+//! The fit of every case is held to the negative log posterior of its evaluation, but for the
+//! cases of [`FIT_REFUSED`], whose posterior has no largest value; the cases of the priors,
+//! 0024 and 0025, are fitted as well, with that prior bounded away from zero.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 use sbmlsim_abi::{IntegratorSettings, Tolerance};
+use sbmlsim_fit::{JacobianChoice, Problem, Settings};
 use sbmlsim_host::Runtime;
 use sbmlsim_petab::math::{Formula, parse};
-use sbmlsim_petab::{Executor, Options, PetabProblem, Plan};
+use sbmlsim_petab::{Executor, InMemory, Options, PetabProblem, Plan};
 use serde::{Deserialize, Serialize};
 
 /// The commit of the suite, the `PETAB_SUITE_COMMIT` of sbmlsim.
@@ -28,6 +33,20 @@ const COMMIT: &str = "d09985e7bb03280b461599a24337137533d931e2";
 
 /// The tolerance of a math case, the `MATH_TOLERANCE` of sbmlsim.
 const MATH_TOLERANCE: f64 = 1e-12;
+
+/// The cases whose fit is refused, with the reason: the `log-laplace(3, 5)` prior of
+/// `p_log_laplace` at the lower bound 0, whose density `x^(-0.8)` is not bounded there, so the
+/// posterior has no largest value and a fit no optimum.
+const FIT_REFUSED: [(&str, &str); 2] = [
+    (
+        "0024",
+        "the log-laplace prior of 'p_log_laplace' has a density which is not bounded",
+    ),
+    (
+        "0025",
+        "the log-laplace prior of 'p_log_laplace' has a density which is not bounded",
+    ),
+];
 
 /// The groups of cases, by their directory below the cases of the suite.
 const GROUPS: [(&str, &str); 2] = [
@@ -233,8 +252,21 @@ fn run_case(directory: &Path, runtime: &Runtime) -> Result<(), String> {
         ));
     }
     // the fit of the engine: its cost is the negative log posterior at its start, plus the
-    // offsets of its rows; a problem it cannot carry is a gap of the fit and no failure
+    // offsets of its rows; the fit of every case is carried, but for the ones whose
+    // posterior has no optimum
+    let refused = FIT_REFUSED
+        .iter()
+        .find(|(case, _)| directory.ends_with(Path::new("v2.0.0/sbml").join(case)))
+        .map(|(_, reason)| *reason);
     match executor.problem(1) {
+        Ok(_) if refused.is_some() => {
+            failed.push(format!(
+                "fit: carried, and it is refused with '{}'",
+                refused.unwrap_or_default()
+            ));
+        }
+        Err(err) if refused.is_some_and(|reason| err.to_string().contains(reason)) => {}
+        Err(err) => failed.push(format!("fit: {err}")),
         Ok(problem) => {
             let start = problem.start();
             let values = problem.values(&start);
@@ -257,7 +289,6 @@ fn run_case(directory: &Path, runtime: &Runtime) -> Result<(), String> {
                 ));
             }
         }
-        Err(err) => eprintln!("  {id}: no fit of the engine: {err}"),
     }
     if failed.is_empty() {
         Ok(())
@@ -302,6 +333,211 @@ fn run_math(expression: &str, expected: &serde_norway::Value) -> Result<(), Stri
         Ok(())
     } else {
         Err(format!("'{expression}' is {value}, expected {expected}"))
+    }
+}
+
+/// The options of the runs of the suite: the tolerances of sbmlsim's run.
+fn options() -> Options {
+    Options {
+        integrator: Some(IntegratorSettings {
+            relative_tolerance: 1e-12,
+            absolute_tolerance: Tolerance::Scalar(1e-12),
+            ..IntegratorSettings::default()
+        }),
+        ..Options::default()
+    }
+}
+
+/// The files of a case, the lower bound of `p_log_laplace` raised from 0 to 1, where the
+/// density of its prior is bounded.
+fn bounded_case(directory: &Path) -> InMemory {
+    let mut files = InMemory::new();
+    for entry in std::fs::read_dir(directory).expect("the case") {
+        let path = entry.expect("a file of the case").path();
+        if path.is_file() {
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or_default();
+            files.insert(name.to_string(), std::fs::read(&path).expect("a file"));
+        }
+    }
+    let table = String::from_utf8(files["_parameters.tsv"].clone()).expect("a table");
+    assert!(table.contains("p_log_laplace\t0.0\t"), "{table}");
+    files.insert(
+        "_parameters.tsv".to_string(),
+        table
+            .replace("p_log_laplace\t0.0\t", "p_log_laplace\t1.0\t")
+            .into_bytes(),
+    );
+    files
+}
+
+/// The gradient of the cost of a problem, `J' r`, and its central difference.
+fn gradients(problem: &Problem, x: &[f64]) -> (Vec<f64>, Vec<f64>) {
+    let k = x.len();
+    let residuals = problem.residuals(x).expect("the residuals");
+    let jacobian = problem.jacobian(x).expect("the jacobian");
+    let gradient = (0..k)
+        .map(|column| {
+            residuals
+                .iter()
+                .enumerate()
+                .map(|(row, r)| r * jacobian[row * k + column])
+                .sum()
+        })
+        .collect();
+    let central = (0..k)
+        .map(|column| {
+            let step = 1e-6 * x[column].abs().max(1.0);
+            let (mut below, mut above) = (x.to_vec(), x.to_vec());
+            below[column] -= step;
+            above[column] += step;
+            (problem.cost(&above).expect("a cost") - problem.cost(&below).expect("a cost"))
+                / (2.0 * step)
+        })
+        .collect();
+    (gradient, central)
+}
+
+#[test]
+fn the_cases_of_every_prior_are_fitted() {
+    // every kind of prior of PEtab v2, truncated at finite bounds (0024) and at bounds which
+    // are not finite (0025); no data informs a parameter of a prior, so the optimum of the
+    // posterior is the mode of every prior in its bounds, and `p1`, measured once at 1, is 1
+    let Some(suite) = suite() else {
+        eprintln!("the PEtab test suite {COMMIT} is not downloaded");
+        return;
+    };
+    let runtime = Runtime::embedded().expect("the embedded engine");
+    let modes: HashMap<&str, f64> = [
+        ("p_normal", 4.0),
+        ("p_log_normal", 1f64.exp()),
+        ("p_cauchy", 3.0),
+        ("p_chisquare", 2.0),
+        ("p_exponential", 0.0),
+        ("p_gamma", 10.0),
+        ("p_laplace", 3.0),
+        ("p_log_laplace", 1.0),
+        ("p_log_uniform", 3.0),
+        ("p_rayleigh", 3.0),
+        ("p1", 1.0),
+    ]
+    .into_iter()
+    .collect();
+    for case in ["0024", "0025"] {
+        let directory = suite.join("v2.0.0/sbml").join(case);
+        let yaml = format!("_{case}.yaml");
+        let problem = PetabProblem::read(&yaml, &bounded_case(&directory)).expect("the case");
+        let executor =
+            Executor::with_runtime(Plan::new(&problem, &options()).expect("a plan"), &runtime)
+                .expect("the models");
+        let plan = executor.plan();
+        let ids: Vec<&str> = plan
+            .estimated()
+            .into_iter()
+            .map(|k| plan.parameters[k].id.as_str())
+            .collect();
+
+        // the cost is the negative log posterior and its gradient the one of the jacobian of
+        // the sensitivities, whose rows of the priors are analytic, at points of the box
+        let mut definition = executor.definition(&plan.nominal()).expect("a definition");
+        definition.jacobian = JacobianChoice::Sensitivities;
+        let problem = executor.problem_of(definition, 1).expect("a problem");
+        let offset = executor.cost_offset().expect("the offset");
+        let (lower, upper) = problem.bounds();
+        let start = problem.start();
+        for shift in [0.0, -0.3, 0.15, 0.4] {
+            let x: Vec<f64> = start
+                .iter()
+                .zip(lower.iter().zip(&upper))
+                .map(|(x, (low, high))| {
+                    let moved = x + shift * x.abs().max(0.5);
+                    if low.is_finite() && high.is_finite() {
+                        let margin = 0.02 * (high - low);
+                        moved.clamp(low + margin, high - margin)
+                    } else if low.is_finite() {
+                        moved.max(low + 0.1)
+                    } else {
+                        moved
+                    }
+                })
+                .collect();
+            let evaluation = executor.evaluate(&problem.values(&x));
+            let posterior = evaluation.unnorm_log_posterior();
+            let cost = problem.cost(&x).expect("a cost") - offset;
+            assert!(
+                (cost + posterior).abs() <= 1e-9 * posterior.abs().max(1.0),
+                "{case} at {x:?}: the cost {cost} is not the negative log posterior {}",
+                -posterior
+            );
+            let (gradient, central) = gradients(&problem, &x);
+            for (k, (g, c)) in gradient.iter().zip(&central).enumerate() {
+                assert!(
+                    (g - c).abs() <= 1e-5 * c.abs().max(1.0),
+                    "{case} at {x:?}: the gradient of '{}' is {g} and its central difference {c}",
+                    ids[k]
+                );
+            }
+        }
+
+        // the fit of every prior alone, the others held at their start, finds its mode, on
+        // the analytic rows of the priors, which the kink of a Laplace prior at its mode needs
+        let full = &problem;
+        let settings = Settings {
+            max_iterations: 500,
+            ..Settings::default()
+        };
+        for (k, id) in ids.iter().enumerate() {
+            let held: Vec<(usize, f64)> = (0..ids.len())
+                .filter(|other| *other != k)
+                .map(|other| (other, full.parameters()[other].start))
+                .collect();
+            let one = full.fixing(&held).expect("a problem of one parameter");
+            let fit = one.optimize(&settings).expect("a fit");
+            let value = fit.values[0];
+            match modes.get(id) {
+                // the cost of the optimum is the one of the mode, and so is its value, to the
+                // flatness of a mode at a bound where the slope of the density is zero, e.g.
+                // the one of `gamma(3, 5)` at 10
+                Some(mode) => {
+                    let at_mode = one
+                        .cost(&[one.parameters()[0].scale.to_search(*mode)])
+                        .expect("the cost of the mode");
+                    assert!(
+                        (value - mode).abs() <= 1e-3 * mode.max(1.0) && fit.cost <= at_mode + 1e-6,
+                        "{case}: '{id}' is fitted to {value} of the cost {} and its mode is \
+                         {mode} of the cost {at_mode} ({})",
+                        fit.cost,
+                        fit.status
+                    );
+                }
+                // the uniform prior between 2 and 8 has no mode, and the fit stays at its
+                // start
+                None => assert!((2.0..=8.0).contains(&value), "{case}: '{id}' is {value}"),
+            }
+        }
+
+        // and the fit of all of them, whose objective is the negative log posterior at its
+        // optimum; the kink of the Laplace prior at its mode slows the joint fit, which ends
+        // close to the modes
+        let answer = executor.fit(&settings, 1).expect("a fit");
+        let posterior = executor.evaluate(&answer.x).unnorm_log_posterior();
+        assert!(
+            (answer.objective + posterior).abs() <= 1e-9 * posterior.abs().max(1.0),
+            "{case}: the objective {} is not the negative log posterior {}",
+            answer.objective,
+            -posterior
+        );
+        for (id, value) in ids.iter().zip(&answer.x) {
+            if let Some(mode) = modes.get(id) {
+                assert!(
+                    (value - mode).abs() <= 1e-2 * mode.max(1.0),
+                    "{case}: '{id}' is fitted to {value} and its mode is {mode} ({})",
+                    answer.fit.status
+                );
+            }
+        }
     }
 }
 

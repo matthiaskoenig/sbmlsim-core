@@ -120,11 +120,12 @@ pub struct FitRequest {
 pub struct PriorRequest {
     /// The position of the parameter in the parameters of the fit.
     pub parameter: usize,
-    /// The distribution of the prior: `"normal"`, `"log-normal"`, `"uniform"`,
-    /// `"log-uniform"`, `"laplace"` or `"log-laplace"`.
+    /// The distribution of the prior, one of the eleven of PEtab v2: `"normal"`,
+    /// `"log-normal"`, `"uniform"`, `"log-uniform"`, `"laplace"`, `"log-laplace"`, `"cauchy"`,
+    /// `"gamma"`, `"chisquare"`, `"exponential"` or `"rayleigh"`.
     pub kind: PriorKind,
-    /// The two parameters of that distribution, the ones of PEtab, whose meaning is the one
-    /// of the kind:
+    /// The parameters of that distribution, the ones of PEtab, whose meaning is the one of the
+    /// kind:
     ///
     /// ```text
     /// normal(mu, s)       the mean and the standard deviation of the value
@@ -133,20 +134,30 @@ pub struct PriorRequest {
     /// log-laplace(mu, b)  the location and the scale of its logarithm
     /// uniform(a, b)       the bounds of the value, which increase
     /// log-uniform(a, b)   the bounds of the value as well, both positive
+    /// cauchy(x0, g)       the location and the scale of the value
+    /// gamma(k, t)         the shape and the scale of the value
+    /// chisquare(k)        the degrees of freedom
+    /// exponential(b)      the scale of the value, the inverse of its rate
+    /// rayleigh(s)         the scale of the value
     /// ```
     ///
     /// The bounds of a `log-uniform` prior are the ones of the value and not of its
-    /// logarithm, as PEtab writes them, so its density is `1 / (x (ln(b) - ln(a)))`; a scale
-    /// is positive and the bounds of a uniform kind increase.
+    /// logarithm, as PEtab writes them, so its density is `1 / (x (ln(b) - ln(a)))`; a scale,
+    /// a shape and the degrees of freedom are positive and the bounds of a uniform kind
+    /// increase.
     pub parameters: Vec<f64>,
     /// The offset `c` of the row, which keeps `c - 2 log p` positive between the bounds: the
     /// density of a narrow distribution is larger than one, whose negative logarithm has no
-    /// root.
+    /// root. Twice the largest log density between the bounds makes the row zero at the mode
+    /// of the prior, where it is a distance from the mode, which a least squares optimizer
+    /// steps to as it steps to the optimum of a curve.
     pub offset: f64,
     /// The logarithm of the mass of the prior between the bounds, which the engine subtracts
     /// from the density of the kind; zero for a prior the host does not truncate.
     pub normalizer: f64,
-    /// The smallest value the prior is defined at, the lower bound of the parameter.
+    /// The smallest value the prior is defined at, the lower bound of the parameter, which
+    /// may be `-inf` as the bound of the parameter may (a host of the library, JSON has no
+    /// infinity).
     ///
     /// The bounds have to cover the ones of the parameter, and a prior whose bounds lie
     /// inside them is refused: the row of a value the prior is not defined at is `NaN`, so a
@@ -250,9 +261,10 @@ pub struct ParameterRequest {
     pub id: String,
     /// The value the fit starts from, on the linear scale.
     pub start: f64,
-    /// The smallest value.
+    /// The smallest value, `-inf` for a parameter which is not bounded below (which a host
+    /// of the library writes, JSON has no infinity), see [`crate::Parameter::lower`].
     pub lower: f64,
-    /// The largest value.
+    /// The largest value, `inf` for a parameter which is not bounded above.
     pub upper: f64,
     /// The scale an optimizer searches the parameter on; the value itself when it is absent.
     #[serde(default)]
@@ -913,6 +925,7 @@ fn definition_of(request: &FitRequest) -> Result<Definition, FitError> {
                                         factor: term.factor,
                                     })
                                     .collect(),
+                                form: None,
                             })
                             .collect()
                     })

@@ -581,6 +581,31 @@ impl Formula {
         };
         sbmlsim_ir::eval::eval(&self.expr, &read)
     }
+
+    /// The partial derivative of the formula in its symbol `symbol` (its position in
+    /// [`Formula::symbols`]), a formula of the same symbols, by the derivatives of the
+    /// operators of the engine's analytic jacobian ([`sbmlsim_ir::derive::derivative`]).
+    ///
+    /// # Errors
+    ///
+    /// The operator which has no derivative, e.g. `factorial` of an argument which reads the
+    /// symbol.
+    pub fn derivative(&self, symbol: usize) -> Result<Formula, String> {
+        let wrt = |read: Symbol| match read {
+            Symbol::Param(i) if self.positions.get(i as usize) == Some(&symbol) => {
+                Some(Expr::Number(1.0))
+            }
+            _ => None,
+        };
+        let expr = sbmlsim_ir::derive::derivative(&self.expr, &wrt)
+            .map_err(|op| format!("the operator {op:?} has no derivative"))?
+            .unwrap_or(Expr::Number(0.0));
+        Ok(Formula {
+            symbols: self.symbols.clone(),
+            expr,
+            positions: self.positions.clone(),
+        })
+    }
 }
 
 #[cfg(test)]
@@ -625,6 +650,24 @@ mod tests {
         let formula = Formula::new(&parse("a * b + time").unwrap()).unwrap();
         assert_eq!(formula.symbols(), ["a", "b"]);
         assert_eq!(formula.evaluate(&[2.0, 3.0], 4.0), 10.0);
+    }
+
+    #[test]
+    fn the_derivative_of_a_formula_is_one_of_its_symbols() {
+        let formula = Formula::new(&parse("a * b^2 + exp(a) - time").unwrap()).unwrap();
+        let (a, b) = (0.7, 1.3);
+        let da = formula.derivative(0).unwrap().evaluate(&[a, b], 2.0);
+        let db = formula.derivative(1).unwrap().evaluate(&[a, b], 2.0);
+        assert!((da - (b * b + a.exp())).abs() < 1e-14, "{da}");
+        assert!((db - 2.0 * a * b).abs() < 1e-14, "{db}");
+        // a symbol the value does not read has the derivative zero
+        assert_eq!(formula.derivative(5).unwrap().evaluate(&[a, b], 0.0), 0.0);
+        // no function of PEtab lacks a derivative, the math of SBML does
+        let factorial = Node::Apply {
+            op: Op::Factorial,
+            args: vec![Node::Symbol("a".to_string())],
+        };
+        assert!(Formula::new(&factorial).unwrap().derivative(0).is_err());
     }
 
     #[test]

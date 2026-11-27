@@ -54,7 +54,7 @@ pub use identifiability::{
 pub use optimize::{Algorithm, Evolution, Fit, Settings, Stop};
 pub use problem::{
     Condition, Correlation, Curve, DEFAULT_MODEL, DIFF_STEP, Definition, Derived, Dimension,
-    FAILED_RESIDUAL, FitError, JacobianChoice, LIKELIHOOD_OFFSET, LN_2, LN_2PI_HALF, Likelihood,
-    NoiseKind, Parameter, Pinned, Prior, PriorKind, Problem, Scale, Term,
+    FAILED_RESIDUAL, FitError, Form, JacobianChoice, LIKELIHOOD_OFFSET, LN_2, LN_2PI_HALF,
+    Likelihood, NoiseKind, Parameter, Pinned, Prior, PriorKind, Problem, Scale, Term,
 };
 pub use reduction::{MIN_PADDED_LENGTH, PK_STEP, PkReduction, REDUCTIONS, Reduction};

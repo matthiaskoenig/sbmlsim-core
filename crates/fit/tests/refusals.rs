@@ -96,9 +96,18 @@ fn a_fit_of_nothing_is_refused() {
 fn a_parameter_which_cannot_be_searched_is_refused() {
     for (fault, parameter) in [
         (
-            "has a bound which is not finite",
+            "has a bound which is NaN",
             Parameter {
+                upper: f64::NAN,
+                ..parameter()
+            },
+        ),
+        (
+            "has the bounds [inf, inf], which are not increasing",
+            Parameter {
+                lower: f64::INFINITY,
                 upper: f64::INFINITY,
+                start: f64::INFINITY,
                 ..parameter()
             },
         ),
@@ -118,10 +127,19 @@ fn a_parameter_which_cannot_be_searched_is_refused() {
             },
         ),
         (
-            "is searched on a logarithmic scale and has the lower bound 0, which is not positive",
+            "is searched on a logarithmic scale and has the lower bound -1, which is negative",
+            Parameter {
+                lower: -1.0,
+                scale: Scale::Log10,
+                ..parameter()
+            },
+        ),
+        (
+            "is searched on a logarithmic scale and starts at 0, which has no logarithm",
             Parameter {
                 lower: 0.0,
-                scale: Scale::Log10,
+                start: 0.0,
+                scale: Scale::Log,
                 ..parameter()
             },
         ),
@@ -177,9 +195,9 @@ fn a_prior_of_a_number_which_is_not_finite_is_refused() {
             },
         ),
         (
-            "of 'k' is defined between 0.1 and inf, which are not increasing and finite",
+            "of 'k' is defined between 0.1 and NaN, which are not increasing",
             Prior {
-                upper: f64::INFINITY,
+                upper: f64::NAN,
                 ..prior()
             },
         ),

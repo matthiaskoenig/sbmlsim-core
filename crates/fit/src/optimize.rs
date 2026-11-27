@@ -33,12 +33,14 @@ use crate::problem::{FitError, Problem};
 ///
 /// A start whose norm is 1e-6 of the box of the parameters or less takes the radius a start
 /// of zero takes, which is one: the radius is the one of the space the bounds scale, where
-/// one is about half of the box, whatever the parameters measure.
+/// one is about half of the box, whatever the parameters measure. A bound which is not finite
+/// spans nothing a start can be measured against, so the box is the one of the finite bounds.
 fn radius(start: &[f64], lower: &[f64], upper: &[f64]) -> Option<f64> {
     let norm = start.iter().map(|value| value * value).sum::<f64>().sqrt();
     let span = lower
         .iter()
         .chain(upper)
+        .filter(|bound| bound.is_finite())
         .fold(1.0_f64, |most, bound| most.max(bound.abs()));
     (norm <= 1e-6 * span).then_some(1.0)
 }
@@ -342,6 +344,22 @@ pub(crate) fn run(
                 return Err(FitError::Optimizer(format!(
                     "needs a population of four members or more, not {population}"
                 )));
+            }
+            // the population is drawn in the box of the search space, which a bound that is
+            // not finite there leaves without a size
+            if let Some((parameter, (low, high))) = problem
+                .parameters()
+                .iter()
+                .zip(lower.iter().zip(&upper))
+                .find(|(_, (low, high))| !low.is_finite() || !high.is_finite())
+            {
+                return Err(FitError::Parameter {
+                    id: parameter.id.clone(),
+                    message: format!(
+                        "is searched between {low} and {high}, and a differential evolution \
+                         draws its population in a box whose bounds are finite"
+                    ),
+                });
             }
             let mut solver = De::<f64>::new(evolution.seed);
             if let Some(population) = evolution.population {

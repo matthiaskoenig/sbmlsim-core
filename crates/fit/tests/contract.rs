@@ -1159,7 +1159,7 @@ fn of_the_scale(scale: &str, value: f64) -> f64 {
 /// `petab` computes there.
 struct Case {
     kind: &'static str,
-    parameters: [f64; 2],
+    parameters: &'static [f64],
     value: f64,
     normalizer: f64,
     density: f64,
@@ -1192,51 +1192,95 @@ impl Case {
 /// math.log(norm.cdf(5.0, 1.0, 0.5) - norm.cdf(0.1, 1.0, 0.5))
 /// ```
 ///
+/// and the kinds of a value which is not negative by `scipy.stats` alone, e.g.
+///
+/// ```python
+/// from scipy.stats import gamma
+/// d = gamma(2.0, scale=0.9)
+/// normalizer = math.log(d.cdf(5.0) - d.cdf(0.1))
+/// density = d.logpdf(1.5) - normalizer
+/// ```
+///
 /// The normalizer is the one a host sends and is no number of the engine, which evaluates the
 /// density of the kind itself: the two together are the number `petab` computes, so the
 /// closed form of every kind is checked against `scipy` and nothing of it cancels.
-const CASES: [Case; 6] = [
+const CASES: [Case; 11] = [
     Case {
         kind: "normal",
-        parameters: [1.0, 0.5],
+        parameters: &[1.0, 0.5],
         value: 1.3,
         normalizer: -0.036_591_703_906_010_09,
         density: -0.369_199_648_738_717_13,
     },
     Case {
         kind: "log-normal",
-        parameters: [0.0, 0.7],
+        parameters: &[0.0, 0.7],
         value: 1.4,
         normalizer: -0.011_312_617_346_251_117,
         density: -1.002_947_255_496_903_7,
     },
     Case {
         kind: "laplace",
-        parameters: [1.0, 0.4],
+        parameters: &[1.0, 0.4],
         value: 0.6,
         normalizer: -0.054_162_999_894_149_17,
         density: -0.722_693_448_791_641,
     },
     Case {
         kind: "log-laplace",
-        parameters: [0.2, 0.6],
+        parameters: &[0.2, 0.6],
         value: 1.7,
         normalizer: -0.057_044_403_638_205_81,
         density: -1.206_952_489_321_536_4,
     },
     Case {
         kind: "uniform",
-        parameters: [0.5, 3.0],
+        parameters: &[0.5, 3.0],
         value: 2.1,
         normalizer: 0.0,
         density: -0.916_290_731_874_155,
     },
     Case {
         kind: "log-uniform",
-        parameters: [0.5, 3.0],
+        parameters: &[0.5, 3.0],
         value: 2.1,
         normalizer: 0.0,
         density: -1.325_135_425_512_036_7,
+    },
+    Case {
+        kind: "cauchy",
+        parameters: &[1.0, 0.8],
+        value: 1.6,
+        normalizer: -0.348_324_759_607_335_94,
+        density: -1.019_548_677_556_274,
+    },
+    Case {
+        kind: "gamma",
+        parameters: &[2.0, 0.9],
+        value: 1.5,
+        normalizer: -0.031_570_491_408_447_1,
+        density: -1.018_910_035_834_402_5,
+    },
+    Case {
+        kind: "chisquare",
+        parameters: &[3.0],
+        value: 1.2,
+        normalizer: -0.198_401_818_667_878_57,
+        density: -1.229_375_936_139_816_7,
+    },
+    Case {
+        kind: "exponential",
+        parameters: &[1.5],
+        value: 0.8,
+        normalizer: -0.105_546_097_672_252_72,
+        density: -0.833_252_343_769_245,
+    },
+    Case {
+        kind: "rayleigh",
+        parameters: &[1.2],
+        value: 1.1,
+        normalizer: -0.003_642_684_231_843_451_8,
+        density: -0.685_829_138_440_629_8,
     },
 ];
 
@@ -1962,6 +2006,27 @@ fn a_prior_which_cannot_be_evaluated_is_refused() {
         (
             of_a_prior(1.3, prior(json!({"parameters": [1.0]}))),
             "takes two of them",
+        ),
+        (
+            of_a_prior(
+                1.3,
+                prior(json!({"kind": "exponential", "parameters": [1.0, 2.0]})),
+            ),
+            "and the kind exponential takes one",
+        ),
+        (
+            of_a_prior(
+                1.3,
+                prior(json!({"kind": "gamma", "parameters": [0.0, 2.0]})),
+            ),
+            "which are not both positive",
+        ),
+        (
+            of_a_prior(
+                1.3,
+                prior(json!({"kind": "chisquare", "parameters": [-1.0]})),
+            ),
+            "of the parameter -1, which is not positive",
         ),
         (
             of_a_prior(1.3, prior(json!({"parameters": [1.0, 0.0]}))),

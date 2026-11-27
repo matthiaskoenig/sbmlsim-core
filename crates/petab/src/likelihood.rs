@@ -240,8 +240,10 @@ impl Prior {
         Ok(prior)
     }
 
-    /// The support of the distribution.
-    fn support(&self) -> (f64, f64) {
+    /// The support of the distribution, the values whose density is not zero, its bounds
+    /// included.
+    #[must_use]
+    pub fn support(&self) -> (f64, f64) {
         match self.kind {
             PriorKind::Uniform | PriorKind::LogUniform => (self.parameters[0], self.parameters[1]),
             PriorKind::Cauchy | PriorKind::Laplace | PriorKind::Normal => {
@@ -340,11 +342,11 @@ impl Prior {
             PriorKind::Exponential => -p[0].ln() - x / p[0],
             PriorKind::Rayleigh => x.ln() - 2.0 * p[0].ln() - x * x / (2.0 * p[0] * p[0]),
             PriorKind::Gamma => {
-                (p[0] - 1.0) * x.ln() - x / p[1] - libm::lgamma(p[0]) - p[0] * p[1].ln()
+                power_term(p[0] - 1.0, x) - x / p[1] - libm::lgamma(p[0]) - p[0] * p[1].ln()
             }
             PriorKind::ChiSquare => {
                 let k = p[0] / 2.0;
-                (k - 1.0) * x.ln() - x / 2.0 - k * std::f64::consts::LN_2 - libm::lgamma(k)
+                power_term(k - 1.0, x) - x / 2.0 - k * std::f64::consts::LN_2 - libm::lgamma(k)
             }
         }
     }
@@ -360,6 +362,13 @@ impl Prior {
         }
         self.untruncated_log_density(x) - self.log_mass
     }
+}
+
+/// `a * ln(x)`, zero for `a = 0` at every `x`: the power of the value in the density of a gamma
+/// and a chi-squared kind, whose exponent is zero for a shape of one (two degrees of freedom),
+/// where the density is the one of an exponential kind and finite at `x = 0`.
+fn power_term(a: f64, x: f64) -> f64 {
+    if a == 0.0 { 0.0 } else { a * x.ln() }
 }
 
 /// The distribution function of the standard normal distribution, exact in the lower tail.

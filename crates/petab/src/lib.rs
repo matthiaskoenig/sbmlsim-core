@@ -39,8 +39,8 @@ mod execute;
 
 pub use likelihood::{NoiseDistribution, Prior, PriorKind};
 pub use plan::{
-    DataAtChange, Evaluation, ExtensionPolicy, InitialValue, Noise, Options, Plan, PlanParameter,
-    PlannedMeasurement, PlannedModel, PlannedSimulation,
+    DataAtChange, Evaluation, ExtensionPolicy, InitialValue, Noise, Options, ParameterScale, Plan,
+    PlanParameter, PlannedMeasurement, PlannedModel, PlannedSimulation,
 };
 pub use problem::{Directory, Files, InMemory, PetabProblem};
 
