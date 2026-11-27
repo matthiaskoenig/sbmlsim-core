@@ -126,10 +126,15 @@ simulation:
 | `terms` | the terms over the parameters, each the `parameter` (its position in `parameters`) and its `factor`; empty for a value which is a constant |
 
 The value is `constant + Σ factor * parameter` on the linear scale of the parameters, whatever
-scale an optimizer searches them in. A fit whose conditions carry derived values takes the
-difference quotients of its optimizer for its jacobian: a derived value follows more than one
-parameter in general, which the one parameter per varying target of a block of the forward
-sensitivities cannot carry.
+scale an optimizer searches them in. Its derivative in a parameter is the factor of its term,
+so a fit of `"sensitivities"` takes the forward sensitivities of its target, which is a
+varying target of the condition like the target of a parameter, and the chain rule: the
+column of a parameter is the sensitivity of its own target, unless the condition pins it, plus
+the sensitivity of the target of every derived value times the factor of its term of the
+parameter. That is as exact as the column of a parameter without derived values, and a target
+whose sensitivity the engine refuses refuses the condition. A value which is no linear form of
+the parameters, e.g. the product of two of them, is no derived value: the contract has no
+other form, and a host keeps such a condition out of a fit of the engine.
 
 The curves:
 
@@ -463,14 +468,15 @@ parameter, and the engine has two ways of giving it:
 - **The finite differences** (`"difference_quotient"`) are one simulation per parameter
   besides the one of the residuals: `k + 1` simulations of every condition, which the batch
   runs on every thread at once. A column is a forward difference over a relative step of
-  `1e-7` of the parameter, so it carries about 1e-3 of itself in error, and every condition of
-  a fit can be differenced, whatever its request holds.
+  `1e-3` of the parameter (`DIFF_STEP`, the `diff_step` of sbmlsim), so it carries about 1e-3
+  of itself in error, and every condition of a fit can be differenced, whatever its request
+  holds.
 - **The forward sensitivities** (`"sensitivities"`) are one simulation per condition, which
   integrates `dy/dp` along with `y` ([forward
   sensitivities](simulating.md#forward-sensitivities)) and gives the derivative of a residual
   instead of a difference of two of them, accurate to about 1e-8. A condition whose
-  sensitivities the engine refuses (events, a delay, an algebraic rule, a concentration or a
-  parameter which is no parameter of the model)
+  sensitivities the engine refuses (events, a discontinuity of the math, an algebraic rule, a
+  delay, the iterative linear solver)
   is refused with the condition and the reason, because a jacobian of two accuracies is worse
   than either of them.
 
