@@ -213,7 +213,7 @@ A dimension of a scan may set the target of a parameter of the fit. The engine s
 
 The target of a pinned parameter holds the `value` of the pin in that condition, on the linear scale, so the parameter has no effect on the condition and its column of the jacobian of the curves of the condition is zero. A parameter is pinned at most once per condition, at a finite value. A `derived` value of the condition reads the value of the parameter and not the pin.
 
-`sbmlsim_core.FIT_FIELDS` names the fields a build reads which an older release would not refuse: `"curve.dimension"` and `"condition.pinned"`. A release before them has no such constant, does not deny `pinned` and would set the parameter over the value of the point, and refuses a curve without a `condition` like any other request: a host reads the constant before it sends either field.
+`sbmlsim_core.FIT_FIELDS` names the fields a build reads which an older release would not refuse: `"curve.dimension"` and `"condition.pinned"`. A release before 0.35.0 has no such constant, does not deny `pinned` and would set the parameter over the value of the point, and refuses a curve without a `condition` like any other request: a host reads the constant before it sends either field.
 
 ### The likelihood of a curve
 
