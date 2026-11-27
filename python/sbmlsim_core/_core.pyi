@@ -871,6 +871,81 @@ def stats_log_sd(scale: Any, sd: float) -> float:
 def stats_lognormal_cv(sigma: float) -> float:
     """The coefficient of variation `sqrt(exp(sigma²) - 1)` of a log-normal (since 0.40.0)."""
 
+def stats_mean_se(x: numpy.typing.ArrayLike) -> tuple[float, float, int]:
+    """The mean, its standard error `s / sqrt(n)` and the number of draws (since 0.40.0).
+
+    `sbmlsim.uncertainty.statistics.mean_se`: the draws which are `NaN` dropped, `nan`
+    without draws, the error `nan` without two of them and of infinite draws.
+    """
+
+def stats_sd_se(x: numpy.typing.ArrayLike) -> tuple[float, float, int]:
+    """The standard deviation, its standard error and the number of draws (since 0.40.0).
+
+    `sbmlsim.uncertainty.statistics.sd_se`, the error by the delta method with the fourth
+    central moment: `nan` without two draws and of infinite draws. Raises `OverflowError`
+    for a fourth power of the standard deviation past the largest double, as python does.
+    """
+
+def stats_quantile(x: numpy.typing.ArrayLike, q: float) -> float:
+    """The quantile `q` of the draws which are not `NaN`, `np.nanquantile` (since 0.40.0).
+
+    numpy's linear method, `nan` without draws. Raises `ValueError` for a probability
+    outside [0, 1].
+    """
+
+def stats_quantiles(
+    x: numpy.typing.ArrayLike, qs: numpy.typing.ArrayLike
+) -> numpy.typing.NDArray[numpy.float64]:
+    """The quantiles `qs` of the draws which are not `NaN`, `np.nanquantile` (since 0.40.0).
+
+    Raises `ValueError` as `stats_quantile`.
+    """
+
+def stats_quantile_ci(
+    x: numpy.typing.ArrayLike, q: float, level: float = 0.95
+) -> tuple[float, float, float, int]:
+    """A quantile, the ends of its interval and the number of draws (since 0.40.0).
+
+    `sbmlsim.uncertainty.statistics.quantile_ci`: the order statistics of the ranks of the
+    binomial distribution, an end beyond the draws `nan`, all `nan` without draws. Raises
+    `ValueError` for a probability outside [0, 1] and a level outside [-1, 1].
+    """
+
+def stats_first_order_given_data(
+    x: numpy.typing.ArrayLike, y: numpy.typing.ArrayLike, n_bins: int | None = None
+) -> float:
+    """The first-order index of an input from given draws, by binning (since 0.40.0).
+
+    `sbmlsim.uncertainty.statistics.first_order_given_data`: `nan` with fewer than 8
+    finite pairs and an output without variance. Raises `ValueError` for draws of other
+    lengths and no bins, `IndexError` for one draw against several and `OverflowError` for
+    a square of a bin past the largest double, as the python does.
+    """
+
+def stats_precise(values: numpy.typing.ArrayLike, rel_tol: float) -> tuple[bool, float]:
+    """Whether the draws of an output are precise enough, and the largest width (since 0.40.0).
+
+    `_precise` of `sbmlsim.uncertainty.propagation`: the half widths of the 95 % intervals
+    of the mean, the standard deviation and the 5 % and 95 % quantiles relative to the
+    standard deviation. Raises `OverflowError` as `stats_sd_se`.
+    """
+
+def stats_interval_parameters(
+    low: SupportsFloat,
+    high: SupportsFloat,
+    level: SupportsFloat = 0.95,
+    *,
+    lognormal: bool,
+) -> tuple[float, float]:
+    """The parameters of the distribution of a reported interval (since 0.40.0).
+
+    `Uncertain.interval`: the median and the coefficient of variation of a log-normal, the
+    mean and the standard deviation of a normal. Raises `ValueError` for a level outside
+    (0, 1), an empty interval and a log-normal one which is not positive,
+    `ZeroDivisionError` for a level whose quantile is 0 and `OverflowError` for an
+    exponential past the largest double, as the python does.
+    """
+
 ODE_CONTRACT: str
 
 class _EquationSystem:

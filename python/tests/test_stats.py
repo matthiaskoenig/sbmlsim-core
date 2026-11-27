@@ -651,3 +651,244 @@ def test_a_strided_an_integer_and_a_fortran_matrix_are_read_as_their_values() ->
         stats.fisher_intervals([2.0, 3.0], [1.0, 1.0], ["LOG", "LINEAR"]),
     )
     assert expected["rank"] == 4
+
+
+# --- uncertainty ------------------------------------------------------------------------------
+
+UNCERTAINTY = cases("uncertainty", "")
+
+#: the tolerance of a value of the quantile of the normal distribution, relative
+NORMAL = 1e-13
+#: the probabilities of the quantiles and of their intervals, `QUANTILE_QS` of the oracles
+QUANTILE_QS = [0.05, 0.5, 0.95]
+#: the probabilities of the quantiles, `QUANTILES_QS` of the oracles
+QUANTILES_QS = [0.0, 0.05, 0.25, 0.5, 0.95, 1.0]
+#: the exceptions the python raised, by the names the fixture holds
+EXCEPTIONS = {
+    "ValueError": ValueError,
+    "OverflowError": OverflowError,
+    "ZeroDivisionError": ZeroDivisionError,
+    "IndexError": IndexError,
+}
+
+
+def of_uncertainty(prefix: str) -> list[tuple[str, dict[str, Any]]]:
+    """The cases of `uncertainty.json` whose names start with `prefix`, as parameters."""
+    return [
+        (name, case) for name, case in UNCERTAINTY.items() if name.startswith(prefix)
+    ]
+
+
+def assert_raised(call: Any, expected: Any, rtol: float = KERNEL) -> Any:
+    """Hold a call of a binding to the outcome of the python: the same class and message
+    of the exception it raised, or values within `rtol`; returns the value."""
+    if isinstance(expected, dict) and "error" in expected:
+        with pytest.raises(EXCEPTIONS[expected["exception"]]) as raised:
+            call()
+        assert type(raised.value) is EXCEPTIONS[expected["exception"]]
+        assert str(raised.value) == expected["error"]
+        return None
+    found = call()
+    numpy.testing.assert_allclose(
+        numpy.asarray(found, dtype=float), expected, rtol=rtol, atol=0.0
+    )
+    return found
+
+
+def draws_of(case: dict[str, Any]) -> numpy.ndarray:
+    """The draws of a case of the statistics: its `x`, or the formula of its `n`."""
+    if "x" in case["inputs"]:
+        return numpy.asarray(case["inputs"]["x"], dtype=float)
+    x = large_residuals(case["inputs"]["n"])
+    assert x[:4].tolist() == case["inputs"]["first"]
+    return x
+
+
+@pytest.mark.parametrize(("name", "case"), of_uncertainty("statistics"))
+def test_the_statistics_of_draws_are_the_ones_of_sbmlsim(
+    name: str, case: dict[str, Any]
+) -> None:
+    x = draws_of(case)
+    expected = case["expected"]
+    mean_se = assert_raised(lambda: stats.mean_se(x), expected["mean_se"])
+    assert isinstance(mean_se[2], int)
+    assert_raised(lambda: stats.sd_se(x), expected["sd_se"])
+    for q, outcome in zip(QUANTILE_QS, expected["quantile_ci"], strict=True):
+        found = assert_raised(lambda q=q: stats.quantile_ci(x, q), outcome)
+        numpy.testing.assert_array_equal(found, stats.quantile_ci(x, q, 0.95))
+    assert_raised(lambda: stats.quantiles(x, QUANTILES_QS), expected["quantiles"])
+    for q, outcome in zip(QUANTILES_QS, expected["quantiles"], strict=True):
+        assert_raised(lambda q=q: stats.quantile(x, q), outcome)
+
+
+@pytest.mark.parametrize(("name", "case"), of_uncertainty("statistics_formula/"))
+def test_the_mean_of_many_draws_is_the_one_of_numpy_bit_for_bit(
+    name: str, case: dict[str, Any]
+) -> None:
+    x = draws_of(case)
+    assert list(stats.mean_se(x)) == case["expected"]["mean_se"]
+    assert stats.sd_se(x)[0] == case["expected"]["sd_se"][0]
+
+
+@pytest.mark.parametrize(
+    ("name", "case"), of_uncertainty("quantile_ci/") + of_uncertainty("quantiles/")
+)
+def test_quantile_ci_refuses_and_returns_nan_as_sbmlsim(
+    name: str, case: dict[str, Any]
+) -> None:
+    inputs = case["inputs"]
+    if name.startswith("quantiles/"):
+        assert_raised(
+            lambda: stats.quantiles(inputs["x"], inputs["qs"]), case["expected"]
+        )
+        assert_raised(
+            lambda: stats.quantile(inputs["x"], max(inputs["qs"])), case["expected"]
+        )
+        return
+    assert_raised(
+        lambda: stats.quantile_ci(inputs["x"], inputs["q"], inputs["level"]),
+        case["expected"],
+    )
+
+
+def paired_draws(n: int) -> tuple[numpy.ndarray, numpy.ndarray]:
+    """The draws of `paired_draws` of `crates/stats/oracles/make_oracles.py`."""
+    x = large_residuals(n)
+    return x, x * x + large_residuals(n + 13)[13:]
+
+
+@pytest.mark.parametrize(
+    ("name", "case"),
+    of_uncertainty("first_order/") + of_uncertainty("first_order_formula/"),
+)
+def test_the_first_order_index_from_given_data_is_the_one_of_sbmlsim(
+    name: str, case: dict[str, Any]
+) -> None:
+    inputs = case["inputs"]
+    if "n" in inputs:
+        x, y = paired_draws(inputs["n"])
+        assert x[:4].tolist() == inputs["first_x"]
+        assert y[:4].tolist() == inputs["first_y"]
+        assert stats.first_order_given_data(x, y) == case["expected"]
+        return
+    x, y = (
+        numpy.asarray(inputs["x"], dtype=float),
+        numpy.asarray(inputs["y"], dtype=float),
+    )
+    if inputs["n_bins"] is None:
+        assert_raised(lambda: stats.first_order_given_data(x, y), case["expected"])
+    assert_raised(
+        lambda: stats.first_order_given_data(x, y, inputs["n_bins"]), case["expected"]
+    )
+
+
+@pytest.mark.parametrize(
+    ("name", "case"), of_uncertainty("precise/") + of_uncertainty("precise_formula/")
+)
+def test_the_precision_of_an_output_is_the_one_of_sbmlsim(
+    name: str, case: dict[str, Any]
+) -> None:
+    inputs = case["inputs"]
+    values = (
+        large_residuals(inputs["n"])
+        if "n" in inputs
+        else numpy.asarray(inputs["values"], dtype=float)
+    )
+    found = assert_raised(
+        lambda: stats.precise(values, inputs["rel_tol"]), case["expected"]
+    )
+    if found is not None:
+        assert found[0] is case["expected"][0]
+
+
+@pytest.mark.parametrize(("name", "case"), of_uncertainty("interval/"))
+def test_the_parameters_of_an_interval_are_the_ones_of_uncertain_interval(
+    name: str, case: dict[str, Any]
+) -> None:
+    inputs = case["inputs"]
+    assert_raised(
+        lambda: stats.interval_parameters(
+            inputs["low"],
+            inputs["high"],
+            inputs["level"],
+            lognormal=inputs["lognormal"],
+        ),
+        case["expected"],
+        rtol=NORMAL,
+    )
+
+
+def test_an_interval_writes_its_numbers_as_python_writes_them() -> None:
+    # the python writes the objects it was given, `2` of the int 2 and not `2.0`
+    for call, message in [
+        (
+            lambda: stats.interval_parameters(2, 1, lognormal=False),
+            "The interval [2, 1] is empty.",
+        ),
+        (
+            lambda: stats.interval_parameters(1, numpy.int64(1), lognormal=True),
+            "The interval [1, 1] is empty.",
+        ),
+        (
+            lambda: stats.interval_parameters(-1, 2.5, lognormal=True),
+            "The log-normal interval [-1, 2.5] must be positive.",
+        ),
+        (
+            lambda: stats.interval_parameters(1.0, 2.0, 1, lognormal=True),
+            "The level 1 of an interval must be in (0, 1).",
+        ),
+        (
+            lambda: stats.interval_parameters(
+                1.0, 2.0, numpy.float64(0.0), lognormal=False
+            ),
+            "The level 0.0 of an interval must be in (0, 1).",
+        ),
+    ]:
+        with pytest.raises(ValueError) as raised:
+            call()
+        assert str(raised.value) == message
+    # the level of 95 % by default, and the parameters of integers those of their doubles
+    assert stats.interval_parameters(1, 2, lognormal=True) == stats.interval_parameters(
+        1.0, 2.0, 0.95, lognormal=True
+    )
+    with pytest.raises(TypeError):
+        stats.interval_parameters(1.0, 2.0)  # ty: ignore[missing-argument]
+
+
+def test_no_bins_and_negative_bins_are_refused_as_numpy_refuses_them() -> None:
+    case = UNCERTAINTY["first_order/bins_0"]
+    x, y = case["inputs"]["x"], case["inputs"]["y"]
+    for bins in (0, -3):
+        with pytest.raises(
+            ValueError, match=r"^number sections must be larger than 0\.$"
+        ):
+            stats.first_order_given_data(x, y, bins)
+
+
+def test_strided_integer_and_fortran_draws_are_read_as_their_values() -> None:
+    x = large_residuals(1000)
+    case = UNCERTAINTY["statistics_formula/1000"]
+    strided = numpy.repeat(x, 2)[::2]
+    fortran = numpy.asfortranarray(x.reshape(40, 25))
+    assert not strided.flags.c_contiguous
+    assert not fortran.flags.c_contiguous
+    # a matrix in Fortran order is read in the order numpy ravels it, the one of `x`
+    for array in (strided, fortran):
+        assert list(stats.mean_se(array)) == case["expected"]["mean_se"]
+    assert stats.quantile_ci(fortran, 0.5) == stats.quantile_ci(fortran.ravel(), 0.5)
+    xp, yp = paired_draws(1000)
+    expected = UNCERTAINTY["first_order_formula/1000"]["expected"]
+    assert stats.first_order_given_data(numpy.repeat(xp, 3)[::3], yp) == expected
+    # integers, converted to doubles
+    integers = numpy.array([3, 1, 2, 5, 4, 8, 7, 6, 9], dtype=numpy.int32)
+    doubles = integers.astype(float)
+    assert stats.mean_se(integers) == stats.mean_se(doubles)
+    assert stats.sd_se(integers[::-1]) == stats.sd_se(doubles[::-1])
+    assert stats.quantile(integers, 0.3) == stats.quantile(doubles, 0.3)
+    numpy.testing.assert_array_equal(
+        stats.quantiles(integers, numpy.array([0, 1])), [1.0, 9.0]
+    )
+    assert stats.precise(integers, 1.0) == stats.precise(doubles, 1.0)
+    assert stats.first_order_given_data(
+        integers, integers[::-1]
+    ) == stats.first_order_given_data(doubles, doubles[::-1])

@@ -17,6 +17,10 @@
 //!   `sbmlsim.fit.fisher.FisherInformation` gives them.
 //! - [`posterior`]: the Laplace approximation of the posterior from its precision and the
 //!   correlations and marginals of the posterior, as `sbmlsim.fit.posterior` gives them.
+//! - [`uncertainty`]: the statistics of the draws of an uncertainty analysis with their errors
+//!   (the mean, the standard deviation, the quantiles and their intervals, the first-order
+//!   index from given data), the precision of an output and the parameters of a reported
+//!   interval, as `sbmlsim.uncertainty` gives them.
 //!
 //! Every transcendental function comes from the crate libm, so one input gives the same bits
 //! on every target, natively and in wasm. The tests hold every function to the values of numpy
@@ -26,8 +30,11 @@
 pub mod fisher;
 pub mod linalg;
 pub mod metrics;
+mod numpy;
 pub mod posterior;
+mod python;
 pub mod special;
+pub mod uncertainty;
 
 /// An error of the arguments of a function.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]

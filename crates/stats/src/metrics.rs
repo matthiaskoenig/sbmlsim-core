@@ -18,82 +18,13 @@
 //! where it raises one. A sum is numpy's pairwise sum, so a metric is the one of numpy to the
 //! last bits, not only to its rounding.
 
+use crate::numpy::{numpy_mean, numpy_sum};
+use crate::python::python_repr;
 use crate::{Result, StatsError, special};
 
 /// The points with a ratio a subset needs for its own limits of agreement, see
 /// [`subset_agreement`].
 pub const MIN_POINTS_SUBSET_AGREEMENT: usize = 10;
-
-/// The block of the pairwise sum of numpy (`PW_BLOCKSIZE`), below which it sums in eight
-/// lanes.
-const PAIRWISE_BLOCK: usize = 128;
-
-/// The sum of `value(start..start + n)` as numpy sums a contiguous array of doubles
-/// (`np.add.reduce`, `pairwise_sum` of its loops): below eight values in order, up to a block
-/// in eight lanes which are added as a tree, above that the halves (cut at a multiple of
-/// eight) recursively.
-fn pairwise(start: usize, n: usize, value: &impl Fn(usize) -> f64) -> f64 {
-    if n < 8 {
-        let mut sum = 0.0;
-        for i in start..start + n {
-            sum += value(i);
-        }
-        sum
-    } else if n <= PAIRWISE_BLOCK {
-        let mut lanes = [0.0; 8];
-        for (j, lane) in lanes.iter_mut().enumerate() {
-            *lane = value(start + j);
-        }
-        let mut i = 8;
-        while i < n - n % 8 {
-            for (j, lane) in lanes.iter_mut().enumerate() {
-                *lane += value(start + i + j);
-            }
-            i += 8;
-        }
-        let mut sum = ((lanes[0] + lanes[1]) + (lanes[2] + lanes[3]))
-            + ((lanes[4] + lanes[5]) + (lanes[6] + lanes[7]));
-        for k in i..n {
-            sum += value(start + k);
-        }
-        sum
-    } else {
-        let half = n / 2;
-        let half = half - half % 8;
-        pairwise(start, half, value) + pairwise(start + half, n - half, value)
-    }
-}
-
-/// The sum of `value(0..n)` as `np.sum` of the array of the values: the reduction starts at
-/// the identity 0 and adds the pairwise sum of all of them (numpy 2.5 over the whole of a
-/// contiguous array, not in blocks of its buffer).
-pub(crate) fn numpy_sum(n: usize, value: impl Fn(usize) -> f64) -> f64 {
-    0.0 + pairwise(0, n, &value)
-}
-
-/// The mean of `value(0..n)` as `np.mean`: the sum divided by the count, `nan` of none.
-pub(crate) fn numpy_mean(n: usize, value: impl Fn(usize) -> f64) -> f64 {
-    numpy_sum(n, value) / n as f64
-}
-
-/// The text python gives a double, `repr`: the shortest digits which read back as it, in
-/// decimals from 1e-4 to below 1e16 and with an exponent of a sign and two digits at least
-/// outside (`1e-05`, `1e+16`), `nan`, `inf` and `-inf`.
-pub(crate) fn python_repr(x: f64) -> String {
-    if x.is_nan() {
-        return "nan".to_owned();
-    }
-    // Debug: the shortest digits, in decimals in the same range as python
-    let text = format!("{x:?}");
-    match text.split_once('e') {
-        Some((mantissa, exponent)) => {
-            let exponent: i32 = exponent.parse().expect("an exponent is an integer");
-            let sign = if exponent < 0 { '-' } else { '+' };
-            format!("{mantissa}e{sign}{:02}", exponent.unsigned_abs())
-        }
-        None => text,
-    }
-}
 
 /// The error of a fold criterion of points of another number of predictions than values.
 fn check_lengths(y: &[f64], f: &[f64]) -> Result<()> {
@@ -449,39 +380,4 @@ pub fn subset_agreement(y: &[f64], f: &[f64]) -> Result<Option<(f64, f64, f64, f
         t * sd / libm::sqrt(count),
         t * libm::sqrt(3.0 * (sd * sd) / count),
     )))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_double_is_written_as_python_writes_it() {
-        for (x, text) in [
-            (-1.0, "-1.0"),
-            (-0.0, "-0.0"),
-            (0.5, "0.5"),
-            (1e-4, "0.0001"),
-            (-1e-5, "-1e-05"),
-            (1.5e-7, "1.5e-07"),
-            (1e16, "1e+16"),
-            (9_999_999_999_999_998.0, "9999999999999998.0"),
-            (123_456_789_012_345.67, "123456789012345.67"),
-            (-1e300, "-1e+300"),
-            (5e-324, "5e-324"),
-            (f64::NAN, "nan"),
-            (f64::INFINITY, "inf"),
-            (f64::NEG_INFINITY, "-inf"),
-        ] {
-            assert_eq!(python_repr(x), text);
-        }
-    }
-
-    #[test]
-    fn the_pairwise_sum_of_few_values_is_the_sum_in_order() {
-        assert_eq!(numpy_sum(0, |_| 1.0), 0.0);
-        assert!(numpy_mean(0, |_| 1.0).is_nan());
-        let values = [1.0, 2.0, 3.0];
-        assert_eq!(numpy_sum(3, |i| values[i]), 6.0);
-    }
 }

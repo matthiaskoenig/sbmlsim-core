@@ -18,16 +18,17 @@ modules take two:
       uv run --no-project --with numpy --with scipy \
           python crates/stats/oracles/make_oracles.py
 
-- `metrics` and `fisher` call the functions of sbmlsim itself (`sbmlsim.fit.metrics`,
-  `sbmlsim.fit.evaluation`, `sbmlsim.fit.fisher` and `sbmlsim.fit.posterior`), so their
-  environment has sbmlsim as well, with the python and the package index of libroadrunner
-  sbmlsim needs:
+- `metrics`, `fisher` and `uncertainty` call the functions of sbmlsim itself
+  (`sbmlsim.fit.metrics`, `sbmlsim.fit.evaluation`, `sbmlsim.fit.fisher`,
+  `sbmlsim.fit.posterior`, `sbmlsim.uncertainty.statistics`, `_precise` of
+  `sbmlsim.uncertainty.propagation` and `Uncertain.interval`), so their environment has
+  sbmlsim as well, with the python and the package index of libroadrunner sbmlsim needs:
 
       uv run --no-project --python 3.14 \
           --index https://matthiaskoenig.github.io/roadrunner-wheels/simple/ \
           --index-strategy unsafe-best-match \
           --with sbmlsim==0.53.0 --with numpy --with scipy \
-          python crates/stats/oracles/make_oracles.py metrics fisher
+          python crates/stats/oracles/make_oracles.py metrics fisher uncertainty
 
 Modules given as arguments write only their fixtures (`... make_oracles.py special`); a
 module of sbmlsim in an environment without it stops before any fixture is written.
@@ -1107,15 +1108,266 @@ def fisher() -> dict[str, Any]:
     return cases
 
 
+# --- uncertainty ------------------------------------------------------------------------------
+
+
+def raised(function: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    """The value of a call, `{"error": <message>, "exception": <class>}` for one which raised.
+
+    The statistics of the uncertainty raise more than a ValueError on the edges: an
+    OverflowError of a power or an exponential past the largest double, a
+    ZeroDivisionError and an IndexError of numpy, whose class the bindings raise as well.
+    """
+    try:
+        return function(*args, **kwargs)
+    except (ValueError, OverflowError, ZeroDivisionError, IndexError) as error:
+        return {"error": str(error), "exception": type(error).__name__}
+
+
+def paired_draws(n: int) -> tuple[np.ndarray, np.ndarray]:
+    """Get the draws `x` and `y` of `n` pairs of the formula of `large_residuals`.
+
+    `x = large_residuals(n)` and `y = x * x + large_residuals(n + 13)[13:]`, of exact
+    operations of doubles: the tests compute them bit for bit as here.
+    """
+    x = large_residuals(n)
+    return x, x * x + large_residuals(n + 13)[13:]
+
+
+#: the probabilities of the quantiles and of their intervals of every input of the statistics
+QUANTILE_QS = [0.05, 0.5, 0.95]
+#: the probabilities of the quantiles of every input, the ends included
+QUANTILES_QS = [0.0, 0.05, 0.25, 0.5, 0.95, 1.0]
+
+
+def uncertainty() -> dict[str, Any]:
+    """The cases of `uncertainty`: `sbmlsim.uncertainty.statistics` and its siblings.
+
+    The mean, the standard deviation and the quantiles of draws with their errors
+    (`mean_se`, `sd_se`, `quantile_ci`) and `np.nanquantile`, of 0, 1, 2, 7, 8 and 1000
+    draws (the last of the formula of `large_residuals`), with not a number, infinite
+    draws and without variance; the edges of `quantile_ci` (the probabilities 0 and 1,
+    the levels 0 and 1 and the arguments numpy and scipy refuse); the first-order index
+    from given data (`first_order_given_data`) of ties, too few pairs, an output
+    without variance and of bins of every number; the precision of an output
+    (`propagation._precise`); and the parameters of the distribution of a reported
+    interval (`Uncertain.interval`, the median and the coefficient of variation of a
+    log-normal, the mean and the standard deviation of a normal).
+    """
+    from sbmlsim.uncertainty import statistics as st
+    from sbmlsim.uncertainty.propagation import _precise
+    from sbmlsim.uncertainty.quantity import Uncertain
+
+    rng = np.random.default_rng(20261127)
+    cases: dict[str, Any] = {}
+
+    def statistics_of(x: np.ndarray) -> dict[str, Any]:
+        with np.errstate(all="ignore"):
+            return {
+                "mean_se": raised(st.mean_se, x),
+                "sd_se": raised(st.sd_se, x),
+                "quantile_ci": [raised(st.quantile_ci, x, q) for q in QUANTILE_QS],
+                "quantiles": np.nanquantile(x, QUANTILES_QS)
+                if np.any(~np.isnan(x))
+                else [math.nan] * len(QUANTILES_QS),
+            }
+
+    draws: dict[str, np.ndarray] = {
+        "empty": np.array([]),
+        "one": np.array([0.7]),
+        "two": np.array([0.7, -1.2]),
+        "not_a_number_only": np.array([np.nan, np.nan]),
+        "zero_variance": np.full(9, 2.5),
+        "with_not_a_number": np.array([1.0, np.nan, 2.0, 4.0, np.nan, 8.0]),
+        "infinite": np.array([1.0, np.inf, 2.0, 3.0]),
+        "both_infinities": np.array([np.inf, 1.0, 2.0, -np.inf]),
+        "infinite_only": np.array([np.inf, np.inf]),
+        "one_infinite": np.array([np.inf]),
+        # the fourth power of the standard deviation past the largest double, which
+        # python refuses with an OverflowError, and a variance which overflows
+        "overflow_power": np.array([0.0, 1e100, -1e100]),
+        "overflow_variance": np.array([1e300, -1e300, 1e300]),
+        "ties": np.array([3.0, 1.0, 3.0, 2.0, 3.0, 1.0, 2.0, 3.0]),
+        "negative_zero": np.array([-0.0, 0.0, -0.0]),
+    }
+    for n in (7, 8):
+        draws[f"random_{n}"] = rng.standard_normal(n) * np.exp(rng.standard_normal(n))
+    draws["random_8_not_a_number"] = draws["random_8"].copy()
+    draws["random_8_not_a_number"][[2, 5]] = np.nan
+    for label, x in draws.items():
+        cases[f"statistics/{label}"] = {"inputs": {"x": x}, "expected": statistics_of(x)}
+    for n in (1000, 100003):
+        x = large_residuals(n)
+        cases[f"statistics_formula/{n}"] = {
+            "inputs": {"n": n, "first": x[:4]},
+            "expected": statistics_of(x),
+        }
+
+    # the edges of the probability and of the level of the interval of a quantile
+    edges = {
+        "q0": (0.0, 0.95),
+        "q1": (1.0, 0.95),
+        "q_above": (1.5, 0.95),
+        "q_below": (-0.1, 0.95),
+        "q_not_a_number": (math.nan, 0.95),
+        "level0": (0.5, 0.0),
+        "level1": (0.5, 1.0),
+        "level_above": (0.5, 1.5),
+        "level_not_a_number": (0.5, math.nan),
+        "level_minus_one": (0.5, -1.0),
+        "level_negative": (0.5, -0.5),
+        "level50": (0.3, 0.5),
+        "level99": (0.99, 0.99),
+    }
+    for size in (0, 3, 10):
+        x = rng.standard_normal(size)
+        for label, (q, level) in edges.items():
+            cases[f"quantile_ci/{size}_{label}"] = {
+                "inputs": {"x": x, "q": q, "level": level},
+                "expected": raised(st.quantile_ci, x, q, level),
+            }
+
+    # the quantiles numpy refuses, of probabilities outside [0, 1] and not a number
+    x = np.array([1.0, 2.0, 3.0])
+    for label, qs in {
+        "above": [0.5, 1.5],
+        "below": [-0.1],
+        "not_a_number": [math.nan],
+    }.items():
+        cases[f"quantiles/{label}"] = {
+            "inputs": {"x": x, "qs": qs},
+            "expected": raised(np.nanquantile, x, qs),
+        }
+
+    # the first-order index from given data
+    def first_order(label: str, x: Any, y: Any, n_bins: int | None = None) -> None:
+        with np.errstate(all="ignore"):
+            expected = raised(st.first_order_given_data, x, y, n_bins)
+        cases[f"first_order/{label}"] = {
+            "inputs": {"x": x, "y": y, "n_bins": n_bins},
+            "expected": expected,
+        }
+
+    for n in (7, 8, 9, 20, 100):
+        x = rng.standard_normal(n)
+        first_order(f"random_{n}", x, 2.0 * x + rng.standard_normal(n))
+    # an input without an effect, ties of the input which the stable sort keeps in order
+    x = np.round(rng.standard_normal(50), 1)
+    first_order("no_effect", x, rng.standard_normal(50))
+    first_order("ties", x, x * x + 0.1 * rng.standard_normal(50))
+    first_order("ties_bins_3", x, x * x + 0.1 * rng.standard_normal(50), 3)
+    first_order("negative_zero_ties", np.array([0.0, -0.0] * 6), np.arange(12.0))
+    x = rng.standard_normal(30)
+    y = x + rng.standard_normal(30)
+    for bins in (1, 2, 7, 29, 30, 31, 0):
+        first_order(f"bins_{bins}", x, y, bins)
+    first_order("bins_0_too_few", x[:7], y[:7], 0)
+    first_order("no_variance", x, np.full(30, 4.0))
+    first_order("no_variance_bins_0", x, np.full(30, 4.0), 0)
+    with_gaps_x, with_gaps_y = x.copy(), y.copy()
+    with_gaps_x[[1, 4]] = [np.nan, np.inf]
+    with_gaps_y[[2, 9, 11]] = [np.nan, -np.inf, np.inf]
+    first_order("not_finite_pairs", with_gaps_x, with_gaps_y)
+    first_order("variance_overflows", x, y * 1e300)
+    first_order("lengths", x, y[:29])
+    first_order("lengths_one_x", x[:1], y)
+    first_order("lengths_one_y", x, y[:1])
+    first_order("lengths_one_and_empty", x[:1], y[:0])
+    first_order("lengths_empty_and_one", x[:0], y[:1])
+    first_order("empty", x[:0], y[:0])
+    for n in (1000, 100003):
+        x, y = paired_draws(n)
+        cases[f"first_order_formula/{n}"] = {
+            "inputs": {"n": n, "first_x": x[:4], "first_y": y[:4]},
+            "expected": st.first_order_given_data(x, y),
+        }
+
+    # the precision of the draws of an output
+    def precise(label: str, values: np.ndarray, rel_tol: float) -> None:
+        with np.errstate(all="ignore"):
+            expected = raised(_precise, values, rel_tol)
+        cases[f"precise/{label}"] = {
+            "inputs": {"values": values, "rel_tol": rel_tol},
+            "expected": expected,
+        }
+
+    precise("seven", rng.standard_normal(7), 0.1)
+    precise("seven_and_not_a_number", np.append(rng.standard_normal(7), np.nan), 0.1)
+    precise("constant", np.full(10, 3.0), 0.1)
+    precise("random_8", rng.standard_normal(8), 10.0)
+    precise("random_50", rng.standard_normal(50), 0.5)
+    precise("random_50_strict", rng.standard_normal(50), 0.1)
+    precise("infinite", np.append(rng.standard_normal(20), np.inf), 0.1)
+    precise("overflow", np.array([0.0, 1e100, -1e100] * 3), 0.1)
+    # enough draws for both ends of the intervals of the 5 % and the 95 % quantile
+    values = rng.standard_normal(200)
+    values[[3, 50, 120]] = np.nan
+    precise("random_200_not_a_number", values, 0.3)
+    for n in (1000, 100003):
+        values = large_residuals(n)
+        for rel_tol in (0.05, 0.5):
+            cases[f"precise_formula/{n}_{rel_tol}"] = {
+                "inputs": {"n": n, "rel_tol": rel_tol},
+                "expected": _precise(values, rel_tol),
+            }
+
+    # the parameters of the distribution of a reported interval
+    def interval(low: float, high: float, level: float, lognormal: bool) -> Any:
+        u = Uncertain.interval(
+            low, high, level=level, shape="log-normal" if lognormal else "normal"
+        )
+        d = u.distribution
+        return [d.median, d.cv] if lognormal else [d.mean, d.sd]
+
+    intervals = {
+        "positive": (1.0, 2.0, 0.95),
+        "positive_90": (0.3, 7.5, 0.9),
+        "positive_50": (10.0, 11.0, 0.5),
+        "wide": (1e-6, 1e6, 0.99),
+        "narrow": (1.0, 1.0 + 1e-12, 0.95),
+        "negative": (-1.0, 2.0, 0.9),
+        "infinite": (1.0, math.inf, 0.95),
+        "minus_infinite": (-math.inf, 1.0, 0.95),
+        "subnormal": (5e-324, 1e-323, 0.95),
+        "empty": (2.0, 1.0, 0.9),
+        "point": (1.0, 1.0, 0.9),
+        "not_a_number": (math.nan, 2.0, 0.9),
+        "level0": (1.0, 2.0, 0.0),
+        "level1": (1.0, 2.0, 1.0),
+        "level_not_a_number": (1.0, 2.0, math.nan),
+        # 0.5 + level / 2 is 0.5: a quantile of zero, a division by it
+        "level_tiny": (1.0, 2.0, 1e-17),
+        # the variance of the logarithm past the exponential of the largest double
+        "exp_overflow": (1e-300, 1e300, 1e-10),
+        "zero": (0.0, 1.0, 0.95),
+        # neighbouring doubles of one logarithm: a log-normal without a spread
+        "logarithms_equal": (1e300, math.nextafter(1e300, math.inf), 0.95),
+    }
+    for label, (low, high, level) in intervals.items():
+        for lognormal in (False, True):
+            name = "lognormal" if lognormal else "normal"
+            cases[f"interval/{label}_{name}"] = {
+                "inputs": {
+                    "low": low,
+                    "high": high,
+                    "level": level,
+                    "lognormal": lognormal,
+                },
+                "expected": raised(interval, low, high, level, lognormal),
+            }
+    return cases
+
+
 GENERATORS: dict[str, Callable[[], dict[str, Any]]] = {
     "special": special,
     "linalg": linalg,
     "metrics": metrics,
     "fisher": fisher,
+    "uncertainty": uncertainty,
 }
 
 #: the modules whose fixture is of the functions of sbmlsim, whose version it records
-OF_SBMLSIM = {"metrics", "fisher"}
+OF_SBMLSIM = {"metrics", "fisher", "uncertainty"}
 
 
 def main(modules: list[str]) -> None:

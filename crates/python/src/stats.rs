@@ -12,9 +12,10 @@ use numpy::ndarray::{Array2, ArrayD, IxDyn};
 use numpy::{
     AllowTypeChange, PyArray1, PyArray2, PyArrayDyn, PyArrayLikeDyn, PyUntypedArrayMethods,
 };
-use pyo3::exceptions::PyValueError;
+use pyo3::exceptions::{PyIndexError, PyOverflowError, PyValueError, PyZeroDivisionError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyFloat, PyString};
+use sbmlsim_stats::uncertainty::{self, Exception};
 use sbmlsim_stats::{Scale, StatsError, fisher, linalg, metrics, posterior};
 
 /// The array of values of numpy the functions take, of any shape.
@@ -48,6 +49,25 @@ impl Number {
         value: 2.0,
         written: None,
     };
+
+    /// The level of an interval without one, 95 %.
+    const LEVEL_95: Self = Self {
+        value: 0.95,
+        written: None,
+    };
+
+    /// The message with the number as python writes the object given, where the crate wrote
+    /// the double between `before` and `after`.
+    fn written_in(&self, message: String, before: &str, after: &str) -> String {
+        match &self.written {
+            Some((double, original)) => message.replacen(
+                &format!("{before}{double}{after}"),
+                &format!("{before}{original}{after}"),
+                1,
+            ),
+            None => message,
+        }
+    }
 
     /// The error of the crate with the number as python writes the object given.
     fn error(&self, error: StatsError) -> PyErr {
@@ -475,6 +495,100 @@ pub(crate) fn stats_lognormal_cv(sigma: f64) -> f64 {
     posterior::lognormal_cv(sigma)
 }
 
+/// The error of a function of the uncertainty as the exception the python raised: a
+/// `ValueError`, an `OverflowError`, a `ZeroDivisionError` or an `IndexError`.
+fn uncertainty_error(error: StatsError) -> PyErr {
+    match uncertainty::exception(&error) {
+        Exception::Value => PyValueError::new_err(error.0),
+        Exception::Overflow => PyOverflowError::new_err(error.0),
+        Exception::ZeroDivision => PyZeroDivisionError::new_err(error.0),
+        Exception::Index => PyIndexError::new_err(error.0),
+    }
+}
+
+/// The mean, its standard error and the number of draws which are not `NaN`.
+#[pyfunction]
+pub(crate) fn stats_mean_se(x: Values<'_>) -> (f64, f64, usize) {
+    uncertainty::mean_se(&values(&x))
+}
+
+/// The standard deviation, its standard error by the delta method and the number of draws
+/// which are not `NaN`.
+#[pyfunction]
+pub(crate) fn stats_sd_se(x: Values<'_>) -> PyResult<(f64, f64, usize)> {
+    uncertainty::sd_se(&values(&x)).map_err(uncertainty_error)
+}
+
+/// The quantile of the draws which are not `NaN`, numpy's linear one.
+#[pyfunction]
+pub(crate) fn stats_quantile(x: Values<'_>, q: f64) -> PyResult<f64> {
+    uncertainty::quantile(&values(&x), q).map_err(uncertainty_error)
+}
+
+/// The quantiles of the draws which are not `NaN`, numpy's linear ones.
+#[pyfunction]
+pub(crate) fn stats_quantiles<'py>(
+    py: Python<'py>,
+    x: Values<'py>,
+    qs: Values<'py>,
+) -> PyResult<Bound<'py, PyArray1<f64>>> {
+    let found = uncertainty::quantiles(&values(&x), &values(&qs)).map_err(uncertainty_error)?;
+    Ok(PyArray1::from_vec(py, found))
+}
+
+/// A quantile, the ends of its distribution-free interval and the number of draws which are
+/// not `NaN`.
+#[pyfunction]
+#[pyo3(signature = (x, q, level = 0.95))]
+pub(crate) fn stats_quantile_ci(
+    x: Values<'_>,
+    q: f64,
+    level: f64,
+) -> PyResult<(f64, f64, f64, usize)> {
+    uncertainty::quantile_ci(&values(&x), q, level).map_err(uncertainty_error)
+}
+
+/// The first-order index of an input from given draws, by binning.
+#[pyfunction]
+#[pyo3(signature = (x, y, n_bins = None))]
+pub(crate) fn stats_first_order_given_data(
+    x: Values<'_>,
+    y: Values<'_>,
+    n_bins: Option<i64>,
+) -> PyResult<f64> {
+    // a negative number of bins is refused as none, as numpy refuses it
+    let n_bins = n_bins.map(|bins| usize::try_from(bins).unwrap_or(0));
+    uncertainty::first_order_given_data(&values(&x), &values(&y), n_bins).map_err(uncertainty_error)
+}
+
+/// Whether the statistics of the draws of an output are precise enough, and the largest half
+/// width relative to the standard deviation.
+#[pyfunction]
+pub(crate) fn stats_precise(values: Values<'_>, rel_tol: f64) -> PyResult<(bool, f64)> {
+    uncertainty::precise(&self::values(&values), rel_tol).map_err(uncertainty_error)
+}
+
+/// The parameters of the distribution of a reported interval: the median and the coefficient
+/// of variation of a log-normal, the mean and the standard deviation of a normal.
+#[pyfunction]
+#[pyo3(signature = (low, high, level = Number::LEVEL_95, *, lognormal))]
+#[pyo3(text_signature = "(low, high, level=0.95, *, lognormal)")]
+pub(crate) fn stats_interval_parameters(
+    low: Number,
+    high: Number,
+    level: Number,
+    lognormal: bool,
+) -> PyResult<(f64, f64)> {
+    uncertainty::interval_parameters(low.value, high.value, level.value, lognormal).map_err(
+        |error| {
+            let message = low.written_in(error.0, "[", ",");
+            let message = high.written_in(message, ", ", "]");
+            let message = level.written_in(message, "The level ", " of");
+            uncertainty_error(StatsError(message))
+        },
+    )
+}
+
 /// Adds the functions and the constants of the statistics to the module, by the names
 /// `stats_<name>` and `STATS_<NAME>`.
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -510,5 +624,13 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(stats_guest_limits, m)?)?;
     m.add_function(wrap_pyfunction!(stats_within_guest, m)?)?;
     m.add_function(wrap_pyfunction!(stats_subset_agreement, m)?)?;
+    m.add_function(wrap_pyfunction!(stats_mean_se, m)?)?;
+    m.add_function(wrap_pyfunction!(stats_sd_se, m)?)?;
+    m.add_function(wrap_pyfunction!(stats_quantile, m)?)?;
+    m.add_function(wrap_pyfunction!(stats_quantiles, m)?)?;
+    m.add_function(wrap_pyfunction!(stats_quantile_ci, m)?)?;
+    m.add_function(wrap_pyfunction!(stats_first_order_given_data, m)?)?;
+    m.add_function(wrap_pyfunction!(stats_precise, m)?)?;
+    m.add_function(wrap_pyfunction!(stats_interval_parameters, m)?)?;
     Ok(())
 }
