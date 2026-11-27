@@ -36,10 +36,34 @@
 //!   check, as `predictive_check` of `sbmlsim.fit.variability` gives them, the groups resampled
 //!   from the streams of sbmlsim-core rather than numpy's.
 //!
-//! Every transcendental function comes from the crate libm, so one input gives the same bits
-//! on every target, natively and in wasm. The tests hold every function to the values of numpy
-//! and scipy, and the metrics to the functions of sbmlsim, computed once by
-//! `oracles/make_oracles.py` and stored next to it as JSON.
+//! # Accuracy
+//!
+//! The tests hold every function to the values of numpy and scipy, and the metrics to the
+//! functions of sbmlsim, computed once by `oracles/make_oracles.py` and stored next to it as
+//! JSON (`tests/oracle.rs`): the deterministic kernels (the metrics, the Fisher statistics, the
+//! posterior, the statistics of the draws, the logarithm of the beta function, the p-values and
+//! the confidence sequence) to 1e-12 relative, the normal distribution to 1e-13, the incomplete
+//! beta function and the t and binomial distributions to 1e-10, the binomial quantiles to the
+//! same integers and the linear algebra of up to 200 parameters to 1e-10 of the largest value
+//! of the matrix (LAPACK sums in another order). Where the crate and scipy differ beyond the
+//! rounding, the crate is the more accurate: [`special::ln_beta`] keeps its digits at a large
+//! and a small parameter, where `scipy.special.betaln` loses them (1.5e-10 relative at 0.5 and
+//! 1e6), so the largest difference of the p-values of [`testing`] to the python is the error
+//! of scipy's `betaln`.
+//!
+//! # Determinism
+//!
+//! Every transcendental function comes from the crate libm, and every random draw from
+//! xoshiro256++ of sbmlsim-core (`sbmlsim_sensitivity::random`), so one input and one seed give
+//! the same bits on every target, natively and in wasm: the tests hold the hashes of the bits
+//! of every module, natively and under wasmtime (`--target wasm32-wasip1`).
+//!
+//! The random streams are deliberately not the ones of scipy and numpy which sbmlsim drew from:
+//! the Sobol' points of [`draws`] are the Sobol' sequence of sbmlsim-core with its linear matrix
+//! scrambling and digital shift (LMS+shift, not the scrambling of Owen), and the random points,
+//! the Latin hypercube and the resampling of the group means of [`variability`] draw from
+//! xoshiro256++, not from PCG64. The draws are held to their distributions, and a seed of a
+//! result from before reproduces it only with the release it was computed with.
 
 pub mod correlation;
 pub mod draws;

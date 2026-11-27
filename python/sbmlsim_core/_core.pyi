@@ -638,35 +638,35 @@ def sensitivity_morris_effects(
     """
 
 STATS_MIN_POINTS_SUBSET_AGREEMENT: int
-"""The points with a ratio `stats_subset_agreement` needs, 10 (since 0.40.0)."""
+"""The points with a ratio `stats_subset_agreement` needs, 10 (since 0.42.0)."""
 
 def stats_sse(residuals: numpy.typing.ArrayLike) -> float:
-    """Sum of Squared Errors (SSE) of the residuals, 0 of none (since 0.40.0).
+    """Sum of Squared Errors (SSE) of the residuals, 0 of none (since 0.42.0).
 
     `sbmlsim.fit.metrics.sse`: the sum of numpy, pairwise, to the last bits.
     """
 
 def stats_mse(residuals: numpy.typing.ArrayLike) -> float:
-    """Mean Squared Error (MSE) of the residuals (since 0.40.0).
+    """Mean Squared Error (MSE) of the residuals (since 0.42.0).
 
     Raises `ValueError` without a residual.
     """
 
 def stats_rmse_from_mse(mse: SupportsFloat) -> float:
-    """Root Mean Squared Error (RMSE) from the mean squared error (since 0.40.0).
+    """Root Mean Squared Error (RMSE) from the mean squared error (since 0.42.0).
 
     Raises `ValueError` for a negative MSE.
     """
 
 def stats_aic_from_mse(mse: SupportsFloat, n: int, k: int) -> float:
-    """Akaike Information Criterion of a least squares fit, `n ln(MSE) + 2 k` (since 0.40.0).
+    """Akaike Information Criterion of a least squares fit, `n ln(MSE) + 2 k` (since 0.42.0).
 
     `-inf` for an MSE of 0. Raises `ValueError` for a negative MSE and a number of points
     which is not positive.
     """
 
 def stats_bic_from_mse(mse: SupportsFloat, n: int, k: int) -> float:
-    """Bayesian Information Criterion of a least squares fit, `n ln(MSE) + k ln(n)` (since 0.40.0).
+    """Bayesian Information Criterion of a least squares fit, `n ln(MSE) + k ln(n)` (since 0.42.0).
 
     `-inf` for an MSE of 0. Raises `ValueError` for a negative MSE and a number of points
     which is not positive.
@@ -675,7 +675,7 @@ def stats_bic_from_mse(mse: SupportsFloat, n: int, k: int) -> float:
 def stats_r_squared(
     y_observed: numpy.typing.ArrayLike, y_predicted: numpy.typing.ArrayLike
 ) -> float:
-    """Coefficient of determination (R²) of a prediction, `1 - SSE / SST` (since 0.40.0).
+    """Coefficient of determination (R²) of a prediction, `1 - SSE / SST` (since 0.42.0).
 
     `nan` for fewer than two data points and for data without variance. Raises
     `ValueError` for another number of predictions than of data points.
@@ -686,7 +686,7 @@ def stats_fold_counts(
     y_predicted: numpy.typing.ArrayLike,
     fold: SupportsFloat = 2.0,
 ) -> tuple[int, int]:
-    """The points within the fold factor and the points with a ratio (since 0.40.0).
+    """The points within the fold factor and the points with a ratio (since 0.42.0).
 
     A point has a ratio with a positive and finite value and prediction, and is within the
     fold factor for `y / fold <= f <= y * fold`. Raises `ValueError` for a fold factor which
@@ -698,7 +698,7 @@ def stats_fold_accepted(
     y_predicted: numpy.typing.ArrayLike,
     fold: SupportsFloat = 2.0,
 ) -> numpy.typing.NDArray[numpy.float64]:
-    """The fold criterion of every point, `Fold(fold).accepted` of sbmlsim (since 0.40.0).
+    """The fold criterion of every point, `Fold(fold).accepted` of sbmlsim (since 0.42.0).
 
     1 within the fold factor, 0 outside, `nan` for a point without a ratio. Raises
     `ValueError` as `stats_fold_counts`.
@@ -710,7 +710,7 @@ def stats_sd_accepted(
     y_sd: numpy.typing.ArrayLike,
     k: float = 2.0,
 ) -> numpy.typing.NDArray[numpy.float64]:
-    """The uncertainty criterion of every point, `Uncertainty(k).accepted` (since 0.40.0).
+    """The uncertainty criterion of every point, `Uncertainty(k).accepted` (since 0.42.0).
 
     1 for `|y - f| <= k sd`, 0 outside, `nan` for a point without a positive and finite
     standard deviation or with a value or prediction which is not finite. Raises
@@ -720,7 +720,7 @@ def stats_sd_accepted(
 def stats_gmfe(
     y_observed: numpy.typing.ArrayLike, y_predicted: numpy.typing.ArrayLike
 ) -> float:
-    """The geometric mean fold error `10**mean(|log10(f/y)|)` (since 0.40.0).
+    """The geometric mean fold error `10**mean(|log10(f/y)|)` (since 0.42.0).
 
     Of the points with a ratio, `nan` without one. Raises `ValueError` for another number
     of predictions than of values.
@@ -729,14 +729,14 @@ def stats_gmfe(
 def stats_afe(
     y_observed: numpy.typing.ArrayLike, y_predicted: numpy.typing.ArrayLike
 ) -> float:
-    """The average fold error `10**mean(log10(f/y))`, the bias as a fold (since 0.40.0).
+    """The average fold error `10**mean(log10(f/y))`, the bias as a fold (since 0.42.0).
 
     Of the points with a ratio, `nan` without one. Raises `ValueError` for another number
     of predictions than of values.
     """
 
 def stats_nrmse(nres: numpy.typing.ArrayLike) -> float:
-    """The root mean square of the normalized residuals (since 0.40.0).
+    """The root mean square of the normalized residuals (since 0.42.0).
 
     `nan` without one or with one which is not finite, `evaluation._rms` of sbmlsim.
     """
@@ -744,7 +744,7 @@ def stats_nrmse(nres: numpy.typing.ArrayLike) -> float:
 def stats_guest_limits(
     observed: numpy.typing.ArrayLike,
 ) -> tuple[numpy.typing.NDArray[numpy.float64], numpy.typing.NDArray[numpy.float64]]:
-    """The limits of the predicted ratios of Guest et al., `delta = 1` (since 0.40.0).
+    """The limits of the predicted ratios of Guest et al., `delta = 1` (since 0.42.0).
 
     The lower and the upper limit of every observed ratio, of the shape of the ratios.
     """
@@ -752,7 +752,7 @@ def stats_guest_limits(
 def stats_within_guest(
     observed: numpy.typing.ArrayLike, predicted: numpy.typing.ArrayLike
 ) -> float:
-    """The percentage of the finite predicted ratios within the limits of Guest et al. (since 0.40.0).
+    """The percentage of the finite predicted ratios within the limits of Guest et al. (since 0.42.0).
 
     `nan` without a finite predicted ratio. Raises `ValueError` for ratios of other shapes
     and an observed ratio which is not positive and finite.
@@ -761,7 +761,7 @@ def stats_within_guest(
 def stats_subset_agreement(
     y_observed: numpy.typing.ArrayLike, y_predicted: numpy.typing.ArrayLike
 ) -> tuple[float, float, float, float] | None:
-    """The agreement of a subset of the points with a ratio, Bland and Altman (since 0.40.0).
+    """The agreement of a subset of the points with a ratio, Bland and Altman (since 0.42.0).
 
     The bias `mean(log10(f/y))`, the half width `1.96 SD` of the limits of agreement and
     the half widths of the 95% intervals of the bias and of a limit (t quantile of `n - 1`
@@ -772,10 +772,10 @@ def stats_subset_agreement(
 
 STATS_DEFAULT_RANK_TOLERANCE: float
 """The fraction of the largest eigenvalue below which an eigenvalue is a direction the data
-do not constrain, 1e-8 (since 0.40.0)."""
+do not constrain, 1e-8 (since 0.42.0)."""
 
 def stats_gram(jacobian: numpy.typing.ArrayLike) -> numpy.typing.NDArray[numpy.float64]:
-    """The Fisher information `J' J` of a jacobian of the residuals by the parameters (since 0.40.0).
+    """The Fisher information `J' J` of a jacobian of the residuals by the parameters (since 0.42.0).
 
     Raises `ValueError` for a jacobian which is not a matrix.
     """
@@ -787,7 +787,7 @@ def stats_fisher_statistics(
     likelihood: bool = False,
     rank_tolerance: float = 1e-8,
 ) -> dict[str, Any]:
-    """The statistics of a Fisher information, `sbmlsim.fit.fisher.FisherInformation` (since 0.40.0).
+    """The statistics of a Fisher information, `sbmlsim.fit.fisher.FisherInformation` (since 0.42.0).
 
     `information` is `J' J` of `n` data points with the cost `cost` of the data, of a
     likelihood with `likelihood`. The keys: `sigma2`, the variance of the residuals
@@ -808,7 +808,7 @@ def stats_fisher_intervals(
     level: float = 0.95,
     dof: float | None = None,
 ) -> tuple[numpy.typing.NDArray[numpy.float64], numpy.typing.NDArray[numpy.float64]]:
-    """The lower and upper bounds of the intervals of the parameters (since 0.40.0).
+    """The lower and upper bounds of the intervals of the parameters (since 0.42.0).
 
     `value ± q SE` on the scale of every parameter, transformed back into the units of the
     model, with the quantile `q` of the t distribution of `dof` degrees of freedom (`nan`
@@ -824,7 +824,7 @@ def stats_fisher_relative_errors(
     standard_errors: numpy.typing.ArrayLike,
     scales: Sequence[Any],
 ) -> numpy.typing.NDArray[numpy.float64]:
-    """The standard errors relative to the values, `FisherInformation.relative_errors` (since 0.40.0).
+    """The standard errors relative to the values, `FisherInformation.relative_errors` (since 0.42.0).
 
     `|SE / value|` on the linear scale, `SE` on the natural and `ln(10) SE` on the decadic
     logarithm. Raises `ValueError` as `stats_fisher_intervals`.
@@ -836,7 +836,7 @@ def stats_posterior_laplace(
     opid: str | None = None,
     rank_tolerance: float = 1e-8,
 ) -> numpy.typing.NDArray[numpy.float64]:
-    """The covariance of the Laplace approximation of a posterior of its precision (since 0.40.0).
+    """The covariance of the Laplace approximation of a posterior of its precision (since 0.42.0).
 
     `sbmlsim.fit.posterior.posterior_laplace` from the precision on. Raises `ValueError` with
     its message for a direction the precision does not constrain, the parameters named by
@@ -847,7 +847,7 @@ def stats_posterior_laplace(
 def stats_rank_correlation(
     r: numpy.typing.ArrayLike,
 ) -> numpy.typing.NDArray[numpy.float64]:
-    """The Spearman rank correlation `6 / π asin(r / 2)` of a correlation (since 0.40.0).
+    """The Spearman rank correlation `6 / π asin(r / 2)` of a correlation (since 0.42.0).
 
     `ParameterPosterior.rank_correlation`: `r` clipped to `[-1, 1]`, the diagonal 1,
     symmetrized. Raises `ValueError` for a matrix which is not square.
@@ -856,30 +856,30 @@ def stats_rank_correlation(
 def stats_normal_correlation(
     r: numpy.typing.ArrayLike,
 ) -> numpy.typing.NDArray[numpy.float64]:
-    """The correlation of the normal scores of a posterior (since 0.40.0).
+    """The correlation of the normal scores of a posterior (since 0.42.0).
 
     `ParameterPosterior.normal_correlation`: the symmetric part of `r`, the diagonal 1.
     Raises `ValueError` for a matrix which is not square.
     """
 
 def stats_log_sd(scale: Any, sd: float) -> float:
-    """The standard deviation of the natural logarithm of an SD on a scale (since 0.40.0).
+    """The standard deviation of the natural logarithm of an SD on a scale (since 0.42.0).
 
     `ln(10) sd` on `LOG10`, `sd` otherwise. Raises `ValueError` for an unknown scale.
     """
 
 def stats_lognormal_cv(sigma: float) -> float:
-    """The coefficient of variation `sqrt(exp(sigma²) - 1)` of a log-normal (since 0.40.0)."""
+    """The coefficient of variation `sqrt(exp(sigma²) - 1)` of a log-normal (since 0.42.0)."""
 
 def stats_mean_se(x: numpy.typing.ArrayLike) -> tuple[float, float, int]:
-    """The mean, its standard error `s / sqrt(n)` and the number of draws (since 0.40.0).
+    """The mean, its standard error `s / sqrt(n)` and the number of draws (since 0.42.0).
 
     `sbmlsim.uncertainty.statistics.mean_se`: the draws which are `NaN` dropped, `nan`
     without draws, the error `nan` without two of them and of infinite draws.
     """
 
 def stats_sd_se(x: numpy.typing.ArrayLike) -> tuple[float, float, int]:
-    """The standard deviation, its standard error and the number of draws (since 0.40.0).
+    """The standard deviation, its standard error and the number of draws (since 0.42.0).
 
     `sbmlsim.uncertainty.statistics.sd_se`, the error by the delta method with the fourth
     central moment: `nan` without two draws and of infinite draws. Raises `OverflowError`
@@ -887,7 +887,7 @@ def stats_sd_se(x: numpy.typing.ArrayLike) -> tuple[float, float, int]:
     """
 
 def stats_quantile(x: numpy.typing.ArrayLike, q: float) -> float:
-    """The quantile `q` of the draws which are not `NaN`, `np.nanquantile` (since 0.40.0).
+    """The quantile `q` of the draws which are not `NaN`, `np.nanquantile` (since 0.42.0).
 
     numpy's linear method, `nan` without draws. Raises `ValueError` for a probability
     outside [0, 1].
@@ -896,7 +896,7 @@ def stats_quantile(x: numpy.typing.ArrayLike, q: float) -> float:
 def stats_quantiles(
     x: numpy.typing.ArrayLike, qs: numpy.typing.ArrayLike
 ) -> numpy.typing.NDArray[numpy.float64]:
-    """The quantiles `qs` of the draws which are not `NaN`, `np.nanquantile` (since 0.40.0).
+    """The quantiles `qs` of the draws which are not `NaN`, `np.nanquantile` (since 0.42.0).
 
     Raises `ValueError` as `stats_quantile`.
     """
@@ -904,7 +904,7 @@ def stats_quantiles(
 def stats_quantile_ci(
     x: numpy.typing.ArrayLike, q: float, level: float = 0.95
 ) -> tuple[float, float, float, int]:
-    """A quantile, the ends of its interval and the number of draws (since 0.40.0).
+    """A quantile, the ends of its interval and the number of draws (since 0.42.0).
 
     `sbmlsim.uncertainty.statistics.quantile_ci`: the order statistics of the ranks of the
     binomial distribution, an end beyond the draws `nan`, all `nan` without draws. Raises
@@ -914,7 +914,7 @@ def stats_quantile_ci(
 def stats_first_order_given_data(
     x: numpy.typing.ArrayLike, y: numpy.typing.ArrayLike, n_bins: int | None = None
 ) -> float:
-    """The first-order index of an input from given draws, by binning (since 0.40.0).
+    """The first-order index of an input from given draws, by binning (since 0.42.0).
 
     `sbmlsim.uncertainty.statistics.first_order_given_data`: `nan` with fewer than 8
     finite pairs and an output without variance. Raises `ValueError` for draws of other
@@ -923,7 +923,7 @@ def stats_first_order_given_data(
     """
 
 def stats_precise(values: numpy.typing.ArrayLike, rel_tol: float) -> tuple[bool, float]:
-    """Whether the draws of an output are precise enough, and the largest width (since 0.40.0).
+    """Whether the draws of an output are precise enough, and the largest width (since 0.42.0).
 
     `_precise` of `sbmlsim.uncertainty.propagation`: the half widths of the 95 % intervals
     of the mean, the standard deviation and the 5 % and 95 % quantiles relative to the
@@ -937,7 +937,7 @@ def stats_interval_parameters(
     *,
     lognormal: bool,
 ) -> tuple[float, float]:
-    """The parameters of the distribution of a reported interval (since 0.40.0).
+    """The parameters of the distribution of a reported interval (since 0.42.0).
 
     `Uncertain.interval`: the median and the coefficient of variation of a log-normal, the
     mean and the standard deviation of a normal. Raises `ValueError` for a level outside
@@ -948,11 +948,11 @@ def stats_interval_parameters(
 
 STATS_PSD_RTOL: float
 """The tolerance of the smallest eigenvalue of a positive semi-definite matrix relative to the
-largest one, `PSD_RTOL` of `sbmlsim.uncertainty.covariance`, 1e-10 (since 0.40.0)."""
+largest one, `PSD_RTOL` of `sbmlsim.uncertainty.covariance`, 1e-10 (since 0.42.0)."""
 
 STATS_EPS: float
 """The distance of the points of the copula from the ends of the unit interval, 1e-12
-(since 0.40.0)."""
+(since 0.42.0)."""
 
 def stats_unit_points(
     d: int,
@@ -962,7 +962,7 @@ def stats_unit_points(
     seed: int,
     start: int = 0,
 ) -> numpy.typing.NDArray[numpy.float64]:
-    """`n` points of the unit cube of `d` dimensions, `n` rows of `d` columns (since 0.40.0).
+    """`n` points of the unit cube of `d` dimensions, `n` rows of `d` columns (since 0.42.0).
 
     `unit_points` of `sbmlsim.uncertainty.draws` on the streams of sbmlsim-core: `sobol`
     (the scrambled Sobol' sequence, from the point `start`), `lhs` (a Latin hypercube) or
@@ -975,7 +975,7 @@ def stats_unit_points(
 def stats_copula(
     u: numpy.typing.ArrayLike, r: numpy.typing.ArrayLike
 ) -> numpy.typing.NDArray[numpy.float64]:
-    """The Gaussian copula of the correlation `r` on the points `u` (since 0.40.0).
+    """The Gaussian copula of the correlation `r` on the points `u` (since 0.42.0).
 
     The copula of `draw` of `sbmlsim.uncertainty.draws`: `Φ(Φ⁻¹(clip(u)) Fᵀ)` with the factor
     `F` of `r`, the points themselves for a correlation which is the identity. Raises
@@ -988,7 +988,7 @@ def stats_normal_score_rho(
     b: tuple[str, float, float],
     scale: str = "linear",
 ) -> float:
-    """The coefficient of the normal scores of the covariance `m` of two marginals (since 0.40.0).
+    """The coefficient of the normal scores of the covariance `m` of two marginals (since 0.42.0).
 
     The marginals are `(family, mean, sd)` of `_moments` of `sbmlsim.uncertainty.draws`,
     `normal` or `log-normal`, the covariance on the scale `linear` or `log`. Raises
@@ -998,13 +998,13 @@ def stats_normal_score_rho(
 def stats_nearest_correlation(
     matrix: numpy.typing.ArrayLike, max_iterations: int = 100, tol: float = 1e-10
 ) -> numpy.typing.NDArray[numpy.float64]:
-    """The nearest correlation matrix in the Frobenius norm, Higham 2002 (since 0.40.0).
+    """The nearest correlation matrix in the Frobenius norm, Higham 2002 (since 0.42.0).
 
     `nearest_correlation` of `sbmlsim.uncertainty.covariance`.
     """
 
 def stats_is_psd(matrix: numpy.typing.ArrayLike, rtol: float = 1e-10) -> bool:
-    """Whether a symmetric matrix is positive semi-definite, `_is_psd` (since 0.40.0)."""
+    """Whether a symmetric matrix is positive semi-definite, `_is_psd` (since 0.42.0)."""
 
 def stats_validate_covariance(
     targets: Sequence[object],
@@ -1013,24 +1013,24 @@ def stats_validate_covariance(
     kind: str = "covariance",
     units: Iterable[str | None] | None = None,
 ) -> None:
-    """Check the matrix of a `Covariance` of the targets, `Covariance._validate` (since 0.40.0).
+    """Check the matrix of a `Covariance` of the targets, `Covariance._validate` (since 0.42.0).
 
     Raises `ValueError` with the message of the python for a matrix which is not valid.
     """
 
 STATS_MARGIN: float
 """The margin of a threshold by default, `MARGIN` of `sbmlsim.uncertainty.testing`, 0.05
-(since 0.40.0)."""
+(since 0.42.0)."""
 
 STATS_MAX_NEEDED: int
-"""The most draws `stats_needed` searches, `MAX_NEEDED`, 2**26 (since 0.40.0)."""
+"""The most draws `stats_needed` searches, `MAX_NEEDED`, 2**26 (since 0.42.0)."""
 
 STATS_BISECTIONS: int
-"""The bisections of each end of the confidence sequence, `BISECTIONS`, 52 (since 0.40.0)."""
+"""The bisections of each end of the confidence sequence, `BISECTIONS`, 52 (since 0.42.0)."""
 
 STATS_MIXTURE: tuple[float, float]
 """The Jeffreys mixture `(a, b)` of the confidence sequence, `MIXTURE`, (0.5, 0.5) (since
-0.40.0)."""
+0.42.0)."""
 
 def stats_p_values(
     satisfied: numpy.typing.ArrayLike,
@@ -1038,7 +1038,7 @@ def stats_p_values(
     side: Literal["greater", "less", "equivalent"],
     margin: float = 0.05,
 ) -> numpy.typing.NDArray[numpy.float64]:
-    """The anytime-valid p-values of a probability after every number of draws (since 0.40.0).
+    """The anytime-valid p-values of a probability after every number of draws (since 0.42.0).
 
     `_Prefixes.p_values` and `_p_values` of `sbmlsim.uncertainty.testing`, from whether every
     draw satisfies the hypothesis (`np.asarray(satisfied, dtype=bool)`): `greater` of
@@ -1050,7 +1050,7 @@ def stats_p_values(
 def stats_confidence_sequence(
     satisfied: numpy.typing.ArrayLike, level: float = 0.95
 ) -> tuple[float, float]:
-    """The confidence sequence of a probability after the draws (since 0.40.0).
+    """The confidence sequence of a probability after the draws (since 0.42.0).
 
     `confidence_sequence` of `sbmlsim.uncertainty.testing`: the lower and the upper end of the
     intersection of the confidence sets of every number of draws, `(0, 1)` without draws.
@@ -1059,7 +1059,7 @@ def stats_confidence_sequence(
     """
 
 def stats_decide(p_values: numpy.typing.ArrayLike, alpha: float) -> int | None:
-    """The number of draws at which a p-value first is at most `alpha` (since 0.40.0)."""
+    """The number of draws at which a p-value first is at most `alpha` (since 0.42.0)."""
 
 def stats_decision(
     p_greater: numpy.typing.ArrayLike,
@@ -1067,7 +1067,7 @@ def stats_decision(
     p_equivalent: numpy.typing.ArrayLike,
     alpha: float,
 ) -> tuple[Literal["accepted", "rejected", "equivalent", "undecided"], int | None]:
-    """The decision of a statement and the draws which first showed it (since 0.40.0).
+    """The decision of a statement and the draws which first showed it (since 0.42.0).
 
     `_decide` of `sbmlsim.uncertainty.testing`: the direction shown first, else the
     equivalence, else `undecided` without a number of draws.
@@ -1076,7 +1076,7 @@ def stats_decision(
 def stats_needed(
     estimate: float, n: int, p0: float, margin: float, alpha: float
 ) -> int | None:
-    """The draws which decide a statement at its estimate (since 0.40.0).
+    """The draws which decide a statement at its estimate (since 0.42.0).
 
     `_needed` of `sbmlsim.uncertainty.testing`, `None` beyond `STATS_MAX_NEEDED` and of no
     draws. Raises the `ValueError` and the `OverflowError` of `round` of python of an
@@ -1084,7 +1084,7 @@ def stats_needed(
     """
 
 def stats_family_level(level: float, m: int) -> float:
-    """The level of a statement in a report of `m` of them, Bonferroni (since 0.40.0)."""
+    """The level of a statement in a report of `m` of them, Bonferroni (since 0.42.0)."""
 
 def stats_group_means(
     values: numpy.typing.ArrayLike,
@@ -1094,19 +1094,20 @@ def stats_group_means(
     geometric: bool = False,
     seed: int,
 ) -> numpy.typing.NDArray[numpy.float64]:
-    """The statistic of virtual groups of subjects of the predictions (since 0.40.0).
+    """The statistic of virtual groups of subjects of the predictions (since 0.42.0).
 
     `_group_means` of `sbmlsim.fit.variability` on the stream xoshiro256++ of sbmlsim-core:
     the subjects which are not finite at every data point are removed, groups of one are
     the subjects themselves, else `groups` groups of `size` subjects drawn with replacement,
     a row per group, their mean or their geometric mean. Raises `ValueError` for predictions
-    which are not a matrix and numpy's for a negative size or number of groups.
+    which are not a matrix, numpy's for a negative size or number of groups and for groups
+    whose statistics no memory holds (where numpy raises a `ValueError` or a `MemoryError`).
     """
 
 def stats_bands(
     distribution: numpy.typing.ArrayLike, qs: numpy.typing.ArrayLike
 ) -> numpy.typing.NDArray[numpy.float64]:
-    """The bands of a distribution of groups, a row per data point (since 0.40.0).
+    """The bands of a distribution of groups, a row per data point (since 0.42.0).
 
     The quantiles of `predictive_check` of `sbmlsim.fit.variability`: numpy's linear
     quantiles `qs` of the finite values of every column, `nan` of a column without one.
