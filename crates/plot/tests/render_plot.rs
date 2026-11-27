@@ -4,7 +4,7 @@ mod support;
 
 use roxmltree::{Document, Node};
 use sbmlsim_plot::{FontWeight, parse, render_svg, text_width, text_width_weighted};
-use support::{assert_golden, spec_text};
+use support::{assert_golden, spec_text, used_markers};
 
 /// Renders a figure of JSON text.
 fn render(json: &str) -> String {
@@ -217,7 +217,7 @@ fn log_axis_drops_nonpositive() {
     }
     let doc = Document::parse(&svg).unwrap();
     let g = element_group(&doc, "c");
-    let markers = g.descendants().filter(|n| n.has_tag_name("circle")).count();
+    let markers = used_markers(&doc, g).len();
     assert_eq!(markers, 2);
     // the line runs between the two drawn points only
     let paths: Vec<&str> = g

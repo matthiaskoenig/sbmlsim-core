@@ -36,7 +36,7 @@ chart.save("elimination.json")
 
 A plot can have several colour bars: every `plot.colorbar(scale, low, high, label=...)` adds one, stacked right of the panel. A bar takes the part of its colour map it shows (`start`, `end`, from 0 to 1), its `ticks` and their `tick_labels`, and `categorical=True` draws one band per integer from `low` to `high`, labelled by `tick_labels`. `chart.plot(legend_swatches={group: {...}})` draws the swatch of a legend group in a style of its own, the style keywords of `curve`, e.g. the middle colour of lines which differ in colour. A text, a title or a label breaks its lines at `\n`, a tick label too. The fonts of a chart take the sizes `title`, `label`, `tick`, `tick_y` (the y axes and the colour bars), `legend` and `plot_title` (the titles of the plots, `label` without) and the weights `title_weight`, `label_weight`, `tick_weight` and `legend_weight`, `normal` or `bold`: `Chart(fonts={"label": 13, "label_weight": "bold"})`.
 
-A heat map and a colour bar take the sequential and the diverging colour maps of matplotlib by their names, in the case of matplotlib or in lower case (`Blues`, `Reds`, `PuRd`, `YlOrRd`, `RdBu`, ...), each also reversed (`Blues_r`); `sbmlsim_core.COLOR_SCALES` lists them, and a value has the colour matplotlib gives it. A heat map places its cells on the categories of its axes, or with `x_edges` and `y_edges` between edges on numeric axes, which stay numeric, so a space-time heat map shares its time with a curve below it. `ChartAxis(line_visible=False)` hides the line of an axis, and `chart.plot(aspect="equal")` makes a unit of y as long as a unit of x by widening the limits of one axis, so a lobule is a regular hexagon without measuring the panel. Error bars take caps of a length in pixels (`error_cap=`), a text its `size` and `weight`, and a text keeps its runs of spaces. The panel of a plot is at least 20 pixels over its span, so a grid of many thin columns fits its chart as long as its plots span several of them:
+A heat map and a colour bar take the sequential and the diverging colour maps of matplotlib by their names, in the case of matplotlib or in lower case (`Blues`, `Reds`, `PuRd`, `YlOrRd`, `RdBu`, ...), each also reversed (`Blues_r`); `sbmlsim_core.COLOR_SCALES` lists them, and a value has the colour matplotlib gives it. A heat map places its cells on the categories of its axes, or with `x_edges` and `y_edges` between edges on numeric axes, which stay numeric, so a space-time heat map shares its time with a curve below it. `ChartAxis(line_visible=False)` hides the line of an axis, and `chart.plot(aspect="equal")` makes a unit of y as long as a unit of x by widening the limits of one axis, so a lobule is a regular hexagon without measuring the panel. Error bars take caps of matplotlib's `capsize` in pixels (`error_cap=`: a cap reaches that far to each side of its bar and is twice as long, since 0.37.0; before as long), a text its `size` and `weight`, and a text keeps its runs of spaces. The panel of a plot is at least 20 pixels over its span, so a grid of many thin columns fits its chart as long as its plots span several of them:
 
 ```python
 import numpy as np
@@ -84,7 +84,7 @@ outflow.curve(
     [1, 2, 4, 6, 8],
     [0.4, 0.8, 0.9, 0.6, 0.3],
     yerr=[0.05, 0.1, 0.1, 0.05, 0.05],
-    error_cap=8,
+    error_cap=4,
     marker="circle",
     label="measured",
 )
@@ -184,7 +184,7 @@ data.curve(
     [1, 2, 4, 8],
     [2.0, 5.0, 3.0, 1.0],
     yerr=([0.8, 2.0, np.nan, 0.4], [1.0, 4.0, 2.0, 0.6]),
-    error_cap=5,
+    error_cap=3,
     line="none",
     marker="octagon",
     size=8,

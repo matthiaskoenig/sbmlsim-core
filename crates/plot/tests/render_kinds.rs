@@ -7,7 +7,7 @@ use roxmltree::{Document, Node};
 use sbmlsim_plot::{
     COLOR_SCALES, ColorScale, ColorScaleName, NO_VALUE_COLOR, color_scale, parse, render_svg,
 };
-use support::{assert_golden, spec_text};
+use support::{assert_golden, spec_text, used_markers};
 
 /// Renders a figure of JSON text.
 fn render(json: &str) -> String {
@@ -415,15 +415,10 @@ fn box_from_stats() {
     assert_near(ml, left, "median from the left of the box");
     assert_near(mr, right, "median to the right of the box");
     // one circle per outlier
-    let circles: Vec<Node> = group
-        .descendants()
-        .filter(|n| n.has_tag_name("circle"))
-        .collect();
+    let circles = used_markers(&doc, group);
     assert_eq!(circles.len(), 2);
-    let mut cys: Vec<f64> = circles
-        .iter()
-        .map(|c| c.attribute("cy").unwrap().parse().unwrap())
-        .collect();
+    assert!(circles.iter().all(|c| c.shape.has_tag_name("circle")));
+    let mut cys: Vec<f64> = circles.iter().map(|c| c.y).collect();
     cys.sort_by(f64::total_cmp);
     assert_near(cys[0], y(9.5), "outlier 9.5");
     assert_near(cys[1], y(0.5), "outlier 0.5");
@@ -967,26 +962,24 @@ fn hollow_marker() {
     let svg = render(&json);
     let doc = Document::parse(&svg).unwrap();
     // no fill, the edge in the colour of the series
-    let circles: Vec<Node> = element_group(&doc, "hollow")
-        .descendants()
-        .filter(|n| n.has_tag_name("circle"))
-        .collect();
+    let circles = used_markers(&doc, element_group(&doc, "hollow"));
     assert_eq!(circles.len(), 3);
-    for c in &circles {
+    for c in circles.iter().map(|c| c.shape) {
+        assert!(c.has_tag_name("circle"));
         assert_eq!(c.attribute("fill"), Some("none"));
         assert_eq!(c.attribute("stroke"), Some("#aa0000"));
         assert_eq!(c.attribute("stroke-width"), Some("1.5"));
     }
     // an edge of its own
-    let squares: Vec<Node> = element_group(&doc, "edged")
-        .descendants()
-        .filter(|n| n.has_tag_name("rect"))
-        .collect();
+    let squares = used_markers(&doc, element_group(&doc, "edged"));
     assert_eq!(squares.len(), 3);
     assert!(
-        squares.iter().all(
-            |s| s.attribute("fill") == Some("none") && s.attribute("stroke") == Some("#0000aa")
-        )
+        squares
+            .iter()
+            .map(|s| s.shape)
+            .all(|s| s.has_tag_name("rect")
+                && s.attribute("fill") == Some("none")
+                && s.attribute("stroke") == Some("#0000aa"))
     );
     // the swatch of the legend is hollow as well
     let swatch = doc

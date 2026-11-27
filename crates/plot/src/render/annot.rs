@@ -73,12 +73,12 @@ fn raw(e: &Element, svg: String) -> RawSvg {
     if e.clip {
         RawSvg {
             clipped: svg,
-            unclipped: String::new(),
+            ..RawSvg::default()
         }
     } else {
         RawSvg {
-            clipped: String::new(),
             unclipped: svg,
+            ..RawSvg::default()
         }
     }
 }
@@ -447,6 +447,7 @@ pub(crate) fn marks_layer(
     use super::marks::{Stroke, error_runs, fill_of, per_pixel};
     let style = &e.style;
     let mut svg = String::new();
+    let mut pieces = Vec::new();
     let stroke_attrs = |out: &mut String, s: &Stroke| {
         attr_css(out, "stroke", &s.color);
         attr_num(out, "stroke-width", s.width);
@@ -509,8 +510,11 @@ pub(crate) fn marks_layer(
             let m = &style.marker;
             if m.kind != crate::spec::MarkerType::None && m.size > 0.0 {
                 let g = crate::svg::MarkerGlyph::of(m, color, style.opacity);
+                pieces = crate::svg::glyph_pieces(&g);
+                let hrefs: Vec<String> =
+                    (0..pieces.len()).map(crate::svg::raw_piece_href).collect();
                 for p in points.iter().filter(|p| p.0.is_finite() && p.1.is_finite()) {
-                    crate::svg::glyph(&mut svg, &g, p.0, p.1);
+                    crate::svg::glyph_uses(&mut svg, &hrefs, g.opacity, p.0, p.1);
                 }
             }
         }
@@ -540,5 +544,8 @@ pub(crate) fn marks_layer(
         }
         _ => return None,
     }
-    Some(raw(e, svg))
+    Some(RawSvg {
+        pieces,
+        ..raw(e, svg)
+    })
 }

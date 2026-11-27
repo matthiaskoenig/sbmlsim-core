@@ -351,6 +351,12 @@ pub(crate) struct LayerInfo {
     pub raw: Option<RawSvg>,
 }
 
+/// The `href` of a `<use>` of the piece `k` of the marker pieces of a [`RawSvg`], which the
+/// writer replaces with the id it defines the piece with (since 0.37.0).
+pub(crate) fn raw_piece_href(k: usize) -> String {
+    format!("\u{2}{k}\u{2}")
+}
+
 /// The SVG of a layer the crate draws itself, in pixels from the upper left corner of the
 /// panel (since 0.33.0): the part clipped to the panel and the part drawn over the whole canvas
 /// (`clip: false` of an element), which the writer writes after the panel, in a group of its
@@ -361,6 +367,9 @@ pub(crate) struct RawSvg {
     pub clipped: String,
     /// Drawn after the panel, not clipped.
     pub unclipped: String,
+    /// The pieces of the markers it uses (see [`glyph_pieces`]), whose uses name the piece `k`
+    /// by [`raw_piece_href`] (since 0.37.0).
+    pub pieces: Vec<String>,
 }
 
 /// The tag of an element group.
@@ -511,6 +520,10 @@ pub(crate) struct PlotWriter<'a> {
     axis: Option<AxisKind>,
     /// The marker of the open layer.
     marker: Option<MarkerGlyph>,
+    /// The ids of the pieces of the marker of the open layer, which every marker of it uses.
+    marker_ids: Vec<String>,
+    /// The marker pieces defined in `defs`, the piece with the id `<prefix>-marker-<k>` at `k`.
+    pieces: Vec<String>,
     /// The panel of the plot, the clip of its plot group.
     pub panel: Option<Rect>,
     /// The tick labels of the open axis written so far.
@@ -538,6 +551,8 @@ impl<'a> PlotWriter<'a> {
             next_element: 0,
             axis: None,
             marker: None,
+            marker_ids: Vec::new(),
+            pieces: Vec::new(),
             panel: None,
             tick_labels: 0,
             unclipped: Vec::new(),
@@ -553,6 +568,27 @@ impl<'a> PlotWriter<'a> {
             let group = self.body.split_off(self.group_start.min(self.body.len()));
             self.groups.push((index, group));
         }
+    }
+
+    /// The ids of marker pieces, each defined in `defs` unless an equal piece is already.
+    fn define_pieces(&mut self, pieces: &[String]) -> Vec<String> {
+        pieces
+            .iter()
+            .map(|piece| {
+                let k = match self.pieces.iter().position(|p| p == piece) {
+                    Some(k) => k,
+                    None => {
+                        // the id goes right after the name of the element
+                        let at = piece.find([' ', '/']).unwrap_or(piece.len());
+                        let id = format!("{}-marker-{}", self.prefix, self.pieces.len());
+                        let _ = write!(self.defs, "{} id=\"{id}\"{}", &piece[..at], &piece[at..]);
+                        self.pieces.push(piece.clone());
+                        self.pieces.len() - 1
+                    }
+                };
+                format!("{}-marker-{k}", self.prefix)
+            })
+            .collect()
     }
 
     /// Writes SVG in pixels of the panel, moved onto the panel.
@@ -1057,14 +1093,52 @@ fn half_circle_d(b: &mut String, r: f64, (x, y): (f64, f64), style: FillStyle, o
     b.push('Z');
 }
 
-/// Writes a marker glyph centred at a point.
+/// Writes a marker glyph centred at a point, its pieces (see [`glyph_pieces`]) one after the
+/// other, each with the opacity of the marker.
+pub(crate) fn glyph(b: &mut String, m: &MarkerGlyph, x: f64, y: f64) {
+    for piece in glyph_elements(m, x, y, true) {
+        b.push_str(&piece);
+    }
+}
+
+/// The pieces of a marker glyph centred at the origin, each an SVG element of its shape with
+/// its fill and edge and without the opacity of the marker, which the `<use>` of a piece
+/// carries (see [`glyph_uses`]): one piece for most markers, two for a half filled one.
+pub(crate) fn glyph_pieces(m: &MarkerGlyph) -> Vec<String> {
+    glyph_elements(m, 0.0, 0.0, false)
+}
+
+/// Writes the uses of the pieces of a marker glyph at a point: one `<use>` of the id of every
+/// piece, moved to the point, with the opacity of the marker (since 0.37.0).
+///
+/// A marker drawn as a use of its pieces looks as the glyph drawn in place, with the opacity of
+/// the use composing each piece apart as the opacity of an element does, and it is drawn by a
+/// PDF writer as one object which every marker of the style shares: Typst draws a marker with
+/// an opacity as a transparency group, one object of its own per marker in place, one shared
+/// object for all uses of one piece.
+pub(crate) fn glyph_uses(b: &mut String, ids: &[String], opacity: f64, x: f64, y: f64) {
+    for id in ids {
+        b.push_str("<use href=\"#");
+        b.push_str(id);
+        b.push('"');
+        attr_num(b, "x", x);
+        attr_num(b, "y", y);
+        attr_opacity(b, "opacity", opacity);
+        b.push_str("/>");
+    }
+}
+
+/// The SVG elements of a marker glyph centred at a point, with the opacity of the marker or
+/// without it.
 ///
 /// The filled markers have matplotlib's shapes for a marker size: the circle as wide as the
 /// size, the square of the side of the size, the triangles as wide and high as the size, the
 /// diamond a square of the side of the size on its corner (since 0.31.0); a half filled marker
 /// draws its filled half and its other half (of `fill_alt`) each with the edge, as matplotlib.
-pub(crate) fn glyph(b: &mut String, m: &MarkerGlyph, x: f64, y: f64) {
+fn glyph_elements(m: &MarkerGlyph, x: f64, y: f64, opacity: bool) -> Vec<String> {
+    let mut pieces = Vec::new();
     let r = m.size / 2.0;
+    let opacity = if opacity { m.opacity } else { 1.0 };
     // a filled glyph: its fill and, with an edge, its stroke
     let paint = |b: &mut String, fill: &str| {
         let _ = write!(b, " fill=\"{fill}\"");
@@ -1072,7 +1146,7 @@ pub(crate) fn glyph(b: &mut String, m: &MarkerGlyph, x: f64, y: f64) {
             let _ = write!(b, " stroke=\"{}\"", m.edge);
             attr_num(b, "stroke-width", m.edge_width);
         }
-        attr_opacity(b, "opacity", m.opacity);
+        attr_opacity(b, "opacity", opacity);
         b.push_str("/>");
     };
     let half = m.fill_style != FillStyle::Full;
@@ -1080,28 +1154,31 @@ pub(crate) fn glyph(b: &mut String, m: &MarkerGlyph, x: f64, y: f64) {
         MarkerType::None => {}
         MarkerType::Circle if half => {
             for (other, fill) in [(false, m.fill.as_str()), (true, m.fill_alt.as_str())] {
-                b.push_str("<path d=\"");
-                half_circle_d(b, r, (x, y), m.fill_style, other);
+                let mut b = String::from("<path d=\"");
+                half_circle_d(&mut b, r, (x, y), m.fill_style, other);
                 b.push('"');
-                paint(b, fill);
+                paint(&mut b, fill);
+                pieces.push(b);
             }
         }
         MarkerType::Circle => {
-            b.push_str("<circle");
+            let b = &mut String::from("<circle");
             attr_num(b, "cx", x);
             attr_num(b, "cy", y);
             attr_num(b, "r", r);
             paint(b, &m.fill);
+            pieces.push(std::mem::take(b));
         }
         MarkerType::Square if !half => {
             // matplotlib's square, of the side of the size (of the area of the circle before
             // 0.31.0)
-            b.push_str("<rect");
+            let b = &mut String::from("<rect");
             attr_num(b, "x", x - r);
             attr_num(b, "y", y - r);
             attr_num(b, "width", 2.0 * r);
             attr_num(b, "height", 2.0 * r);
             paint(b, &m.fill);
+            pieces.push(std::mem::take(b));
         }
         kind if kind.is_line() => {
             // matplotlib's `+` and `x`: lines across the square of the size; its tri markers
@@ -1124,7 +1201,7 @@ pub(crate) fn glyph(b: &mut String, m: &MarkerGlyph, x: f64, y: f64) {
                 MarkerType::TriRight => tri(1.0, 0.0),
                 _ => vec![(-d, -d, d, d), (-d, d, d, -d)],
             };
-            b.push_str("<path d=\"");
+            let b = &mut String::from("<path d=\"");
             for (x1, y1, x2, y2) in segments {
                 b.push('M');
                 num(b, x + x1);
@@ -1139,32 +1216,34 @@ pub(crate) fn glyph(b: &mut String, m: &MarkerGlyph, x: f64, y: f64) {
             b.push_str(" fill=\"none\"");
             let _ = write!(b, " stroke=\"{}\"", m.edge);
             attr_num(b, "stroke-width", m.edge_width.max(1.0) * 1.5);
-            attr_opacity(b, "opacity", m.opacity);
+            attr_opacity(b, "opacity", opacity);
             b.push_str("/>");
+            pieces.push(std::mem::take(b));
         }
         kind => {
-            let Some(o) = outline(kind) else {
-                return;
-            };
-            if half {
-                let (filled, other) = halves(&o, m.fill_style);
-                for (points, fill) in [(filled, m.fill.as_str()), (other, m.fill_alt.as_str())] {
-                    if points.len() < 3 {
-                        continue;
-                    }
-                    b.push_str("<path d=\"");
-                    polygon_d(b, &points, m.size, (x, y));
+            if let Some(o) = outline(kind) {
+                let mut polygon = |points: &[(f64, f64)], fill: &str| {
+                    let mut b = String::from("<path d=\"");
+                    polygon_d(&mut b, points, m.size, (x, y));
                     b.push('"');
-                    paint(b, fill);
+                    paint(&mut b, fill);
+                    pieces.push(b);
+                };
+                if half {
+                    let (filled, other) = halves(&o, m.fill_style);
+                    for (points, fill) in [(filled, m.fill.as_str()), (other, m.fill_alt.as_str())]
+                    {
+                        if points.len() >= 3 {
+                            polygon(&points, fill);
+                        }
+                    }
+                } else {
+                    polygon(&o.points, &m.fill);
                 }
-            } else {
-                b.push_str("<path d=\"");
-                polygon_d(b, &o.points, m.size, (x, y));
-                b.push('"');
-                paint(b, &m.fill);
             }
         }
     }
+    pieces
 }
 
 /// The CSS name of a weight.
@@ -1185,8 +1264,14 @@ impl RenderBackend for PlotWriter<'_> {
         if self.suppressed() || !finite(&[c.x, c.y, c.radius]) {
             return;
         }
-        if let Some(m) = self.marker.clone() {
-            glyph(&mut self.body, &m, f64::from(c.x), f64::from(c.y));
+        if let Some(m) = &self.marker {
+            glyph_uses(
+                &mut self.body,
+                &self.marker_ids,
+                m.opacity,
+                f64::from(c.x),
+                f64::from(c.y),
+            );
             return;
         }
         let b = &mut self.body;
@@ -1486,13 +1571,26 @@ impl RenderBackend for PlotWriter<'_> {
                             self.next_element = e + 1;
                         }
                         self.marker = info.marker.clone();
+                        self.marker_ids = match &info.marker {
+                            Some(m) => self.define_pieces(&glyph_pieces(m)),
+                            None => Vec::new(),
+                        };
                         // a layer the crate draws itself: its SVG instead of Charton's
-                        if let Some(raw) = info.raw.clone() {
+                        if let Some(raw) = &info.raw {
+                            let ids = self.define_pieces(&raw.pieces);
+                            let resolve = |svg: &str| {
+                                let mut svg = svg.to_string();
+                                for (k, id) in ids.iter().enumerate() {
+                                    svg = svg.replace(&raw_piece_href(k), id);
+                                }
+                                svg
+                            };
                             if !raw.clipped.is_empty() {
-                                self.panel_svg(&raw.clipped);
+                                let svg = resolve(&raw.clipped);
+                                self.panel_svg(&svg);
                             }
                             if !raw.unclipped.is_empty() {
-                                self.unclipped.push((e, raw.unclipped));
+                                self.unclipped.push((e, resolve(&raw.unclipped)));
                             }
                             frame.suppress = true;
                         }
@@ -1583,6 +1681,7 @@ impl RenderBackend for PlotWriter<'_> {
         }
         if frame.mark {
             self.marker = None;
+            self.marker_ids.clear();
         }
         if frame.wrote {
             self.body.push_str("</g>");

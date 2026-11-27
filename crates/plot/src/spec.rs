@@ -1211,8 +1211,9 @@ pub enum ElementKind {
         /// Error of y: one per value, or the sides apart (since 0.33.0), see [`Errors`].
         #[serde(default, skip_serializing_if = "Option::is_none")]
         yerr: Option<Errors>,
-        /// The length of the caps of the error bars in pixels, 0 (no caps) by default (since
-        /// 0.30.0).
+        /// The size of the caps of the error bars in pixels, matplotlib's `capsize`: a cap
+        /// reaches that far to each side of its bar, so it is twice as long (since 0.37.0; as
+        /// long as the size before), 0 (no caps) by default (since 0.30.0).
         #[serde(default, skip_serializing_if = "is_zero")]
         error_cap: f64,
         /// The width of the lines of the error bars in pixels, 1 by default (since 0.31.0;
@@ -1269,8 +1270,9 @@ pub enum ElementKind {
         /// Width of a bar in axis units.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         width: Option<f64>,
-        /// The length of the caps of the error bars in pixels, 0 (no caps) by default (since
-        /// 0.30.0).
+        /// The size of the caps of the error bars in pixels, matplotlib's `capsize`: a cap
+        /// reaches that far to each side of its bar, so it is twice as long (since 0.37.0; as
+        /// long as the size before), 0 (no caps) by default (since 0.30.0).
         #[serde(default, skip_serializing_if = "is_zero")]
         error_cap: f64,
         /// The width of the lines of the error bars in pixels, 1 by default (since 0.31.0;

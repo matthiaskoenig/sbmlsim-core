@@ -343,6 +343,7 @@ pub(crate) fn contour_svg(g: &Grid, look: &Look, fonts: &Fonts, px: &Pixels) -> 
         return RawSvg {
             clipped: out,
             unclipped: String::new(),
+            pieces: Vec::new(),
         };
     }
     let line = look.style.line_or_default();
@@ -413,6 +414,7 @@ pub(crate) fn contour_svg(g: &Grid, look: &Look, fonts: &Fonts, px: &Pixels) -> 
     RawSvg {
         clipped: out,
         unclipped: String::new(),
+        pieces: Vec::new(),
     }
 }
 
