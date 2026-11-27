@@ -1,6 +1,6 @@
 # PEtab
 
-[PEtab](https://petab.readthedocs.io) describes a parameter estimation problem as tables: the conditions an experiment applies at its times, the observables and the noise of the measurements, the measurements themselves and the parameters to estimate with their bounds and priors. sbmlsim-core reads a problem of PEtab v2, simulates it, evaluates its likelihood and fits it in Rust (the crate `sbmlsim-petab`), with no python and no sympy on the way: the math of the tables is read by the parser of the crate into the math of SBML, which the compiler and the engine evaluate as they evaluate a model.
+[PEtab](https://petab.readthedocs.io) describes a parameter estimation problem as tables: the conditions an experiment applies at its times, the observables and the noise of the measurements, the measurements themselves and the parameters to estimate with their bounds and priors. sbmlsim-core reads a problem of PEtab v2 (since 0.38.0), simulates it, evaluates its likelihood and fits it in Rust (the crate `sbmlsim-petab`), with no python and no sympy on the way: the math of the tables is read by the parser of the crate into the math of SBML, which the compiler and the engine evaluate as they evaluate a model.
 
 ## Running a problem
 
@@ -98,7 +98,7 @@ sbmlsim writes a problem with the extension `sbmlsim`, which carries what the ta
 
 - `settings.data_at_change`: `before` reads a measurement at a change after the start in the state before the change, except at the first time of an observable of an experiment which is measured later as well, the start of a collection,
 - `settings.relative_tolerance` and `settings.absolute_tolerance` (the smallest of its kinds), the tolerances of the integrator,
-- `observables.<id>.kind`: only the training data enter the likelihood; validation data and outliers are simulated and reported.
+- `observables.<id>.kind`: only the training data enter the likelihood; validation data and outliers are simulated and reported. The validation problem of a fit (`role: validation`, the problem of sbmlsim's `to_petab_problems` which holds the validation data at the fitted parameters) has its validation data as the data of its likelihood, so its log-likelihood is the one of the validation data, as in sbmlsim.
 
 `ExtensionPolicy::Ignore` (`extension="ignore"`) reads a problem as a tool which does not know the extension does. Any other extension which the problem marks as required is refused, as PEtab asks of a tool which does not support it.
 
@@ -134,9 +134,9 @@ At the tolerances of the problem the two differ by the error of their integrator
 
 ## In a browser
 
-The reader, the plan and the evaluation are pure Rust without a file system, which builds for `wasm32-unknown-unknown` (`sbmlsim-petab` without its feature `native`). `compiler.wasm` carries them (the feature `petab` of `sbmlsim-wasm`, on by default) as `petab_open` (the problem from the JSON `{"yaml": name, "files": {name: text}}`, with the summary of its parameters), `petab_model` (a model of the plan compiled as `compile` compiles one), `petab_requests` (the requests of the simulations at a point), `petab_evaluate` (the evaluation from the results the host simulated, their values as the bytes of their `f64`s) and `petab_close`, which `crates/wasm/tests/petab.rs` drives with the results of a host.
+The reader, the plan and the evaluation are pure Rust without a file system, which builds for `wasm32-unknown-unknown` (`sbmlsim-petab` without its feature `native`). `compiler.wasm` carries them (the feature `petab` of `sbmlsim-wasm`, on by default since 0.39.0) as `petab_open` (the problem from the JSON `{"yaml": name, "files": {name: text}}`, with the summary of its parameters), `petab_model` (a model of the plan compiled as `compile` compiles one), `petab_requests` (the requests of the simulations at a point), `petab_evaluate` (the evaluation from the results the host simulated, their values as the bytes of their `f64`s since 0.39.0) and `petab_close`, which `crates/wasm/tests/petab.rs` drives with the results of a host.
 
-`js/petab.mjs` is the host of JavaScript of these calls, which simulates the requests with `engine.wasm` under the loader or on the workers of a pool, so a page evaluates a problem with the bits of the command line:
+`js/petab.mjs` (since 0.39.0) is the host of JavaScript of these calls, which simulates the requests with `engine.wasm` under the loader or on the workers of a pool, so a page evaluates a problem with the bits of the command line:
 
 ```js
 import { openPetab } from "sbmlsim-core/petab";

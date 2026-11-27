@@ -1,4 +1,4 @@
-// PEtab v2 in a JavaScript host: a problem read, simulated and evaluated in a page.
+// PEtab v2 in a JavaScript host (since 0.39.0): a problem read, simulated and evaluated in a page.
 //
 // Plain ECMAScript without dependencies and without APIs of Node, so it runs in browsers as well:
 //

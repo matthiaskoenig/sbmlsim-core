@@ -254,7 +254,10 @@ class FitProblem:
         """The jacobian at a point, `(n_residuals, parameters)`, one batch of the engine."""
 
 class PetabProblem:
-    """A PEtab v2 problem read, compiled and evaluated in Rust (`sbmlsim_core.petab.Problem`)."""
+    """A PEtab v2 problem read, compiled and evaluated in Rust (since 0.38.0).
+
+    The class of `sbmlsim_core.petab.Problem`.
+    """
 
     @staticmethod
     def from_yaml(

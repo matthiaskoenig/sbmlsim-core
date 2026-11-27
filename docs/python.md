@@ -132,7 +132,7 @@ The multi-indices are those of `sbmlsim.sensitivity.chaos.expansion` in its orde
 
 ## PEtab
 
-`sbmlsim_core.petab.Problem` is a problem of PEtab v2 read, compiled, simulated and evaluated in Rust (the crate `sbmlsim-petab`): `Problem.from_yaml("problem.yaml")` or `Problem.from_files(files, "problem.yaml")` of the contents of its files, `evaluate()` its log-likelihood, `chi2`, log priors and simulations at the nominal values of its parameter table or at a point, `fit()` a fit of its parameters with an optimizer of the engine and `fit_problem()` the `FitProblem` of an optimizer of python. Every call holds no GIL. See [PEtab](petab.md).
+`sbmlsim_core.petab.Problem` (since 0.38.0) is a problem of PEtab v2 read, compiled, simulated and evaluated in Rust (the crate `sbmlsim-petab`): `Problem.from_yaml("problem.yaml")` or `Problem.from_files(files, "problem.yaml")` of the contents of its files, `evaluate()` its log-likelihood, `chi2`, log priors and simulations at the nominal values of its parameter table or at a point, `fit()` a fit of its parameters with an optimizer of the engine and `fit_problem()` the `FitProblem` of an optimizer of python. Every call holds no GIL. See [PEtab](petab.md).
 
 ## A page of one file
 

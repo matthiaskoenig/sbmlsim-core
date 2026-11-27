@@ -28,7 +28,7 @@ export { FigureHandle, attachFigure, formatValue } from "./figure.mjs";
 // the page script of a static report, `sbmlsimCore.hydrateFigures(document, { wasm })`
 export { hydrateFigures } from "./hydrate.mjs";
 
-// a problem of PEtab v2 in a page: `sbmlsimCore.openPetab({ compiler, runtime, files })` with
+// a problem of PEtab v2 in a page (since 0.39.0): `sbmlsimCore.openPetab({ compiler, runtime, files })` with
 // `sbmlsimCore.createCompiler({ compiler })` and `sbmlsimCore.createRuntime({ engine, mathlib })`
 // of the bytes of `sbmlsim_core.runtime_wasm()`
 export { CompileError, createCompiler } from "./compile.mjs";

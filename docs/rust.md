@@ -6,10 +6,10 @@ The crates are built from this repository and version together with it, so depen
 
 ```toml
 [dependencies]
-sbmlsim-abi = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.37.0" }
-sbmlsim-compiler = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.37.0" }
-sbmlsim-host = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.37.0" }
-sbmlsim-batch = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.37.0" }
+sbmlsim-abi = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.38.0" }
+sbmlsim-compiler = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.38.0" }
+sbmlsim-host = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.38.0" }
+sbmlsim-batch = { git = "https://github.com/matthiaskoenig/sbmlsim-core", tag = "v0.38.0" }
 anyhow = "1"
 
 # the reader alone, from crates.io
@@ -143,7 +143,7 @@ The pool is the one the [Python](python.md) bindings run `simulate_many` and `ba
 | `sbmlsim-host` | the wasmtime host: `Runtime`, `LoadedModel`, `Instance` |
 | `sbmlsim-batch` | the pool of a batch of simulations: a thread per point, an instance per thread |
 | `sbmlsim-fit` | the fit of a model on the batch, the contract `fit/1`: its objective, the optimizers of basin, the profiles and the Fisher information |
-| `sbmlsim-petab` | PEtab v2: the reader of a problem, its plan of simulations of the engine, its likelihood, and its execution and fit (feature `native`); the reader, the plan and the likelihood build for `wasm32-unknown-unknown`, see [PEtab](petab.md) |
+| `sbmlsim-petab` | PEtab v2 (since 0.38.0): the reader of a problem, its plan of simulations of the engine, its likelihood, and its execution and fit (feature `native`); the reader, the plan and the likelihood build for `wasm32-unknown-unknown`, see [PEtab](petab.md) |
 | `sbmlsim-chaos` | the basis of a polynomial chaos expansion: its multi-indices, its design matrix and its surrogate |
 | `sbmlsim-thin` | the thinning of a line of a figure to the points which can be seen, Ramer-Douglas-Peucker, the core of `sbmlsim_core.chart.thinning` |
 | `sbmlsim-csolvers` | CVODE and SuiteSparse, built from source for the engine and for the native host |

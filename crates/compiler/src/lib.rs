@@ -60,7 +60,8 @@ pub fn compile(sbml: &str, options: &CompileOptions) -> Result<CompiledModel, Co
 }
 
 /// Compiles a document [`sbmlsim_sbml::read`] gave, e.g. one a caller added parameters and
-/// rules to, as the PEtab problems of `sbmlsim-petab` add their observables to their models.
+/// rules to, as the PEtab problems of `sbmlsim-petab` add their observables to their models
+/// (since 0.38.0).
 pub fn compile_document(
     doc: &sbmlsim_sbml::Document,
     options: &CompileOptions,
