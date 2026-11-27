@@ -6,9 +6,10 @@
 //! "nan", "inf" and "-inf". A test runs a function over the inputs of a case and holds every
 //! value to the expected one at a relative tolerance; it prints the largest relative error it
 //! found (`cargo test -p sbmlsim-stats -- --nocapture`).
-#![cfg(not(target_family = "wasm"))]
-
-use std::path::PathBuf;
+//!
+//! The fixtures are compiled into the tests, so they run in wasm as well
+//! (`cargo test -p sbmlsim-stats --target wasm32-wasip1`, in the continuous integration), and
+//! a hash of the bits of every value found holds the wasm build to the native one.
 
 use serde_json::Value;
 
@@ -20,15 +21,18 @@ struct Fixture {
     value: Value,
 }
 
+/// The text of the fixture of a module, compiled in.
+fn source(module: &str) -> &'static str {
+    match module {
+        "special" => include_str!("../oracles/special.json"),
+        _ => panic!("no fixture of the module {module}"),
+    }
+}
+
 impl Fixture {
     fn load(module: &str) -> Self {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("oracles")
-            .join(format!("{module}.json"));
-        let text =
-            std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-        let value =
-            serde_json::from_str(&text).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        let value = serde_json::from_str(source(module))
+            .unwrap_or_else(|e| panic!("oracles/{module}.json: {e}"));
         Self {
             module: module.to_string(),
             value,
@@ -230,6 +234,33 @@ fn beta_inc_is_not_a_number_outside_of_its_domain() {
 }
 
 #[test]
+fn beta_inc_of_an_infinite_parameter_is_the_limit_as_in_scipy() {
+    // scipy 1.18: betainc(inf, 1, 0.5) = 0, betainc(2, inf, 0.5) = 1, betainc(inf, inf, x) nan
+    let inf = f64::INFINITY;
+    for (a, b, x, expected) in [
+        (inf, 1.0, 0.5, 0.0),
+        (inf, 2.0, 0.999, 0.0),
+        (inf, 1.0, 0.0, 0.0),
+        (inf, 1.0, 1.0, 1.0),
+        (2.0, inf, 0.5, 1.0),
+        (1.0, inf, 0.5, 1.0),
+        (2.0, inf, 0.0, 0.0),
+        (2.0, inf, 1.0, 1.0),
+    ] {
+        assert_eq!(special::beta_inc(a, b, x), expected, "{a}, {b}, {x}");
+    }
+    assert!(special::beta_inc(inf, inf, 0.5).is_nan());
+}
+
+#[test]
+fn beta_inc_is_not_a_number_where_it_would_lose_its_digits() {
+    // two parameters above CF_MAX, where the continued fraction would lose more than 1e-6
+    assert!(special::beta_inc(1e11, 1e11, 0.5).is_nan());
+    assert!(special::binom_cdf(10_000_000_000, 30_000_000_000, 0.4).is_nan());
+    assert!(special::beta_inc(1e9, 1e9, 0.5).is_finite());
+}
+
+#[test]
 fn normal_cdf_is_norm_cdf_of_scipy() {
     let fixture = Fixture::load("special");
     let case = fixture.case("normal_cdf");
@@ -308,12 +339,20 @@ fn the_t_distribution_is_symmetric_and_its_quantile_inverts_it() {
         assert_eq!(special::t_cdf(0.0, df), 0.5);
         for p in [1e-300, 1e-12, 0.01, 0.3, 0.49] {
             let t = special::t_ppf(p, df);
-            assert_eq!(
-                special::t_ppf(1.0 - p, df),
-                -special::t_ppf(1.0 - (1.0 - p), df)
-            );
             let back = special::t_cdf(t, df);
             assert!((back - p).abs() <= 1e-12 * p, "{p}, {df}: {back}");
+        }
+        // probabilities whose complement is exact
+        for (p, q) in [(0.25, 0.75), (0.125, 0.875), (0.0625, 0.9375)] {
+            assert_eq!(1.0 - p, q);
+            assert_eq!(special::t_ppf(p, df), -special::t_ppf(q, df), "{p}, {df}");
+        }
+        for x in [1e-3, 0.5, 1.0, 2.0, 10.0, 1e3] {
+            let (lower, upper) = (special::t_cdf(-x, df), special::t_cdf(x, df));
+            assert!(
+                (lower - (1.0 - upper)).abs() <= 1e-15 * lower.max(1e-300) + f64::EPSILON / 2.0,
+                "{x}, {df}: {lower} {upper}"
+            );
         }
     }
 }
@@ -442,4 +481,81 @@ fn the_binomial_distribution_at_its_ends_and_of_a_degenerate_probability() {
         assert!(special::binom_ppf(q, 10, p).is_nan(), "{q}, {p}");
     }
     assert!(special::binom_cdf(3, 10, f64::NAN).is_nan());
+}
+
+/// The FNV-1a hash of the bits of the values.
+fn hash(values: &[f64]) -> u64 {
+    values.iter().fold(0xcbf2_9ce4_8422_2325, |state, value| {
+        value
+            .to_bits()
+            .to_le_bytes()
+            .iter()
+            .fold(state, |s, &byte| {
+                (s ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
+            })
+    })
+}
+
+#[test]
+fn the_special_functions_give_the_same_bits_on_every_target() {
+    // the values of every case of the fixture, natively and in wasm (libm on both)
+    let fixture = Fixture::load("special");
+    let mut values = Vec::new();
+    let case = fixture.case("ln_beta");
+    for (a, b) in case.input("a").into_iter().zip(case.input("b")) {
+        values.push(special::ln_beta(a, b));
+    }
+    for name in ["beta_inc", "beta_inc_large"] {
+        let case = fixture.case(name);
+        for ((a, b), x) in case
+            .input("a")
+            .into_iter()
+            .zip(case.input("b"))
+            .zip(case.input("x"))
+        {
+            values.push(special::beta_inc(a, b, x));
+        }
+    }
+    for x in fixture.case("normal_cdf").input("x") {
+        values.push(special::normal_cdf(x));
+    }
+    for p in fixture.case("normal_ppf").input("p") {
+        values.push(special::normal_ppf(p));
+    }
+    for name in ["t_cdf", "t_cdf_large_df"] {
+        let case = fixture.case(name);
+        for (x, df) in case.input("x").into_iter().zip(case.input("df")) {
+            values.push(special::t_cdf(x, df));
+        }
+    }
+    let case = fixture.case("t_ppf");
+    for (p, df) in case.input("p").into_iter().zip(case.input("df")) {
+        values.push(special::t_ppf(p, df));
+    }
+    let case = fixture.case("binom_cdf");
+    for ((k, n), p) in case
+        .input_u64("k")
+        .into_iter()
+        .zip(case.input_u64("n"))
+        .zip(case.input("p"))
+    {
+        values.push(special::binom_cdf(k, n, p));
+    }
+    for name in ["binom_ppf", "binom_ppf_ties"] {
+        let case = fixture.case(name);
+        for ((q, n), p) in case
+            .input("q")
+            .into_iter()
+            .zip(case.input_u64("n"))
+            .zip(case.input("p"))
+        {
+            values.push(special::binom_ppf(q, n, p));
+        }
+    }
+    assert_eq!(
+        hash(&values),
+        0xd800_ea5c_0a1d_4805,
+        "{} values",
+        values.len()
+    );
 }

@@ -8,6 +8,15 @@
 //! incomplete beta function and the t and binomial distributions to 1e-10, the binomial
 //! quantile exactly.
 //!
+//! The range of these digits: the continued fraction of the incomplete beta function loses
+//! about `a * eps` relative when both of its parameters are large, so the incomplete beta
+//! function keeps them for both parameters below about 1e6 (a large one with a small one,
+//! below 40, takes an expansion without the loss) and the binomial distribution for up to
+//! about 1e6 draws (6.7e-11 relative at 1e6, 2.3e-10 at 1e7). The t distribution keeps them
+//! for every number of degrees of freedom. Where the loss would exceed about 1e-6, both
+//! parameters above [`CF_MAX`], and where a continued fraction does not converge in
+//! [`MAX_STEPS`] steps, a function gives not a number instead of a wrong value.
+//!
 //! References:
 //!
 //! - Press, W. H., Teukolsky, S. A., Vetterling, W. T., Flannery, B. P. (2007). Numerical
@@ -49,8 +58,15 @@ const BGRAT_B_MAX: f64 = 40.0;
 const BGRAT_X_MIN: f64 = 0.7;
 
 /// The most steps of a continued fraction or a series, far more than they take to a rounding
-/// (the continued fraction of the incomplete beta function below its mean takes a few dozen).
-const MAX_STEPS: usize = 1_000_000;
+/// (the continued fraction of the incomplete beta function takes a few dozen below its mean,
+/// about the square root of its parameters at its mean); a function which does not converge
+/// in them is not a number.
+pub const MAX_STEPS: usize = 1_000_000;
+
+/// The largest smaller parameter of the continued fraction of the incomplete beta function:
+/// above, it loses more than about 1e-6 relative (`a * eps`; 2e-8 at 1e9, above one at 1e16),
+/// and the function is not a number.
+pub const CF_MAX: f64 = 1e10;
 
 /// The logarithm of the gamma function, of libm.
 fn ln_gamma(x: f64) -> f64 {
@@ -112,10 +128,25 @@ pub fn ln_beta(a: f64, b: f64) -> f64 {
 /// mean `(a + 1) / (a + b + 2)` and of `1 - I_(1-x)(b, a)` above it. Close to one, a large
 /// first parameter with a small second one takes the expansion BGRAT of DiDonato and Morris
 /// instead, whose digits do not depend on those of `x` but of `1 - x`.
+///
+/// Accurate to 1e-10 relative for both parameters below about 1e6, where the continued
+/// fraction loses about `a * eps`; not a number for both above [`CF_MAX`] and where it does
+/// not converge in [`MAX_STEPS`] steps. As scipy, an infinite parameter is the limit: zero
+/// below `x = 1` for an infinite `a`, one above `x = 0` for an infinite `b`, not a number for
+/// both.
 #[must_use]
 pub fn beta_inc(a: f64, b: f64, x: f64) -> f64 {
     if !(a > 0.0 && b > 0.0 && (0.0..=1.0).contains(&x)) {
         return f64::NAN;
+    }
+    if a.is_infinite() && b.is_infinite() {
+        return f64::NAN;
+    }
+    if a.is_infinite() {
+        return if x == 1.0 { 1.0 } else { 0.0 };
+    }
+    if b.is_infinite() {
+        return if x == 0.0 { 0.0 } else { 1.0 };
     }
     beta_inc_xy(a, b, x, 1.0 - x)
 }
@@ -161,8 +192,11 @@ fn beta_inc_below_mean(a: f64, b: f64, x: f64, y: f64) -> f64 {
     if a >= BGRAT_A_MIN && b < BGRAT_B_MAX && x > BGRAT_X_MIN {
         return bgrat_up(a, b, x, y);
     }
+    if a.min(b) > CF_MAX {
+        return f64::NAN;
+    }
     let front = libm::exp(a * ln_of(x, y) + b * ln_of(y, x) - ln_beta(a, b)) / a;
-    front * beta_continued_fraction(a, b, x)
+    front * beta_continued_fraction(a, b, x, MAX_STEPS)
 }
 
 /// `I_x(a, b)` of a large `a` and an `x` close to one: the expansion BGRAT of `I_x(a, b0)` of
@@ -188,15 +222,16 @@ fn bgrat_up(a: f64, b: f64, x: f64, y: f64) -> f64 {
 }
 
 /// The continued fraction of `I_x(a, b) a B(a, b) / (x^a y^b)`, by the modified method of
-/// Lentz (Numerical Recipes, `betacf`), to a rounding.
-fn beta_continued_fraction(a: f64, b: f64, x: f64) -> f64 {
+/// Lentz (Numerical Recipes, `betacf`), to a rounding; not a number if it does not converge in
+/// `max_steps` steps.
+fn beta_continued_fraction(a: f64, b: f64, x: f64, max_steps: usize) -> f64 {
     const TINY: f64 = 1e-300;
     let guard = |value: f64| if value.abs() < TINY { TINY } else { value };
     let (sum, a_plus_one, a_minus_one) = (a + b, a + 1.0, a - 1.0);
     let mut c = 1.0;
     let mut d = 1.0 / guard(1.0 - sum * x / a_plus_one);
     let mut h = d;
-    for step in 1..=MAX_STEPS {
+    for step in 1..=max_steps {
         let m = step as f64;
         let m2 = 2.0 * m;
         // the even step
@@ -211,10 +246,10 @@ fn beta_continued_fraction(a: f64, b: f64, x: f64) -> f64 {
         let delta = d * c;
         h *= delta;
         if (delta - 1.0).abs() <= f64::EPSILON {
-            break;
+            return h;
         }
     }
-    h
+    f64::NAN
 }
 
 /// `I_x(a, b)` of a large `a` and a `b` up to one by the asymptotic expansion BGRAT of
@@ -273,7 +308,8 @@ fn bgrat(a: f64, b: f64, x: f64, y: f64) -> f64 {
 
 /// The regularized upper incomplete gamma function `Q(b, u)` of `b` in `(0, 1]`: the closed
 /// forms of one half (`erfc √u`) and one (`e^-u`), else the series of `P = 1 - Q` below
-/// `u = b + 1` and the continued fraction of `Q` above (Numerical Recipes, `gser`, `gcf`).
+/// `u = b + 1` and the continued fraction of `Q` above (Numerical Recipes, `gser`, `gcf`), not
+/// a number if either does not converge in [`MAX_STEPS`] steps.
 fn gamma_q(b: f64, u: f64) -> f64 {
     if b == 0.5 {
         return libm::erfc(libm::sqrt(u));
@@ -294,10 +330,10 @@ fn gamma_q(b: f64, u: f64) -> f64 {
             term *= u / denominator;
             sum += term;
             if term.abs() <= sum.abs() * f64::EPSILON {
-                break;
+                return 1.0 - sum * libm::exp(front - ln_gamma(b));
             }
         }
-        1.0 - sum * libm::exp(front - ln_gamma(b))
+        f64::NAN
     } else {
         const TINY: f64 = 1e-300;
         let guard = |value: f64| if value.abs() < TINY { TINY } else { value };
@@ -314,10 +350,10 @@ fn gamma_q(b: f64, u: f64) -> f64 {
             let delta = d * c;
             h *= delta;
             if (delta - 1.0).abs() <= f64::EPSILON {
-                break;
+                return libm::exp(front - ln_gamma(b)) * h;
             }
         }
-        libm::exp(front - ln_gamma(b)) * h
+        f64::NAN
     }
 }
 
@@ -461,7 +497,8 @@ fn t_tail_quantile(q: f64, df: f64) -> f64 {
         }
         let step = (next - s).abs();
         s = next;
-        if step <= 2.0 * f64::EPSILON * s.abs().max(1.0) || high - low <= f64::EPSILON {
+        let scale = low.abs().max(high.abs()).max(1.0);
+        if step <= 2.0 * f64::EPSILON * scale || high - low <= 2.0 * f64::EPSILON * scale {
             break;
         }
     }
@@ -470,7 +507,8 @@ fn t_tail_quantile(q: f64, df: f64) -> f64 {
 
 /// The distribution function of the binomial distribution of `n` draws of the probability `p`
 /// at `k`, `scipy.stats.binom.cdf`: `I_(1-p)(n - k, k + 1)`, of `p` itself as the complement,
-/// so a small probability keeps its digits.
+/// so a small probability keeps its digits. Accurate to 1e-10 relative for up to about 1e6
+/// draws (see [`beta_inc`]).
 #[must_use]
 pub fn binom_cdf(k: u64, n: u64, p: f64) -> f64 {
     if !(0.0..=1.0).contains(&p) {
@@ -514,4 +552,17 @@ pub fn binom_ppf(q: f64, n: u64, p: f64) -> f64 {
         }
     }
     low as f64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MAX_STEPS, beta_continued_fraction};
+
+    #[test]
+    fn a_continued_fraction_which_does_not_converge_is_not_a_number() {
+        // at the mean of two large parameters it takes about the square root of them in steps
+        let (a, b, x) = (1e6, 1e6, 0.5);
+        assert!(beta_continued_fraction(a, b, x, MAX_STEPS).is_finite());
+        assert!(beta_continued_fraction(a, b, x, 10).is_nan());
+    }
 }

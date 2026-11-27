@@ -63,6 +63,9 @@ jobs:
       # the global sensitivity analysis gives the bits of its native tests in wasm
       - run: cargo clippy -p sbmlsim-sensitivity --all-targets --target wasm32-wasip1 -- -D warnings
       - run: cargo test -p sbmlsim-sensitivity --target wasm32-wasip1
+      # the special functions of the statistics give the bits of their native tests in wasm
+      - run: cargo clippy -p sbmlsim-stats --all-targets --target wasm32-wasip1 -- -D warnings
+      - run: cargo test -p sbmlsim-stats --target wasm32-wasip1
   compiler_builds_for_wasm32_unknown_unknown:
     # the compiler (and the crates it is made of) does no file system or OS access, so it runs
     # in a browser as wasm32-unknown-unknown; needs no wasi-sdk
@@ -79,6 +82,7 @@ jobs:
       - run: cargo build -p sbmlsim-ode --target wasm32-unknown-unknown
       - run: cargo build -p sbmlsim-compiler --target wasm32-unknown-unknown --release
       - run: cargo build -p sbmlsim-sensitivity --target wasm32-unknown-unknown
+      - run: cargo build -p sbmlsim-stats --target wasm32-unknown-unknown
       # PEtab v2 read, planned and evaluated without an engine, as a page runs it
       - run: cargo build -p sbmlsim-petab --no-default-features --target wasm32-unknown-unknown
       # the fit without the batch, whose optimizers a page drives ask/tell
