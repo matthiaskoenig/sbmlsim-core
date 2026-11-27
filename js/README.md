@@ -21,7 +21,7 @@ npm install sbmlsim-core
 or import the modules from a CDN, which serves them with the headers every origin may read:
 
 ```js
-import { createPanelEndpoint } from "https://cdn.jsdelivr.net/npm/sbmlsim-core@0.34.0/panels.mjs";
+import { createPanelEndpoint } from "https://cdn.jsdelivr.net/npm/sbmlsim-core@0.35.0/panels.mjs";
 ```
 
 A pool started from a module of another origin starts its workers through a module of the page's own origin, so the CDN works for the workers as well. The engine needs fixed-width SIMD of WebAssembly: Chrome 91, Firefox 89, Safari 16.4 or newer, Node 20 or newer.
@@ -128,7 +128,7 @@ A spec the renderer refuses raises a `PlotError` whose message is `path: what is
 <!-- the IIFE build of sbmlsim-web, a release with registerEndpoint -->
 <script src="sbmlsim-web.iife.js"></script>
 <script type="module">
-  import { createPanelEndpoint } from "https://cdn.jsdelivr.net/npm/sbmlsim-core@0.34.0/panels.mjs";
+  import { createPanelEndpoint } from "https://cdn.jsdelivr.net/npm/sbmlsim-core@0.35.0/panels.mjs";
 
   sbmlsimWeb.registerEndpoint(
     "local:glimepiride",
