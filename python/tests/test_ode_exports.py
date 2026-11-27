@@ -23,7 +23,9 @@ def test_complete_native_exports(label: str, fmt: str, complete: bool) -> None:
     system = core.OdeSystem.from_sbml((FIXTURES / f"{label}.xml").read_bytes())
     option = "simulator" if core.ODE_FORMATS[fmt].kind == "code" else "standalone"
     actual = system.render(fmt, **{option: complete})
-    expected = (FIXTURES / f"{label}.{fmt}_{str(complete).lower()}.txt").read_text(encoding="utf-8")
+    expected = (FIXTURES / f"{label}.{fmt}_{str(complete).lower()}.txt").read_text(
+        encoding="utf-8"
+    )
     expected = expected.replace("sbmlode 0.3.3", f"sbmlsim-core {core.__version__}")
     assert actual == expected
 
@@ -45,7 +47,9 @@ def test_generated_event_simulators_preserve_numerical_results(label: str) -> No
     pytest.importorskip("pandas")
     system = core.OdeSystem.from_sbml((FIXTURES / f"{label}.xml").read_bytes())
     current = _module(system.render("python"))
-    reference = _module((FIXTURES / f"{label}.python_true.txt").read_text(encoding="utf-8"))
+    reference = _module(
+        (FIXTURES / f"{label}.python_true.txt").read_text(encoding="utf-8")
+    )
     result = current.simulate(20, points=41)
     expected = reference.simulate(20, points=41)
     assert list(result.columns) == list(expected.columns)
@@ -173,7 +177,9 @@ def test_generated_diffrax_numerics_and_gradients(label: str) -> None:
     pytest.importorskip("pandas")
     system = core.OdeSystem.from_sbml((FIXTURES / f"{label}.xml").read_bytes())
     current = _module(system.render("diffrax"))
-    reference = _module((FIXTURES / f"{label}.diffrax_true.txt").read_text(encoding="utf-8"))
+    reference = _module(
+        (FIXTURES / f"{label}.diffrax_true.txt").read_text(encoding="utf-8")
+    )
     times = jnp.linspace(0.0, 10.0, 21)
     actual = current.to_frame(current.simulate(times))
     expected = reference.to_frame(reference.simulate(times))
