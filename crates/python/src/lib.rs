@@ -77,6 +77,7 @@ mod fit;
 mod plot;
 mod runtime;
 mod simulate;
+mod thin;
 
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
@@ -142,6 +143,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(plot::pick, m)?)?;
     m.add_function(wrap_pyfunction!(plot::color_scale, m)?)?;
     m.add_function(wrap_pyfunction!(plot::image_png, m)?)?;
+    m.add_function(wrap_pyfunction!(thin::thin_kept_points, m)?)?;
     Ok(())
 }
 

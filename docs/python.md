@@ -136,7 +136,7 @@ The package carries what a page needs to simulate the models compiled here witho
 
 ## Charts
 
-`sbmlsim_core.chart` is the chart builder of the figures, pure python on numpy: `Chart`, `ChartPlot` and `ChartAxis` build a `figure/1` spec from numbers, quantities of pint and data arrays of xarray (both optional, read by duck typing) and draw it with `render_svg` and `render_png`, see [Charts](chart.md). The figures of that page are drawn by `scripts/chart_docs.py` with an installed wheel of the checkout (`--check` compares them), after a change of the page, of the chart builder or of the renderer.
+`sbmlsim_core.chart` is the chart builder of the figures, python on numpy but for the thinning of its lines to the points which can be seen, which runs in the extension (`thin_kept_points`, the crate `sbmlsim-thin`): `Chart`, `ChartPlot` and `ChartAxis` build a `figure/1` spec from numbers, quantities of pint and data arrays of xarray (both optional, read by duck typing) and draw it with `render_svg` and `render_png`, see [Charts](chart.md). The figures of that page are drawn by `scripts/chart_docs.py` with an installed wheel of the checkout (`--check` compares them), after a change of the page, of the chart builder or of the renderer.
 
 ## Errors
 

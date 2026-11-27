@@ -1,0 +1,9 @@
+[package]
+name = "sbmlsim-thin"
+version.workspace = true
+edition.workspace = true
+# not on crates.io yet, as the rest of the workspace
+publish = false
+license.workspace = true
+authors.workspace = true
+description = "The thinning of the lines of a figure of sbmlsim-core to the points which can be seen, Ramer-Douglas-Peucker"

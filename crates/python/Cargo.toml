@@ -36,6 +36,8 @@ sbmlsim-plot = { path = "../plot", features = ["png"] }
 # twice as fast as `engine.wasm` in wasmtime does (`bench/SBMLSIM.md`). Its results are not
 # bitwise those of `engine.wasm`, see `crates/host/src/native.rs`.
 sbmlsim-host = { path = "../host", features = ["native"] }
+# the thinning of the lines of the chart builder, `sbmlsim_core.chart.thinning`
+sbmlsim-thin = { path = "../thin" }
 serde_path_to_error = "0.1.20"
 
 # The allocator of the extension module (`src/lib.rs`, where the measurement is), on every
