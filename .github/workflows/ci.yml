@@ -73,6 +73,7 @@ jobs:
       # `compiler.wasm`, the compiler of `js/compile.mjs`: the module of the npm package
       - run: cargo build -p sbmlsim-wasm --target wasm32-unknown-unknown --profile wasm
       - run: cargo test -p sbmlsim-wasm
+      - run: cargo test -p sbmlsim-wasm --features petab
       - uses: actions/setup-node@v4
         with:
           node-version: "24"

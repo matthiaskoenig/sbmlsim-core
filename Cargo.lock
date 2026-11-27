@@ -2867,7 +2867,6 @@ version = "0.36.0"
 dependencies = [
  "sbmlsim-abi",
  "sbmlsim-compiler",
- "sbmlsim-host",
  "sbmlsim-ode",
  "sbmlsim-petab",
  "serde",

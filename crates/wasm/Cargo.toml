@@ -28,8 +28,4 @@ serde_json.workspace = true
 sbmlsim-petab = { path = "../petab", default-features = false, optional = true }
 
 [dev-dependencies]
-# the engine which simulates the requests of a PEtab problem in the tests, where a page has
-# the loader of JavaScript
-sbmlsim-host = { path = "../host" }
-sbmlsim-petab = { path = "../petab" }
 serde_json.workspace = true

@@ -134,7 +134,7 @@ At the tolerances of the problem the two differ by the error of their integrator
 
 ## In a browser
 
-The reader, the plan and the evaluation are pure Rust without a file system, which builds for `wasm32-unknown-unknown` (`sbmlsim-petab` without its feature `native`). `compiler.wasm` built with the feature `petab` of `sbmlsim-wasm` carries them as `petab_open` (the problem from the JSON `{"yaml": name, "files": {name: text}}`, with the summary of its parameters), `petab_model` (a model of the plan compiled as `compile` compiles one), `petab_requests` (the requests of the simulations at a point), `petab_evaluate` (the evaluation from the results the host simulated) and `petab_close`, which `crates/wasm/tests/petab.rs` drives against the native evaluation. The module of the npm package is built without the feature until the host of JavaScript drives them.
+The reader, the plan and the evaluation are pure Rust without a file system, which builds for `wasm32-unknown-unknown` (`sbmlsim-petab` without its feature `native`). `compiler.wasm` built with the feature `petab` of `sbmlsim-wasm` carries them as `petab_open` (the problem from the JSON `{"yaml": name, "files": {name: text}}`, with the summary of its parameters), `petab_model` (a model of the plan compiled as `compile` compiles one), `petab_requests` (the requests of the simulations at a point), `petab_evaluate` (the evaluation from the results the host simulated) and `petab_close`, which `crates/wasm/tests/petab.rs` drives with the results of a host. The module of the npm package is built without the feature until the host of JavaScript drives them.
 
 ## Not supported yet
 

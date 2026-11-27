@@ -1,9 +1,8 @@
-//! A PEtab problem through the interface of a page: opened, compiled, simulated by a host and
-//! evaluated, against the evaluation of `sbmlsim-petab` on the native engine.
+//! A PEtab problem through the interface of a page: opened, compiled, its requests simulated by
+//! a host (here a table of known values) and evaluated.
 #![cfg(feature = "petab")]
 
-use sbmlsim_abi::{ModelDescription, SimulationRequest};
-use sbmlsim_host::Runtime;
+use sbmlsim_abi::{ModelDescription, Output, SimulationRequest, SimulationResult};
 use serde_json::{Value, json};
 
 const MODEL: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -46,63 +45,87 @@ fn files() -> Value {
 }
 
 #[test]
-fn a_page_evaluates_a_problem_as_the_native_executor_does() {
+fn a_page_evaluates_a_problem_from_the_results_of_its_host() {
     let request = json!({ "yaml": "problem.yaml", "files": files() });
     let summary: Value =
         serde_json::from_str(&sbmlsim_wasm::petab::open(request.to_string().as_bytes()).unwrap())
             .unwrap();
     let handle = summary["handle"].as_u64().unwrap() as usize;
     assert_eq!(summary["parameters"], json!(["k1", "k2", "scale"]));
+    assert_eq!(summary["nominal"], json!([0.8, 0.6, 2.0]));
 
-    // the host: compiles the model of the plan, simulates the requests
+    // the model of the plan carries the columns of the observables its requests select
     let compiled = sbmlsim_wasm::petab::model(handle, 0).unwrap();
+    assert!(compiled.wasm.starts_with(b"\0asm"));
     let description: ModelDescription = serde_json::from_str(&compiled.description).unwrap();
-    let runtime = Runtime::embedded().unwrap();
-    let model = runtime.load(&compiled.wasm, &description).unwrap();
     let x = json!([0.5, 0.4, 3.0]);
     let requests: Vec<Value> = serde_json::from_str(
         &sbmlsim_wasm::petab::requests(handle, x.to_string().as_bytes()).unwrap(),
     )
     .unwrap();
-    let results: Vec<Value> = requests
-        .iter()
-        .map(|planned| {
-            let request: SimulationRequest =
-                serde_json::from_value(planned["request"].clone()).unwrap();
-            let result = model.instantiate().unwrap().simulate(&request).unwrap();
-            serde_json::to_value(result).unwrap()
-        })
-        .collect();
-    let input = json!({ "x": x, "results": results });
+    assert_eq!(requests.len(), 1);
+    let request: SimulationRequest =
+        serde_json::from_value(requests[0]["request"].clone()).unwrap();
+    assert!(request.preinit.contains(&("k1".to_string(), 0.5)));
+    assert!(request.preinit.contains(&("[A]".to_string(), 1.5)));
+    assert_eq!(request.changes.len(), 1, "the dose at 5 is a change");
+    for column in &request.selections[1..] {
+        assert!(
+            description.parameters.iter().any(|p| p.id == *column),
+            "{column} is no parameter of the model"
+        );
+    }
+
+    // a host which simulated: every column the value 1 + its position, at the output times,
+    // with the two rows of the change at 5
+    let Output::Times(times) = &request.output else {
+        panic!("the output is the times of the measurements")
+    };
+    let mut rows: Vec<f64> = times.clone();
+    rows.push(5.0);
+    rows.sort_by(f64::total_cmp);
+    let width = request.selections.len();
+    let mut values = Vec::new();
+    for time in &rows {
+        values.push(*time);
+        values.extend((1..width).map(|k| 1.0 + k as f64));
+    }
+    let result = SimulationResult {
+        columns: request.selections.clone(),
+        n_rows: rows.len(),
+        values,
+        sensitivities: None,
+        local_errors: None,
+    };
+    let input = json!({ "x": x, "results": [serde_json::to_value(&result).unwrap()] });
     let evaluation: Value = serde_json::from_str(
         &sbmlsim_wasm::petab::evaluate(handle, input.to_string().as_bytes()).unwrap(),
     )
     .unwrap();
-    sbmlsim_wasm::petab::close(handle);
-    assert!(sbmlsim_wasm::petab::requests(handle, b"").is_err());
-
-    // the native executor of the same files
-    let files: sbmlsim_petab::InMemory = files()
-        .as_object()
-        .unwrap()
-        .iter()
-        .map(|(name, text)| (name.clone(), text.as_str().unwrap().as_bytes().to_vec()))
-        .collect();
-    let problem = sbmlsim_petab::PetabProblem::read("problem.yaml", &files).unwrap();
-    let plan = sbmlsim_petab::Plan::new(&problem, &sbmlsim_petab::Options::default()).unwrap();
-    let native = sbmlsim_petab::Executor::new(plan)
-        .unwrap()
-        .evaluate(&[0.5, 0.4, 3.0]);
-    assert_eq!(evaluation["llh"].as_f64().unwrap(), native.llh);
-    assert_eq!(evaluation["chi2"].as_f64().unwrap(), native.chi2);
+    // obs_a is the first column (2), obs_b the second (3), of the noises 0.5 and 0.2
     let simulated: Vec<f64> = serde_json::from_value(evaluation["simulated"].clone()).unwrap();
-    assert_eq!(simulated, native.simulated);
+    assert_eq!(simulated, [2.0, 2.0, 3.0]);
+    let normal = |m: f64, y: f64, s: f64| {
+        -0.5 * ((m - y) / s).powi(2) - s.ln() - 0.5 * (2.0 * std::f64::consts::PI).ln()
+    };
+    let llh = normal(0.7, 2.0, 0.5) + normal(1.4, 2.0, 0.5) + normal(1.1, 3.0, 0.2);
+    assert!((evaluation["llh"].as_f64().unwrap() - llh).abs() < 1e-12);
     assert!(
         evaluation["simulation_table"]
             .as_str()
             .unwrap()
             .starts_with("observableId")
     );
+
+    // a failed simulation is a log-likelihood of no number
+    let input = json!({ "results": [{ "error": "the integration failed" }] });
+    let evaluation: Value = serde_json::from_str(
+        &sbmlsim_wasm::petab::evaluate(handle, input.to_string().as_bytes()).unwrap(),
+    )
+    .unwrap();
+    assert!(evaluation["llh"].is_null(), "{evaluation}");
+    sbmlsim_wasm::petab::close(handle);
+    assert!(sbmlsim_wasm::petab::requests(handle, b"").is_err());
 }
 
 #[test]
