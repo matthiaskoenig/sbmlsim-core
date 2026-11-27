@@ -3280,10 +3280,16 @@ var sbmlsimCore = (() => {
       const settings = fitSettings(rest);
       const points = this.starts(starts, seed);
       const began = performance.now();
-      const fits = points.map((start) => {
-        const input = new TextEncoder().encode(JSON.stringify({ settings, start: Array.from(start) }));
-        return { start, ...this.api.json("petab_fit_open", [this.handle], [input]) };
-      });
+      const fits = [];
+      try {
+        for (const start of points) {
+          const input = new TextEncoder().encode(JSON.stringify({ settings, start: Array.from(start) }));
+          fits.push({ start, ...this.api.json("petab_fit_open", [this.handle], [input]) });
+        }
+      } catch (error) {
+        for (const { fit } of fits) this.api.exports.petab_fit_close(fit);
+        throw error;
+      }
       const stopAll = () => {
         for (const { fit } of fits) this.api.exports.petab_fit_stop(fit);
       };
