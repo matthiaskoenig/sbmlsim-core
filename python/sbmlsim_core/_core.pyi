@@ -424,7 +424,7 @@ def thin_kept_points(
     tolerance: float,
     keep: numpy.typing.ArrayLike | None = None,
 ) -> numpy.typing.NDArray[numpy.bool_]:
-    """The points of a line which are kept, Ramer-Douglas-Peucker (since 0.34.0).
+    """The points of a line which are kept, Ramer-Douglas-Peucker (since 0.35.0).
 
     The first and the last point, the ones of `keep`, every point which is not finite and
     its neighbours, and the points which keep every other one within `tolerance` of the
