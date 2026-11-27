@@ -32,6 +32,7 @@ renderer of the package, `sbmlsim_core.render_svg` and `render_png`.
 
 from __future__ import annotations
 
+import base64
 import copy
 import json
 import math
@@ -44,7 +45,7 @@ from typing import Any, Final, Literal, cast
 
 import numpy as np
 
-from sbmlsim_core._core import render_png, render_svg
+from sbmlsim_core._core import image_png, render_png, render_svg
 from sbmlsim_core.chart._atomic import write_bytes_atomic, write_text_atomic
 from sbmlsim_core.chart.colors import color_alpha
 from sbmlsim_core.chart.thinning import THIN_TOLERANCE, thin_elements
@@ -102,9 +103,20 @@ type ColorMap = str | Sequence[tuple[float, str]]
 #: Which half of a marker its fill fills, matplotlib's `fillstyle`.
 type FillStyle = Literal["full", "left", "right", "bottom", "top"]
 
-#: Where a colour bar goes: right of its panel, above the panels of its row or
-#: inside its panel.
-type Placement = Literal["right", "top", "inset", "strip", "panel"]
+#: Where a colour bar goes: right of its panel, above or below the panels of
+#: its row, inside its panel, along its top or in its place.
+type Placement = Literal["right", "top", "bottom", "inset", "strip", "panel"]
+
+#: The side of a horizontal colour bar its ticks and labels go.
+type TickSide = Literal["top", "bottom"]
+
+#: The edge of an image its first row goes at, matplotlib's `origin`.
+type Origin = Literal["upper", "lower"]
+
+#: How the pixels of an image are resampled.
+type Interpolation = Literal["auto", "smooth", "nearest"]
+
+type Weight = Literal["normal", "bold"]
 
 type Coordinates = Literal["data", "axes"]
 
@@ -197,6 +209,10 @@ class ChartAxis:
         tick_label_color: the color of the tick labels: one for all, or one
             per tick of `ticks` or per category (matplotlib's
             `ticklabel.set_color`); `None` for the color of the renderer.
+        tick_weight: the weight of the tick labels of the axis, `normal` or
+            `bold`; `None` for the `tick_weight` of the fonts of the chart.
+        label_size: the font size of the label of the axis, e.g. the smaller
+            labels of an inset; `None` for the `label` size of the fonts.
     """
 
     label: str | None = None
@@ -217,6 +233,8 @@ class ChartAxis:
     ticks: Sequence[float] | None = None
     tick_labels: Sequence[str] | None = None
     tick_label_color: str | Sequence[str] | None = None
+    tick_weight: Weight | None = None
+    label_size: float | None = None
 
     def __post_init__(self) -> None:
         """Keep the categories, the frame and the ticks as tuples.
@@ -358,6 +376,10 @@ class _AxisState:
             spec["tick_label_color"] = _hex(a.tick_label_color, "tick label")
         elif a.tick_label_color is not None:
             spec["tick_label_color"] = list(a.tick_label_color)
+        if a.tick_weight is not None:
+            spec["tick_weight"] = str(a.tick_weight)
+        if a.label_size is not None:
+            spec["label_size"] = float(a.label_size)
         return spec
 
 
@@ -664,6 +686,10 @@ class ChartPlot:
         legend_anchor: tuple[float, float] | None = None,
         legends: Sequence[Mapping[str, Any]] | None = None,
         legend_tuples: Sequence[str] | None = None,
+        legend_size: float | None = None,
+        legend_weight: Weight | None = None,
+        legend_family: Literal["sans", "monospace"] | None = None,
+        legend_frame: bool = True,
     ) -> None:
         """Create a plot, see `Chart.plot`."""
         self.chart = chart
@@ -700,6 +726,10 @@ class ChartPlot:
         )
         self.legends = None if legends is None else [_plot_legend(lg) for lg in legends]
         self.legend_tuples = None if legend_tuples is None else list(legend_tuples)
+        self.legend_size = None if legend_size is None else float(legend_size)
+        self.legend_weight = legend_weight
+        self.legend_family = legend_family
+        self.legend_frame = bool(legend_frame)
         self._elements: list[dict[str, Any]] = []
         # the thinned elements by the tolerance and the number of elements
         self._thinned: tuple[float, int, list[dict[str, Any]]] | None = None
@@ -834,6 +864,7 @@ class ChartPlot:
         axis: AxisName,
         coordinates: Coordinates = "data",
         clip: bool = True,
+        z: float | None = None,
     ) -> str:
         """Add an element of a kind with its data and return its id."""
         self._state(axis)
@@ -853,6 +884,8 @@ class ChartPlot:
             element["coordinates"] = coordinates
         if not clip:
             element["clip"] = False
+        if z is not None:
+            element["z"] = _finite(z, "z of an element")
         element.update(data)
         self._elements.append(element)
         return element_id
@@ -883,6 +916,7 @@ class ChartPlot:
         axis: Literal["y", "y2"] = "y",
         coordinates: Coordinates = "data",
         clip: bool = True,
+        z: float | None = None,
     ) -> str:
         """Add a curve, a line and/or markers with error bars.
 
@@ -932,6 +966,9 @@ class ChartPlot:
             clip: whether the curve is clipped to the panel; `False` draws it
                 over the whole figure (matplotlib's `clip_on=False`), e.g. the
                 slashes of a broken axis.
+            z: the drawing order (matplotlib's `zorder`): the elements of a
+                plot are drawn by increasing `z`, those of both y axes
+                together; `None` for 0, in the order they were added.
 
         Returns:
             The id of the element.
@@ -971,6 +1008,7 @@ class ChartPlot:
             axis=axis,
             coordinates=coordinates,
             clip=clip,
+            z=z,
         )
 
     def band(
@@ -990,6 +1028,7 @@ class ChartPlot:
         color: str | None = None,
         opacity: float = 1.0,
         axis: Literal["y", "y2"] = "y",
+        z: float | None = None,
     ) -> str:
         """Add a band between two curves with an optional median line.
 
@@ -1009,6 +1048,9 @@ class ChartPlot:
                 `sbmlsim_core.chart.colors`), the cycle by default.
             opacity: the opacity.
             axis: the y axis, `y` or `y2`.
+            z: the drawing order (matplotlib's `zorder`): the elements of a
+                plot are drawn by increasing `z`, those of both y axes
+                together; `None` for 0, in the order they were added.
 
         Returns:
             The id of the element.
@@ -1030,7 +1072,7 @@ class ChartPlot:
             default_fill_opacity=BAND_OPACITY,
         )
         return self._add(
-            "band", data, style, label=label, legend=legend, id=id, axis=axis
+            "band", data, style, label=label, legend=legend, id=id, axis=axis, z=z
         )
 
     def area(
@@ -1047,6 +1089,7 @@ class ChartPlot:
         color: str | None = None,
         opacity: float = 1.0,
         axis: Literal["y", "y2"] = "y",
+        z: float | None = None,
     ) -> str:
         """Add a filled area between two curves.
 
@@ -1063,6 +1106,9 @@ class ChartPlot:
                 `sbmlsim_core.chart.colors`), the cycle by default.
             opacity: the opacity.
             axis: the y axis, `y` or `y2`.
+            z: the drawing order (matplotlib's `zorder`): the elements of a
+                plot are drawn by increasing `z`, those of both y axes
+                together; `None` for 0, in the order they were added.
 
         Returns:
             The id of the element.
@@ -1080,7 +1126,7 @@ class ChartPlot:
             default_fill_opacity=BAND_OPACITY,
         )
         return self._add(
-            "area", data, style, label=label, legend=legend, id=id, axis=axis
+            "area", data, style, label=label, legend=legend, id=id, axis=axis, z=z
         )
 
     def bar(
@@ -1094,6 +1140,8 @@ class ChartPlot:
         horizontal: bool = False,
         bar_width: float | None = None,
         base: Values | None = None,
+        edge_color: str | None = None,
+        edge_width: float | None = None,
         line: LineType | None = None,
         width: float | None = None,
         fill: str | None = None,
@@ -1104,6 +1152,7 @@ class ChartPlot:
         color: str | None = None,
         opacity: float = 1.0,
         axis: Literal["y", "y2"] = "y",
+        z: float | None = None,
     ) -> str:
         """Add bars at positions or at categories.
 
@@ -1122,6 +1171,13 @@ class ChartPlot:
                 positions, the default of the renderer for `None`.
             base: where every bar starts, matplotlib's `bottom` (`left` of
                 horizontal bars), so bars stack; 0 for `None`.
+            edge_color: the color of the edges of the bars (matplotlib's
+                `edgecolor`, e.g. `white` between stacked bars); with it or
+                `edge_width` every bar is outlined, in the color of the bars
+                without it.
+            edge_width: the width of the edges in pixels (matplotlib's
+                `linewidth`), the width of the outline (1 without) for
+                `None`.
             line: the type of the outline, in the color of the bars; a bar
                 has no outline without `line` and `width`.
             width: the width of the outline in pixels.
@@ -1134,6 +1190,9 @@ class ChartPlot:
                 `sbmlsim_core.chart.colors`), the cycle by default.
             opacity: the opacity.
             axis: the y axis, `y` or `y2`.
+            z: the drawing order (matplotlib's `zorder`): the elements of a
+                plot are drawn by increasing `z`, those of both y axes
+                together; `None` for 0, in the order they were added.
 
         Returns:
             The id of the element.
@@ -1155,6 +1214,7 @@ class ChartPlot:
             data["width"] = float(bar_width)
         if base is not None:
             data["base"] = _numbers(self._on(heights, base))
+        data.update(_edges(edge_color, edge_width))
         style = _Style(
             color=color,
             opacity=opacity,
@@ -1164,7 +1224,7 @@ class ChartPlot:
             fill_opacity=fill_opacity,
         )
         return self._add(
-            "bar", data, style, label=label, legend=legend, id=id, axis=axis
+            "bar", data, style, label=label, legend=legend, id=id, axis=axis, z=z
         )
 
     def box(
@@ -1175,6 +1235,7 @@ class ChartPlot:
         box_width: float | None = None,
         median_color: str | None = None,
         whisker_opacity: float | None = None,
+        median_opacity: float | None = None,
         line: LineType = "solid",
         width: float = 2.0,
         fill: str | None = None,
@@ -1192,6 +1253,7 @@ class ChartPlot:
         color: str | None = None,
         opacity: float = 1.0,
         axis: Literal["y", "y2"] = "y",
+        z: float | None = None,
     ) -> str:
         """Add box plots, one per position.
 
@@ -1210,6 +1272,9 @@ class ChartPlot:
                 `medianprops`), the color of the box for `None`.
             whisker_opacity: the opacity of the whiskers and their caps, the
                 opacity of the box for `None`.
+            median_opacity: the opacity of the median line (seaborn's opaque
+                median in a translucent box), the opacity of the box for
+                `None`.
             line: the type of the outline of the boxes.
             width: the width of the outline in pixels.
             fill: the fill color, the color by default.
@@ -1232,6 +1297,9 @@ class ChartPlot:
                 `sbmlsim_core.chart.colors`), the cycle by default.
             opacity: the opacity.
             axis: the y axis, `y` or `y2`.
+            z: the drawing order (matplotlib's `zorder`): the elements of a
+                plot are drawn by increasing `z`, those of both y axes
+                together; `None` for 0, in the order they were added.
 
         Returns:
             The id of the element.
@@ -1264,6 +1332,8 @@ class ChartPlot:
             data["median_color"] = _hex(median_color, "median")
         if whisker_opacity is not None:
             data["whisker_opacity"] = float(whisker_opacity)
+        if median_opacity is not None:
+            data["median_opacity"] = float(median_opacity)
         style = _Style(
             color=color,
             opacity=opacity,
@@ -1281,7 +1351,7 @@ class ChartPlot:
             marker_fill_alt=marker_fill_alt,
         )
         return self._add(
-            "box", data, style, label=label, legend=legend, id=id, axis=axis
+            "box", data, style, label=label, legend=legend, id=id, axis=axis, z=z
         )
 
     def violin(
@@ -1299,6 +1369,7 @@ class ChartPlot:
         color: str | None = None,
         opacity: float = 1.0,
         axis: Literal["y", "y2"] = "y",
+        z: float | None = None,
     ) -> str:
         """Add violins, one per position.
 
@@ -1318,6 +1389,9 @@ class ChartPlot:
                 `sbmlsim_core.chart.colors`), the cycle by default.
             opacity: the opacity.
             axis: the y axis, `y` or `y2`.
+            z: the drawing order (matplotlib's `zorder`): the elements of a
+                plot are drawn by increasing `z`, those of both y axes
+                together; `None` for 0, in the order they were added.
 
         Returns:
             The id of the element.
@@ -1342,7 +1416,7 @@ class ChartPlot:
             default_fill_opacity=BAND_OPACITY,
         )
         return self._add(
-            "violin", data, style, label=label, legend=legend, id=id, axis=axis
+            "violin", data, style, label=label, legend=legend, id=id, axis=axis, z=z
         )
 
     def histogram(
@@ -1351,6 +1425,8 @@ class ChartPlot:
         counts: Values,
         *,
         base: Values | None = None,
+        edge_color: str | None = None,
+        edge_width: float | None = None,
         line: LineType | None = None,
         width: float | None = None,
         fill: str | None = None,
@@ -1361,6 +1437,7 @@ class ChartPlot:
         color: str | None = None,
         opacity: float = 1.0,
         axis: Literal["y", "y2"] = "y",
+        z: float | None = None,
     ) -> str:
         """Add a histogram.
 
@@ -1369,6 +1446,11 @@ class ChartPlot:
             counts: the counts of the bins.
             base: where the bar of every bin starts, matplotlib's `bottom`,
                 so histograms stack (`hist(stacked=True)`); 0 for `None`.
+            edge_color: the color of the edges of the bins (matplotlib's
+                `edgecolor`); with it or `edge_width` every bin is outlined,
+                in the color of the histogram without it, and its swatch
+                shows the edge.
+            edge_width: the width of the edges in pixels, 1 for `None`.
             line: the type of the edges of the bars (matplotlib's
                 `edgecolor`), in the color of the histogram; the bars of
                 neighbouring bins are one outline without edges without `line`
@@ -1383,6 +1465,9 @@ class ChartPlot:
                 `sbmlsim_core.chart.colors`), the cycle by default.
             opacity: the opacity.
             axis: the y axis, `y` or `y2`.
+            z: the drawing order (matplotlib's `zorder`): the elements of a
+                plot are drawn by increasing `z`, those of both y axes
+                together; `None` for 0, in the order they were added.
 
         Returns:
             The id of the element.
@@ -1393,6 +1478,7 @@ class ChartPlot:
         }
         if base is not None:
             data["base"] = _numbers(self._on(axis, base))
+        data.update(_edges(edge_color, edge_width))
         style = _Style(
             color=color,
             opacity=opacity,
@@ -1402,7 +1488,7 @@ class ChartPlot:
             fill_opacity=fill_opacity,
         )
         return self._add(
-            "histogram", data, style, label=label, legend=legend, id=id, axis=axis
+            "histogram", data, style, label=label, legend=legend, id=id, axis=axis, z=z
         )
 
     def heatmap(
@@ -1426,6 +1512,7 @@ class ChartPlot:
         color: str | None = None,
         opacity: float = 1.0,
         axis: Literal["y", "y2"] = "y",
+        z: float | None = None,
     ) -> str:
         """Add a heat map.
 
@@ -1466,6 +1553,9 @@ class ChartPlot:
                 `sbmlsim_core.chart.colors`), the cycle by default.
             opacity: the opacity.
             axis: the y axis, `y` or `y2`.
+            z: the drawing order (matplotlib's `zorder`): the elements of a
+                plot are drawn by increasing `z`, those of both y axes
+                together; `None` for 0, in the order they were added.
 
         Returns:
             The id of the element.
@@ -1504,6 +1594,7 @@ class ChartPlot:
             legend=legend,
             id=id,
             axis=axis,
+            z=z,
         )
 
     def text(
@@ -1528,6 +1619,7 @@ class ChartPlot:
         axis: Literal["y", "y2"] = "y",
         coordinates: Coordinates = "data",
         clip: bool = True,
+        z: float | None = None,
     ) -> str:
         """Add a text at a position or at a location of the panel.
 
@@ -1568,6 +1660,9 @@ class ChartPlot:
             coordinates: `data` or `axes`, the position in fractions of the
                 panel, see `curve`.
             clip: whether the text is clipped to the panel, see `curve`.
+            z: the drawing order (matplotlib's `zorder`): the elements of a
+                plot are drawn by increasing `z`, those of both y axes
+                together; `None` for 0, in the order they were added.
 
         Returns:
             The id of the element.
@@ -1620,6 +1715,7 @@ class ChartPlot:
             axis=axis,
             coordinates=coordinates,
             clip=clip,
+            z=z,
         )
 
     def arrow(
@@ -1649,6 +1745,7 @@ class ChartPlot:
         axis: Literal["y", "y2"] = "y",
         coordinates: Coordinates = "data",
         clip: bool = True,
+        z: float | None = None,
     ) -> str:
         """Add an arrow from a tail to a head with an optional text at its tail.
 
@@ -1686,6 +1783,9 @@ class ChartPlot:
             axis: the y axis, `y` or `y2`.
             coordinates: `data` or `axes`, see `curve`.
             clip: whether the arrow is clipped to the panel, see `curve`.
+            z: the drawing order (matplotlib's `zorder`): the elements of a
+                plot are drawn by increasing `z`, those of both y axes
+                together; `None` for 0, in the order they were added.
 
         Returns:
             The id of the element.
@@ -1733,6 +1833,7 @@ class ChartPlot:
             axis=axis,
             coordinates=coordinates,
             clip=clip,
+            z=z,
         )
 
     def contour(
@@ -1759,6 +1860,7 @@ class ChartPlot:
         color: str | None = None,
         opacity: float = 1.0,
         axis: Literal["y", "y2"] = "y",
+        z: float | None = None,
     ) -> str:
         """Add contours of a grid of values: lines at levels or filled bands.
 
@@ -1793,6 +1895,9 @@ class ChartPlot:
             color: the color of lines without a scale, the cycle by default.
             opacity: the opacity.
             axis: the y axis, `y` or `y2`.
+            z: the drawing order (matplotlib's `zorder`): the elements of a
+                plot are drawn by increasing `z`, those of both y axes
+                together; `None` for 0, in the order they were added.
 
         Returns:
             The id of the element.
@@ -1829,7 +1934,7 @@ class ChartPlot:
             data["label_size"] = float(label_size)
         style = _Style(color=color, opacity=opacity, line=line, width=width)
         return self._add(
-            "contour", data, style, label=label, legend=legend, id=id, axis=axis
+            "contour", data, style, label=label, legend=legend, id=id, axis=axis, z=z
         )
 
     def rule(
@@ -1845,6 +1950,7 @@ class ChartPlot:
         color: str | None = None,
         opacity: float = 1.0,
         axis: Literal["y", "y2"] = "y",
+        z: float | None = None,
     ) -> str:
         """Add a line across the plot.
 
@@ -1861,6 +1967,9 @@ class ChartPlot:
                 `sbmlsim_core.chart.colors`), the cycle by default.
             opacity: the opacity.
             axis: the y axis, `y` or `y2`.
+            z: the drawing order (matplotlib's `zorder`): the elements of a
+                plot are drawn by increasing `z`, those of both y axes
+                together; `None` for 0, in the order they were added.
 
         Returns:
             The id of the element.
@@ -1875,7 +1984,7 @@ class ChartPlot:
         }
         style = _Style(color=color, opacity=opacity, line=line, width=width)
         return self._add(
-            "rule", data, style, label=label, legend=legend, id=id, axis=axis
+            "rule", data, style, label=label, legend=legend, id=id, axis=axis, z=z
         )
 
     def polygon(
@@ -1894,6 +2003,7 @@ class ChartPlot:
         axis: Literal["y", "y2"] = "y",
         coordinates: Coordinates = "data",
         clip: bool = True,
+        z: float | None = None,
     ) -> str:
         """Add filled polygons.
 
@@ -1917,6 +2027,9 @@ class ChartPlot:
             coordinates: `data` or `axes`, the points in fractions of the
                 panel, see `curve`.
             clip: whether the polygons are clipped to the panel, see `curve`.
+            z: the drawing order (matplotlib's `zorder`): the elements of a
+                plot are drawn by increasing `z`, those of both y axes
+                together; `None` for 0, in the order they were added.
 
         Returns:
             The id of the element.
@@ -1953,6 +2066,80 @@ class ChartPlot:
             axis=axis,
             coordinates=coordinates,
             clip=clip,
+            z=z,
+        )
+
+    def image(
+        self,
+        image: Any,
+        extent: Sequence[Values],
+        *,
+        origin: Origin = "upper",
+        interpolation: Interpolation = "auto",
+        opacity: float = 1.0,
+        id: str | None = None,
+        axis: Literal["y", "y2"] = "y",
+        z: float | None = None,
+    ) -> str:
+        """Add a raster image over a rectangle of the axes, matplotlib's `imshow`.
+
+        The image is stretched over its `extent`, under the other elements of
+        the plot by default, e.g. the scan of a figure of a study under the
+        data digitized from it; the axes stick to its edges, and
+        `Chart.plot(aspect="equal")` keeps its proportions:
+
+            plot.image(Path("figure2.png").read_bytes(), (0, 24, 0, 16))
+
+        Args:
+            image: the bytes of a PNG, its base64 text, or an RGB or RGBA
+                array of shape `(rows, columns, 3 or 4)`, its first row the
+                top of the image, of integers from 0 to 255 or numbers from 0
+                to 1 (`sbmlsim_core.image_png`).
+            extent: `(x0, x1, y0, y1)`, the left and the right edge and the
+                bottom and the top edge in values of the axes (matplotlib's
+                `extent`); an edge left of (below) the other mirrors the image.
+            origin: the edge the first row of the image goes at, `upper` (at
+                `y1`) or `lower` (at `y0`), matplotlib's `origin`.
+            interpolation: `auto` (square pixels for an image drawn three
+                times its size or more, smoothed else, as matplotlib),
+                `smooth` or `nearest`.
+            opacity: the opacity of the image.
+            id: the id, `e<n>` by default.
+            axis: the y axis, `y` or `y2`.
+            z: the drawing order, see `curve`; `None` for -1, under the
+                other elements.
+
+        Returns:
+            The id of the element.
+
+        Raises:
+            ValueError: for an extent of other than four values, an origin
+                or interpolation which is none of these, and an array which
+                is no image.
+        """
+        if len(extent) != 4:
+            raise ValueError(
+                f"The extent of an image is (x0, x1, y0, y1), not {extent!r}."
+            )
+        if origin not in ("upper", "lower"):
+            raise ValueError(
+                f"An image has its origin 'upper' or 'lower', not {origin!r}."
+            )
+        if interpolation not in ("auto", "smooth", "nearest"):
+            raise ValueError(
+                "An image is resampled 'auto', 'smooth' or 'nearest', not "
+                f"{interpolation!r}."
+            )
+        x0, x1 = (self._position("x", v, "extent of an image") for v in extent[:2])
+        y0, y1 = (self._position(axis, v, "extent of an image") for v in extent[2:])
+        data: dict[str, Any] = {"png": _image(image), "extent": [x0, x1, y0, y1]}
+        if origin != "upper":
+            data["origin"] = origin
+        if interpolation != "auto":
+            data["interpolation"] = interpolation
+        style = _Style(opacity=opacity)
+        return self._add(
+            "image", data, style, label=None, legend=None, id=id, axis=axis, z=z
         )
 
     def colorbar(
@@ -1977,6 +2164,7 @@ class ChartPlot:
         extend: Extend = "neither",
         rows: int | None = None,
         gamma: float | None = None,
+        tick_side: TickSide | None = None,
     ) -> None:
         """Add a color bar to the plot, a field of the plot and no element.
 
@@ -2014,8 +2202,10 @@ class ChartPlot:
                 black and 2 pixels wide, or a mapping of `value`, `color` and
                 `width`.
             placement: `right` of the panel (vertical), `top`, above the
-                panels of the row centred over them, `inset`, inside the
-                panel at `loc` (both horizontal), `strip`, the colors along
+                panels of the row centred over them, `bottom`, below the
+                panels of the row and their axes (matplotlib's
+                `location="bottom"`), `inset`, inside the panel at `loc` (all
+                three horizontal), `strip`, the colors along
                 the top of the panel without ticks and outline, or `panel`,
                 vertical in place of the panel, which draws nothing else (a
                 figure of a color bar alone).
@@ -2034,6 +2224,9 @@ class ChartPlot:
                 row of its plot (matplotlib's `fig.colorbar(...,
                 ax=axes[:, -1])`); `None` for its row.
             gamma: the exponent of a power scale, matplotlib's `PowerNorm`.
+            tick_side: the side of a horizontal bar its ticks and label go,
+                `top` or `bottom` (matplotlib's `ticklocation`); `None` for
+                above a bar above a row and below the others.
 
         Raises:
             ValueError: for a mark which is no number or mapping, for an
@@ -2057,10 +2250,10 @@ class ChartPlot:
             colorbar["categorical"] = True
         if marks is not None:
             colorbar["marks"] = [_mark(m) for m in marks]
-        if placement not in ("right", "top", "inset", "strip", "panel"):
+        if placement not in ("right", "top", "bottom", "inset", "strip", "panel"):
             raise ValueError(
-                "A color bar goes 'right', 'top', 'inset', 'strip' or 'panel', "
-                f"not {placement!r}."
+                "A color bar goes 'right', 'top', 'bottom', 'inset', 'strip' or "
+                f"'panel', not {placement!r}."
             )
         if placement != "right":
             colorbar["placement"] = placement
@@ -2090,6 +2283,17 @@ class ChartPlot:
             colorbar["extend"] = extend
         if rows is not None:
             colorbar["rows"] = int(rows)
+        if tick_side is not None:
+            if tick_side not in ("top", "bottom") or placement not in (
+                "top",
+                "bottom",
+                "inset",
+            ):
+                raise ValueError(
+                    f"The ticks of a horizontal color bar go 'top' or 'bottom', not "
+                    f"{tick_side!r} of a bar {placement!r}."
+                )
+            colorbar["tick_side"] = tick_side
         self._colorbars.append(colorbar)
 
     def spec(self) -> dict[str, Any]:
@@ -2126,6 +2330,14 @@ class ChartPlot:
             spec["legends"] = self.legends
         if self.legend_tuples is not None:
             spec["legend_tuples"] = self.legend_tuples
+        if self.legend_size is not None:
+            spec["legend_size"] = self.legend_size
+        if self.legend_weight is not None:
+            spec["legend_weight"] = str(self.legend_weight)
+        if self.legend_family is not None:
+            spec["legend_family"] = str(self.legend_family)
+        if not self.legend_frame:
+            spec["legend_frame"] = False
         if len(self._colorbars) == 1:
             spec["colorbar"] = self._colorbars[0]
         elif self._colorbars:
@@ -2242,6 +2454,37 @@ def _color_map(name: ColorMap) -> dict[str, Any]:
     return {"stops": stops}
 
 
+def _edges(color: str | None, width: float | None) -> dict[str, Any]:
+    """Get the edges of bars or bins for the spec, none of what is `None`.
+
+    Raises:
+        ValueError: for a color which is none and a width which is negative
+            or not finite.
+    """
+    spec: dict[str, Any] = {}
+    if color is not None:
+        spec["edge_color"] = _hex(color, "edge")
+    if width is not None:
+        value = float(width)
+        if not math.isfinite(value) or value < 0:
+            raise ValueError(f"The edges have a width in pixels, not {width!r}.")
+        spec["edge_width"] = value
+    return spec
+
+
+def _image(image: Any) -> str:
+    """Get the `png` of an image element, the base64 of a PNG.
+
+    Base64 text is taken as it is, the bytes of a PNG are written in base64 and
+    an RGB(A) array is encoded as a PNG (`sbmlsim_core.image_png`).
+    """
+    if isinstance(image, str):
+        return image
+    if isinstance(image, (bytes, bytearray, memoryview)):
+        return base64.b64encode(bytes(image)).decode("ascii")
+    return image_png(image)
+
+
 def _text_box(box: Mapping[str, Any]) -> dict[str, Any]:
     """Get the box of a text for the spec.
 
@@ -2272,6 +2515,7 @@ def _plot_legend(legend: Mapping[str, Any]) -> dict[str, Any]:
         ValueError: for an unknown key or a legend without groups.
     """
     keys = {"groups", "title", "loc", "anchor", "columns", "family", "position"}
+    keys |= {"size", "weight", "frame", "column"}
     unknown = sorted(set(legend) - keys)
     if unknown or "groups" not in legend:
         raise ValueError(
@@ -2291,6 +2535,14 @@ def _plot_legend(legend: Mapping[str, Any]) -> dict[str, Any]:
         spec["columns"] = _legend_columns(legend["columns"])
     if legend.get("family") is not None:
         spec["family"] = str(legend["family"])
+    if legend.get("size") is not None:
+        spec["size"] = float(legend["size"])
+    if legend.get("weight") is not None:
+        spec["weight"] = str(legend["weight"])
+    if legend.get("frame") is not None and not legend["frame"]:
+        spec["frame"] = False
+    if legend.get("column") is not None:
+        spec["column"] = int(legend["column"])
     return spec
 
 
@@ -2328,7 +2580,7 @@ def _color_scale(
 #: the fields of the fonts of a chart which are weights, the others sizes
 _FONT_WEIGHTS: Final = frozenset(
     {"title_weight", "label_weight", "tick_weight", "legend_weight"}
-    | {"plot_title_weight", "legend_family"}
+    | {"plot_title_weight", "legend_family", "colorbar_label_weight"}
 )
 
 
@@ -2430,9 +2682,12 @@ class Chart:
                 plots, `label` without), `colorbar_label` (the labels of the
                 color bars, `label` without), the weights `normal` or
                 `bold` by `title_weight`, `plot_title_weight` (the plot
-                titles, `title_weight` without), `label_weight`, `tick_weight`
-                and `legend_weight`, and `legend_family`, `sans` or `monospace`
-                (every legend); the defaults of the renderer for the others.
+                titles, `title_weight` without), `label_weight`, `tick_weight`,
+                `legend_weight` and `colorbar_label_weight` (the labels of the
+                color bars, `label_weight` without), the size `colorbar_tick`
+                (the tick labels of the color bars, `tick_y` without), and
+                `legend_family`, `sans` or `monospace` (every legend); the
+                defaults of the renderer for the others.
             legend_scope: `plot`, a legend per plot, or `row`, one per row.
             legend_position: `inside`, `outside`, right of the plot, or
                 `bottom`, one legend of the entries of all plots below the
@@ -2448,10 +2703,13 @@ class Chart:
             legend_title: the title of the legend `bottom`.
             legends: legends of the figure of the groups they list, each a
                 mapping of `groups`, `position` (`right`, right of the grid at
-                its top, matplotlib's `"outside right upper"`, or `bottom`,
-                below the grid, `"outside lower center"`), and optional
-                `title`, `columns` and `family`; their groups leave the
-                legends of the plots.
+                its top, matplotlib's `"outside right upper"`, `bottom`,
+                below the grid, `"outside lower center"`, or `top`, above
+                the grid, `"outside upper center"`), and optional `title`,
+                `columns`, `family`, `size`, `weight`, `frame` and `column`
+                (a legend `top` or `bottom` centred on the panels of that
+                column of the grid); their groups leave the legends of the
+                plots.
             row_titles: the titles of the rows of the grid, one per row (an
                 empty one for none), centred above the panels of each row
                 (matplotlib's `subfig.suptitle`).
@@ -2509,6 +2767,10 @@ class Chart:
         legend_anchor: tuple[float, float] | None = None,
         legends: Sequence[Mapping[str, Any]] | None = None,
         legend_tuples: Sequence[str] | None = None,
+        legend_size: float | None = None,
+        legend_weight: Weight | None = None,
+        legend_family: Literal["sans", "monospace"] | None = None,
+        legend_frame: bool = True,
     ) -> ChartPlot:
         """Add a plot at a cell of the grid, or as an inset of another plot.
 
@@ -2567,14 +2829,25 @@ class Chart:
                 `ax.inset_axes`); its row and column are those of the host.
             legend_anchor: a point in fractions of the panel the legend of
                 the plot is anchored at by its `legend_loc` (matplotlib's
-                `bbox_to_anchor` with `loc`).
+                `bbox_to_anchor` with `loc`); an anchor beyond the panel
+                (below 0 or above 1) reserves the room of the legend beyond
+                it, e.g. `(1.02, 1)` with `upper left` right of the panel.
             legends: further legends of the plot in its panel, each a mapping
-                of `groups` and optional `title`, `loc`, `anchor`, `columns`
-                and `family` (matplotlib's second legend of an axes); their
-                groups leave the legend of the plot.
+                of `groups` and optional `title`, `loc`, `anchor`, `columns`,
+                `family`, `size`, `weight` and `frame` (matplotlib's second
+                legend of an axes); their groups leave the legend of the plot.
             legend_tuples: the legend groups whose swatch draws the markers
                 of all their elements side by side (matplotlib's
                 `HandlerTuple`).
+            legend_size: the font size of the legend of the plot
+                (matplotlib's `fontsize`), the `legend` size of the fonts for
+                `None`.
+            legend_weight: the weight of the labels of the legend of the
+                plot, `normal` or `bold`.
+            legend_family: the family of the legend of the plot, `sans` or
+                `monospace`.
+            legend_frame: whether the legend of the plot has a frame
+                (matplotlib's `frameon`).
 
         Returns:
             The plot, which its methods add elements to.
@@ -2622,6 +2895,10 @@ class Chart:
             legend_anchor=legend_anchor,
             legends=legends,
             legend_tuples=legend_tuples,
+            legend_size=legend_size,
+            legend_weight=legend_weight,
+            legend_family=legend_family,
+            legend_frame=legend_frame,
         )
         self.plots.append(plot)
         return plot

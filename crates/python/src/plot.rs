@@ -169,3 +169,48 @@ pub(crate) fn text_width(text: &str, size: f64, bold: bool, family: &str) -> PyR
     };
     Ok(text_width_family(text, size, weight, family))
 }
+
+/// The `png` of an image element of a figure (since 0.34.0): the base64 of the PNG of an RGB
+/// or RGBA image, an array of shape `(rows, columns, 3)` or `(rows, columns, 4)` whose first
+/// row is the top of the image, of integers from 0 to 255 or of numbers from 0 to 1, as
+/// matplotlib's `imshow` reads an image.
+///
+/// Raises `ValueError` for another shape, for values out of their range and for an image of
+/// more than 64 Mpx.
+#[pyfunction]
+pub(crate) fn image_png(py: Python<'_>, pixels: &Bound<'_, PyAny>) -> PyResult<String> {
+    use numpy::PyUntypedArrayMethods;
+    // the kind of the numbers of the array numpy makes of the pixels: integers or others
+    let array = py.import("numpy")?.call_method1("asarray", (pixels,))?;
+    let kind: String = array.getattr("dtype")?.getattr("kind")?.extract()?;
+    let pixels: numpy::PyArrayLikeDyn<'_, f64, numpy::AllowTypeChange> = array.extract()?;
+    let shape = pixels.shape().to_vec();
+    let [rows, columns, channels] = shape[..] else {
+        return Err(PyValueError::new_err(format!(
+            "an image is an array of shape (rows, columns, 3 or 4), got {shape:?}"
+        )));
+    };
+    if channels != 3 && channels != 4 {
+        return Err(PyValueError::new_err(format!(
+            "an image has 3 (RGB) or 4 (RGBA) channels, got {channels}"
+        )));
+    }
+    // integers are the bytes of the channels, other numbers their shares of 255
+    let integers = matches!(kind.as_str(), "u" | "i" | "b");
+    let (scale, top) = if integers { (1.0, 255.0) } else { (255.0, 1.0) };
+    let mut bytes = Vec::with_capacity(rows * columns * channels);
+    for v in pixels.as_array().iter() {
+        if !(0.0..=top).contains(v) {
+            return Err(PyValueError::new_err(format!(
+                "the value {v} of an image is not between 0 and {top}"
+            )));
+        }
+        bytes.push((v * scale).round() as u8);
+    }
+    let (w, h) = (
+        u32::try_from(columns).unwrap_or(u32::MAX),
+        u32::try_from(rows).unwrap_or(u32::MAX),
+    );
+    py.detach(|| sbmlsim_plot::encode_png(w, h, channels == 4, &bytes))
+        .map_err(PyValueError::new_err)
+}

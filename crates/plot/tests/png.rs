@@ -92,3 +92,33 @@ fn png_time() {
         assert!(ms < 100.0, "{ms} ms");
     }
 }
+
+/// The PNG of an image element (since 0.34.0): its pixels drawn over its extent, the left one
+/// red and the right one blue, each a square at the nearest pixel.
+#[test]
+fn png_draws_an_image() {
+    const TWO: &str = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAIAAAB7QOjdAAAAD0lEQVR4nGO4pq4hX74FAAhtAnCJDgMlAAAAAElFTkSuQmCC";
+    let spec = format!(
+        r#"{{"contract": "figure/1", "width": 300, "height": 200,
+            "grid": {{"rows": 1, "columns": 1}},
+            "plots": [{{"id": "p", "row": 0, "column": 0, "legend": false,
+                        "x": {{}}, "y": {{}},
+                        "elements": [{{"id": "i", "kind": "image", "png": "{TWO}",
+                                       "extent": [0, 2, 0, 1]}}]}}]}}"#
+    );
+    let f = parse(&spec).unwrap_or_else(|e| panic!("{e}"));
+    let png = render_png(&f, 72.0).unwrap();
+    let pixmap = resvg::tiny_skia::Pixmap::decode_png(&png).unwrap();
+    let g = sbmlsim_plot::geometry(&f);
+    let r = &g.plots[0].rect;
+    let at = |share: f64| {
+        let (x, y) = (
+            (r.x + share * r.width) as u32,
+            (r.y + r.height / 2.0) as u32,
+        );
+        let p = pixmap.pixel(x, y).unwrap();
+        (p.red(), p.green(), p.blue())
+    };
+    assert_eq!(at(0.25), (0xd6, 0x27, 0x28));
+    assert_eq!(at(0.75), (0x1f, 0x77, 0xb4));
+}

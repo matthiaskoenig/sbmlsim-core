@@ -159,6 +159,7 @@ impl Ink {
                 edges,
                 counts,
                 base,
+                ..
             } => {
                 let tops = tops(counts, base.as_deref());
                 for (k, e) in edges.windows(2).enumerate() {
@@ -277,7 +278,8 @@ impl Ink {
             }
             ElementKind::Text { .. }
             | ElementKind::Heatmap { .. }
-            | ElementKind::Contour { .. } => {}
+            | ElementKind::Contour { .. }
+            | ElementKind::Image { .. } => {}
         }
     }
 

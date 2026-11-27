@@ -26,9 +26,9 @@
 use std::fmt::Write as _;
 
 use super::marks::{ERROR_WIDTH, Stroke, fill_of};
-use super::stats_marks::{outline_of, solid_fill};
+use super::stats_marks::{edge_of, outline_of, solid_fill};
 use crate::layout::Rect;
-use crate::spec::{ElementKind, FontFamily, Fonts, MarkerType, Plot, Style};
+use crate::spec::{ElementKind, FontFamily, FontWeight, Fonts, MarkerType, Plot, Style};
 use crate::svg::{
     MarkerGlyph, Stack, attr_css, attr_dash, attr_num, attr_opacity, attr_weight, escape, glyph,
     text_lines, theme,
@@ -57,7 +57,8 @@ const COLUMN_GAP: f64 = 2.0;
 const TITLE_HEIGHT: f64 = 1.6;
 
 /// How a legend lays out its entries (since 0.31.0): its title above them and the columns they
-/// fill, top down and then left to right, as matplotlib's `title` and `ncols`.
+/// fill, top down and then left to right, as matplotlib's `title` and `ncols`, in its font and
+/// with or without a frame (since 0.34.0).
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Shape {
     /// The title, drawn centred above the entries.
@@ -66,32 +67,49 @@ pub(crate) struct Shape {
     pub columns: usize,
     /// The family of the labels and the title (since 0.33.0).
     pub family: FontFamily,
-}
-
-impl Default for Shape {
-    fn default() -> Self {
-        Shape {
-            title: None,
-            columns: 1,
-            family: FontFamily::Sans,
-        }
-    }
+    /// The font size of the labels and the title (since 0.34.0).
+    pub size: f64,
+    /// The weight of the labels (since 0.34.0).
+    pub weight: FontWeight,
+    /// The weight of the title, the `legend_weight` of the fonts (matplotlib's weight of a
+    /// legend title apart from the one of its labels).
+    pub title_weight: FontWeight,
+    /// Whether the legend has a frame (since 0.34.0).
+    pub frame: bool,
 }
 
 impl Shape {
+    /// The shape of a legend of one column without a title in the legend font of the figure.
+    pub(crate) fn of(fonts: &Fonts) -> Shape {
+        Shape {
+            title: None,
+            columns: 1,
+            family: fonts.legend_family,
+            size: fonts.legend,
+            weight: fonts.legend_weight,
+            title_weight: fonts.legend_weight,
+            frame: true,
+        }
+    }
+
     /// The height of the title with its lines and its gap to the entries, 0 without one.
-    fn title_height(&self, fonts: &Fonts) -> f64 {
+    fn title_height(&self) -> f64 {
         match self.title.as_deref() {
-            Some(t) if !t.is_empty() => TITLE_HEIGHT * fonts.legend + extra_lines(t, fonts.legend),
+            Some(t) if !t.is_empty() => TITLE_HEIGHT * self.size + extra_lines(t, self.size),
             _ => 0.0,
         }
     }
 
     /// The width of the title, 0 without one.
-    fn title_width(&self, fonts: &Fonts) -> f64 {
+    fn title_width(&self) -> f64 {
         self.title.as_deref().map_or(0.0, |t| {
-            text_width_family(t, fonts.legend, fonts.legend_weight, self.family)
+            text_width_family(t, self.size, self.title_weight, self.family)
         })
+    }
+
+    /// The width of a text of the legend.
+    fn text_width(&self, text: &str) -> f64 {
+        text_width_family(text, self.size, self.weight, self.family)
     }
 
     /// The rows of `n` entries in the columns.
@@ -245,28 +263,28 @@ pub(crate) fn merge_ordered(
     out
 }
 
-/// The height of the entry of a label in pixels: [`ENTRY_HEIGHT`] font sizes and the lines of
-/// the label after its first.
-fn entry_height(label: &str, fonts: &Fonts) -> f64 {
-    ENTRY_HEIGHT * fonts.legend + extra_lines(label, fonts.legend)
+/// The height of the entry of a label in pixels: [`ENTRY_HEIGHT`] font sizes of the legend and
+/// the lines of the label after its first.
+fn entry_height(label: &str, size: f64) -> f64 {
+    ENTRY_HEIGHT * size + extra_lines(label, size)
 }
 
 /// The width and height of a legend of entries in pixels.
-pub(crate) fn size(entries: &[Entry], shape: &Shape, fonts: &Fonts) -> (f64, f64) {
+pub(crate) fn size(entries: &[Entry], shape: &Shape) -> (f64, f64) {
     let labels: Vec<&str> = entries.iter().map(|e| e.label.as_str()).collect();
-    size_of_labels(&labels, shape, fonts)
+    size_of_labels(&labels, shape)
 }
 
 /// The widths of the columns of a legend of labels: of the swatch, its gap and the widest label
 /// of each column.
-fn column_widths(labels: &[&str], shape: &Shape, fonts: &Fonts) -> Vec<f64> {
+fn column_widths(labels: &[&str], shape: &Shape) -> Vec<f64> {
     let rows = shape.rows(labels.len());
     labels
         .chunks(rows)
         .map(|column| {
             let widest = column
                 .iter()
-                .map(|l| text_width_family(l, fonts.legend, fonts.legend_weight, shape.family))
+                .map(|l| shape.text_width(l))
                 .fold(0.0, f64::max);
             SWATCH_WIDTH + SWATCH_GAP + widest
         })
@@ -274,10 +292,10 @@ fn column_widths(labels: &[&str], shape: &Shape, fonts: &Fonts) -> Vec<f64> {
 }
 
 /// The width and height of a legend of entries of these labels in pixels.
-fn size_of_labels(labels: &[&str], shape: &Shape, fonts: &Fonts) -> (f64, f64) {
+fn size_of_labels(labels: &[&str], shape: &Shape) -> (f64, f64) {
     let rows = shape.rows(labels.len());
-    let widths = column_widths(labels, shape, fonts);
-    let gaps = widths.len().saturating_sub(1) as f64 * COLUMN_GAP * fonts.legend;
+    let widths = column_widths(labels, shape);
+    let gaps = widths.len().saturating_sub(1) as f64 * COLUMN_GAP * shape.size;
     let entries_width = if widths.is_empty() {
         SWATCH_WIDTH + SWATCH_GAP
     } else {
@@ -285,11 +303,16 @@ fn size_of_labels(labels: &[&str], shape: &Shape, fonts: &Fonts) -> (f64, f64) {
     };
     let height = labels
         .chunks(rows)
-        .map(|column| column.iter().map(|l| entry_height(l, fonts)).sum::<f64>())
+        .map(|column| {
+            column
+                .iter()
+                .map(|l| entry_height(l, shape.size))
+                .sum::<f64>()
+        })
         .fold(0.0, f64::max);
     (
-        2.0 * PADDING + entries_width.max(shape.title_width(fonts)),
-        2.0 * PADDING + shape.title_height(fonts) + height,
+        2.0 * PADDING + entries_width.max(shape.title_width()),
+        2.0 * PADDING + shape.title_height() + height,
     )
 }
 
@@ -304,17 +327,12 @@ fn size_of_labels(labels: &[&str], shape: &Shape, fonts: &Fonts) -> (f64, f64) {
 /// the widest label of any of them and as tall as the one of the most rows. The room is then a
 /// function of what a page may show and not of what it shows now: two states of a page which
 /// draw different lists keep their plot and their figure where they are.
-pub(crate) fn room(
-    entries: &[Entry],
-    declared: &[&[String]],
-    shape: &Shape,
-    fonts: &Fonts,
-) -> Option<(f64, f64)> {
+pub(crate) fn room(entries: &[Entry], declared: &[&[String]], shape: &Shape) -> Option<(f64, f64)> {
     let lists: Vec<&[String]> = declared.iter().copied().filter(|l| !l.is_empty()).collect();
     if entries.is_empty() && lists.is_empty() {
         return None;
     }
-    let (mut width, mut height) = size(entries, shape, fonts);
+    let (mut width, mut height) = size(entries, shape);
     let held = |label: &str| lists.iter().any(|l| l.iter().any(|d| d == label));
     let always: Vec<&str> = entries
         .iter()
@@ -327,7 +345,7 @@ pub(crate) fn room(
             .copied()
             .chain(list.iter().map(String::as_str))
             .collect();
-        let (w, h) = size_of_labels(&labels, shape, fonts);
+        let (w, h) = size_of_labels(&labels, shape);
         width = width.max(w);
         height = height.max(h);
     }
@@ -336,23 +354,18 @@ pub(crate) fn room(
 
 /// The rectangles of the entries of a legend whose frame is `frame`, from its top below its
 /// title, column by column.
-pub(crate) fn entry_rects(
-    frame: Rect,
-    entries: &[Entry],
-    shape: &Shape,
-    fonts: &Fonts,
-) -> Vec<Rect> {
+pub(crate) fn entry_rects(frame: Rect, entries: &[Entry], shape: &Shape) -> Vec<Rect> {
     let labels: Vec<&str> = entries.iter().map(|e| e.label.as_str()).collect();
-    let widths = column_widths(&labels, shape, fonts);
+    let widths = column_widths(&labels, shape);
     let rows = shape.rows(entries.len());
-    let top = frame.y + PADDING + shape.title_height(fonts);
+    let top = frame.y + PADDING + shape.title_height();
     let one = widths.len() <= 1;
     let mut x = frame.x + PADDING;
     let mut out = Vec::with_capacity(entries.len());
     for (column, width) in entries.chunks(rows).zip(widths) {
         let mut y = top;
         for e in column {
-            let height = entry_height(&e.label, fonts);
+            let height = entry_height(&e.label, shape.size);
             out.push(Rect {
                 x,
                 y,
@@ -366,7 +379,7 @@ pub(crate) fn entry_rects(
             });
             y += height;
         }
-        x += width + COLUMN_GAP * fonts.legend;
+        x += width + COLUMN_GAP * shape.size;
     }
     out
 }
@@ -378,44 +391,44 @@ pub(crate) fn draw(
     frame: Rect,
     entries: &[Entry],
     shape: &Shape,
-    fonts: &Fonts,
 ) {
     out.push_str("<g class=\"sbmlsim-legend\" ");
     out.push_str(owner.0);
     out.push_str("=\"");
     escape(out, owner.1);
-    out.push_str("\"><rect class=\"sbmlsim-legend-frame\"");
-    attr_num(out, "x", frame.x);
-    attr_num(out, "y", frame.y);
-    attr_num(out, "width", frame.width);
-    attr_num(out, "height", frame.height);
-    let _ = write!(
-        out,
-        " rx=\"2\" fill=\"{}\" fill-opacity=\"{FRAME_OPACITY}\" stroke=\"{}\" stroke-width=\"1\"/>",
-        theme::BACKGROUND,
-        theme::GRID
-    );
+    out.push_str("\">");
+    // a legend without a frame has no background either, as matplotlib's `frameon=False`
+    if shape.frame {
+        out.push_str("<rect class=\"sbmlsim-legend-frame\"");
+        attr_num(out, "x", frame.x);
+        attr_num(out, "y", frame.y);
+        attr_num(out, "width", frame.width);
+        attr_num(out, "height", frame.height);
+        let _ = write!(
+            out,
+            " rx=\"2\" fill=\"{}\" fill-opacity=\"{FRAME_OPACITY}\" stroke=\"{}\" stroke-width=\"1\"/>",
+            theme::BACKGROUND,
+            theme::GRID
+        );
+    }
     if let Some(title) = shape.title.as_deref().filter(|t| !t.is_empty()) {
         // centred above the entries, as matplotlib's title of a legend
         let (x, y) = (frame.x + frame.width / 2.0, frame.y + PADDING);
         out.push_str("<text class=\"sbmlsim-legend-title\"");
         attr_num(out, "x", x);
         attr_num(out, "y", y);
-        attr_num(out, "font-size", fonts.legend);
-        attr_weight(out, fonts.legend_weight);
+        attr_num(out, "font-size", shape.size);
+        attr_weight(out, shape.title_weight);
         family_attr(out, shape.family);
         let _ = write!(
             out,
             " fill=\"{}\" text-anchor=\"middle\" dominant-baseline=\"hanging\">",
             theme::FG
         );
-        text_lines(out, title, (x, y), fonts.legend, Stack::Down, "hanging");
+        text_lines(out, title, (x, y), shape.size, Stack::Down, "hanging");
         out.push_str("</text>");
     }
-    for (e, r) in entries
-        .iter()
-        .zip(entry_rects(frame, entries, shape, fonts))
-    {
+    for (e, r) in entries.iter().zip(entry_rects(frame, entries, shape)) {
         let cy = r.y + r.height / 2.0;
         out.push_str("<g class=\"sbmlsim-legend-entry\" data-legend=\"");
         escape(out, &e.legend);
@@ -433,8 +446,8 @@ pub(crate) fn draw(
         let x = r.x + SWATCH_WIDTH + SWATCH_GAP;
         attr_num(out, "x", x);
         attr_num(out, "y", cy);
-        attr_num(out, "font-size", fonts.legend);
-        attr_weight(out, fonts.legend_weight);
+        attr_num(out, "font-size", shape.size);
+        attr_weight(out, shape.weight);
         family_attr(out, shape.family);
         let _ = write!(
             out,
@@ -445,7 +458,7 @@ pub(crate) fn draw(
             out,
             &e.label,
             (x, cy),
-            fonts.legend,
+            shape.size,
             Stack::Centred,
             "central",
         );
@@ -593,15 +606,21 @@ fn swatch(kind: &ElementKind, style: &Style, color: &str, fonts: &Fonts) -> Stri
             let (fill, opacity) = fill_of(style, color);
             filled(&mut out, (&fill, opacity), None, fonts);
         }
-        ElementKind::Bar { .. } => {
-            // the outline of the bars: the line the style gives
-            let (fill, opacity) = solid_fill(style, color);
-            let edge = style.line.and_then(|l| Stroke::of(l, style, color));
-            filled(&mut out, (&fill, opacity), edge.as_ref(), fonts);
+        // the edge of the bars and bins, their edge or the line the style gives (of the bins
+        // since 0.34.0, so a white bin with a black edge shows, as matplotlib's patch handler)
+        ElementKind::Bar {
+            edge_color,
+            edge_width,
+            ..
         }
-        ElementKind::Histogram { .. } => {
+        | ElementKind::Histogram {
+            edge_color,
+            edge_width,
+            ..
+        } => {
             let (fill, opacity) = solid_fill(style, color);
-            filled(&mut out, (&fill, opacity), None, fonts);
+            let edge = edge_of(style, color, (edge_color.as_deref(), *edge_width));
+            filled(&mut out, (&fill, opacity), edge.as_ref(), fonts);
         }
         ElementKind::Box { .. } | ElementKind::Violin { .. } => {
             let (fill, opacity) = fill_of(style, color);
@@ -624,6 +643,8 @@ fn swatch(kind: &ElementKind, style: &Style, color: &str, fonts: &Fonts) -> Stri
             }
         }
         ElementKind::Text { .. } | ElementKind::Arrow { .. } => {}
+        // an image has no swatch, matplotlib has no handler of an image in a legend
+        ElementKind::Image { .. } => {}
         ElementKind::Contour { filled: true, .. } => {
             filled(&mut out, (color, style.opacity), None, fonts);
         }

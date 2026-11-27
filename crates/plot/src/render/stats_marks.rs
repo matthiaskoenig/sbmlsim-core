@@ -20,7 +20,7 @@ use super::marks::{
     ERROR_WIDTH, Layers, Stroke, dash, dataset, error_runs, fill_of, group_name, path_layer,
     per_pixel,
 };
-use crate::spec::{BoxStats, Density, Errors, FillStyle, MarkerType, Style};
+use crate::spec::{BoxStats, Density, Errors, FillStyle, Line, LineType, MarkerType, Style};
 use crate::svg::{LayerInfo, MarkerGlyph, theme};
 
 /// The width of a box, a share of the spacing of the positions (matplotlib's 0.5).
@@ -141,6 +141,35 @@ pub(crate) fn outline_of(style: &Style, color: &str) -> Stroke {
     }
 }
 
+/// The edges of bars or bins: with an `edge_color` or an `edge_width` (since 0.34.0) a line of
+/// that colour (the colour of the element without one) and width (of the line of the style,
+/// 1 without one), else the line of the style when it gives one (since 0.28.0), else none.
+pub(crate) fn edge_of(
+    style: &Style,
+    color: &str,
+    (edge_color, edge_width): (Option<&str>, Option<f64>),
+) -> Option<Stroke> {
+    if edge_color.is_none() && edge_width.is_none() {
+        return style.line.and_then(|l| Stroke::of(l, style, color));
+    }
+    let line = style.line.unwrap_or(Line {
+        kind: LineType::Solid,
+        width: 1.0,
+    });
+    // an edge asked for is drawn, solid for a style without a line
+    let kind = match line.kind {
+        LineType::None => LineType::Solid,
+        k => k,
+    };
+    let width = edge_width.unwrap_or(line.width);
+    (width > 0.0).then(|| Stroke {
+        color: edge_color.unwrap_or(color).to_string(),
+        width,
+        dash: dash(kind, width),
+        opacity: style.opacity,
+    })
+}
+
 /// The tops of bars (since 0.33.0): their bases and heights, the heights without bases.
 pub(crate) fn tops(height: &[f64], base: Option<&[f64]>) -> Vec<f64> {
     match base {
@@ -196,6 +225,8 @@ pub(crate) struct Bars<'a> {
     pub error_width: f64,
     /// The width and the height of the panel in pixels.
     pub panel: (f64, f64),
+    /// The colour and the width of the edges (since 0.34.0).
+    pub edge: (Option<&'a str>, Option<f64>),
 }
 
 /// The layers of bars: one ring per bar from 0 to its height, outlined by the line the style
@@ -233,8 +264,8 @@ pub(crate) fn bar_layers(
         })
         .collect();
     let (fill, opacity) = solid_fill(style, color);
-    // the outline of the bars: the line of the style when it gives one (since 0.28.0)
-    let outline = style.line.and_then(|l| Stroke::of(l, style, color));
+    // the outline of the bars: their edge, else the line of the style when it gives one
+    let outline = edge_of(style, color, bars.edge);
     if let Some(l) = rings_layer(&rings, Some((&fill, opacity)), outline.as_ref())? {
         layers.push(l, info(index));
     }
@@ -290,6 +321,8 @@ pub(crate) struct Boxes<'a> {
     pub median_color: Option<&'a str>,
     /// The opacity of the whiskers and caps (since 0.33.0).
     pub whisker_opacity: Option<f64>,
+    /// The opacity of the median line (since 0.34.0).
+    pub median_opacity: Option<f64>,
 }
 
 /// The layers of box plots from their statistics: the box from the first to the third
@@ -351,6 +384,7 @@ pub(crate) fn box_layers(
     }
     let median = Stroke {
         color: boxes.median_color.unwrap_or(&solid.color).to_string(),
+        opacity: boxes.median_opacity.unwrap_or(solid.opacity),
         ..solid.clone()
     };
     if let Some(l) = path_layer(&finite(medians), &median, true)? {
@@ -439,12 +473,13 @@ pub(crate) fn violin_layers(
 /// The layers of a histogram from its bins: the bars of every run of neighbouring bins of a
 /// count which is not zero as one outline from their bases (0 by default, since 0.33.0) to their
 /// counts, so neighbouring bars meet without a seam (since 0.33.0; a ring per bin with an edge
-/// of the background between them before), and with a line of the style the outline of every
-/// bar in it (matplotlib's `edgecolor`).
+/// of the background between them before), and with an edge (since 0.34.0) or a line of the
+/// style the outline of every bar in it (matplotlib's `edgecolor`).
 pub(crate) fn histogram_layers(
     layers: &mut Layers,
     index: usize,
     (edges, counts, base): (&[f64], &[f64], Option<&[f64]>),
+    edge: (Option<&str>, Option<f64>),
     style: &Style,
     color: &str,
     (xa, ya): (&ResolvedAxis, &ResolvedAxis),
@@ -499,8 +534,8 @@ pub(crate) fn histogram_layers(
     if let Some(l) = rings_layer(&rings, Some((&fill, opacity)), None)? {
         layers.push(l, info(index));
     }
-    // the edges of the bars in the line of the style
-    if let Some(edge) = style.line.and_then(|l| Stroke::of(l, style, color)) {
+    // the edges of the bars: their edge, else the line of the style
+    if let Some(edge) = edge_of(style, color, edge) {
         let outlines: Vec<Vec<(f64, f64)>> = bars
             .iter()
             .flatten()

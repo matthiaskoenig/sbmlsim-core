@@ -605,6 +605,21 @@ pub(crate) fn build(
                     raw_layer(&mut layers, index, raw, (xa, ya))?;
                 }
             }
+            ElementKind::Image {
+                png,
+                extent,
+                origin,
+                interpolation,
+            } => {
+                let px = Pixels::new((xa, ya), panel);
+                if let Some(svg) = image_svg(png, *extent, *origin, *interpolation, style, &px) {
+                    let raw = RawSvg {
+                        clipped: svg,
+                        unclipped: String::new(),
+                    };
+                    raw_layer(&mut layers, index, raw, (xa, ya))?;
+                }
+            }
             ElementKind::Text {
                 x,
                 y,
@@ -670,6 +685,8 @@ pub(crate) fn build(
                 error_cap,
                 error_width,
                 base,
+                edge_color,
+                edge_width,
             } => stats_marks::bar_layers(
                 &mut layers,
                 index,
@@ -683,6 +700,7 @@ pub(crate) fn build(
                     error_cap: *error_cap,
                     error_width: error_width.unwrap_or(ERROR_WIDTH),
                     panel,
+                    edge: (edge_color.as_deref(), *edge_width),
                 },
                 style,
                 color,
@@ -694,6 +712,7 @@ pub(crate) fn build(
                 width,
                 median_color,
                 whisker_opacity,
+                median_opacity,
             } => stats_marks::box_layers(
                 &mut layers,
                 index,
@@ -703,6 +722,7 @@ pub(crate) fn build(
                     width: *width,
                     median_color: median_color.as_deref(),
                     whisker_opacity: *whisker_opacity,
+                    median_opacity: *median_opacity,
                 },
                 style,
                 color,
@@ -723,10 +743,13 @@ pub(crate) fn build(
                 edges,
                 counts,
                 base,
+                edge_color,
+                edge_width,
             } => stats_marks::histogram_layers(
                 &mut layers,
                 index,
                 (edges, counts, base.as_deref()),
+                (edge_color.as_deref(), *edge_width),
                 style,
                 color,
                 (xa, ya),
@@ -760,6 +783,81 @@ pub(crate) fn build(
         }
     }
     Ok(layers)
+}
+
+/// The `<image>` of an image element in the pixels of its panel (since 0.34.0), `None` for an
+/// extent the axes cannot show (an edge at or below 0 on a log axis).
+///
+/// The image is stretched over the rectangle of its corners (`preserveAspectRatio="none"`, as
+/// matplotlib fills the `extent`), its first row at the top or the bottom edge by its origin;
+/// an extent or an axis which runs the other way mirrors it, by a transform about its centre.
+fn image_svg(
+    png: &str,
+    [x0, x1, y0, y1]: [f64; 4],
+    origin: crate::spec::ImageOrigin,
+    interpolation: crate::spec::Interpolation,
+    style: &Style,
+    px: &Pixels,
+) -> Option<String> {
+    use crate::svg::{attr_num, attr_opacity, num};
+    // the pixels of the left and the right edge, and of the edges of the first and the last row
+    let (first, last) = match origin {
+        crate::spec::ImageOrigin::Upper => (y1, y0),
+        crate::spec::ImageOrigin::Lower => (y0, y1),
+    };
+    let (left, top) = px.at(Coordinates::Data, x0, first);
+    let (right, bottom) = px.at(Coordinates::Data, x1, last);
+    if ![left, top, right, bottom].iter().all(|v| v.is_finite()) {
+        return None;
+    }
+    let (x, w) = (left.min(right), (right - left).abs());
+    let (y, h) = (top.min(bottom), (bottom - top).abs());
+    if w <= 0.0 || h <= 0.0 {
+        return None;
+    }
+    let mut out = String::with_capacity(png.len() + 256);
+    out.push_str("<image class=\"sbmlsim-image-raster\"");
+    attr_num(&mut out, "x", x);
+    attr_num(&mut out, "y", y);
+    attr_num(&mut out, "width", w);
+    attr_num(&mut out, "height", h);
+    out.push_str(" preserveAspectRatio=\"none\"");
+    // matplotlib's `auto`: the pixels of an image drawn three times its size or more as
+    // squares, else smoothed
+    let nearest = match interpolation {
+        crate::spec::Interpolation::Nearest => true,
+        crate::spec::Interpolation::Smooth => false,
+        crate::spec::Interpolation::Auto => crate::image::png_size(png)
+            .is_ok_and(|(pw, ph)| w >= 3.0 * f64::from(pw) && h >= 3.0 * f64::from(ph)),
+    };
+    // `pixelated` is a value of CSS only (resvg ignores it in the attribute); the attribute of
+    // SVG 1.1 for a page which refuses inline styles
+    if nearest {
+        out.push_str(" image-rendering=\"optimizeSpeed\" style=\"image-rendering:pixelated\"");
+    }
+    attr_opacity(&mut out, "opacity", style.opacity);
+    // a mirror about the centre of the image along each side which runs the other way
+    let (fx, fy) = (right < left, bottom < top);
+    if fx || fy {
+        let (sx, sy) = (if fx { -1.0 } else { 1.0 }, if fy { -1.0 } else { 1.0 });
+        let (cx, cy) = (x + w / 2.0, y + h / 2.0);
+        out.push_str(" transform=\"matrix(");
+        for (k, v) in [sx, 0.0, 0.0, sy, cx - sx * cx, cy - sy * cy]
+            .iter()
+            .enumerate()
+        {
+            if k > 0 {
+                out.push(' ');
+            }
+            num(&mut out, *v);
+        }
+        out.push_str(")\"");
+    }
+    out.push_str(" href=\"data:image/png;base64,");
+    // the base64 of the spec, checked to be of its alphabet, which needs no escaping
+    out.push_str(png);
+    out.push_str("\"/>");
+    Some(out)
 }
 
 /// The values the elements of a plot put on its axes.
@@ -844,6 +942,14 @@ pub(crate) fn extent(e: &Element, out: &mut Extent, ends: Option<(XEnds, bool)>)
         }
         // the axes stick to the ends of the grid of contours, as matplotlib's tight limits of
         // a `ContourSet`
+        // the axes stick to the edges of an image, as matplotlib's limits of an image (since
+        // 0.34.0)
+        ElementKind::Image { extent, .. } => {
+            out.xs.extend_from_slice(&extent[..2]);
+            out.ys.extend_from_slice(&extent[2..]);
+            out.x_sticky.extend_from_slice(&extent[..2]);
+            out.y_sticky.extend_from_slice(&extent[2..]);
+        }
         ElementKind::Contour { x, y, .. } => {
             for (values, out_v, sticky) in [
                 (x, &mut out.xs, &mut out.x_sticky),
@@ -918,6 +1024,7 @@ pub(crate) fn extent(e: &Element, out: &mut Extent, ends: Option<(XEnds, bool)>)
             edges,
             counts,
             base,
+            ..
         } => {
             xs.extend_from_slice(edges);
             ys.extend(stats_marks::tops(counts, base.as_deref()));
@@ -1088,11 +1195,15 @@ fn cut_extent(e: &Element, out: &mut Extent, ends: XEnds, log_y: bool) -> bool {
 }
 
 /// Whether an element without a colour of its own takes the next colour of the cycle; a rule,
-/// a text and an arrow are drawn in the text colour instead.
+/// a text and an arrow are drawn in the text colour instead, and an image has its own colours
+/// (since 0.34.0).
 pub(crate) fn cycled(e: &Element) -> bool {
     !matches!(
         e.kind,
-        ElementKind::Rule { .. } | ElementKind::Text { .. } | ElementKind::Arrow { .. }
+        ElementKind::Rule { .. }
+            | ElementKind::Text { .. }
+            | ElementKind::Arrow { .. }
+            | ElementKind::Image { .. }
     )
 }
 

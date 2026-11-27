@@ -13,8 +13,9 @@ publish = false
 name = "sbmlsim_plot"
 
 [features]
-# the PNG of a figure, rasterized from its SVG with the bundled font; native only, never wasm
-png = ["dep:resvg"]
+# the PNG of a figure, rasterized from its SVG with the bundled font, and the PNG of an image
+# element from its pixels (since 0.34.0); native only, never wasm
+png = ["dep:resvg", "dep:png"]
 
 [dependencies]
 serde.workspace = true
@@ -24,8 +25,11 @@ serde_path_to_error = "0.1.20"
 charton = { version = "=0.9.1", default-features = false }
 # every transcendental function of a coordinate or a tick, the same bits natively and in wasm
 libm = "0.2"
-# the rasterizer of the PNG: no system fonts and no image formats but the PNG it writes
-resvg = { version = "0.50", default-features = false, features = ["text"], optional = true }
+# the rasterizer of the PNG: no system fonts; its raster images draw the PNG of an image element
+# (since 0.34.0), the only image the PNG of a figure reads, from a data URI
+resvg = { version = "0.50", default-features = false, features = ["text", "raster-images"], optional = true }
+# the encoder of the PNG of an image element from its pixels (`encode_png`, since 0.34.0)
+png = { version = "0.18", optional = true }
 
 [dev-dependencies]
 roxmltree.workspace = true

@@ -53,7 +53,7 @@ pub(crate) fn layout(axis: &Axis, resolved: &ResolvedAxis, fonts: &Fonts) -> Rig
         .iter()
         .map(|(_, l)| {
             label_extent(
-                label_width(l, tick, fonts.tick_weight),
+                label_width(l, tick, axis.tick_weight_of(fonts)),
                 label_height(l, tick),
                 axis.tick_rotation,
                 false,
@@ -69,7 +69,8 @@ pub(crate) fn layout(axis: &Axis, resolved: &ResolvedAxis, fonts: &Fonts) -> Rig
     };
     let name = axis_title(axis);
     // a title of several lines stacks them outwards, away from the axis
-    let title_room = TITLE_GAP + fonts.label + extra_lines(&name, fonts.label);
+    let title_room =
+        TITLE_GAP + axis.label_size_of(fonts) + extra_lines(&name, axis.label_size_of(fonts));
     let title = (axis.label_visible && !name.is_empty()).then_some(name);
     let depth = labels_depth + if title.is_some() { title_room } else { 0.0 };
     RightAxis {
@@ -174,7 +175,7 @@ pub(crate) fn draw(
             attr_num(out, "x", lx);
             attr_num(out, "y", y);
             attr_num(out, "font-size", tick);
-            attr_weight(out, fonts.tick_weight);
+            attr_weight(out, axis.tick_weight_of(fonts));
             let _ = write!(
                 out,
                 " fill=\"{}\" dominant-baseline=\"central\"",
@@ -202,20 +203,20 @@ pub(crate) fn draw(
         attr_num(out, "x", mx);
         attr_num(out, "y", my);
         attr_num(out, "font-size", fonts.y_tick());
-        attr_weight(out, fonts.tick_weight);
+        attr_weight(out, axis.tick_weight_of(fonts));
         let _ = write!(out, " fill=\"{}\" text-anchor=\"end\">", theme::FG_SOFT);
         label_lines(out, m, (mx, my), fonts.y_tick(), Stack::Down, "alphabetic");
         out.push_str("</text></g>");
     }
     if let Some(title) = &layout.title {
         let (tx, ty) = (
-            x + layout.labels_depth + TITLE_GAP + fonts.label / 2.0,
+            x + layout.labels_depth + TITLE_GAP + axis.label_size_of(fonts) / 2.0,
             panel.y + panel.height / 2.0,
         );
         out.push_str("<g class=\"charton-axis-title\"><text");
         attr_num(out, "x", tx);
         attr_num(out, "y", ty);
-        attr_num(out, "font-size", fonts.label);
+        attr_num(out, "font-size", axis.label_size_of(fonts));
         attr_weight(out, fonts.label_weight);
         let _ = write!(
             out,
@@ -227,7 +228,14 @@ pub(crate) fn draw(
         num(out, ty);
         out.push_str(")\">");
         // the lines stack outwards, right of the axis: down in the rotated text
-        text_lines(out, title, (tx, ty), fonts.label, Stack::Down, "middle");
+        text_lines(
+            out,
+            title,
+            (tx, ty),
+            axis.label_size_of(fonts),
+            Stack::Down,
+            "middle",
+        );
         out.push_str("</text></g>");
     }
     out.push_str("</g>");

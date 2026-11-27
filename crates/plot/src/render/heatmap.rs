@@ -38,7 +38,7 @@ use crate::colors::{color_of, color_scale, dark_text_on};
 use crate::layout::Rect;
 use crate::spec::{
     Axis, AxisScale, ColorBar, ColorBarPlacement, ColorScale, ElementKind, Fonts, LegendLoc, Plot,
-    Style, YAxisRef,
+    Style, TickSide, YAxisRef,
 };
 use crate::svg::{self, LayerInfo, theme};
 use crate::text::{extra_lines, label_height, label_width, text_width_one_line};
@@ -299,6 +299,9 @@ pub(crate) struct ColorBarLayout {
     thickness: f64,
     /// The length of the bar as a share of what it runs along.
     length: f64,
+    /// Whether the ticks and labels of a horizontal bar go above it (since 0.34.0; of a bar
+    /// above a row by default, else below).
+    up: bool,
     /// The pixels the bar takes: right of the panel (or the bar before it) for a bar right of
     /// it, above the row for a bar above it, 0 for an inset.
     pub room: f64,
@@ -315,6 +318,7 @@ fn default_length(placement: ColorBarPlacement) -> f64 {
     match placement {
         ColorBarPlacement::Right
         | ColorBarPlacement::Top
+        | ColorBarPlacement::Bottom
         | ColorBarPlacement::Strip
         | ColorBarPlacement::Panel => 1.0,
         ColorBarPlacement::Inset => 0.5,
@@ -358,6 +362,8 @@ pub(crate) fn colorbar_layout(bar: &ColorBar, fonts: &Fonts, along: f64) -> Colo
         ticks: None,
         tick_labels: None,
         tick_label_color: None,
+        tick_weight: None,
+        label_size: None,
     };
     let room = if horizontal {
         X_TICK_ROOM
@@ -366,7 +372,7 @@ pub(crate) fn colorbar_layout(bar: &ColorBar, fonts: &Fonts, along: f64) -> Colo
     };
     // the log room of matplotlib's colour bar: of a y axis along a vertical bar, of an x axis
     // along a horizontal one
-    let size = fonts.y_tick();
+    let size = fonts.colorbar_tick_size();
     let room = TickRoom {
         linear: room,
         log: if horizontal { 3.0 * size } else { 2.0 * size },
@@ -428,7 +434,7 @@ pub(crate) fn colorbar_layout(bar: &ColorBar, fonts: &Fonts, along: f64) -> Colo
                 .collect()
         }
     };
-    let size = fonts.y_tick();
+    let size = fonts.colorbar_tick_size();
     let labels_width = ticks
         .iter()
         .map(|(_, l)| label_width(l, size, fonts.tick_weight))
@@ -448,7 +454,9 @@ pub(crate) fn colorbar_layout(bar: &ColorBar, fonts: &Fonts, along: f64) -> Colo
     let across = thickness + COLORBAR_TICK + COLORBAR_TICK_PADDING;
     let room = match placement {
         ColorBarPlacement::Right => COLORBAR_GAP + across + labels_width + label_room,
-        ColorBarPlacement::Top => COLORBAR_GAP + across + labels_height + label_room,
+        ColorBarPlacement::Top | ColorBarPlacement::Bottom => {
+            COLORBAR_GAP + across + labels_height + label_room
+        }
         // a bar in the panel takes the room of its ticks and labels right of it
         ColorBarPlacement::Panel => {
             COLORBAR_TICK + COLORBAR_TICK_PADDING + labels_width + label_room
@@ -463,6 +471,10 @@ pub(crate) fn colorbar_layout(bar: &ColorBar, fonts: &Fonts, along: f64) -> Colo
         placement,
         thickness,
         length,
+        up: match bar.tick_side {
+            Some(side) => side == TickSide::Top,
+            None => placement == ColorBarPlacement::Top,
+        },
         room,
     }
 }
@@ -490,6 +502,7 @@ impl ColorBarLayout {
             placement: self.placement,
             thickness,
             length: self.length,
+            up: self.up,
             room: self.room,
         }
     }
@@ -508,8 +521,18 @@ impl ColorBarLayout {
     fn overhang(&self, fonts: &Fonts) -> f64 {
         self.ticks
             .iter()
-            .map(|(_, l)| label_width(l, fonts.y_tick(), fonts.tick_weight) / 2.0)
+            .map(|(_, l)| label_width(l, fonts.colorbar_tick_size(), fonts.tick_weight) / 2.0)
             .fold(0.0, f64::max)
+    }
+
+    /// The pixels from the edge of the block of a horizontal bar to the bar: its ticks, tick
+    /// labels and label above it, else 0.
+    fn above(&self) -> f64 {
+        if self.up {
+            self.label_room + self.labels_height + COLORBAR_TICK_PADDING + COLORBAR_TICK
+        } else {
+            0.0
+        }
     }
 
     /// The pixels a horizontal bar takes across it: the bar, its ticks, tick labels and label.
@@ -702,6 +725,7 @@ pub(crate) fn draw_colorbar(
     let class = match layout.placement {
         ColorBarPlacement::Right => "sbmlsim-colorbar",
         ColorBarPlacement::Top => "sbmlsim-colorbar sbmlsim-colorbar-top",
+        ColorBarPlacement::Bottom => "sbmlsim-colorbar sbmlsim-colorbar-bottom",
         ColorBarPlacement::Inset => "sbmlsim-colorbar sbmlsim-colorbar-inset",
         ColorBarPlacement::Strip => "sbmlsim-colorbar sbmlsim-colorbar-strip",
         ColorBarPlacement::Panel => "sbmlsim-colorbar sbmlsim-colorbar-panel",
@@ -838,8 +862,9 @@ pub(crate) fn draw_colorbar(
         " fill=\"none\" stroke=\"{}\" stroke-width=\"1\"/>",
         theme::FG_SOFT
     );
-    // the side of the ticks: right of a vertical bar, above a bar above a row, below an inset
-    let up = layout.placement == ColorBarPlacement::Top;
+    // the side of the ticks: right of a vertical bar, above a bar above a row, below the other
+    // horizontal ones, or the side of `tick_side` (since 0.34.0)
+    let up = horizontal && layout.up;
     let edge = if !horizontal {
         bx + bw
     } else if up {
@@ -870,7 +895,7 @@ pub(crate) fn draw_colorbar(
         body.push_str("/>");
     }
     body.push_str("</g>");
-    let size = fonts.y_tick();
+    let size = fonts.colorbar_tick_size();
     let _ = write!(
         body,
         "<g class=\"sbmlsim-colorbar-tick-labels\" fill=\"{}\"",
@@ -920,7 +945,7 @@ pub(crate) fn draw_colorbar(
             attr(body, "x", tx);
             attr(body, "y", ty);
             attr(body, "font-size", fonts.colorbar_label_size());
-            svg::attr_weight(body, fonts.label_weight);
+            svg::attr_weight(body, fonts.colorbar_label_weight());
             let _ = write!(
                 body,
                 " fill=\"{}\" text-anchor=\"middle\" dominant-baseline=\"middle\" transform=\"rotate(-90 ",
@@ -950,7 +975,7 @@ pub(crate) fn draw_colorbar(
             attr(body, "x", tx);
             attr(body, "y", ty);
             attr(body, "font-size", fonts.colorbar_label_size());
-            svg::attr_weight(body, fonts.label_weight);
+            svg::attr_weight(body, fonts.colorbar_label_weight());
             let _ = write!(
                 body,
                 " fill=\"{}\" text-anchor=\"middle\" dominant-baseline=\"{baseline}\">",
@@ -976,20 +1001,26 @@ pub(crate) fn inset_bar(layout: &ColorBarLayout, block: Rect, fonts: &Fonts) -> 
     let o = layout.overhang(fonts);
     Rect {
         x: block.x + o,
-        y: block.y,
+        y: block.y + layout.above(),
         width: (block.width - 2.0 * o).max(0.0),
         height: layout.thickness,
     }
 }
 
-/// The rectangle of a bar above a row: its length of the span `(left, right)` of the panels of
-/// the row centred on it, its top above `top`, the top of the room of the row, by its label and
-/// tick labels.
-pub(crate) fn top_bar(layout: &ColorBarLayout, (left, right): (f64, f64), top: f64) -> Rect {
+/// The rectangle of a bar above or below a row: its length of the span `(left, right)` of the
+/// panels of the row centred on it; above a row its block from `edge`, the top of the room of
+/// the row, below a row (since 0.34.0) its block from `edge`, the end of the room of the axes of
+/// the row, after its gap; the bar after its label and tick labels when they go above it.
+pub(crate) fn row_bar(layout: &ColorBarLayout, (left, right): (f64, f64), edge: f64) -> Rect {
     let (x, width) = centred((left, right - left), layout.length);
+    let start = if layout.placement == ColorBarPlacement::Bottom {
+        edge + COLORBAR_GAP
+    } else {
+        edge
+    };
     Rect {
         x,
-        y: top + layout.label_room + layout.labels_height + COLORBAR_TICK_PADDING + COLORBAR_TICK,
+        y: start + layout.above(),
         width,
         height: layout.thickness,
     }
