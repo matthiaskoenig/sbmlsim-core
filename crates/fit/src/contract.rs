@@ -28,10 +28,10 @@ fn is_auto(choice: &JacobianChoice) -> bool {
 /// The contract of a fit: the version of the schema of a request and of its answer.
 pub const FIT_CONTRACT: &str = "fit/1";
 
-/// The additive fields of `fit/1` this build reads which a release before them would not
-/// refuse, or would refuse with an error a host cannot tell from another: a host reads them
-/// before it sends such a field, as it reads [`crate::REDUCTIONS`] before it sends a
-/// reduction.
+/// The additive fields of `fit/1` this build reads (since 0.35.0) which a release before
+/// them would not refuse, or would refuse with an error a host cannot tell from another: a
+/// host reads them before it sends such a field, as it reads [`crate::REDUCTIONS`] before it
+/// sends a reduction.
 ///
 /// - `"curve.dimension"`: a curve over the points of a dimension of a scan, which
 ///   interpolates between their conditions ([`CurveRequest::dimension`]);
@@ -302,7 +302,7 @@ pub struct ConditionRequest {
     /// reads the value of the parameter and not the pin.
     ///
     /// Absent, which is every request written before the field existed, there are none. A
-    /// release before it does not deny the field and would set the parameter over the value
+    /// release before 0.35.0 does not deny the field and would set the parameter over the value
     /// of the condition, so a host sends it only to a build which names `"condition.pinned"`
     /// in [`crate::FIELDS`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -431,8 +431,8 @@ pub struct CurveRequest {
     /// condition.
     ///
     /// Absent, which is every request written before the field existed, the curve reads its
-    /// `condition`. A release before it requires the `condition` of a curve and refuses such
-    /// a request; a host sends it to a build which names `"curve.dimension"` in
+    /// `condition`. A release before 0.35.0 requires the `condition` of a curve and refuses
+    /// such a request; a host sends it to a build which names `"curve.dimension"` in
     /// [`crate::FIELDS`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dimension: Option<DimensionRequest>,
