@@ -1,2 +1,5 @@
 # the inline build is generated and checked byte for byte against its sources (js/build.mjs --check)
 python/sbmlsim_core/web/sbmlsim-core.js -text
+
+# Embedded source templates must have reproducible bytes on every build host.
+crates/ode/templates/* text eol=lf

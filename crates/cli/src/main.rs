@@ -63,6 +63,26 @@ enum Command {
         #[arg(long)]
         no_parameter_jacobian: bool,
     },
+    /// Export standalone Python, Diffrax, Julia, R, Markdown, LaTeX or Typst from SBML.
+    Export {
+        /// The trusted SBML file, with local comp companion documents.
+        model: PathBuf,
+        /// The source format.
+        #[arg(long, value_parser=["python","diffrax","julia","r","markdown","latex","typst"], default_value="python")]
+        format: String,
+        /// The file to write (stdout without).
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        /// Emit equation functions without a simulation driver.
+        #[arg(long)]
+        no_simulator: bool,
+        /// Emit a document fragment instead of a standalone document.
+        #[arg(long)]
+        fragment: bool,
+        /// Mathematical symbols use source ids or unambiguous names.
+        #[arg(long, value_parser=["id","name"], default_value="id")]
+        symbols: String,
+    },
     /// Simulates a compiled model with a request and writes the result as CSV.
     Simulate {
         /// The directory of the model, with `model.wasm` and `model.json`.
@@ -112,6 +132,22 @@ fn main() -> ExitCode {
             no_optimize,
             no_parameter_jacobian,
         } => compile(&model, &output, !no_optimize, !no_parameter_jacobian).map(|()| true),
+        Command::Export {
+            model,
+            format,
+            output,
+            no_simulator,
+            fragment,
+            symbols,
+        } => export_ode(
+            &model,
+            &format,
+            output.as_deref(),
+            !no_simulator,
+            !fragment,
+            &symbols,
+        )
+        .map(|()| true),
         Command::Simulate {
             model_dir,
             request,
@@ -264,6 +300,34 @@ fn simulate(
             .lock()
             .write_all(csv.as_bytes())
             .context("cannot write to stdout")?,
+    }
+    Ok(())
+}
+
+/// Generate a standalone file through the same reader and equation kernel as the bindings.
+fn export_ode(
+    model: &Path,
+    format: &str,
+    output: Option<&Path>,
+    simulator: bool,
+    standalone: bool,
+    symbols: &str,
+) -> anyhow::Result<()> {
+    let system = sbmlsim_ode::OdeSystem::read_path(model, 10000).map_err(anyhow::Error::msg)?;
+    let options = sbmlsim_ode::RenderOptions {
+        simulator,
+        standalone,
+        symbols: symbols.into(),
+        source: model.file_name().map(|s| s.to_string_lossy().into_owned()),
+    };
+    let export = system
+        .render(format, &options)
+        .map_err(anyhow::Error::msg)?;
+    match output {
+        Some(path) => std::fs::write(path, export.content)?,
+        None => std::io::stdout()
+            .lock()
+            .write_all(export.content.as_bytes())?,
     }
     Ok(())
 }

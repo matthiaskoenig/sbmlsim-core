@@ -1,0 +1,276 @@
+# The ODE system of the model `events_model`.
+#
+# Written by sbmlode 0.3.3, SBML L3V2.
+#
+# States x:
+#
+#      id  name       unit
+#   1  V
+#   2  S   substrate
+#   3  P
+#   4  A
+#   5  B
+#
+# `initial_values(p)` returns the initial states x0 and the constants p at t = 0,
+# `f_dxdt(t, x, p)` the rates of change of the states (in a list, as deSolve
+# wants them) and `f_y(t, x, p)` the assigned values y, the rules and the
+# reaction rates.
+# `EVENTS` lists the events with the functions of their delays, priorities and
+# assignments, `event_triggers(t, x, p)` and `event_conditions(t, x, p)` their
+# triggers.
+# Sourcing the file needs base R only.
+
+# the ids of the states x, the constants p and the assigned values y
+XIDS <- c(
+  "V",
+  "S",  # substrate
+  "P",
+  "A",
+  "B"
+)
+PIDS <- c(
+  "c",
+  "vmax",
+  "km",
+  "k1",
+  "S0",
+  "total"
+)
+YIDS <- c(
+  "dV_dt",  # rate of V
+  "k2",
+  "J0",
+  "J1"
+)
+
+# the names and the units of the ids, `NA` for none
+NAMES <- c(
+  "V" = NA_character_,
+  "S" = "substrate",
+  "P" = NA_character_,
+  "A" = NA_character_,
+  "B" = NA_character_,
+  "c" = NA_character_,
+  "vmax" = NA_character_,
+  "km" = NA_character_,
+  "k1" = NA_character_,
+  "S0" = NA_character_,
+  "total" = NA_character_,
+  "dV_dt" = "rate of V",
+  "k2" = NA_character_,
+  "J0" = NA_character_,
+  "J1" = NA_character_
+)
+UNITS <- c(
+  "V" = NA_character_,
+  "S" = NA_character_,
+  "P" = NA_character_,
+  "A" = NA_character_,
+  "B" = NA_character_,
+  "c" = NA_character_,
+  "vmax" = NA_character_,
+  "km" = NA_character_,
+  "k1" = NA_character_,
+  "S0" = NA_character_,
+  "total" = NA_character_,
+  "dV_dt" = NA_character_,
+  "k2" = NA_character_,
+  "J0" = NA_character_,
+  "J1" = NA_character_
+)
+
+# the default values of the constants, `NaN` for one without a value, e.g. one
+# which an initial assignment sets and `initial_values` computes
+P0 <- c(
+  "c" = 1,
+  "vmax" = 2,
+  "km" = 0.5,
+  "k1" = 0.1,
+  "S0" = 10,
+  "total" = 0
+)
+
+mm <- function(S, km) S / (km + S)
+
+# The initial states x0 and the constants p at t = 0.
+#
+# The initial values, initial assignments and the rules they need are evaluated
+# in the order of their dependencies.
+#
+# Every constant keeps the value passed.
+#
+# Returns a list of the initial states x0 and the constants p, named vectors.
+initial_values <- function(p = P0) {
+  p <- as.numeric(p)
+  # constants
+  S0 <- p[[5]]
+  # initial values
+  V <- 2
+  S <- S0  # substrate
+  P <- 0
+  A <- 5
+  B <- 1
+  x0 <- as.numeric(c(V, S, P, A, B))
+  names(x0) <- XIDS
+  names(p) <- PIDS
+  list(x0 = x0, p = p)
+}
+
+# The rates of change dx/dt of the states x at the time t, in a list (deSolve).
+f_dxdt <- function(t, x, p) {
+  # states
+  V <- x[[1]]
+  S <- x[[2]]  # substrate
+  A <- x[[4]]
+  B <- x[[5]]
+  # constants
+  c_ <- p[[1]]
+  vmax <- p[[2]]
+  km <- p[[3]]
+  k1 <- p[[4]]
+  # assigned values and reaction rates
+  dV_dt <- 0.1  # rate of V
+  J0 <- vmax * mm(S, km)
+  J1 <- k1 * S * A
+  # rates of change
+  dx <- numeric(5)
+  dx[[1]] <- 0.1  # dV/dt
+  dx[[2]] <- (-J0 - J1) / c_  # dS/dt
+  dx[[3]] <- (J0 + 2 * J1) / c_  # dP/dt
+  dx[[4]] <- -J1 / V - A / V * dV_dt  # dA/dt
+  dx[[5]] <- -0.1 * B  # dB/dt
+  list(dx)
+}
+
+# The assigned values y at the time t, the rules and the reaction rates.
+f_y <- function(t, x, p) {
+  # states
+  S <- x[[2]]  # substrate
+  A <- x[[4]]
+  # constants
+  vmax <- p[[2]]
+  km <- p[[3]]
+  k1 <- p[[4]]
+  # assigned values and reaction rates
+  dV_dt <- 0.1  # rate of V
+  k2 <- 2 * k1
+  J0 <- vmax * mm(S, km)
+  J1 <- k1 * S * A
+  as.numeric(c(dV_dt, k2, J0, J1))
+}
+
+# The root function of the trigger of each event, positive where it holds.
+#
+# An integrator locates the time at which a trigger changes as a root of its
+# function. At a root, where the function is 0, the trigger itself decides, see
+# `event_conditions`: `a >= b` holds at `a == b`, `a > b` does not.
+event_triggers <- function(t, x, p) {
+  # states
+  S <- x[[2]]  # substrate
+  as.numeric(c(
+    t - 5,  # E1 reset
+    2 - S  # E2
+  ))
+}
+
+# Whether the trigger of each event holds.
+event_conditions <- function(t, x, p) {
+  # states
+  S <- x[[2]]  # substrate
+  c(
+    isTRUE(t > 5),  # E1 reset
+    isTRUE(S < 2)  # E2
+  )
+}
+
+# The priority of the event E1, evaluated before each execution.
+event_priority_E1 <- function(t, x, p) {
+  1
+}
+
+# The values the event E1 assigns, evaluated when its trigger turns true.
+event_values_E1 <- function(t, x, p) {
+  # states
+  V <- x[[1]]
+  as.numeric(c(
+    2 * V,  # V
+    10,  # S substrate
+    NaN,  # A: not assigned, its amount is kept
+    NaN  # B: not assigned, its amount is kept
+  ))
+}
+
+# The sizes of the compartments the event E1 changes, after its assignments.
+event_sizes_E1 <- function(t, x, p) {
+  # states
+  V <- x[[1]]
+  as.numeric(c(V))
+}
+
+# Execute the event E1: a list of the states x and the constants p with the
+# values.
+#
+# A concentration in a compartment whose size the event changes keeps its amount:
+# it is scaled with the size before the event and divided by the size after it,
+# `event_sizes_E1`, evaluated with the values the event assigned.
+event_assign_E1 <- function(t, x, p, values) {
+  # states
+  V <- x[[1]]
+  A <- x[[4]]
+  B <- x[[5]]
+  x[[1]] <- values[[1]]  # V
+  x[[2]] <- values[[2]]  # S substrate
+  sizes <- event_sizes_E1(t, x, p)
+  x[[4]] <- A * V / sizes[[1]]  # A
+  x[[5]] <- B * V / sizes[[1]]  # B
+  list(x = x, p = p)
+}
+
+# The delay of the event E2, evaluated when its trigger turns true.
+event_delay_E2 <- function(t, x, p) {
+  1
+}
+
+# The values the event E2 assigns, evaluated when its trigger turns true.
+event_values_E2 <- function(t, x, p) {
+  # constants
+  total <- p[[6]]
+  as.numeric(c(
+    1,  # A
+    total + 1  # total
+  ))
+}
+
+# Execute the event E2: a list of the states x and the constants p with the
+# values.
+event_assign_E2 <- function(t, x, p, values) {
+  x[[4]] <- values[[1]]  # A
+  p[[6]] <- values[[2]]  # total
+  list(x = x, p = p)
+}
+
+# the events in the order of the model: their flags and the functions of their
+# delay, priority and assignments; the trigger of EVENTS[[k]] is the entry k of
+# `event_triggers` and `event_conditions`
+EVENTS <- list(
+  list(
+    id = "E1",
+    initial_value = TRUE,
+    persistent = TRUE,
+    use_trigger_values = TRUE,
+    delay = NULL,
+    priority = event_priority_E1,
+    values = event_values_E1,
+    assign = event_assign_E1
+  ),
+  list(
+    id = "E2",
+    initial_value = TRUE,
+    persistent = TRUE,
+    use_trigger_values = TRUE,
+    delay = event_delay_E2,
+    priority = NULL,
+    values = event_values_E2,
+    assign = event_assign_E2
+  )
+)

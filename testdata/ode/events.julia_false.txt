@@ -1,0 +1,328 @@
+"""
+The ODE system of the model `events_model`.
+
+Written by sbmlode 0.3.3, SBML L3V2.
+
+States x:
+
+       id  name       unit
+    1  V
+    2  S   substrate
+    3  P
+    4  A
+    5  B
+
+`initial_values(p)` returns the initial states x0 and the constants p at t = 0,
+`f!(dx, x, p, t)` the rates of change of the states and `f_y(x, p, t)` the assigned
+values y, the rules and the reaction rates.
+`EVENTS` lists the events with the functions of their delays, priorities and
+assignments, `event_triggers(x, p, t)` and `event_conditions(x, p, t)` their triggers.
+"""
+module Events_model
+
+export XIDS, PIDS, YIDS, NAMES, UNITS, P0, EVENTS, initial_values, f!, f_y, event_triggers,
+    event_conditions
+
+# the ids of the states x, the constants p and the assigned values y
+const XIDS = [
+    "V",
+    "S",  # substrate
+    "P",
+    "A",
+    "B",
+]
+const PIDS = [
+    "c",
+    "vmax",
+    "km",
+    "k1",
+    "S0",
+    "total",
+]
+const YIDS = [
+    "dV_dt",  # rate of V
+    "k2",
+    "J0",
+    "J1",
+]
+
+# the names and the units of the ids
+const NAMES = Dict{String, Union{Nothing, String}}(
+    "V" => nothing,
+    "S" => "substrate",
+    "P" => nothing,
+    "A" => nothing,
+    "B" => nothing,
+    "c" => nothing,
+    "vmax" => nothing,
+    "km" => nothing,
+    "k1" => nothing,
+    "S0" => nothing,
+    "total" => nothing,
+    "dV_dt" => "rate of V",
+    "k2" => nothing,
+    "J0" => nothing,
+    "J1" => nothing,
+)
+const UNITS = Dict{String, Union{Nothing, String}}(
+    "V" => nothing,
+    "S" => nothing,
+    "P" => nothing,
+    "A" => nothing,
+    "B" => nothing,
+    "c" => nothing,
+    "vmax" => nothing,
+    "km" => nothing,
+    "k1" => nothing,
+    "S0" => nothing,
+    "total" => nothing,
+    "dV_dt" => nothing,
+    "k2" => nothing,
+    "J0" => nothing,
+    "J1" => nothing,
+)
+
+# the default values of the constants, `NaN` for one without a value, e.g. one which an
+# initial assignment sets and `initial_values` computes
+const P0 = [
+    1.0,  # c
+    2.0,  # vmax
+    0.5,  # km
+    0.1,  # k1
+    10.0,  # S0
+    0.0,  # total
+]
+
+mm(S, km) = S / (km + S)
+
+"""
+    initial_values(p=P0)
+
+The initial states x0 and the constants p at t = 0.
+
+The initial values, initial assignments and the rules they need are evaluated in the
+order of their dependencies.
+
+Every constant keeps the value passed.
+
+Returns the initial states x0 and the constants p, a new vector.
+"""
+function initial_values(p::AbstractVector{<:Real}=P0)
+    p = collect(Float64, p)
+    # constants
+    S0 = p[5]
+    # initial values
+    V = 2.0
+    S = S0  # substrate
+    P = 0.0
+    A = 5.0
+    B = 1.0
+    x0 = Float64[V, S, P, A, B]
+    return x0, p
+end
+
+"""
+    f!(dx, x, p, t)
+
+The rates of change dx/dt of the states x at the time t, written into dx.
+"""
+function f!(dx, x, p, t)
+    # states
+    V = x[1]
+    S = x[2]  # substrate
+    A = x[4]
+    B = x[5]
+    # constants
+    c = p[1]
+    vmax = p[2]
+    km = p[3]
+    k1 = p[4]
+    # assigned values and reaction rates
+    dV_dt = 0.1  # rate of V
+    J0 = vmax * mm(S, km)
+    J1 = k1 * S * A
+    # rates of change
+    dx[1] = 0.1  # dV/dt
+    dx[2] = (-J0 - J1) / c  # dS/dt
+    dx[3] = (J0 + 2.0 * J1) / c  # dP/dt
+    dx[4] = -J1 / V - A / V * dV_dt  # dA/dt
+    dx[5] = -0.1 * B  # dB/dt
+    return nothing
+end
+
+"""
+    f_y(x, p, t)
+
+The assigned values y at the time t, the rules and the reaction rates.
+"""
+function f_y(x, p, t)
+    # states
+    S = x[2]  # substrate
+    A = x[4]
+    # constants
+    vmax = p[2]
+    km = p[3]
+    k1 = p[4]
+    # assigned values and reaction rates
+    dV_dt = 0.1  # rate of V
+    k2 = 2.0 * k1
+    J0 = vmax * mm(S, km)
+    J1 = k1 * S * A
+    return Float64[dV_dt, k2, J0, J1]
+end
+
+"""
+    event_triggers(x, p, t)
+
+The root function of the trigger of each event, positive where it holds.
+
+An integrator locates the time at which a trigger changes as a root of its function.
+At a root, where the function is 0, the trigger itself decides, see
+`event_conditions`: `a >= b` holds at `a == b`, `a > b` does not.
+"""
+function event_triggers(x, p, t)
+    # states
+    S = x[2]  # substrate
+    return Float64[
+        t - 5.0,  # E1 reset
+        2.0 - S,  # E2
+    ]
+end
+
+"""
+    event_conditions(x, p, t)
+
+Whether the trigger of each event holds.
+"""
+function event_conditions(x, p, t)
+    # states
+    S = x[2]  # substrate
+    return Bool[
+        t > 5.0,  # E1 reset
+        S < 2.0,  # E2
+    ]
+end
+
+"""
+    event_priority_E1(x, p, t)
+
+The priority of the event E1, evaluated before each execution.
+"""
+function event_priority_E1(x, p, t)
+    return 1.0
+end
+
+"""
+    event_values_E1(x, p, t)
+
+The values the event E1 assigns, evaluated when its trigger turns true.
+"""
+function event_values_E1(x, p, t)
+    # states
+    V = x[1]
+    return Float64[
+        2.0 * V,  # V
+        10.0,  # S substrate
+        NaN,  # A: not assigned, its amount is kept
+        NaN,  # B: not assigned, its amount is kept
+    ]
+end
+
+"""
+    event_sizes_E1(x, p, t)
+
+The sizes of the compartments the event E1 changes, after its assignments.
+"""
+function event_sizes_E1(x, p, t)
+    # states
+    V = x[1]
+    return Float64[V]
+end
+
+"""
+    event_assign_E1(x, p, t, values)
+
+Execute the event E1: the states x and the constants p with the values, new vectors.
+
+A concentration in a compartment whose size the event changes keeps its amount: it is
+scaled with the size before the event and divided by the size after it,
+`event_sizes_E1`, evaluated with the values the event assigned.
+"""
+function event_assign_E1(x, p, t, values)
+    # states
+    V = x[1]
+    A = x[4]
+    B = x[5]
+    x = copy(x)
+    p = copy(p)
+    x[1] = values[1]  # V
+    x[2] = values[2]  # S substrate
+    sizes = event_sizes_E1(x, p, t)
+    x[4] = A * V / sizes[1]  # A
+    x[5] = B * V / sizes[1]  # B
+    return x, p
+end
+
+"""
+    event_delay_E2(x, p, t)
+
+The delay of the event E2, evaluated when its trigger turns true.
+"""
+function event_delay_E2(x, p, t)
+    return 1.0
+end
+
+"""
+    event_values_E2(x, p, t)
+
+The values the event E2 assigns, evaluated when its trigger turns true.
+"""
+function event_values_E2(x, p, t)
+    # constants
+    total = p[6]
+    return Float64[
+        1.0,  # A
+        total + 1.0,  # total
+    ]
+end
+
+"""
+    event_assign_E2(x, p, t, values)
+
+Execute the event E2: the states x and the constants p with the values, new vectors.
+"""
+function event_assign_E2(x, p, t, values)
+    x = copy(x)
+    p = copy(p)
+    x[4] = values[1]  # A
+    p[6] = values[2]  # total
+    return x, p
+end
+
+# the events in the order of the model: their flags and the functions of their delay,
+# priority and assignments; the trigger of EVENTS[k] is the entry k of `event_triggers`
+# and `event_conditions`
+const EVENTS = [
+    (
+        id = "E1",
+        initial_value = true,
+        persistent = true,
+        use_trigger_values = true,
+        delay = nothing,
+        priority = event_priority_E1,
+        values = event_values_E1,
+        assign = event_assign_E1,
+    ),
+    (
+        id = "E2",
+        initial_value = true,
+        persistent = true,
+        use_trigger_values = true,
+        delay = event_delay_E2,
+        priority = nothing,
+        values = event_values_E2,
+        assign = event_assign_E2,
+    ),
+]
+
+end  # module Events_model

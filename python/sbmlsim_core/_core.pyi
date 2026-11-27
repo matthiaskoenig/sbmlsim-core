@@ -443,3 +443,21 @@ def thin_kept_points(
     Raises `ValueError` for rows of another length than `x`, for no row, and for a `keep`
     of another length.
     """
+
+ODE_CONTRACT: str
+
+class _EquationSystem:
+    def __init__(
+        self,
+        source: bytes,
+        documents: list[tuple[str, bytes]] | None = None,
+        location: str = "./model.xml",
+        max_expanded_elements: int = 10000,
+    ) -> None: ...
+    @staticmethod
+    def from_path(path: str, max_expanded_elements: int = 10000) -> _EquationSystem: ...
+    @property
+    def model_id(self) -> str | None: ...
+    def render(self, fmt: str, options: str) -> tuple[str, str]: ...
+    def render_template(self, fmt: str, options: str, template: str) -> str: ...
+    def typeset_json(self, links: str) -> str: ...

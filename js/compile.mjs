@@ -153,6 +153,71 @@ class Compiler {
     }
     return new Uint8Array(this.exports.memory.buffer, pointer, length);
   }
+
+  /**
+   * Generate standalone ODE code or a document, without a server or simulation runtime.
+   * @param {string|BufferSource} sbml source text or bytes
+   * @param {"python"|"diffrax"|"julia"|"r"|"markdown"|"latex"|"typst"} format
+   * @param {{simulator?:boolean,standalone?:boolean,symbols?:"id"|"name",source?:string,
+   * documents?:Record<string,string>,location?:string,maxExpandedElements?:number}} options
+   * @returns {{filename:string,content:string}}
+   */
+  exportOde(sbml, format, {
+    simulator = true, standalone = true, symbols = "id", source,
+    documents = {}, location = "./model.xml", maxExpandedElements = 10000,
+  } = {}) {
+    if (typeof this.exports.export_ode !== "function") {
+      throw new Error("compiler.wasm does not support ODE exports");
+    }
+    if (typeof simulator !== "boolean" || typeof standalone !== "boolean") {
+      throw new TypeError("simulator and standalone must be booleans");
+    }
+    if (!Number.isSafeInteger(maxExpandedElements) || maxExpandedElements < 0) {
+      throw new TypeError("maxExpandedElements must be a non-negative integer");
+    }
+    if (typeof sbml !== "string" && !ArrayBuffer.isView(sbml) && !(sbml instanceof ArrayBuffer)) {
+      throw new TypeError("SBML source must be text or a BufferSource");
+    }
+    if (typeof format !== "string" || typeof location !== "string" || (source !== undefined && typeof source !== "string")) {
+      throw new TypeError("format, location and source must be strings");
+    }
+    if (!documents || typeof documents !== "object" || Array.isArray(documents)
+        || Object.values(documents).some(value => typeof value !== "string")) {
+      throw new TypeError("documents must map source locations to XML strings");
+    }
+    const encoder = new TextEncoder();
+    const bytes = typeof sbml === "string" ? encoder.encode(sbml)
+      : ArrayBuffer.isView(sbml) ? new Uint8Array(sbml.buffer, sbml.byteOffset, sbml.byteLength)
+      : new Uint8Array(sbml);
+    const config = encoder.encode(JSON.stringify({
+      format, location, documents, max_expanded_elements: maxExpandedElements,
+      render: { simulator, standalone, symbols, source },
+    }));
+    if (bytes.byteLength > 100 * 1024 * 1024 || config.byteLength > 100 * 1024 * 1024) {
+      throw new RangeError("The source or options exceed 100 MB");
+    }
+    const { allocate, deallocate, export_ode } = this.exports;
+    const input = allocate(bytes.length);
+    const options = allocate(config.length);
+    const words = allocate(16);
+    try {
+      this.bytes().set(bytes, input);
+      this.bytes().set(config, options);
+      const status = export_ode(input, bytes.length, options, config.length, words);
+      const [pointer, length] = new Uint32Array(this.exports.memory.buffer, words, 4);
+      try {
+        const text = new TextDecoder().decode(this.read(pointer, length));
+        if (status !== 1) throw new CompileError(text || "The source export failed");
+        return JSON.parse(text);
+      } finally {
+        deallocate(pointer, length);
+      }
+    } finally {
+      deallocate(words, 16);
+      deallocate(options, config.length);
+      deallocate(input, bytes.length);
+    }
+  }
 }
 
 /**

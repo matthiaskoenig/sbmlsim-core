@@ -1,0 +1,421 @@
+"""The ODE system of the model Koenig_demo_v15.
+
+Written by sbmlode 0.3.3, SBML L3V1.
+
+Units of the model:
+
+    time       s
+    substance  mole
+    extent     mole
+    volume     m^3
+    area       m^2
+    length     m
+
+States x:
+
+       id    name  unit
+    0  c__A  A     mole/m^3
+    1  c__B  B     mole/m^3
+    2  c__C  C     mole/m^3
+    3  e__A  A     mole/m^3
+    4  e__B  B     mole/m^3
+    5  e__C  C     mole/m^3
+
+`initial_values(p)` returns the initial states x0 and the constants p at t = 0,
+`f_dxdt(t, x, p)` the rates of change of the states and `f_y(t, x, p)` the assigned
+values y, the rules and the reaction rates. They are functions of JAX: `jax.jit`
+compiles them, `jax.vmap` maps them over arrays and `jax.grad` differentiates them.
+`simulate(ts)` integrates the model with diffrax, it
+returns the states, the assigned values and the constants at the output times ts,
+`to_frame` a table of them, the file run as a script prints the head of a simulation:
+
+    ts = jnp.linspace(0.0, 10.0, 101)
+    simulation = simulate(ts)
+    # a simulation for each row of the constants ps
+    xs = jax.vmap(lambda p: simulate(ts, p).x)(ps)
+    # the gradient of a function of the simulation with respect to the constants
+    gradient = jax.grad(lambda p: jnp.sum(simulate(ts, p).x ** 2))(P0)
+"""
+
+from typing import NamedTuple
+
+import diffrax
+import equinox as eqx
+import jax
+import jax.numpy as jnp
+import numpy as np
+import optimistix as optx
+import pandas as pd
+
+# float64, the precision of the SBML simulators, which the tolerances of the
+# integration need, before the first array; a switch of the process which imports
+# this file
+jax.config.update("jax_enable_x64", True)
+
+# the ids of the states x, the constants p and the assigned values y
+XIDS = [
+    "c__A",  # A [mole/m^3]
+    "c__B",  # B [mole/m^3]
+    "c__C",  # C [mole/m^3]
+    "e__A",  # A [mole/m^3]
+    "e__B",  # B [mole/m^3]
+    "e__C",  # C [mole/m^3]
+]
+PIDS = [
+    "e",  # external compartment [m^3]
+    "c",  # cell compartment [m^3]
+    "m",  # plasma membrane [m^2]
+    "scale_f",  # metabolic scaling factor [-]
+    "Vmax_bA",  # [mol/s]
+    "Km_A",  # [mmol/l]
+    "Vmax_bB",  # [mol/s]
+    "Km_B",  # [mmol/l]
+    "Vmax_bC",  # [mol/s]
+    "Km_C",  # [mmol/l]
+    "Vmax_v1",  # [mol/s]
+    "Keq_v1",  # [-]
+    "Vmax_v2",  # [mol/s]
+    "Vmax_v3",  # [mol/s]
+    "Vmax_v4",  # [mol/s]
+    "Keq_v4",  # [-]
+]
+YIDS = [
+    "bA",  # bA (A import) [mole/s]
+    "bB",  # bB (B export) [mole/s]
+    "bC",  # bC (C export) [mole/s]
+    "v1",  # v1 (A -> B) [mole/s]
+    "v2",  # v2 (A -> C) [mole/s]
+    "v3",  # v3 (C -> A) [mole/s]
+    "v4",  # v4 (C -> B) [mole/s]
+]
+
+# the names and the units of the ids
+NAMES = {
+    "c__A": "A",
+    "c__B": "B",
+    "c__C": "C",
+    "e__A": "A",
+    "e__B": "B",
+    "e__C": "C",
+    "e": "external compartment",
+    "c": "cell compartment",
+    "m": "plasma membrane",
+    "scale_f": "metabolic scaling factor",
+    "Vmax_bA": None,
+    "Km_A": None,
+    "Vmax_bB": None,
+    "Km_B": None,
+    "Vmax_bC": None,
+    "Km_C": None,
+    "Vmax_v1": None,
+    "Keq_v1": None,
+    "Vmax_v2": None,
+    "Vmax_v3": None,
+    "Vmax_v4": None,
+    "Keq_v4": None,
+    "bA": "bA (A import)",
+    "bB": "bB (B export)",
+    "bC": "bC (C export)",
+    "v1": "v1 (A -> B)",
+    "v2": "v2 (A -> C)",
+    "v3": "v3 (C -> A)",
+    "v4": "v4 (C -> B)",
+}
+UNITS = {
+    "c__A": "mole/m^3",
+    "c__B": "mole/m^3",
+    "c__C": "mole/m^3",
+    "e__A": "mole/m^3",
+    "e__B": "mole/m^3",
+    "e__C": "mole/m^3",
+    "e": "m^3",
+    "c": "m^3",
+    "m": "m^2",
+    "scale_f": "-",
+    "Vmax_bA": "mol/s",
+    "Km_A": "mmol/l",
+    "Vmax_bB": "mol/s",
+    "Km_B": "mmol/l",
+    "Vmax_bC": "mol/s",
+    "Km_C": "mmol/l",
+    "Vmax_v1": "mol/s",
+    "Keq_v1": "-",
+    "Vmax_v2": "mol/s",
+    "Vmax_v3": "mol/s",
+    "Vmax_v4": "mol/s",
+    "Keq_v4": "-",
+    "bA": "mole/s",
+    "bB": "mole/s",
+    "bC": "mole/s",
+    "v1": "mole/s",
+    "v2": "mole/s",
+    "v3": "mole/s",
+    "v4": "mole/s",
+}
+
+# the default values of the constants, `jnp.nan` for one without a value, e.g. one
+# which an initial assignment sets and `initial_values` computes
+P0 = jnp.array([
+    1e-06,  # e
+    1e-06,  # c
+    1.0,  # m
+    1e-06,  # scale_f
+    5.0,  # Vmax_bA
+    1.0,  # Km_A
+    2.0,  # Vmax_bB
+    0.5,  # Km_B
+    2.0,  # Vmax_bC
+    3.0,  # Km_C
+    1.0,  # Vmax_v1
+    10.0,  # Keq_v1
+    0.5,  # Vmax_v2
+    0.5,  # Vmax_v3
+    0.5,  # Vmax_v4
+    2.0,  # Keq_v4
+], dtype=float)
+
+
+def initial_values(p: jax.Array | None = None) -> tuple[jax.Array, jax.Array]:
+    """The initial states x0 and the constants p at t = 0.
+
+    The initial values, initial assignments and the rules they need are evaluated
+    in the order of their dependencies.
+
+    Every constant keeps the value passed.
+
+    Args:
+        p: the constants, `P0` if not given
+
+    Returns:
+        the initial states x0 and the constants p, a new array
+    """
+    p = P0 if p is None else jnp.asarray(p, dtype=float)
+    # initial values
+    c__A = 0.0  # A [mole/m^3]
+    c__B = 0.0  # B [mole/m^3]
+    c__C = 0.0  # C [mole/m^3]
+    e__A = 0.0  # A [mole/m^3]
+    e__B = 0.0  # B [mole/m^3]
+    e__C = 0.0  # C [mole/m^3]
+    x0 = jnp.array([c__A, c__B, c__C, e__A, e__B, e__C], dtype=float)
+    return x0, p
+
+
+def f_dxdt(t: jax.Array, x: jax.Array, p: jax.Array) -> jax.Array:
+    """The rates of change dx/dt of the states x at the time t.
+
+    The arguments are in the order of a vector field of diffrax, `diffrax.ODETerm`
+    takes the function with the constants p as its `args`.
+    """
+    # states
+    c__A = x[0]  # A [mole/m^3]
+    c__B = x[1]  # B [mole/m^3]
+    c__C = x[2]  # C [mole/m^3]
+    e__A = x[3]  # A [mole/m^3]
+    e__B = x[4]  # B [mole/m^3]
+    e__C = x[5]  # C [mole/m^3]
+    # constants
+    e_ = p[0]  # external compartment [m^3]
+    c = p[1]  # cell compartment [m^3]
+    scale_f = p[3]  # metabolic scaling factor [-]
+    Vmax_bA = p[4]  # [mol/s]
+    Km_A = p[5]  # [mmol/l]
+    Vmax_bB = p[6]  # [mol/s]
+    Km_B = p[7]  # [mmol/l]
+    Vmax_bC = p[8]  # [mol/s]
+    Km_C = p[9]  # [mmol/l]
+    Vmax_v1 = p[10]  # [mol/s]
+    Keq_v1 = p[11]  # [-]
+    Vmax_v2 = p[12]  # [mol/s]
+    Vmax_v3 = p[13]  # [mol/s]
+    Vmax_v4 = p[14]  # [mol/s]
+    Keq_v4 = p[15]  # [-]
+    # assigned values and reaction rates
+    bA = scale_f * (Vmax_bA / Km_A) * (e__A - c__A) / (1.0 + e__A / Km_A + c__A / Km_A)  # bA (A import) [mole/s]
+    bB = scale_f * (Vmax_bB / Km_B) * (c__B - e__B) / (1.0 + e__B / Km_B + c__B / Km_B)  # bB (B export) [mole/s]
+    bC = scale_f * (Vmax_bC / Km_C) * (c__C - e__C) / (1.0 + e__C / Km_C + c__C / Km_C)  # bC (C export) [mole/s]
+    v1 = scale_f * Vmax_v1 / Km_A * (c__A - 1.0 / Keq_v1 * c__B)  # v1 (A -> B) [mole/s]
+    v2 = scale_f * Vmax_v2 / Km_A * c__A  # v2 (A -> C) [mole/s]
+    v3 = scale_f * Vmax_v3 / Km_A * c__C  # v3 (C -> A) [mole/s]
+    v4 = scale_f * Vmax_v4 / Km_A * (c__C - 1.0 / Keq_v4 * c__B)  # v4 (C -> B) [mole/s]
+    # rates of change
+    return jnp.array([
+        (bA - v1 - v2 + v3) / c,  # dc__A/dt
+        (-bB + v1 + v4) / c,  # dc__B/dt
+        (-bC + v2 - v3 - v4) / c,  # dc__C/dt
+        -bA / e_,  # de__A/dt
+        bB / e_,  # de__B/dt
+        bC / e_,  # de__C/dt
+    ], dtype=float)
+
+
+def f_y(t: jax.Array, x: jax.Array, p: jax.Array) -> jax.Array:
+    """The assigned values y at the time t, the rules and the reaction rates."""
+    # states
+    c__A = x[0]  # A [mole/m^3]
+    c__B = x[1]  # B [mole/m^3]
+    c__C = x[2]  # C [mole/m^3]
+    e__A = x[3]  # A [mole/m^3]
+    e__B = x[4]  # B [mole/m^3]
+    e__C = x[5]  # C [mole/m^3]
+    # constants
+    scale_f = p[3]  # metabolic scaling factor [-]
+    Vmax_bA = p[4]  # [mol/s]
+    Km_A = p[5]  # [mmol/l]
+    Vmax_bB = p[6]  # [mol/s]
+    Km_B = p[7]  # [mmol/l]
+    Vmax_bC = p[8]  # [mol/s]
+    Km_C = p[9]  # [mmol/l]
+    Vmax_v1 = p[10]  # [mol/s]
+    Keq_v1 = p[11]  # [-]
+    Vmax_v2 = p[12]  # [mol/s]
+    Vmax_v3 = p[13]  # [mol/s]
+    Vmax_v4 = p[14]  # [mol/s]
+    Keq_v4 = p[15]  # [-]
+    # assigned values and reaction rates
+    bA = scale_f * (Vmax_bA / Km_A) * (e__A - c__A) / (1.0 + e__A / Km_A + c__A / Km_A)  # bA (A import) [mole/s]
+    bB = scale_f * (Vmax_bB / Km_B) * (c__B - e__B) / (1.0 + e__B / Km_B + c__B / Km_B)  # bB (B export) [mole/s]
+    bC = scale_f * (Vmax_bC / Km_C) * (c__C - e__C) / (1.0 + e__C / Km_C + c__C / Km_C)  # bC (C export) [mole/s]
+    v1 = scale_f * Vmax_v1 / Km_A * (c__A - 1.0 / Keq_v1 * c__B)  # v1 (A -> B) [mole/s]
+    v2 = scale_f * Vmax_v2 / Km_A * c__A  # v2 (A -> C) [mole/s]
+    v3 = scale_f * Vmax_v3 / Km_A * c__C  # v3 (C -> A) [mole/s]
+    v4 = scale_f * Vmax_v4 / Km_A * (c__C - 1.0 / Keq_v4 * c__B)  # v4 (C -> B) [mole/s]
+    return jnp.array([bA, bB, bC, v1, v2, v3, v4], dtype=float)
+
+
+class Simulation(NamedTuple):
+    """A simulation at its output times: the states, assigned values and constants."""
+
+    t: jax.Array  # the output times
+    x: jax.Array  # the states, a row per output time, a column per id of XIDS
+    y: jax.Array  # the assigned values, a column per id of YIDS
+    p: jax.Array  # the constants, a column per id of PIDS
+
+
+class Chord(diffrax.VeryChord):
+    """The chord method of an implicit solver, converged below `kappa`.
+
+    The iteration of a stage whose prediction is exact, e.g. of a rate which is
+    almost constant, is at the rounding errors from its first step on, and the ratio
+    of two of them is random: `diffrax.VeryChord` takes a ratio above 2 for a
+    divergence and rejects the step, under `jax.jit` every step. An increment below
+    `kappa` of the tolerances has converged, whatever the ratio
+    (https://github.com/patrick-kidger/diffrax/issues/782). Newton's method of
+    optimistix is no remedy, it compares the residual with the absolute tolerance
+    alone, which the rounding errors of a large state exceed.
+    """
+
+    def terminate(self, fn, y, args, options, state, tags):
+        terminate, result = super().terminate(fn, y, args, options, state, tags)
+        successful = optx.RESULTS.successful
+        small = (state.diffsize < self.kappa) & (state.result == successful)
+        return terminate | small, optx.RESULTS.where(small, successful, result)
+
+
+def default_solver() -> diffrax.AbstractSolver:
+    """The solver of `simulate` by default: Kvaerno5, implicit for stiff models.
+
+    Its nonlinear equations are solved by `Chord` at the tolerances of the integration.
+    """
+    chord = diffrax.with_stepsize_controller_tols(Chord)()
+    return diffrax.Kvaerno5(root_finder=chord)
+
+
+# the limits of a simulation: the steps of an integration beyond those which the largest
+# step forces
+MAX_STEPS = 100000
+
+
+@eqx.filter_jit
+def simulate(
+    ts: jax.Array,
+    p: jax.Array | None = None,
+    x0: jax.Array | None = None,
+    *,
+    rtol: float = 1e-8,
+    atol: float = 1e-10,
+    solver: diffrax.AbstractSolver | None = None,
+    adjoint: diffrax.AbstractAdjoint | None = None,
+    max_step: float | None = None,
+    max_steps: int | None = None,
+) -> Simulation:
+    """Simulate the model from t = 0 to the last output time.
+
+    `eqx.filter_jit` compiles the simulation for the number of output times and the
+    options, the output times, the constants and the initial states are traced: a
+    simulation with other values runs without a compilation.
+
+    Args:
+        ts: the output times, from 0 on and not decreasing
+        p: the constants, `P0` if not given
+        x0: the initial states, those of `initial_values` if not given
+        rtol: the relative tolerance of the integration
+        atol: the absolute tolerance of the integration
+        solver: the solver of diffrax, `default_solver()` if not given, Kvaerno5, an
+            implicit solver for stiff models; `diffrax.Tsit5()` for a model which is
+            not stiff
+        adjoint: the adjoint of diffrax, which decides how the simulation is
+            differentiated: `diffrax.RecursiveCheckpointAdjoint()` if not given, for
+            reverse mode (`jax.grad`), `diffrax.ForwardMode()` for forward mode
+            (`jax.jacfwd`), `diffrax.DirectAdjoint()` for both
+        max_step: the largest step of the integration, by default the distance of
+            the output times, `ts[-1] / (len(ts) - 1)`
+        max_steps: the largest number of steps of the integration, by
+            default `MAX_STEPS` plus twice the number of output times
+
+    Returns:
+        the time, the states, the assigned values and the constants at the output
+        times
+
+    Raises:
+        RuntimeError: for output times which are negative or decrease, if the
+            integration fails or takes more than `max_steps` steps, e.g. when a
+            state grows without bound
+    """
+    ts = jnp.asarray(ts, dtype=float)
+    ts = eqx.error_if(
+        ts,
+        (ts[0] < 0.0) | jnp.any(ts[1:] < ts[:-1]),
+        "The output times ts must not be negative and must not decrease.",
+    )
+    x_initial, p = initial_values(p)
+    x = x_initial if x0 is None else jnp.asarray(x0, dtype=float)
+    points = ts.shape[0]
+    t_end = ts[-1]
+    if max_step is None:
+        max_step = t_end / (points - 1) if points > 1 else jnp.inf
+        max_step = jnp.where(max_step > 0.0, max_step, jnp.inf)
+    if max_steps is None:
+        max_steps = MAX_STEPS + 2 * points
+    ps = jnp.broadcast_to(p, (points, p.shape[0]))
+    solution = diffrax.diffeqsolve(
+        diffrax.ODETerm(f_dxdt),
+        default_solver() if solver is None else solver,
+        t0=0.0,
+        t1=t_end,
+        dt0=None,
+        y0=x,
+        args=p,
+        saveat=diffrax.SaveAt(ts=ts),
+        # the steps end at the output times, whose values are those of the solver,
+        # not of its interpolation, whose order is lower (3 for Kvaerno5)
+        stepsize_controller=diffrax.PIDController(
+            rtol=rtol, atol=atol, dtmax=max_step, step_ts=ts
+        ),
+        adjoint=diffrax.RecursiveCheckpointAdjoint() if adjoint is None else adjoint,
+        max_steps=max_steps,
+    )
+    xs = solution.ys
+    return Simulation(ts, xs, jax.vmap(f_y)(ts, xs, ps), ps)
+
+
+def to_frame(simulation: Simulation) -> pd.DataFrame:
+    """The simulation as a table: the time, the states and the assigned values, a row
+    per output time."""
+    columns = ["time", *XIDS, *YIDS]
+    data = np.column_stack([simulation.t, simulation.x, simulation.y])
+    return pd.DataFrame(data, columns=columns)
+
+
+if __name__ == "__main__":
+    print(to_frame(simulate(jnp.linspace(0.0, 10.0, 101))).head())

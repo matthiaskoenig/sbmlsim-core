@@ -1,0 +1,254 @@
+# The ODE system of the model `Koenig_demo_v15`.
+#
+# Written by sbmlode 0.3.3, SBML L3V1.
+#
+# Units of the model:
+#
+#   time       s
+#   substance  mole
+#   extent     mole
+#   volume     m^3
+#   area       m^2
+#   length     m
+#
+# States x:
+#
+#      id    name  unit
+#   1  c__A  A     mole/m^3
+#   2  c__B  B     mole/m^3
+#   3  c__C  C     mole/m^3
+#   4  e__A  A     mole/m^3
+#   5  e__B  B     mole/m^3
+#   6  e__C  C     mole/m^3
+#
+# `initial_values(p)` returns the initial states x0 and the constants p at t = 0,
+# `f_dxdt(t, x, p)` the rates of change of the states (in a list, as deSolve
+# wants them) and `f_y(t, x, p)` the assigned values y, the rules and the
+# reaction rates.
+# Sourcing the file needs base R only.
+
+# the ids of the states x, the constants p and the assigned values y
+XIDS <- c(
+  "c__A",  # A [mole/m^3]
+  "c__B",  # B [mole/m^3]
+  "c__C",  # C [mole/m^3]
+  "e__A",  # A [mole/m^3]
+  "e__B",  # B [mole/m^3]
+  "e__C"  # C [mole/m^3]
+)
+PIDS <- c(
+  "e",  # external compartment [m^3]
+  "c",  # cell compartment [m^3]
+  "m",  # plasma membrane [m^2]
+  "scale_f",  # metabolic scaling factor [-]
+  "Vmax_bA",  # [mol/s]
+  "Km_A",  # [mmol/l]
+  "Vmax_bB",  # [mol/s]
+  "Km_B",  # [mmol/l]
+  "Vmax_bC",  # [mol/s]
+  "Km_C",  # [mmol/l]
+  "Vmax_v1",  # [mol/s]
+  "Keq_v1",  # [-]
+  "Vmax_v2",  # [mol/s]
+  "Vmax_v3",  # [mol/s]
+  "Vmax_v4",  # [mol/s]
+  "Keq_v4"  # [-]
+)
+YIDS <- c(
+  "bA",  # bA (A import) [mole/s]
+  "bB",  # bB (B export) [mole/s]
+  "bC",  # bC (C export) [mole/s]
+  "v1",  # v1 (A -> B) [mole/s]
+  "v2",  # v2 (A -> C) [mole/s]
+  "v3",  # v3 (C -> A) [mole/s]
+  "v4"  # v4 (C -> B) [mole/s]
+)
+
+# the names and the units of the ids, `NA` for none
+NAMES <- c(
+  "c__A" = "A",
+  "c__B" = "B",
+  "c__C" = "C",
+  "e__A" = "A",
+  "e__B" = "B",
+  "e__C" = "C",
+  "e" = "external compartment",
+  "c" = "cell compartment",
+  "m" = "plasma membrane",
+  "scale_f" = "metabolic scaling factor",
+  "Vmax_bA" = NA_character_,
+  "Km_A" = NA_character_,
+  "Vmax_bB" = NA_character_,
+  "Km_B" = NA_character_,
+  "Vmax_bC" = NA_character_,
+  "Km_C" = NA_character_,
+  "Vmax_v1" = NA_character_,
+  "Keq_v1" = NA_character_,
+  "Vmax_v2" = NA_character_,
+  "Vmax_v3" = NA_character_,
+  "Vmax_v4" = NA_character_,
+  "Keq_v4" = NA_character_,
+  "bA" = "bA (A import)",
+  "bB" = "bB (B export)",
+  "bC" = "bC (C export)",
+  "v1" = "v1 (A -> B)",
+  "v2" = "v2 (A -> C)",
+  "v3" = "v3 (C -> A)",
+  "v4" = "v4 (C -> B)"
+)
+UNITS <- c(
+  "c__A" = "mole/m^3",
+  "c__B" = "mole/m^3",
+  "c__C" = "mole/m^3",
+  "e__A" = "mole/m^3",
+  "e__B" = "mole/m^3",
+  "e__C" = "mole/m^3",
+  "e" = "m^3",
+  "c" = "m^3",
+  "m" = "m^2",
+  "scale_f" = "-",
+  "Vmax_bA" = "mol/s",
+  "Km_A" = "mmol/l",
+  "Vmax_bB" = "mol/s",
+  "Km_B" = "mmol/l",
+  "Vmax_bC" = "mol/s",
+  "Km_C" = "mmol/l",
+  "Vmax_v1" = "mol/s",
+  "Keq_v1" = "-",
+  "Vmax_v2" = "mol/s",
+  "Vmax_v3" = "mol/s",
+  "Vmax_v4" = "mol/s",
+  "Keq_v4" = "-",
+  "bA" = "mole/s",
+  "bB" = "mole/s",
+  "bC" = "mole/s",
+  "v1" = "mole/s",
+  "v2" = "mole/s",
+  "v3" = "mole/s",
+  "v4" = "mole/s"
+)
+
+# the default values of the constants, `NaN` for one without a value, e.g. one
+# which an initial assignment sets and `initial_values` computes
+P0 <- c(
+  "e" = 1e-06,  # external compartment [m^3]
+  "c" = 1e-06,  # cell compartment [m^3]
+  "m" = 1,  # plasma membrane [m^2]
+  "scale_f" = 1e-06,  # metabolic scaling factor [-]
+  "Vmax_bA" = 5,  # [mol/s]
+  "Km_A" = 1,  # [mmol/l]
+  "Vmax_bB" = 2,  # [mol/s]
+  "Km_B" = 0.5,  # [mmol/l]
+  "Vmax_bC" = 2,  # [mol/s]
+  "Km_C" = 3,  # [mmol/l]
+  "Vmax_v1" = 1,  # [mol/s]
+  "Keq_v1" = 10,  # [-]
+  "Vmax_v2" = 0.5,  # [mol/s]
+  "Vmax_v3" = 0.5,  # [mol/s]
+  "Vmax_v4" = 0.5,  # [mol/s]
+  "Keq_v4" = 2  # [-]
+)
+
+# The initial states x0 and the constants p at t = 0.
+#
+# The initial values, initial assignments and the rules they need are evaluated
+# in the order of their dependencies.
+#
+# Every constant keeps the value passed.
+#
+# Returns a list of the initial states x0 and the constants p, named vectors.
+initial_values <- function(p = P0) {
+  p <- as.numeric(p)
+  # initial values
+  c__A <- 0  # A [mole/m^3]
+  c__B <- 0  # B [mole/m^3]
+  c__C <- 0  # C [mole/m^3]
+  e__A <- 0  # A [mole/m^3]
+  e__B <- 0  # B [mole/m^3]
+  e__C <- 0  # C [mole/m^3]
+  x0 <- as.numeric(c(c__A, c__B, c__C, e__A, e__B, e__C))
+  names(x0) <- XIDS
+  names(p) <- PIDS
+  list(x0 = x0, p = p)
+}
+
+# The rates of change dx/dt of the states x at the time t, in a list (deSolve).
+f_dxdt <- function(t, x, p) {
+  # states
+  c__A <- x[[1]]  # A [mole/m^3]
+  c__B <- x[[2]]  # B [mole/m^3]
+  c__C <- x[[3]]  # C [mole/m^3]
+  e__A <- x[[4]]  # A [mole/m^3]
+  e__B <- x[[5]]  # B [mole/m^3]
+  e__C <- x[[6]]  # C [mole/m^3]
+  # constants
+  e <- p[[1]]  # external compartment [m^3]
+  c_ <- p[[2]]  # cell compartment [m^3]
+  scale_f <- p[[4]]  # metabolic scaling factor [-]
+  Vmax_bA <- p[[5]]  # [mol/s]
+  Km_A <- p[[6]]  # [mmol/l]
+  Vmax_bB <- p[[7]]  # [mol/s]
+  Km_B <- p[[8]]  # [mmol/l]
+  Vmax_bC <- p[[9]]  # [mol/s]
+  Km_C <- p[[10]]  # [mmol/l]
+  Vmax_v1 <- p[[11]]  # [mol/s]
+  Keq_v1 <- p[[12]]  # [-]
+  Vmax_v2 <- p[[13]]  # [mol/s]
+  Vmax_v3 <- p[[14]]  # [mol/s]
+  Vmax_v4 <- p[[15]]  # [mol/s]
+  Keq_v4 <- p[[16]]  # [-]
+  # assigned values and reaction rates
+  bA <- scale_f * (Vmax_bA / Km_A) * (e__A - c__A) / (1 + e__A / Km_A + c__A / Km_A)  # bA (A import) [mole/s]
+  bB <- scale_f * (Vmax_bB / Km_B) * (c__B - e__B) / (1 + e__B / Km_B + c__B / Km_B)  # bB (B export) [mole/s]
+  bC <- scale_f * (Vmax_bC / Km_C) * (c__C - e__C) / (1 + e__C / Km_C + c__C / Km_C)  # bC (C export) [mole/s]
+  v1 <- scale_f * Vmax_v1 / Km_A * (c__A - 1 / Keq_v1 * c__B)  # v1 (A -> B) [mole/s]
+  v2 <- scale_f * Vmax_v2 / Km_A * c__A  # v2 (A -> C) [mole/s]
+  v3 <- scale_f * Vmax_v3 / Km_A * c__C  # v3 (C -> A) [mole/s]
+  v4 <- scale_f * Vmax_v4 / Km_A * (c__C - 1 / Keq_v4 * c__B)  # v4 (C -> B) [mole/s]
+  # rates of change
+  dx <- numeric(6)
+  dx[[1]] <- (bA - v1 - v2 + v3) / c_  # dc__A/dt
+  dx[[2]] <- (-bB + v1 + v4) / c_  # dc__B/dt
+  dx[[3]] <- (-bC + v2 - v3 - v4) / c_  # dc__C/dt
+  dx[[4]] <- -bA / e  # de__A/dt
+  dx[[5]] <- bB / e  # de__B/dt
+  dx[[6]] <- bC / e  # de__C/dt
+  list(dx)
+}
+
+# The assigned values y at the time t, the rules and the reaction rates.
+f_y <- function(t, x, p) {
+  # states
+  c__A <- x[[1]]  # A [mole/m^3]
+  c__B <- x[[2]]  # B [mole/m^3]
+  c__C <- x[[3]]  # C [mole/m^3]
+  e__A <- x[[4]]  # A [mole/m^3]
+  e__B <- x[[5]]  # B [mole/m^3]
+  e__C <- x[[6]]  # C [mole/m^3]
+  # constants
+  scale_f <- p[[4]]  # metabolic scaling factor [-]
+  Vmax_bA <- p[[5]]  # [mol/s]
+  Km_A <- p[[6]]  # [mmol/l]
+  Vmax_bB <- p[[7]]  # [mol/s]
+  Km_B <- p[[8]]  # [mmol/l]
+  Vmax_bC <- p[[9]]  # [mol/s]
+  Km_C <- p[[10]]  # [mmol/l]
+  Vmax_v1 <- p[[11]]  # [mol/s]
+  Keq_v1 <- p[[12]]  # [-]
+  Vmax_v2 <- p[[13]]  # [mol/s]
+  Vmax_v3 <- p[[14]]  # [mol/s]
+  Vmax_v4 <- p[[15]]  # [mol/s]
+  Keq_v4 <- p[[16]]  # [-]
+  # assigned values and reaction rates
+  bA <- scale_f * (Vmax_bA / Km_A) * (e__A - c__A) / (1 + e__A / Km_A + c__A / Km_A)  # bA (A import) [mole/s]
+  bB <- scale_f * (Vmax_bB / Km_B) * (c__B - e__B) / (1 + e__B / Km_B + c__B / Km_B)  # bB (B export) [mole/s]
+  bC <- scale_f * (Vmax_bC / Km_C) * (c__C - e__C) / (1 + e__C / Km_C + c__C / Km_C)  # bC (C export) [mole/s]
+  v1 <- scale_f * Vmax_v1 / Km_A * (c__A - 1 / Keq_v1 * c__B)  # v1 (A -> B) [mole/s]
+  v2 <- scale_f * Vmax_v2 / Km_A * c__A  # v2 (A -> C) [mole/s]
+  v3 <- scale_f * Vmax_v3 / Km_A * c__C  # v3 (C -> A) [mole/s]
+  v4 <- scale_f * Vmax_v4 / Km_A * (c__C - 1 / Keq_v4 * c__B)  # v4 (C -> B) [mole/s]
+  as.numeric(c(bA, bB, bC, v1, v2, v3, v4))
+}
+
+# the model has no events
+EVENTS <- list()

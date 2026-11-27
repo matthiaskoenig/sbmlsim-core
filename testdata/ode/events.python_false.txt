@@ -1,0 +1,293 @@
+"""The ODE system of the model events_model.
+
+Written by sbmlode 0.3.3, SBML L3V2.
+
+States x:
+
+       id  name       unit
+    0  V
+    1  S   substrate
+    2  P
+    3  A
+    4  B
+
+`initial_values(p)` returns the initial states x0 and the constants p at t = 0,
+`f_dxdt(t, x, p)` the rates of change of the states and `f_y(t, x, p)` the assigned
+values y, the rules and the reaction rates.
+`EVENTS` lists the events with the functions of their delays, priorities and
+assignments, `event_triggers(t, x, p)` and `event_conditions(t, x, p)` their
+triggers.
+"""
+
+import numpy as np
+
+# the ids of the states x, the constants p and the assigned values y
+XIDS = [
+    "V",
+    "S",  # substrate
+    "P",
+    "A",
+    "B",
+]
+PIDS = [
+    "c",
+    "vmax",
+    "km",
+    "k1",
+    "S0",
+    "total",
+]
+YIDS = [
+    "dV_dt",  # rate of V
+    "k2",
+    "J0",
+    "J1",
+]
+
+# the names and the units of the ids
+NAMES = {
+    "V": None,
+    "S": "substrate",
+    "P": None,
+    "A": None,
+    "B": None,
+    "c": None,
+    "vmax": None,
+    "km": None,
+    "k1": None,
+    "S0": None,
+    "total": None,
+    "dV_dt": "rate of V",
+    "k2": None,
+    "J0": None,
+    "J1": None,
+}
+UNITS = {
+    "V": None,
+    "S": None,
+    "P": None,
+    "A": None,
+    "B": None,
+    "c": None,
+    "vmax": None,
+    "km": None,
+    "k1": None,
+    "S0": None,
+    "total": None,
+    "dV_dt": None,
+    "k2": None,
+    "J0": None,
+    "J1": None,
+}
+
+# the default values of the constants, `np.nan` for one without a value, e.g. one
+# which an initial assignment sets and `initial_values` computes
+P0 = np.array([
+    1.0,  # c
+    2.0,  # vmax
+    0.5,  # km
+    0.1,  # k1
+    10.0,  # S0
+    0.0,  # total
+])
+
+
+def mm(S, km):
+    return S / (km + S)
+
+
+def initial_values(p: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:
+    """The initial states x0 and the constants p at t = 0.
+
+    The initial values, initial assignments and the rules they need are evaluated
+    in the order of their dependencies.
+
+    Every constant keeps the value passed.
+
+    Args:
+        p: the constants, `P0` if not given
+
+    Returns:
+        the initial states x0 and the constants p, a new array
+    """
+    p = np.array(P0 if p is None else p, dtype=float)
+    # constants
+    S0 = p[4]
+    # initial values
+    V = 2.0
+    S = S0  # substrate
+    P = 0.0
+    A = 5.0
+    B = 1.0
+    x0 = np.array([V, S, P, A, B], dtype=float)
+    return x0, p
+
+
+def f_dxdt(t: float, x: np.ndarray, p: np.ndarray) -> np.ndarray:
+    """The rates of change dx/dt of the states x at the time t."""
+    # states
+    V = x[0]
+    S = x[1]  # substrate
+    A = x[3]
+    B = x[4]
+    # constants
+    c = p[0]
+    vmax = p[1]
+    km = p[2]
+    k1 = p[3]
+    # assigned values and reaction rates
+    dV_dt = 0.1  # rate of V
+    J0 = vmax * mm(S, km)
+    J1 = k1 * S * A
+    # rates of change
+    dx = np.zeros(5)
+    dx[0] = 0.1  # dV/dt
+    dx[1] = (-J0 - J1) / c  # dS/dt
+    dx[2] = (J0 + 2.0 * J1) / c  # dP/dt
+    dx[3] = -J1 / V - A / V * dV_dt  # dA/dt
+    dx[4] = -0.1 * B  # dB/dt
+    return dx
+
+
+def f_y(t: float, x: np.ndarray, p: np.ndarray) -> np.ndarray:
+    """The assigned values y at the time t, the rules and the reaction rates."""
+    # states
+    S = x[1]  # substrate
+    A = x[3]
+    # constants
+    vmax = p[1]
+    km = p[2]
+    k1 = p[3]
+    # assigned values and reaction rates
+    dV_dt = 0.1  # rate of V
+    k2 = 2 * k1
+    J0 = vmax * mm(S, km)
+    J1 = k1 * S * A
+    return np.array([dV_dt, k2, J0, J1], dtype=float)
+
+
+def event_triggers(t: float, x: np.ndarray, p: np.ndarray) -> np.ndarray:
+    """The root function of the trigger of each event, positive where it holds.
+
+    An integrator locates the time at which a trigger changes as a root of its
+    function. At a root, where the function is 0, the trigger itself decides, see
+    `event_conditions`: `a >= b` holds at `a == b`, `a > b` does not.
+    """
+    t = np.float64(t)  # a numpy scalar: math out of its domain is nan, no error
+    # states
+    S = x[1]  # substrate
+    return np.array([
+        t - 5,  # E1 reset
+        2 - S,  # E2
+    ])
+
+
+def event_conditions(t: float, x: np.ndarray, p: np.ndarray) -> np.ndarray:
+    """Whether the trigger of each event holds."""
+    t = np.float64(t)  # a numpy scalar: math out of its domain is nan, no error
+    # states
+    S = x[1]  # substrate
+    return np.array([
+        t > 5,  # E1 reset
+        S < 2,  # E2
+    ], dtype=bool)
+
+
+def event_priority_E1(t: float, x: np.ndarray, p: np.ndarray) -> float:
+    """The priority of the event E1, evaluated before each execution."""
+    return 1
+
+
+def event_values_E1(t: float, x: np.ndarray, p: np.ndarray) -> np.ndarray:
+    """The values the event E1 assigns, evaluated when its trigger turns true."""
+    # states
+    V = x[0]
+    return np.array([
+        2 * V,  # V
+        10,  # S substrate
+        np.nan,  # A: not assigned, its amount is kept
+        np.nan,  # B: not assigned, its amount is kept
+    ], dtype=float)
+
+
+def event_sizes_E1(t: float, x: np.ndarray, p: np.ndarray) -> np.ndarray:
+    """The sizes of the compartments the event E1 changes, after its assignments."""
+    # states
+    V = x[0]
+    return np.array([V], dtype=float)
+
+
+def event_assign_E1(
+    t: float, x: np.ndarray, p: np.ndarray, values: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """Execute the event E1: the states x and the constants p with the values.
+
+    A concentration in a compartment whose size the event changes keeps its amount:
+    it is scaled with the size before the event and divided by the size after it,
+    `event_sizes_E1`, evaluated with the values the event assigned.
+    """
+    # states
+    V = x[0]
+    A = x[3]
+    B = x[4]
+    x = x.copy()
+    p = p.copy()
+    x[0] = values[0]  # V
+    x[1] = values[1]  # S substrate
+    sizes = event_sizes_E1(t, x, p)
+    x[3] = A * V / sizes[0]  # A
+    x[4] = B * V / sizes[0]  # B
+    return x, p
+
+
+def event_delay_E2(t: float, x: np.ndarray, p: np.ndarray) -> float:
+    """The delay of the event E2, evaluated when its trigger turns true."""
+    return 1
+
+
+def event_values_E2(t: float, x: np.ndarray, p: np.ndarray) -> np.ndarray:
+    """The values the event E2 assigns, evaluated when its trigger turns true."""
+    # constants
+    total = p[5]
+    return np.array([
+        1,  # A
+        total + 1,  # total
+    ], dtype=float)
+
+
+def event_assign_E2(
+    t: float, x: np.ndarray, p: np.ndarray, values: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """Execute the event E2: the states x and the constants p with the values."""
+    x = x.copy()
+    p = p.copy()
+    x[3] = values[0]  # A
+    p[5] = values[1]  # total
+    return x, p
+
+
+# the events in the order of the model: their flags and the functions of their
+# delay, priority and assignments; the trigger of EVENTS[k] is the entry k of
+# `event_triggers` and `event_conditions`
+EVENTS = [
+    {
+        "id": "E1",
+        "initial_value": True,
+        "persistent": True,
+        "use_trigger_values": True,
+        "delay": None,
+        "priority": event_priority_E1,
+        "values": event_values_E1,
+        "assign": event_assign_E1,
+    },
+    {
+        "id": "E2",
+        "initial_value": True,
+        "persistent": True,
+        "use_trigger_values": True,
+        "delay": event_delay_E2,
+        "priority": None,
+        "values": event_values_E2,
+        "assign": event_assign_E2,
+    },
+]

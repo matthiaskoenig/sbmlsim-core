@@ -156,6 +156,88 @@ unsafe fn give(bytes: Vec<u8>, out: *mut usize) {
     }
 }
 
+/// Options and explicit companion documents of a standalone source export.
+#[derive(serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct OdeRequest {
+    format: String,
+    location: String,
+    documents: std::collections::BTreeMap<String, String>,
+    max_expanded_elements: usize,
+    render: sbmlsim_ode::RenderOptions,
+}
+impl Default for OdeRequest {
+    fn default() -> Self {
+        Self {
+            format: "python".into(),
+            location: "./model.xml".into(),
+            documents: Default::default(),
+            max_expanded_elements: 10000,
+            render: Default::default(),
+        }
+    }
+}
+
+/// Generate standalone source code or a document with the same Rust kernel as Python.
+///
+/// The result uses the compiler's four-word ownership protocol. The first buffer is
+/// a JSON export (`filename`, `content`) on success and a diagnostic on failure;
+/// the second buffer is empty. No WASI, filesystem or network import is required.
+///
+/// # Safety
+/// All three input/output regions belong to the caller and were allocated by
+/// [`allocate`]. The options are UTF-8 JSON and `out` holds four words.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn export_ode(
+    pointer: *const u8,
+    len: usize,
+    options: *const u8,
+    options_len: usize,
+    out: *mut usize,
+) -> u32 {
+    let result = (|| {
+        if len > 100 * 1024 * 1024 || options_len > 100 * 1024 * 1024 {
+            return Err("The source export exceeds 100 MB.".to_owned());
+        }
+        // SAFETY: the caller owns both regions, as required by this function's contract.
+        let source = if pointer.is_null() || len == 0 {
+            &[][..]
+        } else {
+            unsafe { std::slice::from_raw_parts(pointer, len) }
+        };
+        let options = if options.is_null() || options_len == 0 {
+            &b"{}"[..]
+        } else {
+            unsafe { std::slice::from_raw_parts(options, options_len) }
+        };
+        let request: OdeRequest = serde_json::from_slice(options).map_err(|e| e.to_string())?;
+        let documents = request
+            .documents
+            .into_iter()
+            .map(|(name, xml)| (name, xml.into_bytes()))
+            .collect::<Vec<_>>();
+        let system = sbmlsim_ode::OdeSystem::read_with_sources(
+            source,
+            &request.location,
+            &documents,
+            request.max_expanded_elements,
+        )?;
+        let export = system.render(&request.format, &request.render)?;
+        serde_json::to_vec(&export).map_err(|e| e.to_string())
+    })();
+    let (success, bytes) = match result {
+        Ok(bytes) => (1, bytes),
+        Err(error) => (0, error.into_bytes()),
+    };
+    // SAFETY: the caller supplied four writable words; `give` transfers the owned result.
+    unsafe {
+        give(bytes, out);
+        *out.add(2) = 0;
+        *out.add(3) = 0;
+    }
+    success
+}
+
 /// Compiles the SBML document of the buffer into `model.wasm` and its description.
 ///
 /// Writes the pointer and the length of the description and of the module to the four words at

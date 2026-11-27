@@ -67,11 +67,14 @@ fn main() {
         "codegen",
         "compiler",
         "wasm",
+        "document",
+        "reader",
+        "ode",
         "plot",
         "plot-wasm",
     ] {
         let dir = workspace.join("crates").join(crate_dir);
-        for part in ["src", "csrc", "Cargo.toml", "build.rs"] {
+        for part in ["src", "csrc", "templates", "Cargo.toml", "build.rs"] {
             if dir.join(part).exists() {
                 println!("cargo:rerun-if-changed={}", dir.join(part).display());
             }

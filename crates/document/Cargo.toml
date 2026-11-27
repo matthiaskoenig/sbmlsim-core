@@ -1,0 +1,15 @@
+[package]
+name = "sbmlsim-document"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "The owned lossless SBML document and mathematical syntax tree"
+publish = false
+
+[dependencies]
+thiserror.workspace = true
+serde_json.workspace = true
+
+[lints]

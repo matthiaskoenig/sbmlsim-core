@@ -58,10 +58,18 @@ jobs:
       - run: cargo build -p sbmlsim-sbml --target wasm32-unknown-unknown
       - run: cargo build -p sbmlsim-ir --target wasm32-unknown-unknown
       - run: cargo build -p sbmlsim-codegen --target wasm32-unknown-unknown
+      - run: cargo build -p sbmlsim-ode --target wasm32-unknown-unknown
       - run: cargo build -p sbmlsim-compiler --target wasm32-unknown-unknown --release
       # `compiler.wasm`, the compiler of `js/compile.mjs`: the module of the npm package
       - run: cargo build -p sbmlsim-wasm --target wasm32-unknown-unknown --profile wasm
       - run: cargo test -p sbmlsim-wasm
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: The import-free source generator matches native export fixtures
+        run: node --test js/test/ode.test.mjs
+        env:
+          SBMLSIM_ODE_WASM: target/wasm32-unknown-unknown/wasm/sbmlsim_wasm.wasm
   plot_wasm_same_bytes:
     # `plot.wasm`, the renderer of the figures in a page: built for wasm32-wasip1 (its crate says
     # why), it must give in Node the golden SVG of every fixture of sbmlsim-plot byte for byte,
@@ -273,6 +281,10 @@ jobs:
         run: .venv/bin/python scripts/demo_assets.py --check
       - name: The tests
         run: .venv/bin/pytest python/tests -q
+      - name: Run the generated NumPy and JAX simulators against their migration oracles
+        run: |
+          uv pip install --python .venv --group ode-tests
+          .venv/bin/pytest python/tests/test_ode_exports.py -q
       - name: The type check of the stub and of a caller (python/typecheck)
         # the stub is hand written: the drift test compares names only, this holds the signatures
         run: .venv/bin/ty check python/typecheck

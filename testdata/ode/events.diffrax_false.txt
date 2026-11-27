@@ -1,0 +1,325 @@
+"""The ODE system of the model events_model.
+
+Written by sbmlode 0.3.3, SBML L3V2.
+
+States x:
+
+       id  name       unit
+    0  V
+    1  S   substrate
+    2  P
+    3  A
+    4  B
+
+`initial_values(p)` returns the initial states x0 and the constants p at t = 0,
+`f_dxdt(t, x, p)` the rates of change of the states and `f_y(t, x, p)` the assigned
+values y, the rules and the reaction rates. They are functions of JAX: `jax.jit`
+compiles them, `jax.vmap` maps them over arrays and `jax.grad` differentiates them.
+`EVENT_IDS` lists the events, `event_triggers(t, x, p)` and `event_conditions(t, x, p)`
+their triggers, `event_delay`, `event_priorities`, `event_values` and `event_assign`
+the functions of their delays, priorities and assignments.
+"""
+
+import jax
+import jax.numpy as jnp
+
+# float64, the precision of the SBML simulators, which the tolerances of the
+# integration need, before the first array; a switch of the process which imports
+# this file
+jax.config.update("jax_enable_x64", True)
+
+# the ids of the states x, the constants p and the assigned values y
+XIDS = [
+    "V",
+    "S",  # substrate
+    "P",
+    "A",
+    "B",
+]
+PIDS = [
+    "c",
+    "vmax",
+    "km",
+    "k1",
+    "S0",
+    "total",
+]
+YIDS = [
+    "dV_dt",  # rate of V
+    "k2",
+    "J0",
+    "J1",
+]
+
+# the names and the units of the ids
+NAMES = {
+    "V": None,
+    "S": "substrate",
+    "P": None,
+    "A": None,
+    "B": None,
+    "c": None,
+    "vmax": None,
+    "km": None,
+    "k1": None,
+    "S0": None,
+    "total": None,
+    "dV_dt": "rate of V",
+    "k2": None,
+    "J0": None,
+    "J1": None,
+}
+UNITS = {
+    "V": None,
+    "S": None,
+    "P": None,
+    "A": None,
+    "B": None,
+    "c": None,
+    "vmax": None,
+    "km": None,
+    "k1": None,
+    "S0": None,
+    "total": None,
+    "dV_dt": None,
+    "k2": None,
+    "J0": None,
+    "J1": None,
+}
+
+# the default values of the constants, `jnp.nan` for one without a value, e.g. one
+# which an initial assignment sets and `initial_values` computes
+P0 = jnp.array([
+    1.0,  # c
+    2.0,  # vmax
+    0.5,  # km
+    0.1,  # k1
+    10.0,  # S0
+    0.0,  # total
+], dtype=float)
+
+
+def mm(S, km):
+    return S / (km + S)
+
+
+def initial_values(p: jax.Array | None = None) -> tuple[jax.Array, jax.Array]:
+    """The initial states x0 and the constants p at t = 0.
+
+    The initial values, initial assignments and the rules they need are evaluated
+    in the order of their dependencies.
+
+    Every constant keeps the value passed.
+
+    Args:
+        p: the constants, `P0` if not given
+
+    Returns:
+        the initial states x0 and the constants p, a new array
+    """
+    p = P0 if p is None else jnp.asarray(p, dtype=float)
+    # constants
+    S0 = p[4]
+    # initial values
+    V = 2.0
+    S = S0  # substrate
+    P = 0.0
+    A = 5.0
+    B = 1.0
+    x0 = jnp.array([V, S, P, A, B], dtype=float)
+    return x0, p
+
+
+def f_dxdt(t: jax.Array, x: jax.Array, p: jax.Array) -> jax.Array:
+    """The rates of change dx/dt of the states x at the time t.
+
+    The arguments are in the order of a vector field of diffrax, `diffrax.ODETerm`
+    takes the function with the constants p as its `args`.
+    """
+    # states
+    V = x[0]
+    S = x[1]  # substrate
+    A = x[3]
+    B = x[4]
+    # constants
+    c = p[0]
+    vmax = p[1]
+    km = p[2]
+    k1 = p[3]
+    # assigned values and reaction rates
+    dV_dt = 0.1  # rate of V
+    J0 = vmax * mm(S, km)
+    J1 = k1 * S * A
+    # rates of change
+    return jnp.array([
+        0.1,  # dV/dt
+        (-J0 - J1) / c,  # dS/dt
+        (J0 + 2.0 * J1) / c,  # dP/dt
+        -J1 / V - A / V * dV_dt,  # dA/dt
+        -0.1 * B,  # dB/dt
+    ], dtype=float)
+
+
+def f_y(t: jax.Array, x: jax.Array, p: jax.Array) -> jax.Array:
+    """The assigned values y at the time t, the rules and the reaction rates."""
+    # states
+    S = x[1]  # substrate
+    A = x[3]
+    # constants
+    vmax = p[1]
+    km = p[2]
+    k1 = p[3]
+    # assigned values and reaction rates
+    dV_dt = 0.1  # rate of V
+    k2 = 2.0 * k1
+    J0 = vmax * mm(S, km)
+    J1 = k1 * S * A
+    return jnp.array([dV_dt, k2, J0, J1], dtype=float)
+
+
+def event_triggers(t: jax.Array, x: jax.Array, p: jax.Array) -> jax.Array:
+    """The root function of the trigger of each event, positive where it holds.
+
+    An integrator locates the time at which a trigger changes as a root of its
+    function. At a root, where the function is 0, the trigger itself decides, see
+    `event_conditions`: `a >= b` holds at `a == b`, `a > b` does not.
+    """
+    t = jnp.asarray(t, dtype=float)  # an array: math out of its domain is nan, no error
+    # states
+    S = x[1]  # substrate
+    return jnp.array([
+        t - 5.0,  # E1 reset
+        2.0 - S,  # E2
+    ], dtype=float)
+
+
+def event_conditions(t: jax.Array, x: jax.Array, p: jax.Array) -> jax.Array:
+    """Whether the trigger of each event holds."""
+    t = jnp.asarray(t, dtype=float)  # an array: math out of its domain is nan, no error
+    # states
+    S = x[1]  # substrate
+    return jnp.array([
+        t > 5.0,  # E1 reset
+        S < 2.0,  # E2
+    ], dtype=bool)
+
+
+def event_priority_E1(t: jax.Array, x: jax.Array, p: jax.Array) -> jax.Array:
+    """The priority of the event E1, evaluated before each execution."""
+    return jnp.asarray(1.0, dtype=float)
+
+
+def event_values_E1(t: jax.Array, x: jax.Array, p: jax.Array) -> jax.Array:
+    """The values the event E1 assigns, evaluated when its trigger turns true."""
+    # states
+    V = x[0]
+    return jnp.array([
+        2.0 * V,  # V
+        10.0,  # S substrate
+        jnp.nan,  # A: not assigned, its amount is kept
+        jnp.nan,  # B: not assigned, its amount is kept
+    ], dtype=float)
+
+
+def event_sizes_E1(t: jax.Array, x: jax.Array, p: jax.Array) -> jax.Array:
+    """The sizes of the compartments the event E1 changes, after its assignments."""
+    # states
+    V = x[0]
+    return jnp.array([V], dtype=float)
+
+
+def event_assign_E1(
+    t: jax.Array, x: jax.Array, p: jax.Array, values: jax.Array
+) -> tuple[jax.Array, jax.Array]:
+    """Execute the event E1: the states x and the constants p with the values.
+
+    A concentration in a compartment whose size the event changes keeps its amount:
+    it is scaled with the size before the event and divided by the size after it,
+    `event_sizes_E1`, evaluated with the values the event assigned.
+    """
+    # states
+    V = x[0]
+    A = x[3]
+    B = x[4]
+    x = x.at[0].set(values[0])  # V
+    x = x.at[1].set(values[1])  # S substrate
+    sizes = event_sizes_E1(t, x, p)
+    x = x.at[3].set(A * V / sizes[0])  # A
+    x = x.at[4].set(B * V / sizes[0])  # B
+    return x, p
+
+
+def event_delay_E2(t: jax.Array, x: jax.Array, p: jax.Array) -> jax.Array:
+    """The delay of the event E2, evaluated when its trigger turns true."""
+    return jnp.asarray(1.0, dtype=float)
+
+
+def event_values_E2(t: jax.Array, x: jax.Array, p: jax.Array) -> jax.Array:
+    """The values the event E2 assigns, evaluated when its trigger turns true."""
+    # constants
+    total = p[5]
+    return jnp.array([
+        1.0,  # A
+        total + 1.0,  # total
+    ], dtype=float)
+
+
+def event_assign_E2(
+    t: jax.Array, x: jax.Array, p: jax.Array, values: jax.Array
+) -> tuple[jax.Array, jax.Array]:
+    """Execute the event E2: the states x and the constants p with the values."""
+    x = x.at[3].set(values[0])  # A
+    p = p.at[5].set(values[1])  # total
+    return x, p
+
+
+# the events in the order of the model, the trigger of the event k is the entry k of
+# `event_triggers` and `event_conditions`, its flags the entries k of the arrays
+EVENT_IDS = [
+    "E1",  # reset
+    "E2",
+]
+# the value of each trigger before t = 0
+INITIAL_VALUE = jnp.array([True, True])
+# whether an execution is kept when its trigger turns false before it
+PERSISTENT = jnp.array([True, True])
+# whether an execution assigns the values from the time its trigger turned true
+USE_TRIGGER_VALUES = jnp.array([True, True])
+
+
+def event_delay(
+    event_index: jax.Array, t: jax.Array, x: jax.Array, p: jax.Array
+) -> jax.Array:
+    """The delay of the event of the index, 0 for an event without a delay."""
+    return jax.lax.switch(event_index, [
+        lambda t, x, p: jnp.asarray(0.0, dtype=float),  # E1
+        event_delay_E2,
+    ], t, x, p)
+
+
+def event_priorities(t: jax.Array, x: jax.Array, p: jax.Array) -> jax.Array:
+    """The priority of each event, 0 for an event without a priority."""
+    return jnp.array([
+        event_priority_E1(t, x, p),
+        0.0,  # E2
+    ], dtype=float)
+
+
+def event_values(
+    event_index: jax.Array, t: jax.Array, x: jax.Array, p: jax.Array
+) -> jax.Array:
+    """The values the event of the index assigns, padded with 0 to the most values."""
+    return jax.lax.switch(event_index, [
+        event_values_E1,
+        lambda t, x, p: jnp.pad(event_values_E2(t, x, p), (0, 2)),
+    ], t, x, p)
+
+
+def event_assign(
+    event_index: jax.Array, t: jax.Array, x: jax.Array, p: jax.Array, values: jax.Array
+) -> tuple[jax.Array, jax.Array]:
+    """Execute an event: the states x and the constants p with its values."""
+    return jax.lax.switch(event_index, [
+        event_assign_E1,
+        event_assign_E2,
+    ], t, x, p, values)

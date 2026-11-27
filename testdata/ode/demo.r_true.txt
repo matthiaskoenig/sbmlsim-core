@@ -1,0 +1,410 @@
+# The ODE system of the model `Koenig_demo_v15`.
+#
+# Written by sbmlode 0.3.3, SBML L3V1.
+#
+# Units of the model:
+#
+#   time       s
+#   substance  mole
+#   extent     mole
+#   volume     m^3
+#   area       m^2
+#   length     m
+#
+# States x:
+#
+#      id    name  unit
+#   1  c__A  A     mole/m^3
+#   2  c__B  B     mole/m^3
+#   3  c__C  C     mole/m^3
+#   4  e__A  A     mole/m^3
+#   5  e__B  B     mole/m^3
+#   6  e__C  C     mole/m^3
+#
+# `initial_values(p)` returns the initial states x0 and the constants p at t = 0,
+# `f_dxdt(t, x, p)` the rates of change of the states (in a list, as deSolve
+# wants them) and `f_y(t, x, p)` the assigned values y, the rules and the
+# reaction rates.
+# `simulate(t_end)` returns a data.frame of a simulation with `deSolve::lsoda`.
+# Sourcing the file needs base R only, a simulation the package deSolve; the file
+# run as a script prints the head of a simulation.
+
+# the ids of the states x, the constants p and the assigned values y
+XIDS <- c(
+  "c__A",  # A [mole/m^3]
+  "c__B",  # B [mole/m^3]
+  "c__C",  # C [mole/m^3]
+  "e__A",  # A [mole/m^3]
+  "e__B",  # B [mole/m^3]
+  "e__C"  # C [mole/m^3]
+)
+PIDS <- c(
+  "e",  # external compartment [m^3]
+  "c",  # cell compartment [m^3]
+  "m",  # plasma membrane [m^2]
+  "scale_f",  # metabolic scaling factor [-]
+  "Vmax_bA",  # [mol/s]
+  "Km_A",  # [mmol/l]
+  "Vmax_bB",  # [mol/s]
+  "Km_B",  # [mmol/l]
+  "Vmax_bC",  # [mol/s]
+  "Km_C",  # [mmol/l]
+  "Vmax_v1",  # [mol/s]
+  "Keq_v1",  # [-]
+  "Vmax_v2",  # [mol/s]
+  "Vmax_v3",  # [mol/s]
+  "Vmax_v4",  # [mol/s]
+  "Keq_v4"  # [-]
+)
+YIDS <- c(
+  "bA",  # bA (A import) [mole/s]
+  "bB",  # bB (B export) [mole/s]
+  "bC",  # bC (C export) [mole/s]
+  "v1",  # v1 (A -> B) [mole/s]
+  "v2",  # v2 (A -> C) [mole/s]
+  "v3",  # v3 (C -> A) [mole/s]
+  "v4"  # v4 (C -> B) [mole/s]
+)
+
+# the names and the units of the ids, `NA` for none
+NAMES <- c(
+  "c__A" = "A",
+  "c__B" = "B",
+  "c__C" = "C",
+  "e__A" = "A",
+  "e__B" = "B",
+  "e__C" = "C",
+  "e" = "external compartment",
+  "c" = "cell compartment",
+  "m" = "plasma membrane",
+  "scale_f" = "metabolic scaling factor",
+  "Vmax_bA" = NA_character_,
+  "Km_A" = NA_character_,
+  "Vmax_bB" = NA_character_,
+  "Km_B" = NA_character_,
+  "Vmax_bC" = NA_character_,
+  "Km_C" = NA_character_,
+  "Vmax_v1" = NA_character_,
+  "Keq_v1" = NA_character_,
+  "Vmax_v2" = NA_character_,
+  "Vmax_v3" = NA_character_,
+  "Vmax_v4" = NA_character_,
+  "Keq_v4" = NA_character_,
+  "bA" = "bA (A import)",
+  "bB" = "bB (B export)",
+  "bC" = "bC (C export)",
+  "v1" = "v1 (A -> B)",
+  "v2" = "v2 (A -> C)",
+  "v3" = "v3 (C -> A)",
+  "v4" = "v4 (C -> B)"
+)
+UNITS <- c(
+  "c__A" = "mole/m^3",
+  "c__B" = "mole/m^3",
+  "c__C" = "mole/m^3",
+  "e__A" = "mole/m^3",
+  "e__B" = "mole/m^3",
+  "e__C" = "mole/m^3",
+  "e" = "m^3",
+  "c" = "m^3",
+  "m" = "m^2",
+  "scale_f" = "-",
+  "Vmax_bA" = "mol/s",
+  "Km_A" = "mmol/l",
+  "Vmax_bB" = "mol/s",
+  "Km_B" = "mmol/l",
+  "Vmax_bC" = "mol/s",
+  "Km_C" = "mmol/l",
+  "Vmax_v1" = "mol/s",
+  "Keq_v1" = "-",
+  "Vmax_v2" = "mol/s",
+  "Vmax_v3" = "mol/s",
+  "Vmax_v4" = "mol/s",
+  "Keq_v4" = "-",
+  "bA" = "mole/s",
+  "bB" = "mole/s",
+  "bC" = "mole/s",
+  "v1" = "mole/s",
+  "v2" = "mole/s",
+  "v3" = "mole/s",
+  "v4" = "mole/s"
+)
+
+# the default values of the constants, `NaN` for one without a value, e.g. one
+# which an initial assignment sets and `initial_values` computes
+P0 <- c(
+  "e" = 1e-06,  # external compartment [m^3]
+  "c" = 1e-06,  # cell compartment [m^3]
+  "m" = 1,  # plasma membrane [m^2]
+  "scale_f" = 1e-06,  # metabolic scaling factor [-]
+  "Vmax_bA" = 5,  # [mol/s]
+  "Km_A" = 1,  # [mmol/l]
+  "Vmax_bB" = 2,  # [mol/s]
+  "Km_B" = 0.5,  # [mmol/l]
+  "Vmax_bC" = 2,  # [mol/s]
+  "Km_C" = 3,  # [mmol/l]
+  "Vmax_v1" = 1,  # [mol/s]
+  "Keq_v1" = 10,  # [-]
+  "Vmax_v2" = 0.5,  # [mol/s]
+  "Vmax_v3" = 0.5,  # [mol/s]
+  "Vmax_v4" = 0.5,  # [mol/s]
+  "Keq_v4" = 2  # [-]
+)
+
+# The initial states x0 and the constants p at t = 0.
+#
+# The initial values, initial assignments and the rules they need are evaluated
+# in the order of their dependencies.
+#
+# Every constant keeps the value passed.
+#
+# Returns a list of the initial states x0 and the constants p, named vectors.
+initial_values <- function(p = P0) {
+  p <- as.numeric(p)
+  # initial values
+  c__A <- 0  # A [mole/m^3]
+  c__B <- 0  # B [mole/m^3]
+  c__C <- 0  # C [mole/m^3]
+  e__A <- 0  # A [mole/m^3]
+  e__B <- 0  # B [mole/m^3]
+  e__C <- 0  # C [mole/m^3]
+  x0 <- as.numeric(c(c__A, c__B, c__C, e__A, e__B, e__C))
+  names(x0) <- XIDS
+  names(p) <- PIDS
+  list(x0 = x0, p = p)
+}
+
+# The rates of change dx/dt of the states x at the time t, in a list (deSolve).
+f_dxdt <- function(t, x, p) {
+  # states
+  c__A <- x[[1]]  # A [mole/m^3]
+  c__B <- x[[2]]  # B [mole/m^3]
+  c__C <- x[[3]]  # C [mole/m^3]
+  e__A <- x[[4]]  # A [mole/m^3]
+  e__B <- x[[5]]  # B [mole/m^3]
+  e__C <- x[[6]]  # C [mole/m^3]
+  # constants
+  e <- p[[1]]  # external compartment [m^3]
+  c_ <- p[[2]]  # cell compartment [m^3]
+  scale_f <- p[[4]]  # metabolic scaling factor [-]
+  Vmax_bA <- p[[5]]  # [mol/s]
+  Km_A <- p[[6]]  # [mmol/l]
+  Vmax_bB <- p[[7]]  # [mol/s]
+  Km_B <- p[[8]]  # [mmol/l]
+  Vmax_bC <- p[[9]]  # [mol/s]
+  Km_C <- p[[10]]  # [mmol/l]
+  Vmax_v1 <- p[[11]]  # [mol/s]
+  Keq_v1 <- p[[12]]  # [-]
+  Vmax_v2 <- p[[13]]  # [mol/s]
+  Vmax_v3 <- p[[14]]  # [mol/s]
+  Vmax_v4 <- p[[15]]  # [mol/s]
+  Keq_v4 <- p[[16]]  # [-]
+  # assigned values and reaction rates
+  bA <- scale_f * (Vmax_bA / Km_A) * (e__A - c__A) / (1 + e__A / Km_A + c__A / Km_A)  # bA (A import) [mole/s]
+  bB <- scale_f * (Vmax_bB / Km_B) * (c__B - e__B) / (1 + e__B / Km_B + c__B / Km_B)  # bB (B export) [mole/s]
+  bC <- scale_f * (Vmax_bC / Km_C) * (c__C - e__C) / (1 + e__C / Km_C + c__C / Km_C)  # bC (C export) [mole/s]
+  v1 <- scale_f * Vmax_v1 / Km_A * (c__A - 1 / Keq_v1 * c__B)  # v1 (A -> B) [mole/s]
+  v2 <- scale_f * Vmax_v2 / Km_A * c__A  # v2 (A -> C) [mole/s]
+  v3 <- scale_f * Vmax_v3 / Km_A * c__C  # v3 (C -> A) [mole/s]
+  v4 <- scale_f * Vmax_v4 / Km_A * (c__C - 1 / Keq_v4 * c__B)  # v4 (C -> B) [mole/s]
+  # rates of change
+  dx <- numeric(6)
+  dx[[1]] <- (bA - v1 - v2 + v3) / c_  # dc__A/dt
+  dx[[2]] <- (-bB + v1 + v4) / c_  # dc__B/dt
+  dx[[3]] <- (-bC + v2 - v3 - v4) / c_  # dc__C/dt
+  dx[[4]] <- -bA / e  # de__A/dt
+  dx[[5]] <- bB / e  # de__B/dt
+  dx[[6]] <- bC / e  # de__C/dt
+  list(dx)
+}
+
+# The assigned values y at the time t, the rules and the reaction rates.
+f_y <- function(t, x, p) {
+  # states
+  c__A <- x[[1]]  # A [mole/m^3]
+  c__B <- x[[2]]  # B [mole/m^3]
+  c__C <- x[[3]]  # C [mole/m^3]
+  e__A <- x[[4]]  # A [mole/m^3]
+  e__B <- x[[5]]  # B [mole/m^3]
+  e__C <- x[[6]]  # C [mole/m^3]
+  # constants
+  scale_f <- p[[4]]  # metabolic scaling factor [-]
+  Vmax_bA <- p[[5]]  # [mol/s]
+  Km_A <- p[[6]]  # [mmol/l]
+  Vmax_bB <- p[[7]]  # [mol/s]
+  Km_B <- p[[8]]  # [mmol/l]
+  Vmax_bC <- p[[9]]  # [mol/s]
+  Km_C <- p[[10]]  # [mmol/l]
+  Vmax_v1 <- p[[11]]  # [mol/s]
+  Keq_v1 <- p[[12]]  # [-]
+  Vmax_v2 <- p[[13]]  # [mol/s]
+  Vmax_v3 <- p[[14]]  # [mol/s]
+  Vmax_v4 <- p[[15]]  # [mol/s]
+  Keq_v4 <- p[[16]]  # [-]
+  # assigned values and reaction rates
+  bA <- scale_f * (Vmax_bA / Km_A) * (e__A - c__A) / (1 + e__A / Km_A + c__A / Km_A)  # bA (A import) [mole/s]
+  bB <- scale_f * (Vmax_bB / Km_B) * (c__B - e__B) / (1 + e__B / Km_B + c__B / Km_B)  # bB (B export) [mole/s]
+  bC <- scale_f * (Vmax_bC / Km_C) * (c__C - e__C) / (1 + e__C / Km_C + c__C / Km_C)  # bC (C export) [mole/s]
+  v1 <- scale_f * Vmax_v1 / Km_A * (c__A - 1 / Keq_v1 * c__B)  # v1 (A -> B) [mole/s]
+  v2 <- scale_f * Vmax_v2 / Km_A * c__A  # v2 (A -> C) [mole/s]
+  v3 <- scale_f * Vmax_v3 / Km_A * c__C  # v3 (C -> A) [mole/s]
+  v4 <- scale_f * Vmax_v4 / Km_A * (c__C - 1 / Keq_v4 * c__B)  # v4 (C -> B) [mole/s]
+  as.numeric(c(bA, bB, bC, v1, v2, v3, v4))
+}
+
+# the model has no events
+EVENTS <- list()
+
+# the limits of a simulation: the steps of the integrator beyond those which the
+# largest step forces
+MAX_STEPS <- 100000
+
+# The states at the times, integrated with `deSolve::lsoda` from the states x at
+# the first time.
+#
+# The integrator steps at most `hmax`. An interval which is too short for the
+# integrator, to the rounding of the time, is extrapolated with the rates of
+# change.
+#
+# Returns a list of the times, the states at them (a matrix of a row per time) and
+# the number of steps, `steps` plus those of the integration. Throws an error if
+# the integration fails or takes more than `max_steps` steps in all.
+integrate_segment <- function(x, times, p, rtol, atol, hmax, steps, max_steps) {
+  n_times <- length(times)
+  if (times[[n_times]] - times[[1]] < 4 * .Machine$double.eps * max(1, abs(times))) {
+    dx <- f_dxdt(times[[1]], x, p)[[1]]
+    states <- matrix(x, n_times, length(x), byrow = TRUE)
+    states <- states + outer(times - times[[1]], dx)
+    return(list(time = times, states = states, steps = steps))
+  }
+  # the steps of the integrator, counted while it integrates as the new times at
+  # which it evaluates the rates of change (a step evaluates them at its end, a step
+  # which fails as well): deSolve limits the steps between two outputs only
+  # (`maxsteps`), the count stops the integration as soon as it exceeds `max_steps`
+  counted <- steps
+  t_counted <- NA_real_
+  exceeded <- function(t_at) {
+    stop(
+      "The integration took more than ", max_steps, " steps, at t = ",
+      format(t_at, digits = 15), ".",
+      call. = FALSE
+    )
+  }
+  rates <- function(t, y, p) {
+    if (!identical(t, t_counted)) {
+      t_counted <<- t
+      counted <<- counted + 1
+      if (counted > max_steps) {
+        exceeded(t)
+      }
+    }
+    f_dxdt(t, y, p)
+  }
+  # the warnings, e.g. of the math of the model, and the messages the solver prints
+  warned <- character(0)
+  messages <- utils::capture.output(
+    solution <- withCallingHandlers(
+      deSolve::lsoda(
+        x, times, rates, p,
+        rtol = rtol, atol = atol,
+        tcrit = times[[n_times]], hmax = if (is.finite(hmax)) hmax else 0,
+        maxsteps = max(1, max_steps - steps + 1), ynames = FALSE
+      ),
+      warning = function(condition) {
+        warned <<- c(warned, conditionMessage(condition))
+        invokeRestart("muffleWarning")
+      }
+    )
+  )
+  # the messages of the solver, separated by empty lines, hold bytes which are no
+  # text, e.g. of DLSODAR
+  printed <- trimws(gsub("[^ -~]", "", messages, useBytes = TRUE))
+  blocks <- split(printed, cumsum(!nzchar(printed)))
+  solver <- unique(vapply(blocks, function(lines) {
+    paste(lines[nzchar(lines)], collapse = " ")
+  }, character(1)))
+  solver <- solver[nzchar(solver)]
+  warned <- unique(warned)
+  istate <- attr(solution, "istate")
+  t_reached <- attr(solution, "rstate")[[3]]
+  steps <- max(counted, steps + max(1, istate[[2]]))
+  if (istate[[1]] == -1 || steps > max_steps) {
+    exceeded(t_reached)
+  }
+  if (istate[[1]] < 0) {
+    stop(
+      "The integration failed at t = ", format(t_reached, digits = 15), ": ",
+      paste(c(warned, solver), collapse = " "),
+      call. = FALSE
+    )
+  }
+  # the warnings and the messages of the solver, one by one
+  for (reported in warned) {
+    warning(reported, call. = FALSE)
+  }
+  for (reported in solver) {
+    warning(
+      "The integrator reports at t = ", format(t_reached, digits = 15), ": ",
+      reported,
+      call. = FALSE
+    )
+  }
+  list(
+    time = solution[, 1],
+    states = solution[, -1, drop = FALSE],
+    steps = steps
+  )
+}
+
+# Simulate the model from t = 0 to `t_end`.
+#
+# Arguments:
+# - t_end: the end time
+# - points: the number of time points, 0 and `t_end` included
+# - p: the constants, `P0` if not given
+# - x0: the initial states, those of `initial_values` if not given
+# - rtol: the relative tolerance of the integration
+# - atol: the absolute tolerance of the integration
+# - hmax: the largest step of the integrator, by default the distance of the
+#   time points
+# - max_steps: the largest number of steps of the integrator, by default
+#   `MAX_STEPS` plus twice the number of steps `hmax` forces
+#
+# Returns a data.frame of the time, the states and the assigned values at the
+# time points.
+# Throws an error if the integration fails or takes more than `max_steps` steps,
+# e.g. when a state grows without bound.
+simulate <- function(t_end, points = 101, p = NULL, x0 = NULL, rtol = 1e-8,
+                     atol = 1e-10, hmax = NULL, max_steps = NULL) {
+  initial <- initial_values(if (is.null(p)) P0 else p)
+  p <- unname(initial$p)
+  x <- if (is.null(x0)) unname(initial$x0) else as.numeric(x0)
+  # the time points, a single one at t = 0
+  times <- if (points > 1) seq(0, t_end, length.out = points) else rep(0, points)
+  if (is.null(hmax)) {
+    hmax <- if (points > 1 && t_end > 0) times[[2]] else Inf
+  }
+  if (is.null(max_steps)) {
+    max_steps <- MAX_STEPS + 2 * ceiling(t_end / hmax)
+  }
+  xs <- rep(list(x), points)  # the states at the time points
+  ps <- rep(list(p), points)  # the constants at the time points
+  if (points > 1 && t_end > 0) {
+    segment <- integrate_segment(x, times, p, rtol, atol, hmax, 0, max_steps)
+    xs <- lapply(seq_len(points), function(k_point) segment$states[k_point, ])
+  }
+
+  # the table: the time, the states and the assigned values
+  ys <- lapply(seq_len(points), function(k_point) {
+    f_y(times[[k_point]], xs[[k_point]], ps[[k_point]])
+  })
+  xt <- matrix(as.numeric(unlist(xs)), points, length(XIDS), byrow = TRUE)
+  yt <- matrix(as.numeric(unlist(ys)), points, length(YIDS), byrow = TRUE)
+  data <- as.data.frame(cbind(times, xt, yt))
+  names(data) <- c("time", XIDS, YIDS)
+  data
+}
+
+if (sys.nframe() == 0L) {
+  print(utils::head(simulate(10)))
+}
