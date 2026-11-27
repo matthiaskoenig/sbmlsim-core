@@ -409,7 +409,8 @@ fn with_fit<T>(
 /// fit take and what its cost carries on top of the objective of PEtab.
 ///
 /// The fit is the one of `Executor::fit` of the command line: the same definition, the same
-/// optimizer and, when the host simulates with `engine.wasm`, the same evaluations.
+/// optimizer with the same tolerances where the settings give none (`Plan::fit_settings`) and,
+/// when the host simulates with `engine.wasm`, the same evaluations.
 ///
 /// # Errors
 ///
@@ -428,7 +429,10 @@ pub fn fit_open(handle: usize, input: &[u8]) -> Result<String, String> {
         let offset = plan.cost_offset().map_err(|err| err.to_string())?;
         let models: Vec<String> = plan.models.iter().map(|model| model.id.clone()).collect();
         let opening = Opening::new(definition, &models).map_err(|err| err.to_string())?;
-        Ok((Asking::open(opening, request.settings), offset))
+        Ok((
+            Asking::open(opening, plan.fit_settings(&request.settings)),
+            offset,
+        ))
     })?;
     let fit = FITS.with(|fits| {
         let mut fits = fits.borrow_mut();

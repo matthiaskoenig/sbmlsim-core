@@ -273,7 +273,9 @@ impl PetabProblemPy {
 
     /// Fits the estimated parameters from their nominal values with an optimizer of the
     /// engine; `settings` is the `optimizer` of a request of `fit/1` (`{"algorithm":
-    /// "trust_region", "max_iterations": 100}` by default). Gives a dict of the values `x`,
+    /// "trust_region", "max_iterations": 100}` by default), whose `gradient_tolerance`,
+    /// `step_tolerance` and `cost_tolerance` are the relative tolerance of the integrator, at
+    /// least `1e-8`, where it gives none. Gives a dict of the values `x`,
     /// PEtab's `objective` (the negative log posterior, the negative log-likelihood of a
     /// problem without priors), the `status` of the optimizer and its counts.
     #[pyo3(signature = (settings=None, *, threads=None))]

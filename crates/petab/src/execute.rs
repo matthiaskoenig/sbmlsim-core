@@ -13,10 +13,10 @@ use rayon::prelude::*;
 use sbmlsim_abi::SimulationResult;
 use sbmlsim_fit::{
     Condition, Curve, Definition, Derived, Form, JacobianChoice, Likelihood, NoiseKind, Parameter,
-    Scale, Term,
+    Scale, Settings, Term,
 };
 #[cfg(feature = "native")]
-use sbmlsim_fit::{Fit, Problem, Settings};
+use sbmlsim_fit::{Fit, Problem};
 #[cfg(feature = "native")]
 use sbmlsim_host::{LoadedModel, Runtime};
 use sbmlsim_sbml::math::{Node, Op};
@@ -464,12 +464,53 @@ impl Plan {
         }
         Ok(offset)
     }
+
+    /// The tolerance a fit of the plan tests its scaled gradient, its step and the change of
+    /// its cost at when its settings give none: the relative tolerance of the integrator of
+    /// its simulations, at least `1e-8`, as sbmlsim's `default_tolerance` gives its fits and
+    /// the points of its profiles.
+    ///
+    /// A simulation is exact only to the relative tolerance of its integrator, so the cost of
+    /// a fit has a noise of about that size: a fit which tests neither its step nor the change
+    /// of its cost spends its last iterations chasing that noise and ends in
+    /// `NumericalNoProgress` instead of at a tolerance, and a tolerance below `1e-8`, the
+    /// `ftol`, `xtol` and `gtol` of `scipy.optimize.least_squares`, only adds such steps.
+    #[must_use]
+    pub fn fit_tolerance(&self) -> f64 {
+        self.simulations
+            .iter()
+            .map(|simulation| simulation.request.settings.relative_tolerance)
+            .fold(FIT_TOLERANCE_FLOOR, f64::max)
+    }
+
+    /// The settings of a fit of the plan: `settings`, with [`Plan::fit_tolerance`] for each of
+    /// `gradient_tolerance`, `step_tolerance` and `cost_tolerance` they do not give.
+    ///
+    /// Every fit of a plan takes them: [`Executor::fit`] (the command line and python) and the
+    /// fit a host of JavaScript drives ask/tell (`compiler.wasm`).
+    #[must_use]
+    pub fn fit_settings(&self, settings: &Settings) -> Settings {
+        let tolerance = self.fit_tolerance();
+        let mut settings = settings.clone();
+        for value in [
+            &mut settings.gradient_tolerance,
+            &mut settings.step_tolerance,
+            &mut settings.cost_tolerance,
+        ] {
+            value.get_or_insert(tolerance);
+        }
+        settings
+    }
 }
+
+/// The floor of [`Plan::fit_tolerance`], the `ftol`, `xtol` and `gtol` of
+/// `scipy.optimize.least_squares` (`LEAST_SQUARES_TOLERANCE` of sbmlsim).
+const FIT_TOLERANCE_FLOOR: f64 = 1e-8;
 
 #[cfg(feature = "native")]
 impl Executor {
     /// Fits the estimated parameters with an optimizer of `sbmlsim-fit` from their nominal
-    /// values.
+    /// values, with the tolerances of [`Plan::fit_settings`] where `settings` gives none.
     ///
     /// # Errors
     ///
@@ -478,7 +519,7 @@ impl Executor {
         let problem = self.problem(threads)?;
         let offset = self.plan.cost_offset()?;
         let fit = problem
-            .optimize(settings)
+            .optimize(&self.plan.fit_settings(settings))
             .map_err(|err| PetabError::Engine(err.to_string()))?;
         Ok(FitAnswer {
             x: fit.values.clone(),

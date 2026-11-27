@@ -390,7 +390,7 @@ its own request determines.
 | `step_tolerance` | none | the step a least squares run converges at, relative to the point it steps from, the `xtol` of `scipy.optimize.least_squares`; no test of the step when it is absent |
 | `cost_tolerance` | none | the change of the cost a least squares run converges at, relative to the cost before the step, the `ftol` of `scipy.optimize.least_squares`; no test of the cost when it is absent |
 
-A simulation is exact only to the relative tolerance of its integrator, so the cost of a fit carries a noise of about that size, and the last iterations of a run without `step_tolerance` and `cost_tolerance` chase that noise: such a run ends in `NumericalNoProgress` rather than at a step or a change of the cost it calls small enough. On the fits of the HCTZ model of sbmlsim a run without them takes 2.3 times the evaluations of one which stops at `1e-8` and finds the same optimum, so a caller which knows the tolerance of its integrator passes both.
+A simulation is exact only to the relative tolerance of its integrator, so the cost of a fit carries a noise of about that size, and the last iterations of a run without `step_tolerance` and `cost_tolerance` chase that noise: such a run ends in `NumericalNoProgress` rather than at a step or a change of the cost it calls small enough. On the fits of the HCTZ model of sbmlsim a run without them takes 2.3 times the evaluations of one which stops at `1e-8` and finds the same optimum, so a caller which knows the tolerance of its integrator passes both. The fit of a [PEtab problem](petab.md#the-fit) passes all three, the relative tolerance of the integrator of the problem, at least `1e-8`, where its settings give none.
 
 | `algorithm` | what it does |
 |---|---|

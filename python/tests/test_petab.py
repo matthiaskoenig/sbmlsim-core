@@ -89,6 +89,9 @@ def test_a_fit_finds_the_rate_of_the_data() -> None:
     problem = petab.Problem.from_files(files(), "problem.yaml")
     answer = problem.fit({"max_iterations": 100}, threads=2)
     assert answer["x"] == pytest.approx([0.3], rel=1e-5)
+    # the default tolerances of the step and the cost stop the fit at the noise of the
+    # integrator
+    assert answer["status"] in {"RelativeCostTolerance", "RelativeParamTolerance"}
     # the data is the simulation: the objective is the normalization of the densities
     assert answer["objective"] == pytest.approx(
         3 * math.log(math.sqrt(2 * math.pi) * 0.1), abs=1e-6

@@ -25,6 +25,16 @@ import { ROOT, cli, compilerWasm, loaderRuntime, nodeWorker } from "./helpers.mj
 /** The commit of the PEtab test suite, `COMMIT` of `crates/petab/tests/testsuite.rs`. */
 const SUITE_COMMIT = "d09985e7bb03280b461599a24337137533d931e2";
 
+/** The statuses of a fit which stopped at a tolerance of its step or of its cost. */
+const CONVERGED = /^Relative(Cost|Param)Tolerance$/;
+
+/**
+ * The cases of the PEtab test suite whose objective has no minimum: the noise of their
+ * observable is estimated with a lower bound of zero and runs to it, so the fits stop at the
+ * tolerance of their step on the way, where the rounding of their simulations takes them.
+ */
+const NO_MINIMUM = new Set(["v2.0.0/sbml/0015", "v2.0.0/sbml/0021", "v1.0.0-converted/sbml/0015"]);
+
 /** The conversion problem of the live demo of the documentation. */
 const DEMO = path.join(ROOT, "docs", "demo", "conversion");
 
@@ -81,8 +91,9 @@ function cliFit(yaml) {
  * part at their last iterations. The objectives agree to `1e-8`, and so do the optima: their
  * values to `1e-4`, or, where the data does not determine a parameter and the optimizers ended
  * at two points of a valley of the likelihood, the likelihoods of the two points. A fit whose
- * objective has no minimum (a noise which is estimated runs to zero, `SolverFailed`) ends where
- * its rounding takes it, and is held to its status alone. The record says how often the two
+ * objective has no minimum (a noise which is estimated runs to zero, `NO_MINIMUM`) and a fit
+ * which fails (`SolverFailed`) end where their rounding takes them, and are held to their status
+ * alone. The record says how often the two
  * were the same to the bit.
  */
 async function assertCliFit(problem, fit, expected, name, record = {}) {
@@ -90,7 +101,7 @@ async function assertCliFit(problem, fit, expected, name, record = {}) {
   assert.equal(fit.status, expected.status, `${name}: the status`);
   const same = parameters.every((id, k) => fit.x[k] === expected.values[id]) && fit.objective === expected.objective;
   record.exact = (record.exact ?? 0) + (same ? 1 : 0);
-  if (expected.status === "SolverFailed") return;
+  if (expected.status === "SolverFailed" || NO_MINIMUM.has(name)) return;
   const objective = Math.abs(fit.objective - expected.objective) / Math.max(Math.abs(expected.objective), 1);
   record.objective = Math.max(record.objective ?? 0, objective);
   assert.ok(objective < 1e-8, `${name}: the objective ${fit.objective} != ${expected.objective}`);
@@ -117,6 +128,9 @@ test("a page fits the problem of the demo as the command line does", async (t) =
     assert.ok(-fit.objective > nominal.llh, `${fit.objective} ${nominal.llh}`);
     assert.ok(fit.x.every((value, k) => value > problem.lower[k] && value < problem.upper[k]), `${fit.x}`);
     assert.ok(fit.iterations > 2, fit.status);
+    // the step and the cost are tested at the tolerance of the integrator, so the fit stops
+    // where its simulations stop telling the points apart instead of chasing their noise
+    assert.match(fit.status, CONVERGED);
     assert.equal(fit.runs.length, 1);
     assert.deepEqual(fit.start, problem.nominal);
     // the objective is the negative log-likelihood of PEtab at the optimum
@@ -133,6 +147,23 @@ test("a page fits the problem of the demo as the command line does", async (t) =
     }
     const expected = cliFit(path.join(DEMO, "problem.yaml"));
     await assertCliFit(problem, fit, expected, "demo");
+  } finally {
+    problem.close();
+  }
+});
+
+test("the explicit tolerances of a fit win over the ones of the integrator", async () => {
+  const problem = await openPetab({ compiler: await compiler(), runtime: await loaderRuntime(), files: filesOf(DEMO) });
+  try {
+    const fit = await problem.fit();
+    // tolerances below the noise of the integrator take more evaluations to the same optimum
+    const tight = await problem.fit({ gradientTolerance: 1e-15, stepTolerance: 1e-15, costTolerance: 1e-15 });
+    assert.ok(tight.evaluations > fit.evaluations, `${tight.evaluations} ${fit.evaluations}`);
+    assert.ok(Math.abs(tight.objective - fit.objective) < 1e-9 * Math.abs(tight.objective), `${tight.objective} ${fit.objective}`);
+    // and loose ones stop it at its first step which changes the cost by less
+    const loose = await problem.fit({ costTolerance: 0.5 });
+    assert.equal(loose.status, "RelativeCostTolerance");
+    assert.ok(loose.evaluations < fit.evaluations, `${loose.evaluations} ${fit.evaluations}`);
   } finally {
     problem.close();
   }
