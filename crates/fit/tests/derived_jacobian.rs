@@ -21,7 +21,7 @@ use std::sync::Arc;
 use sbmlsim_abi::SimulationRequest;
 use sbmlsim_compiler::{CompileOptions, compile};
 use sbmlsim_fit::{
-    Condition, Curve, Definition, Derived, Dimension, JacobianChoice, Likelihood, NoiseKind,
+    Condition, Curve, Definition, Derived, Dimension, Form, JacobianChoice, Likelihood, NoiseKind,
     Parameter, Pinned, Problem, Reduction, Scale, Term, fisher,
 };
 use sbmlsim_host::LoadedModel;
@@ -137,6 +137,57 @@ fn derived(target: &str, constant: f64, terms: &[(usize, f64)]) -> Derived {
                 factor: *factor,
             })
             .collect(),
+        form: None,
+    }
+}
+
+/// The product `factor * Π p` of parameters of the fit, a value which is no linear form of
+/// them.
+#[derive(Debug)]
+struct Product {
+    parameters: Vec<usize>,
+    factor: f64,
+}
+
+impl Form for Product {
+    fn parameters(&self) -> &[usize] {
+        &self.parameters
+    }
+
+    fn value(&self, parameters: &[f64]) -> f64 {
+        self.parameters
+            .iter()
+            .fold(self.factor, |product, k| product * parameters[*k])
+    }
+
+    fn gradient(&self, parameters: &[f64]) -> Vec<f64> {
+        (0..self.parameters.len())
+            .map(|at| {
+                self.parameters
+                    .iter()
+                    .enumerate()
+                    .filter(|(other, _)| *other != at)
+                    .fold(self.factor, |product, (_, k)| product * parameters[*k])
+            })
+            .collect()
+    }
+}
+
+/// A derived value of a target, the linear form of [`derived`] plus `factor * Π p` of the
+/// parameters `product`.
+fn nonlinear(
+    target: &str,
+    constant: f64,
+    terms: &[(usize, f64)],
+    factor: f64,
+    product: &[usize],
+) -> Derived {
+    Derived {
+        form: Some(Arc::new(Product {
+            parameters: product.to_vec(),
+            factor,
+        })),
+        ..derived(target, constant, terms)
     }
 }
 
@@ -320,6 +371,107 @@ fn a_derived_value_of_several_parameters_sums_their_terms() {
     let (_, _, apart) = checked(definition);
 
     assert!(apart < 1e-6, "the jacobian is {apart} off");
+}
+
+#[test]
+fn a_derived_value_which_is_no_linear_form_is_the_chain_rule_of_its_form() {
+    // `V = 1 + 2 ka + 40 ka ke`, the product of two parameters of two scales, and `ke` of a
+    // square of `ka`, `ke = 0.05 + 0.1 ka^2`, which reads one parameter twice
+    for scale in [Scale::Lin, Scale::Log10] {
+        for (parameters, derived) in [
+            (
+                vec![
+                    parameter("ka", 1.0, 0.1, 10.0, scale),
+                    parameter("a", 0.15, 0.01, 1.0, Scale::Lin),
+                ],
+                vec![nonlinear("V", 1.0, &[(0, 2.0)], 40.0, &[0, 1])],
+            ),
+            (
+                vec![parameter("ka", 1.0, 0.1, 10.0, scale)],
+                vec![nonlinear("ke", 0.05, &[], 0.1, &[0, 0])],
+            ),
+        ] {
+            let definition = single(parameters, derived, JacobianChoice::Sensitivities);
+
+            let (_, jacobian, apart) = checked(definition);
+
+            assert!(apart < 1e-6, "{scale:?}: the jacobian is {apart} off");
+            assert!(jacobian.iter().any(|d| *d != 0.0), "{jacobian:?}");
+        }
+    }
+}
+
+#[test]
+fn a_form_is_evaluated_where_the_optimizer_is() {
+    // the value of a form is the one of the parameters on the linear scale: a fit of `ka`
+    // with `V = 20 ka^2` simulates the model of `V = 20 ka^2` at every point, as a fit of the
+    // differences of the residuals sees
+    let form = || vec![nonlinear("V", 0.0, &[], 20.0, &[0, 0])];
+    let sensitivities = single(
+        vec![parameter("ka", 0.7, 0.1, 10.0, Scale::Log10)],
+        form(),
+        JacobianChoice::Sensitivities,
+    );
+    let mut fixed = single(
+        vec![parameter("ka", 0.7, 0.1, 10.0, Scale::Log10)],
+        Vec::new(),
+        JacobianChoice::DifferenceQuotient,
+    );
+    fixed.conditions[0].request.preinit = vec![("V".to_string(), 20.0 * 0.7 * 0.7)];
+    let one = Problem::new(sensitivities, model(), 2).unwrap();
+    let other = Problem::new(fixed, model(), 2).unwrap();
+
+    let (a, b) = (
+        one.residuals(&one.start()).unwrap(),
+        other.residuals(&other.start()).unwrap(),
+    );
+
+    for (a, b) in a.iter().zip(&b) {
+        assert!((a - b).abs() <= 1e-12 * b.abs().max(1.0), "{a} != {b}");
+    }
+}
+
+#[test]
+fn a_problem_which_holds_a_parameter_of_a_form_reads_its_value() {
+    let definition = single(
+        vec![
+            parameter("ka", 1.0, 0.1, 10.0, Scale::Log10),
+            parameter("a", 0.15, 0.01, 1.0, Scale::Lin),
+        ],
+        vec![nonlinear("V", 1.0, &[], 40.0, &[0, 1])],
+        JacobianChoice::Sensitivities,
+    );
+    let problem = Problem::new(definition, model(), 2).unwrap();
+
+    for held in [0, 1] {
+        let fixed = problem.fixing(&[(held, [1.5, 0.2][held])]).unwrap();
+        let x = fixed.start();
+
+        let jacobian = fixed.jacobian(&x).unwrap();
+
+        let apart = apart(&jacobian, &central(&fixed, &x), 1);
+        assert!(apart < 1e-6, "holding {held}: the jacobian is {apart} off");
+    }
+}
+
+#[test]
+fn a_form_which_reads_a_parameter_the_fit_has_not_is_refused() {
+    let definition = single(
+        vec![parameter("ka", 1.0, 0.1, 10.0, Scale::Lin)],
+        vec![nonlinear("V", 1.0, &[], 40.0, &[0, 3])],
+        JacobianChoice::Sensitivities,
+    );
+
+    let refusal = Problem::new(definition, model(), 2)
+        .err()
+        .unwrap()
+        .to_string();
+
+    assert_eq!(
+        refusal,
+        "the condition 0 has the derived value 'V', whose form reads the parameter 3 of a fit \
+         of 1 parameters"
+    );
 }
 
 #[test]

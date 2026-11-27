@@ -2706,6 +2706,7 @@ name = "sbmlsim-fit"
 version = "0.39.0"
 dependencies = [
  "basin",
+ "libm",
  "pkpdutils-core",
  "rayon",
  "sbmlsim-abi",

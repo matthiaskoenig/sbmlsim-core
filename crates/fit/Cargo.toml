@@ -26,6 +26,9 @@ sbmlsim-abi = { path = "../abi" }
 # of pkpdutils runs as well, which a fit of a parameter of the analysis is held to; the crate is
 # not on crates.io, so it is a dependency on the tag of a release
 pkpdutils-core = { git = "https://github.com/matthiaskoenig/pkpdutils-core", tag = "v0.7.0" }
+# lgamma and log1p of the densities of the priors, the bits of the distribution functions
+# of `sbmlsim-petab` on every target
+libm = "0.2"
 # the contract `fit/1`, which a host writes and reads back
 serde.workspace = true
 sbmlsim-host = { path = "../host", features = ["native"] }

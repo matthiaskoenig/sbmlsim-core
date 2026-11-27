@@ -79,8 +79,8 @@ The parameters:
 |---|---|
 | `id` | the id of the parameter, a target a request can set (`preinit`): a parameter of the model, the amount of a species, a compartment |
 | `start` | where the fit starts, between the bounds |
-| `lower`, `upper` | the bounds, which every point of the search stays inside |
-| `scale` | `"lin"` (the default), `"log"` or `"log10"`: the space the optimizer searches in. A parameter of a concentration, a rate or a volume is fitted on a logarithmic scale, where a step is a share of the value and not an absolute amount, and its bounds must be positive |
+| `lower`, `upper` | the bounds, which every point of the search stays inside. A bound may be infinite (`-inf`, `inf`, which a host of python or Rust passes; JSON has no infinity), a parameter which is not bounded on that side: the least squares optimizers search such a space as they search a box, and a differential evolution, which draws its population in the box, refuses it |
+| `scale` | `"lin"` (the default), `"log"` or `"log10"`: the space the optimizer searches in. A parameter of a concentration, a rate or a volume is fitted on a logarithmic scale, where a step is a share of the value and not an absolute amount; its lower bound must not be negative and its start positive, and a lower bound of zero is a search space which is not bounded below, the logarithm maps the positive values onto the real line. A point of the search space at a bound is the bound itself in the model, the way back from the logarithm is not exact |
 
 The conditions:
 
@@ -133,8 +133,12 @@ column of a parameter is the sensitivity of its own target, unless the condition
 the sensitivity of the target of every derived value times the factor of its term of the
 parameter. That is as exact as the column of a parameter without derived values, and a target
 whose sensitivity the engine refuses refuses the condition. A value which is no linear form of
-the parameters, e.g. the product of two of them, is no derived value: the contract has no
-other form, and a host keeps such a condition out of a fit of the engine.
+the parameters, e.g. the product of two of them, is a derived value of a `Definition` in Rust
+alone: its `form` (the trait `sbmlsim_fit::Form`, code of the host) gives the value and its
+partial derivatives at the values of the parameters, which the fit adds to the linear form and
+takes the chain rule over, as it takes the factors of the terms. The contract has no form; the
+fit of a PEtab problem passes the formula of a value of a first period this way (see
+[PEtab](petab.md#the-fit)).
 
 The curves:
 
@@ -295,11 +299,11 @@ is a function of the values of the parameters alone, so none of these rows costs
 | field | what it holds |
 |---|---|
 | `parameter` | the position of the parameter in `parameters`, which carries at most one prior and must be no member of `prior_correlation` |
-| `kind` | one of `"normal"`, `"log-normal"`, `"uniform"`, `"log-uniform"`, `"laplace"` and `"log-laplace"` |
-| `parameters` | exactly two numbers, the ones of PEtab for that kind, below |
-| `offset` | the `c` of the row, the constant the host wants the cost measured from |
+| `kind` | one of the eleven of PEtab v2: `"normal"`, `"log-normal"`, `"uniform"`, `"log-uniform"`, `"laplace"`, `"log-laplace"`, `"cauchy"`, `"gamma"`, `"chisquare"`, `"exponential"` and `"rayleigh"` |
+| `parameters` | the numbers of PEtab for that kind, two of them or one of `chisquare`, `exponential` and `rayleigh`, below |
+| `offset` | the `c` of the row, the constant the host wants the cost measured from. Twice the largest log density between the bounds makes the row zero at the mode of the prior, where it is a distance from the mode, which a least squares optimizer steps to as it steps to the optimum of a curve |
 | `normalizer` | the log of the mass of the prior between `lower` and `upper`, which the engine subtracts from the density of the kind to get the truncated one; `0` for a prior the host does not truncate. The engine integrates nothing: a truncation is this one number |
-| `lower`, `upper` | finite and increasing, and they have to cover the bounds of the parameter, since the row is `NaN` outside them and an optimizer searches the whole box. Wider bounds than the parameter's are accepted |
+| `lower`, `upper` | increasing, infinite where the bound of the parameter is, and they have to cover the bounds of the parameter, since the row is `NaN` outside them and an optimizer searches the whole box. Wider bounds than the parameter's are accepted |
 
 | `kind` | `parameters` | the density |
 |---|---|---|
@@ -309,14 +313,20 @@ is a function of the values of the parameters alone, so none of these rows costs
 | `log-uniform` | the bounds **of the value**, both positive, as PEtab writes them | `1 / (x (ln b - ln a))` |
 | `laplace` | the location and the scale | the Laplace of the value |
 | `log-laplace` | the location and the scale **of the logarithm** | the Laplace of the logarithm of the value |
+| `cauchy` | the location and the scale | `1 / (pi g (1 + z^2))`, `z = (x - x0) / g` |
+| `gamma` | the shape `k` and the scale `t`, both positive | `x^(k - 1) exp(-x / t) / (Gamma(k) t^k)` for `x >= 0` |
+| `chisquare` | the degrees of freedom `k`, positive | the gamma of the shape `k / 2` and the scale 2 |
+| `exponential` | the scale `b`, the inverse of the rate, positive | `exp(-x / b) / b` for `x >= 0` |
+| `rayleigh` | the scale `s`, positive | `x exp(-x^2 / (2 s^2)) / s^2` for `x >= 0` |
 
 The row of a prior is `sqrt(max(offset - 2 (log_density(x) - normalizer), 0))`, and its one
 non-zero column of the jacobian is `-(d log_density / dx) / row` times the derivative of the
 scale the parameter is searched in, or `0` where the maximum clipped the square to zero. The
 row is `NaN`, with a zero column, for a value outside `[lower, upper]`, for a `NaN` value and
 for a density of zero (a uniform prior outside its own support, a log kind at a value which is
-not positive). A value **at** a bound is a value of the prior, since an optimizer sits at a
-bound.
+not positive, a kind of a value which is not negative below zero) and for one which is not
+bounded (a gamma kind of a shape below one at zero). A value **at** a bound is a value of the
+prior, since an optimizer sits at a bound.
 
 Priors which are not independent are one `prior_correlation`, a Gaussian copula over the normal
 scores of its members:
@@ -386,7 +396,7 @@ A simulation is exact only to the relative tolerance of its integrator, so the c
 |---|---|
 | `"trust_region"` | trust region reflective, the `trf` of `scipy.optimize.least_squares`, which keeps its steps inside the bounds by reflecting them. The default |
 | `"levenberg_marquardt"` | the Levenberg-Marquardt of a box, which solves a damped normal equation per step |
-| `{"differential_evolution": {...}}` | the differential evolution of Storn and Price (`DE/rand/1/bin`), the global search of a fit whose optimum is unknown. A generation of its population is one batch of the engine and none of its members needs a derivative |
+| `{"differential_evolution": {...}}` | the differential evolution of Storn and Price (`DE/rand/1/bin`), the global search of a fit whose optimum is unknown. A generation of its population is one batch of the engine and none of its members needs a derivative. Its population is drawn in the box of the bounds, so a parameter whose bound is not finite in the space it is searched in is refused |
 
 The block of a differential evolution: `seed` (0 by default, and the same seed gives the same
 fit whatever the threads are), `population` (`max(4, 10 * parameters)` by default), `f` and

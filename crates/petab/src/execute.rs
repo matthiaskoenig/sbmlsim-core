@@ -6,8 +6,8 @@ use std::sync::Arc;
 use rayon::prelude::*;
 use sbmlsim_abi::SimulationResult;
 use sbmlsim_fit::{
-    Condition, Curve, Definition, Derived, Fit, JacobianChoice, Likelihood, NoiseKind, Parameter,
-    Problem, Scale, Settings, Term,
+    Condition, Curve, Definition, Derived, Fit, Form, JacobianChoice, Likelihood, NoiseKind,
+    Parameter, Problem, Scale, Settings, Term,
 };
 use sbmlsim_host::{LoadedModel, Runtime};
 use sbmlsim_sbml::math::{Node, Op};
@@ -15,7 +15,7 @@ use sbmlsim_sbml::math::{Node, Op};
 use crate::PetabError;
 use crate::likelihood::{NoiseDistribution, PriorKind};
 use crate::math::{self, Formula};
-use crate::plan::{Evaluation, Noise, Plan};
+use crate::plan::{Evaluation, Noise, ParameterScale, Plan};
 
 /// A plan whose models are compiled and loaded into the engine.
 pub struct Executor {
@@ -99,9 +99,11 @@ impl Executor {
     ///
     /// # Errors
     ///
-    /// What the fit of the engine cannot carry: a value of a first period which is no linear
-    /// form of the estimated parameters, a prior of a kind the engine does not evaluate and a
-    /// problem without estimated parameters or without data.
+    /// What the fit of the engine cannot carry: a prior whose density is not bounded between
+    /// the bounds of its parameter, so that the posterior has no largest value (a gamma prior
+    /// of a shape below one, a chi-squared prior of fewer than two degrees of freedom and a
+    /// log-Laplace prior of a scale above one, at a lower bound of zero, e.g. the
+    /// `log-laplace(3, 5)` of the cases 0024 and 0025 of the test suite).
     #[allow(clippy::too_many_lines)]
     pub fn definition(&self, start: &[f64]) -> Result<Definition, PetabError> {
         let plan = &self.plan;
@@ -114,28 +116,46 @@ impl Executor {
             .collect();
         let gap = |message: String| PetabError::Unsupported(format!("in a fit: {message}"));
 
+        // the box a parameter is searched in: its bounds, within the support of its prior,
+        // outside which the posterior is zero and the row of the prior is none
+        let boxes: Vec<(f64, f64)> = estimated
+            .iter()
+            .map(|&k| {
+                let parameter = &plan.parameters[k];
+                match &parameter.prior {
+                    Some(prior) => {
+                        let (low, high) = prior.support();
+                        (parameter.lower.max(low), parameter.upper.min(high))
+                    }
+                    None => (parameter.lower, parameter.upper),
+                }
+            })
+            .collect();
         let parameters = estimated
             .iter()
             .zip(start)
-            .map(|(&k, &value)| {
+            .zip(&boxes)
+            .map(|((&k, &value), &(lower, upper))| {
                 let parameter = &plan.parameters[k];
-                let scale = if parameter.lower > 0.0 && parameter.upper.is_finite() {
-                    Scale::Log10
-                } else {
-                    Scale::Lin
+                let scale = match parameter.scale {
+                    Some(ParameterScale::Linear) => Scale::Lin,
+                    Some(ParameterScale::Log) => Scale::Log,
+                    Some(ParameterScale::Log10) => Scale::Log10,
+                    None if lower > 0.0 && upper.is_finite() => Scale::Log10,
+                    None => Scale::Lin,
                 };
                 Parameter {
                     id: parameter.target.clone(),
-                    start: value.clamp(parameter.lower, parameter.upper),
-                    lower: parameter.lower,
-                    upper: parameter.upper,
+                    start: value.max(lower).min(upper),
+                    lower,
+                    upper,
                     scale,
                 }
             })
             .collect();
 
         let mut conditions = Vec::with_capacity(plan.simulations.len());
-        for (index, simulation) in plan.simulations.iter().enumerate() {
+        for simulation in &plan.simulations {
             let mut request = simulation.request.clone();
             request.preinit = plan
                 .parameters
@@ -170,21 +190,44 @@ impl Executor {
                         .position(|p| p.target == symbol)
                         .map_or(f64::NAN, |k| values[k])
                 };
-                let (constant, terms) = linear_form(&initial.node, &estimated_of, &fixed_of)
-                    .ok_or_else(|| {
-                        gap(format!(
-                            "the value of '{}' of the first period of the simulation {index} is no \
-                             linear form of the estimated parameters",
-                            initial.target
-                        ))
-                    })?;
-                derived.push(Derived {
-                    target: initial.target.clone(),
-                    constant,
-                    terms: terms
-                        .into_iter()
-                        .map(|(parameter, factor)| Term { parameter, factor })
-                        .collect(),
+                // a linear form is exact and needs nothing of the plan, every other value is
+                // its formula, evaluated where the optimizer is
+                derived.push(match linear_form(&initial.node, &estimated_of, &fixed_of) {
+                    Some((constant, terms)) => Derived {
+                        target: initial.target.clone(),
+                        constant,
+                        terms: terms
+                            .into_iter()
+                            .map(|(parameter, factor)| Term { parameter, factor })
+                            .collect(),
+                        form: None,
+                    },
+                    None => Derived {
+                        target: initial.target.clone(),
+                        constant: 0.0,
+                        terms: Vec::new(),
+                        form: Some(Arc::new(
+                            InitialForm::new(
+                                &initial.formula,
+                                initial
+                                    .parameters
+                                    .iter()
+                                    .map(|k| match position.get(k) {
+                                        Some(at) => Read::Estimated(*at),
+                                        None => Read::Fixed(values[*k]),
+                                    })
+                                    .collect(),
+                                request.start,
+                            )
+                            .map_err(|message| {
+                                gap(format!(
+                                    "the value of '{}' of a first period has no derivative \
+                                         in the estimated parameters: {message}",
+                                    initial.target
+                                ))
+                            })?,
+                        )),
+                    },
                 });
             }
             conditions.push(Condition {
@@ -245,7 +288,7 @@ impl Executor {
         }
 
         let mut priors = Vec::new();
-        for (position, &k) in estimated.iter().enumerate() {
+        for (position, (&k, &(lower, upper))) in estimated.iter().zip(&boxes).enumerate() {
             let parameter = &plan.parameters[k];
             let Some(prior) = &parameter.prior else {
                 continue;
@@ -257,27 +300,30 @@ impl Executor {
                 PriorKind::LogUniform => sbmlsim_fit::PriorKind::LogUniform,
                 PriorKind::Laplace => sbmlsim_fit::PriorKind::Laplace,
                 PriorKind::LogLaplace => sbmlsim_fit::PriorKind::LogLaplace,
-                other => {
-                    return Err(gap(format!(
-                        "the prior '{}' of '{}' is no prior the engine evaluates",
-                        other.name(),
-                        parameter.id
-                    )));
-                }
+                PriorKind::Cauchy => sbmlsim_fit::PriorKind::Cauchy,
+                PriorKind::Gamma => sbmlsim_fit::PriorKind::Gamma,
+                PriorKind::ChiSquare => sbmlsim_fit::PriorKind::ChiSquare,
+                PriorKind::Exponential => sbmlsim_fit::PriorKind::Exponential,
+                PriorKind::Rayleigh => sbmlsim_fit::PriorKind::Rayleigh,
             };
             priors.push(sbmlsim_fit::Prior {
                 parameter: position,
                 kind,
                 parameters: prior.parameters.clone(),
-                offset: prior_offset(prior).ok_or_else(|| {
+                offset: prior_offset(prior, lower, upper).ok_or_else(|| {
                     gap(format!(
-                        "the prior of '{}' has no largest density between its bounds",
+                        "the {} prior of '{}' has a density which is not bounded between \
+                         {lower} and {upper}, so the posterior has no largest value and a fit \
+                         no optimum",
+                        prior.kind.name(),
                         parameter.id
                     ))
                 })?,
+                // the mass of the prior between the bounds of the parameter, which is its mass
+                // in the box of its support as well
                 normalizer: prior.log_mass,
-                lower: parameter.lower,
-                upper: parameter.upper,
+                lower,
+                upper,
             });
         }
 
@@ -296,15 +342,34 @@ impl Executor {
     ///
     /// Every measurement is a curve of a likelihood, so half the sum of the squares of the
     /// residuals of the problem is the negative log posterior of PEtab plus a constant of the
-    /// data and the priors, [`Executor::cost_offset`]. A parameter whose bounds are positive is
-    /// searched on the scale `log10`, any other one on the linear scale.
+    /// data and the priors, [`Executor::cost_offset`].
+    ///
+    /// A parameter is searched between its bounds, within the support of its prior, outside
+    /// which its posterior is zero (a uniform prior narrower than the bounds), and a bound may
+    /// be infinite. It is searched on the scale of the extension `sbmlsim`
+    /// ([`crate::PlanParameter::scale`]), else on the scale `log10` when the bounds of its box
+    /// are positive and finite and on the linear scale otherwise.
     ///
     /// # Errors
     ///
-    /// As [`Executor::definition`], and the refusals of the fit of the engine, e.g. a bound
-    /// which is not finite.
+    /// As [`Executor::definition`], and the refusals of the fit of the engine, e.g. an
+    /// estimated parameter without a nominal value, where the fit starts, or a logarithmic
+    /// scale of the extension of a parameter whose lower bound is negative.
     pub fn problem(&self, threads: usize) -> Result<Problem, PetabError> {
-        let definition = self.definition(&self.plan.nominal())?;
+        self.problem_of(self.definition(&self.plan.nominal())?, threads)
+    }
+
+    /// The problem of `sbmlsim-fit` of a definition of [`Executor::definition`] which a caller
+    /// changed, e.g. its start or the jacobian it takes, on the models of the plan.
+    ///
+    /// # Errors
+    ///
+    /// The refusals of the fit of the engine.
+    pub fn problem_of(
+        &self,
+        definition: Definition,
+        threads: usize,
+    ) -> Result<Problem, PetabError> {
         let models = self
             .plan
             .models
@@ -320,6 +385,11 @@ impl Executor {
     /// the offsets of the rows of the scale of every measurement and of every prior, and the
     /// log density of the uniform priors PEtab gives a parameter without one when another
     /// parameter has one, which no row carries.
+    ///
+    /// The uniform prior of a parameter whose bounds are not finite has no density, so PEtab's
+    /// log posterior of such a problem is `-inf` everywhere: its constant is left out, and the
+    /// objective of a fit is the negative log posterior of the other priors and the data, the
+    /// improper flat prior being a density of one.
     ///
     /// # Errors
     ///
@@ -347,7 +417,7 @@ impl Executor {
         {
             for &k in &estimated {
                 let parameter = &self.plan.parameters[k];
-                if parameter.prior.is_none() {
+                if parameter.prior.is_none() && (parameter.upper - parameter.lower).is_finite() {
                     // the cost lacks the negative log density of the uniform prior
                     offset -= (parameter.upper - parameter.lower).ln();
                 }
@@ -386,31 +456,130 @@ fn noise_kind(distribution: NoiseDistribution) -> NoiseKind {
     }
 }
 
-/// The offset of the row of a prior: twice its largest truncated log density between the
-/// bounds, so the row is real wherever the parameter goes.
-fn prior_offset(prior: &crate::Prior) -> Option<f64> {
+/// The offset of the row of a prior: twice its largest truncated log density in the box
+/// `[lower, upper]` it is searched in, so the row is real wherever the parameter goes.
+///
+/// Every kind is unimodal, so the largest density is at its mode, or at the bound of the box
+/// next to it; `None` for a density which is not bounded in the box: at a lower bound of zero,
+/// the density of a gamma kind of a shape below one, of a chi-squared kind of fewer than two
+/// degrees of freedom and of a log-Laplace kind of a scale above one grows without a bound
+/// (`x^(1/b - 1)` of the log-Laplace one), so the posterior has no largest value and a fit no
+/// optimum.
+fn prior_offset(prior: &crate::Prior, lower: f64, upper: f64) -> Option<f64> {
     let p = &prior.parameters;
+    let unbounded = lower <= 0.0
+        && match prior.kind {
+            PriorKind::Gamma => p[0] < 1.0,
+            PriorKind::ChiSquare => p[0] < 2.0,
+            PriorKind::LogLaplace => p[1] > 1.0,
+            _ => false,
+        };
+    if unbounded {
+        return None;
+    }
     let mode = match prior.kind {
-        PriorKind::Normal | PriorKind::Laplace => p[0],
+        PriorKind::Normal | PriorKind::Laplace | PriorKind::Cauchy => p[0],
         PriorKind::LogNormal => (p[0] - p[1] * p[1]).exp(),
         PriorKind::LogLaplace => p[0].exp(),
-        _ => prior.lower,
+        PriorKind::Gamma => ((p[0] - 1.0) * p[1]).max(0.0),
+        PriorKind::ChiSquare => (p[0] - 2.0).max(0.0),
+        PriorKind::Rayleigh => p[0],
+        PriorKind::Exponential | PriorKind::Uniform | PriorKind::LogUniform => lower,
     };
-    let mut candidates = vec![
-        prior.lower,
-        prior.upper,
-        mode.clamp(prior.lower, prior.upper),
-    ];
-    if matches!(prior.kind, PriorKind::Uniform) {
-        candidates.push(p[0].max(prior.lower));
-    }
+    let candidates = [lower, upper, mode.max(lower).min(upper)];
     let largest = candidates
         .into_iter()
         .filter(|x| x.is_finite())
         .map(|x| prior.log_density(x))
         .filter(|density| !density.is_nan())
         .fold(f64::NEG_INFINITY, f64::max);
-    largest.is_finite().then(|| (2.0 * largest).max(0.0))
+    largest.is_finite().then_some(2.0 * largest)
+}
+
+/// What a symbol of the formula of a value of a first period reads.
+#[derive(Debug, Clone, Copy)]
+enum Read {
+    /// The estimated parameter of this position in the fit.
+    Estimated(usize),
+    /// A parameter which is not estimated, at its value.
+    Fixed(f64),
+}
+
+/// A value of a first period which is no linear form of the estimated parameters, e.g. their
+/// product, as the [`Form`] of a derived value of the fit: its formula at the values the
+/// optimizer is at, which is the number an evaluation of the problem sets, and its partial
+/// derivatives, the formulas of the derivatives of its operators, which every function of
+/// the math of PEtab has.
+#[derive(Debug)]
+struct InitialForm {
+    /// The formula of the value, over its symbols.
+    formula: Formula,
+    /// What every symbol of the formula reads.
+    reads: Vec<Read>,
+    /// The time the formula is evaluated at, the start of the simulation.
+    time: f64,
+    /// The positions of the estimated parameters the formula reads.
+    parameters: Vec<usize>,
+    /// The partial derivative of the formula in each of them.
+    derivatives: Vec<Formula>,
+}
+
+impl InitialForm {
+    /// The form of a formula whose symbols read what `reads` says, at a time.
+    ///
+    /// # Errors
+    ///
+    /// An operator of the formula which has no derivative, which no function of PEtab is.
+    fn new(formula: &Formula, reads: Vec<Read>, time: f64) -> Result<InitialForm, String> {
+        let (symbols, parameters): (Vec<usize>, Vec<usize>) = reads
+            .iter()
+            .enumerate()
+            .filter_map(|(symbol, read)| match read {
+                Read::Estimated(at) => Some((symbol, *at)),
+                Read::Fixed(_) => None,
+            })
+            .unzip();
+        let derivatives = symbols
+            .iter()
+            .map(|symbol| formula.derivative(*symbol))
+            .collect::<Result<_, _>>()?;
+        Ok(InitialForm {
+            formula: formula.clone(),
+            reads,
+            time,
+            parameters,
+            derivatives,
+        })
+    }
+
+    /// The values of the symbols at the values of the parameters of the fit.
+    fn read(&self, parameters: &[f64]) -> Vec<f64> {
+        self.reads
+            .iter()
+            .map(|read| match read {
+                Read::Estimated(at) => parameters[*at],
+                Read::Fixed(value) => *value,
+            })
+            .collect()
+    }
+}
+
+impl Form for InitialForm {
+    fn parameters(&self) -> &[usize] {
+        &self.parameters
+    }
+
+    fn value(&self, parameters: &[f64]) -> f64 {
+        self.formula.evaluate(&self.read(parameters), self.time)
+    }
+
+    fn gradient(&self, parameters: &[f64]) -> Vec<f64> {
+        let read = self.read(parameters);
+        self.derivatives
+            .iter()
+            .map(|derivative| derivative.evaluate(&read, self.time))
+            .collect()
+    }
 }
 
 /// The linear form of an expression in the estimated parameters, `constant + Σ factor * p`:

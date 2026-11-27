@@ -84,13 +84,11 @@ A species in the math of PEtab is its amount for a species of `hasOnlySubstanceU
 
 ## The fit
 
-`Executor::problem` is the problem of [`sbmlsim-fit`](fitting.md), so its optimizers, its Fisher information and its profiles fit a problem of PEtab. Every measurement is a curve of a [likelihood](fitting.md#the-likelihood-of-a-curve), the column of its observable (of its logarithm for a logarithmic noise) with the noise of its number or of its column, every prior of a normal, log-normal, uniform, log-uniform, Laplace or log-Laplace kind a [prior](fitting.md#the-priors) truncated at the bounds, and a value of a first period which is a linear form of the estimated parameters a [derived value](fitting.md#the-request-fit1). Half the sum of the squares of the residuals is the objective of PEtab plus a constant, `cost_offset`: the negative log-likelihood, and the negative log posterior for a problem whose parameters carry a prior. A parameter whose bounds are positive is searched on the scale `log10`, any other one on the linear scale.
+`Executor::problem` is the problem of [`sbmlsim-fit`](fitting.md), so its optimizers, its Fisher information and its profiles fit a problem of PEtab. Every measurement is a curve of a [likelihood](fitting.md#the-likelihood-of-a-curve), the column of its observable (of its logarithm for a logarithmic noise) with the noise of its number or of its column, and every prior, of any of the eleven kinds of PEtab v2, a [prior](fitting.md#the-priors) truncated at the bounds, whose row is zero at the mode of the prior and whose derivative is analytic. A value of a first period which reads estimated parameters is a [derived value](fitting.md#the-request-fit1): a linear form of them as the form itself, any other formula (`initial_A1 * initial_A2`, `exp(log_a)`) as its formula, which the fit evaluates where the optimizer is and whose partial derivatives, the ones of the operators of the engine's analytic jacobian, are the chain rule of the sensitivities of its target. Half the sum of the squares of the residuals is the objective of PEtab plus a constant, `cost_offset`: the negative log-likelihood, and the negative log posterior for a problem whose parameters carry a prior.
 
-What the fit of the engine cannot carry is refused with the reason, while the evaluation runs:
+A parameter is searched between its bounds, within the support of its prior, outside which its posterior is zero (a uniform prior narrower than the bounds is the box of the search). A bound may be infinite (`-inf`, `inf` or an empty cell of the parameter table), which the least squares optimizers search as they search a box; a differential evolution draws its population in the box and refuses a bound which is not finite. The uniform prior PEtab gives a parameter without one has no density between bounds which are not finite, so PEtab's log posterior of such a problem is `-inf`: the objective of the fit leaves the improper prior out, a density of one. A parameter is searched on its scale of the [extension](#the-extension-of-sbmlsim), else on the scale `log10` when the bounds of its box are positive and finite and on the linear scale otherwise.
 
-- a prior of the kinds `cauchy`, `chisquare`, `exponential`, `gamma` or `rayleigh`, which the rows of the engine do not evaluate (the cases 0024 and 0025 of the test suite),
-- a value of a first period which is no linear form of the estimated parameters, e.g. their product,
-- a bound which is not finite.
+What the fit of the engine cannot carry is refused with the reason, while the evaluation runs: a prior whose density is not bounded between the bounds of its parameter, so that the posterior has no largest value and a fit no optimum. That is a gamma prior of a shape below one, a chi-squared prior of fewer than two degrees of freedom and a log-Laplace prior of a scale above one, at a lower bound of zero, e.g. the `log-laplace(3, 5)` of `p_log_laplace` of the cases 0024 and 0025 of the test suite, whose density grows as `x^(-0.8)` at zero.
 
 ## The extension of sbmlsim
 
@@ -98,13 +96,14 @@ sbmlsim writes a problem with the extension `sbmlsim`, which carries what the ta
 
 - `settings.data_at_change`: `before` reads a measurement at a change after the start in the state before the change, except at the first time of an observable of an experiment which is measured later as well, the start of a collection,
 - `settings.relative_tolerance` and `settings.absolute_tolerance` (the smallest of its kinds), the tolerances of the integrator,
+- `parameters.<id>.scale`, else `settings.parameter_scale`: the scale a [fit](#the-fit) searches a parameter on, `LINEAR`, `LOG` or `LOG10` (the names of sbmlsim's `ParameterScaleType`); any other name is refused,
 - `observables.<id>.kind`: only the training data enter the likelihood; validation data and outliers are simulated and reported. The validation problem of a fit (`role: validation`, the problem of sbmlsim's `to_petab_problems` which holds the validation data at the fitted parameters) has its validation data as the data of its likelihood, so its log-likelihood is the one of the validation data, as in sbmlsim.
 
 `ExtensionPolicy::Ignore` (`extension="ignore"`) reads a problem as a tool which does not know the extension does. Any other extension which the problem marks as required is refused, as PEtab asks of a tool which does not support it.
 
 ## The PEtab test suite
 
-The [PEtab test suite](https://github.com/PEtab-dev/petab_test_suite) runs at the commit sbmlsim pins (`d09985e7`), in `crates/petab/tests/testsuite.rs` against `crates/petab/tests/data/petab_baseline.json`, which lists the cases which do not pass. A case is evaluated at the nominal values of its parameter table with tolerances of the integrator of `1e-12`, and its simulations, `chi2`, `llh`, log priors and log posterior are compared with its solution at its own tolerances; the test fails for a case which breaks and for a case of the baseline which passes. Every case whose problem the fit carries is held to it as well: the cost of the fit at its start is the objective of PEtab plus `cost_offset`, to `1e-6`.
+The [PEtab test suite](https://github.com/PEtab-dev/petab_test_suite) runs at the commit sbmlsim pins (`d09985e7`), in `crates/petab/tests/testsuite.rs` against `crates/petab/tests/data/petab_baseline.json`, which lists the cases which do not pass. A case is evaluated at the nominal values of its parameter table with tolerances of the integrator of `1e-12`, and its simulations, `chi2`, `llh`, log priors and log posterior are compared with its solution at its own tolerances; the test fails for a case which breaks and for a case of the baseline which passes. The fit of every case is held to it as well: the cost of the fit at its start is the objective of PEtab plus `cost_offset`, to `1e-6`, but for 0024 and 0025, whose posterior has no largest value (see [the fit](#the-fit)), and whose refusal is held to that reason. The two cases of the priors are fitted in `the_cases_of_every_prior_are_fitted`, with the lower bound of `p_log_laplace` raised to 1: the cost is the negative log posterior and its gradient the central difference of the cost at points of the box, and a fit finds the mode of every prior, which no data informs.
 
 ```bash
 python scripts/petab_testsuite.py download   # the cases into ~/.cache/sbmlsim/petab-test-suite/<commit>
@@ -113,7 +112,7 @@ cargo test -p sbmlsim-petab --test testsuite -- --nocapture
 
 | group | cases | pass | the fit of the engine |
 | --- | --- | --- | --- |
-| PEtab v2, SBML (`v2.0.0/sbml`) | 31 | 31 | 29, without 0024 and 0025 (priors) |
+| PEtab v2, SBML (`v2.0.0/sbml`) | 31 | 31 | 29, and 0024 and 0025 refused for an unbounded prior, fitted with it bounded |
 | PEtab v1, SBML, converted to v2 (`v1.0.0-converted/sbml`) | 20 | 20 | 20 |
 | math (`v2.0.0/math`) | 98 | 98 | |
 
@@ -150,7 +149,7 @@ See [JavaScript](javascript.md#petab-problems) for its interface, the sizes and 
 ## Not supported yet
 
 - models of other languages than SBML (the PySB cases of the test suite), and a problem of PEtab v1, which is converted first (`petab.v2.petab1to2`),
-- the fit of the problems listed under [the fit](#the-fit),
+- the fit of a posterior which has no largest value, see [the fit](#the-fit),
 - the fit of a problem in a page: `js/petab.mjs` evaluates a problem, and the optimizers are `sbmlsim-fit`, which runs on the native host and its batch of threads ([#147](https://github.com/matthiaskoenig/sbmlsim-core/issues/147)),
 - the problems of the [PEtab benchmark collection](https://github.com/Benchmarking-Initiative/Benchmark-Models-PEtab), which sbmlsim runs in python and which are not run in Rust yet,
 - PEtab SciML.

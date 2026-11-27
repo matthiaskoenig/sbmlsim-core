@@ -126,9 +126,10 @@ pub enum JacobianChoice {
     ///
     /// A derived value of a condition ([`Derived`]) is carried as well: its target is a
     /// varying target of the condition, whose sensitivity enters the column of every parameter
-    /// of its terms times the factor of the term, the chain rule, which is exact for the linear
-    /// form a derived value is. A target whose sensitivity the engine refuses refuses the
-    /// condition, as the target of a parameter does.
+    /// of its terms times the factor of the term, and of every parameter of its [`Form`] times
+    /// the partial derivative the form gives, the chain rule, which is exact for the linear
+    /// form and as exact as the derivative of the form. A target whose sensitivity the engine
+    /// refuses refuses the condition, as the target of a parameter does.
     Sensitivities,
     /// The finite differences of the residuals, whatever the conditions carry.
     DifferenceQuotient,
@@ -246,10 +247,9 @@ pub struct Likelihood {
     pub noise_column: Option<String>,
 }
 
-/// The distribution of the prior of a parameter of a fit, the priors of PEtab the engine
-/// evaluates.
+/// The distribution of the prior of a parameter of a fit, the eleven priors of PEtab v2.
 ///
-/// Every kind takes the two parameters of PEtab, whose meaning is the one of its own kind:
+/// Every kind takes the parameters of PEtab, whose meaning is the one of its own kind:
 ///
 /// ```text
 /// normal(mu, s)       the mean and the standard deviation of the value
@@ -258,6 +258,11 @@ pub struct Likelihood {
 /// log-laplace(mu, b)  the location and the scale of its logarithm
 /// uniform(a, b)       the bounds of the value, which increase
 /// log-uniform(a, b)   the bounds of the value as well, both positive, not of its logarithm
+/// cauchy(x0, g)       the location and the scale of the value
+/// gamma(k, t)         the shape and the scale of the value, both positive
+/// chisquare(k)        the degrees of freedom, positive
+/// exponential(b)      the scale of the value, the inverse of its rate, positive
+/// rayleigh(s)         the scale of the value, positive
 /// ```
 ///
 /// A kind whose name begins with `log` is the distribution of the logarithm of the value,
@@ -284,6 +289,17 @@ pub enum PriorKind {
     Laplace,
     /// A Laplace distribution of the location and the scale of its logarithm.
     LogLaplace,
+    /// A Cauchy distribution of the location and the scale of the value.
+    Cauchy,
+    /// A gamma distribution of the shape and the scale of the value, which is positive.
+    Gamma,
+    /// A chi-squared distribution of the degrees of freedom of the value, which is positive.
+    #[serde(rename = "chisquare")]
+    ChiSquare,
+    /// An exponential distribution of the scale of the value, which is positive.
+    Exponential,
+    /// A Rayleigh distribution of the scale of the value, which is positive.
+    Rayleigh,
 }
 
 impl PriorKind {
@@ -296,12 +312,30 @@ impl PriorKind {
             PriorKind::LogUniform => "log-uniform",
             PriorKind::Laplace => "laplace",
             PriorKind::LogLaplace => "log-laplace",
+            PriorKind::Cauchy => "cauchy",
+            PriorKind::Gamma => "gamma",
+            PriorKind::ChiSquare => "chisquare",
+            PriorKind::Exponential => "exponential",
+            PriorKind::Rayleigh => "rayleigh",
+        }
+    }
+
+    /// The number of parameters of the kind, the ones of PEtab.
+    #[must_use]
+    pub fn arity(self) -> usize {
+        match self {
+            PriorKind::ChiSquare | PriorKind::Exponential | PriorKind::Rayleigh => 1,
+            _ => 2,
         }
     }
 }
 
-/// The number of parameters of a prior, the two of every kind of [`PriorKind`].
-const PRIOR_PARAMETERS: usize = 2;
+/// `a * ln(x)`, which is zero for `a = 0` at every `x`: the power of the value in the density
+/// of a gamma and a chi-squared kind, whose exponent is zero for a shape of one (two degrees
+/// of freedom), where the density is the one of an exponential kind and finite at `x = 0`.
+fn power_term(a: f64, x: f64) -> f64 {
+    if a == 0.0 { 0.0 } else { a * x.ln() }
+}
 
 /// The log density of a prior at a value, the one of the kind without the truncation at the
 /// bounds of its parameter, which [`Prior::normalizer`] carries.
@@ -315,13 +349,29 @@ const PRIOR_PARAMETERS: usize = 2;
 /// log-laplace(mu, b)  -|ln(x) - mu|/b - ln(2 b) - ln(x)
 /// uniform(a, b)       -ln(b - a) between a and b, -inf outside
 /// log-uniform(a, b)   -ln(ln(b) - ln(a)) - ln(x) between a and b, -inf outside
+/// cauchy(x0, g)       -ln(pi g) - ln(1 + z^2)                  z = (x - x0)/g
+/// gamma(k, t)         (k - 1) ln(x) - x/t - lgamma(k) - k ln(t)
+/// chisquare(k)        (k/2 - 1) ln(x) - x/2 - (k/2) ln(2) - lgamma(k/2)
+/// exponential(b)      -ln(b) - x/b
+/// rayleigh(s)         ln(x) - 2 ln(s) - x^2/(2 s^2)
 /// ```
 ///
-/// A value which is not positive has no logarithm, so the density of a log kind there is
-/// `NaN` or an infinity and never a number: the row of such a value is `NaN`, see
+/// The last four are distributions of a value which is not negative, whose density is zero
+/// below zero, `-inf` here. A value which is not positive has no logarithm, so the density of
+/// a log kind there is `NaN` or an infinity and never a number, and so is the density of a
+/// gamma kind of a shape below one (of a chi-squared kind of fewer than two degrees of
+/// freedom) at zero, where it is not bounded: the row of such a value is `NaN`, see
 /// [`Prior::row_of`].
 fn log_density(kind: PriorKind, parameters: &[f64], x: f64) -> f64 {
-    let (first, second) = (parameters[0], parameters[1]);
+    let first = parameters[0];
+    let second = parameters.get(1).copied().unwrap_or(f64::NAN);
+    if matches!(
+        kind,
+        PriorKind::Gamma | PriorKind::ChiSquare | PriorKind::Exponential | PriorKind::Rayleigh
+    ) && x < 0.0
+    {
+        return f64::NEG_INFINITY;
+    }
     match kind {
         PriorKind::Normal => {
             let z = (x - first) / second;
@@ -347,6 +397,19 @@ fn log_density(kind: PriorKind, parameters: &[f64], x: f64) -> f64 {
                 f64::NEG_INFINITY
             }
         }
+        PriorKind::Cauchy => {
+            let z = (x - first) / second;
+            -(std::f64::consts::PI * second).ln() - libm::log1p(z * z)
+        }
+        PriorKind::Gamma => {
+            power_term(first - 1.0, x) - x / second - libm::lgamma(first) - first * second.ln()
+        }
+        PriorKind::ChiSquare => {
+            let k = first / 2.0;
+            power_term(k - 1.0, x) - x / 2.0 - k * LN_2 - libm::lgamma(k)
+        }
+        PriorKind::Exponential => -first.ln() - x / first,
+        PriorKind::Rayleigh => x.ln() - 2.0 * first.ln() - x * x / (2.0 * first * first),
     }
 }
 
@@ -360,13 +423,20 @@ fn log_density(kind: PriorKind, parameters: &[f64], x: f64) -> f64 {
 /// log-laplace(mu, b)  -sign(ln(x) - mu)/(b x) - 1/x
 /// uniform(a, b)       0
 /// log-uniform(a, b)   -1/x
+/// cauchy(x0, g)       -2 z/(g (1 + z^2))                       z = (x - x0)/g
+/// gamma(k, t)         (k - 1)/x - 1/t
+/// chisquare(k)        (k/2 - 1)/x - 1/2
+/// exponential(b)      -1/b
+/// rayleigh(s)         1/x - x/s^2
 /// ```
 ///
 /// The density of a Laplace kind has no derivative at its location, where it is largest and
 /// the row of the prior smallest: the engine takes the derivative as zero there, as it takes
 /// the one of the residual of the data of a Laplace likelihood at its own minimum.
 fn log_density_derivative(kind: PriorKind, parameters: &[f64], x: f64) -> f64 {
-    let (first, second) = (parameters[0], parameters[1]);
+    let first = parameters[0];
+    let second = parameters.get(1).copied().unwrap_or(f64::NAN);
+    let power = |a: f64| if a == 0.0 { 0.0 } else { a / x };
     match kind {
         PriorKind::Normal => {
             let z = (x - first) / second;
@@ -380,6 +450,14 @@ fn log_density_derivative(kind: PriorKind, parameters: &[f64], x: f64) -> f64 {
         PriorKind::LogLaplace => deviation_slope(x.ln() - first, second) / x - 1.0 / x,
         PriorKind::Uniform => 0.0,
         PriorKind::LogUniform => -1.0 / x,
+        PriorKind::Cauchy => {
+            let z = (x - first) / second;
+            -2.0 * z / (second * (1.0 + z * z))
+        }
+        PriorKind::Gamma => power(first - 1.0) - 1.0 / second,
+        PriorKind::ChiSquare => power(first / 2.0 - 1.0) - 0.5,
+        PriorKind::Exponential => -1.0 / first,
+        PriorKind::Rayleigh => 1.0 / x - x / (first * first),
     }
 }
 
@@ -413,9 +491,9 @@ pub struct Prior {
     pub parameter: usize,
     /// The distribution of the prior.
     pub kind: PriorKind,
-    /// The parameters of that distribution, the two of its kind and in its units: the bounds
-    /// of a `log-uniform` kind are the ones of the value and not of its logarithm, see
-    /// [`PriorKind`].
+    /// The parameters of that distribution, the ones of its kind ([`PriorKind::arity`]) and in
+    /// its units: the bounds of a `log-uniform` kind are the ones of the value and not of its
+    /// logarithm, see [`PriorKind`].
     pub parameters: Vec<f64>,
     /// The offset `c` of the row, which keeps `c - 2 log p` positive between the bounds.
     pub offset: f64,
@@ -666,12 +744,40 @@ pub struct Parameter {
     pub id: String,
     /// The value the fit starts from, on the linear scale.
     pub start: f64,
-    /// The smallest value, on the linear scale.
+    /// The smallest value, on the linear scale; `-inf` for a parameter which is not bounded
+    /// below, and zero for one on a logarithmic scale is a search space which is not bounded
+    /// below either.
     pub lower: f64,
-    /// The largest value, on the linear scale.
+    /// The largest value, on the linear scale; `inf` for a parameter which is not bounded
+    /// above.
+    ///
+    /// The least squares optimizers search a space which is not bounded as they search a box,
+    /// trust region reflective reflects a step at a finite bound alone; a differential
+    /// evolution draws its population in the box and refuses a bound which is not finite in
+    /// the space it searches.
     pub upper: f64,
     /// The scale an optimizer searches the parameter on.
     pub scale: Scale,
+}
+
+impl Parameter {
+    /// The value of the parameter at the point `x` of the search space, on the linear scale.
+    ///
+    /// A point inside the bounds of the search space is a value inside the bounds of the
+    /// parameter: the way back from a logarithm is not the number it came from (the upper
+    /// bound 5 on `log10` returns as 5.000000000000001), and a prior is not defined outside
+    /// the bounds, so a start or an optimum at a bound would be a row of `NaN`.
+    fn value_at(&self, x: f64) -> f64 {
+        let value = self.scale.to_model(x);
+        if self.scale.positive()
+            && x >= self.scale.to_search(self.lower)
+            && x <= self.scale.to_search(self.upper)
+        {
+            value.clamp(self.lower, self.upper)
+        } else {
+            value
+        }
+    }
 }
 
 /// A curve of data of a fit: the measurements of one observable of one condition.
@@ -827,7 +933,8 @@ pub struct Pinned {
     pub value: f64,
 }
 
-/// A value of a condition which follows the parameters of a fit, `constant + Σ factor * p`.
+/// A value of a condition which follows the parameters of a fit, `constant + Σ factor * p`,
+/// plus a [`Form`] of them which is not linear.
 ///
 /// A value of a request of `simulation/1` is a number, so a value which an optimizer moves,
 /// e.g. the initial amount of a species which a PEtab condition assigns an estimated
@@ -836,12 +943,13 @@ pub struct Pinned {
 /// pre-initialization of the condition, which is what a varying target of a prepared request
 /// is ([`sbmlsim_core_engine::Engine::prepare`]).
 ///
-/// The value is linear in the parameters by its shape, a constant and a factor per term, so
-/// its derivative in a parameter is the factor of the term: a fit of
-/// [`JacobianChoice::Sensitivities`] takes the sensitivity of its target and the chain rule
-/// over its terms, and a fit of the differences moves it with the parameters it reads. A value
-/// which is no linear form of the parameters, e.g. a product of two of them, is no derived
-/// value, and a host keeps such a condition out of a fit of the engine.
+/// The linear part of the value is a constant and a factor per term, so its derivative in a
+/// parameter is the factor of the term. A value which is no linear form of the parameters,
+/// e.g. the product of two of them, carries a [`Form`], which gives its value and its partial
+/// derivatives: a fit of [`JacobianChoice::Sensitivities`] takes the sensitivity of the target
+/// and the chain rule over the terms and the derivatives of the form, and a fit of the
+/// differences moves it with the parameters it reads. The contract `fit/1` has no form, which
+/// is code of the host: a form is a value of a [`Definition`] in Rust.
 #[derive(Clone, Debug)]
 pub struct Derived {
     /// The entity of the model the value is set on, a settable selection.
@@ -850,6 +958,31 @@ pub struct Derived {
     pub constant: f64,
     /// The terms over the parameters of the fit, by their position.
     pub terms: Vec<Term>,
+    /// The part of the value which is not linear in the parameters, added to the linear form;
+    /// `None` for a value which is a linear form.
+    pub form: Option<Arc<dyn Form>>,
+}
+
+/// The part of a [`Derived`] value which is no linear form of the parameters of a fit, e.g.
+/// the product of two of them: a function of the host, which the fit evaluates at the values
+/// the optimizer is at, and whose partial derivatives are the chain rule of the sensitivities
+/// of its target.
+///
+/// The values a form reads are the values of the parameters of the fit on the linear scale,
+/// in the order of [`Definition::parameters`], whatever scale an optimizer searches them in:
+/// the fit applies the derivative of the scale itself. A parameter a profile holds at a value
+/// is read at that value, and a parameter a condition pins at the value of the parameter, as
+/// the linear terms read it.
+pub trait Form: std::fmt::Debug + Send + Sync {
+    /// The positions of the parameters the value reads, in [`Definition::parameters`].
+    fn parameters(&self) -> &[usize];
+
+    /// The value at the values of the parameters of the fit.
+    fn value(&self, parameters: &[f64]) -> f64;
+
+    /// The partial derivatives of the value in the parameters it reads, in the order of
+    /// [`Form::parameters`], at the values of the parameters of the fit.
+    fn gradient(&self, parameters: &[f64]) -> Vec<f64>;
 }
 
 impl From<SimulationRequest> for Condition {
@@ -867,9 +1000,13 @@ impl From<SimulationRequest> for Condition {
 impl Derived {
     /// The value of the form at the values of the parameters, on the linear scale.
     fn value(&self, parameters: &[f64]) -> f64 {
-        self.terms.iter().fold(self.constant, |sum, term| {
+        let linear = self.terms.iter().fold(self.constant, |sum, term| {
             sum + term.factor * parameters[term.parameter]
-        })
+        });
+        match &self.form {
+            Some(form) => linear + form.value(parameters),
+            None => linear,
+        }
     }
 }
 
@@ -1156,8 +1293,9 @@ fn varying_values<'a>(
 /// the search space, see [`Point::links`].
 ///
 /// The target of a parameter has one link, to the column of its parameter, and the target of
-/// a derived value one per term of a parameter which is searched, so a column is the sum of
-/// the sensitivities of every target which follows its parameter: the chain rule.
+/// a derived value one per term and per parameter of its form which is searched, so a column
+/// is the sum of the sensitivities of every target which follows its parameter: the chain
+/// rule.
 #[derive(Clone, Copy, Debug)]
 struct Link {
     /// The varying target, its index in the sensitivities of the condition.
@@ -1165,7 +1303,8 @@ struct Link {
     /// The column of the search space.
     column: usize,
     /// The derivative of the value of the target in the point of that column: the derivative
-    /// of the scale of the parameter, times the factor of the term of a derived value.
+    /// of the scale of the parameter, times the factor of the term of a derived value or the
+    /// partial derivative of its form.
     factor: f64,
 }
 
@@ -1184,8 +1323,10 @@ impl Point {
     /// parameter which is held at a value. The target of a parameter is the parameter itself,
     /// unless the condition pins it, whose value does not follow the parameter here; the
     /// target of a derived value `constant + Σ factor * p` follows every parameter of its
-    /// terms with the factor of the term, which reads the parameter and not a pin.
-    fn links(&self, factors: &[Option<(usize, f64)>]) -> Vec<Link> {
+    /// terms with the factor of the term, which reads the parameter and not a pin, and every
+    /// parameter of its form with the partial derivative of the form at `parameters`, the
+    /// values of the parameters of the fit.
+    fn links(&self, factors: &[Option<(usize, f64)>], parameters: &[f64]) -> Vec<Link> {
         let mut links = Vec::with_capacity(factors.len() + self.derived.len());
         for (target, factor) in factors.iter().enumerate() {
             if let Some((column, factor)) = factor
@@ -1206,6 +1347,18 @@ impl Point {
                         column,
                         factor: term.factor * factor,
                     });
+                }
+            }
+            if let Some(form) = &value.form {
+                let gradient = form.gradient(parameters);
+                for (parameter, derivative) in form.parameters().iter().zip(gradient) {
+                    if let Some((column, factor)) = factors[*parameter] {
+                        links.push(Link {
+                            target: factors.len() + at,
+                            column,
+                            factor: derivative * factor,
+                        });
+                    }
                 }
             }
         }
@@ -2038,7 +2191,7 @@ impl Problem {
         self.free
             .iter()
             .zip(x.iter())
-            .map(|(parameter, value)| parameter.scale.to_model(*value))
+            .map(|(parameter, value)| parameter.value_at(*value))
             .collect()
     }
 
@@ -2049,7 +2202,7 @@ impl Problem {
         self.slots
             .iter()
             .map(|slot| match slot {
-                Slot::Free { at, scale } => scale.to_model(x[*at]),
+                Slot::Free { at, .. } => self.free[*at].value_at(x[*at]),
                 Slot::Fixed(value) => *value,
             })
             .collect()
@@ -2253,7 +2406,8 @@ impl Problem {
                 };
                 let values = shot.point.values(shot.values);
                 let table = instance.simulate_prepared(prepared, &values)?;
-                shot.point.block(&table, &shot.point.links(&factors), k)
+                shot.point
+                    .block(&table, &shot.point.links(&factors, shot.values), k)
             },
         );
         let mut jacobian = vec![0.0; self.n_residuals * k];
@@ -2639,6 +2793,18 @@ fn check_derived(
                 "has the derived value '{}' of the constant {}, which is not finite",
                 value.target, value.constant
             ))
+        } else if let Some(form) = &value.form
+            && let Some(parameter) = form
+                .parameters()
+                .iter()
+                .find(|parameter| **parameter >= varying.len())
+        {
+            Some(format!(
+                "has the derived value '{}', whose form reads the parameter {parameter} of a \
+                 fit of {} parameters",
+                value.target,
+                varying.len()
+            ))
         } else {
             value.terms.iter().find_map(|term| {
                 if term.parameter >= varying.len() {
@@ -2706,13 +2872,17 @@ fn simulate(
 }
 
 /// Checks the parameters of a fit, which an optimizer searches between their bounds.
+///
+/// A bound may be infinite, a parameter which is not bounded on that side, and the lower
+/// bound of a parameter searched on a logarithmic scale may be zero: its search space is
+/// unbounded below, as the logarithm maps the positive values onto the real line.
 fn check_parameters(parameters: &[Parameter]) -> Result<(), FitError> {
     if parameters.is_empty() {
         return Err(FitError::Empty("parameter"));
     }
     for parameter in parameters {
-        let fault = if !parameter.lower.is_finite() || !parameter.upper.is_finite() {
-            Some("has a bound which is not finite".to_string())
+        let fault = if parameter.lower.is_nan() || parameter.upper.is_nan() {
+            Some("has a bound which is NaN".to_string())
         } else if parameter.lower >= parameter.upper {
             Some(format!(
                 "has the bounds [{}, {}], which are not increasing",
@@ -2726,11 +2896,16 @@ fn check_parameters(parameters: &[Parameter]) -> Result<(), FitError> {
                 "starts at {}, outside its bounds [{}, {}]",
                 parameter.start, parameter.lower, parameter.upper
             ))
-        } else if parameter.scale.positive() && parameter.lower <= 0.0 {
+        } else if parameter.scale.positive() && parameter.lower < 0.0 {
             Some(format!(
-                "is searched on a logarithmic scale and has the lower bound {}, which is not \
-                 positive",
+                "is searched on a logarithmic scale and has the lower bound {}, which is \
+                 negative",
                 parameter.lower
+            ))
+        } else if parameter.scale.positive() && parameter.start <= 0.0 {
+            Some(format!(
+                "is searched on a logarithmic scale and starts at {}, which has no logarithm",
+                parameter.start
             ))
         } else {
             None
@@ -2784,9 +2959,9 @@ fn check_priors(
                 prior.offset, prior.normalizer
             )));
         }
-        if !prior.lower.is_finite() || !prior.upper.is_finite() || prior.lower >= prior.upper {
+        if prior.lower.is_nan() || prior.upper.is_nan() || prior.lower >= prior.upper {
             return Err(fault(format!(
-                "of '{id}' is defined between {} and {}, which are not increasing and finite",
+                "of '{id}' is defined between {} and {}, which are not increasing",
                 prior.lower, prior.upper
             )));
         }
@@ -2811,13 +2986,15 @@ fn check_priors(
     })
 }
 
-/// Checks the parameters of a distribution of a prior, which are the two of its kind.
+/// Checks the parameters of a distribution of a prior, which are the ones of its kind.
 fn check_kind(kind: PriorKind, parameters: &[f64]) -> Result<(), String> {
     let name = kind.name();
-    if parameters.len() != PRIOR_PARAMETERS {
+    let arity = kind.arity();
+    if parameters.len() != arity {
         return Err(format!(
-            "has {} parameters, and a {name} prior takes two of them",
-            parameters.len()
+            "has {} parameters, and the kind {name} takes {}",
+            parameters.len(),
+            if arity == 1 { "one" } else { "two of them" }
         ));
     }
     if let Some(value) = parameters.iter().find(|value| !value.is_finite()) {
@@ -2825,12 +3002,32 @@ fn check_kind(kind: PriorKind, parameters: &[f64]) -> Result<(), String> {
             "has the parameter {value} of its {name} distribution, which is not finite"
         ));
     }
-    let (first, second) = (parameters[0], parameters[1]);
+    let first = parameters[0];
+    let second = parameters.get(1).copied().unwrap_or(f64::NAN);
     match kind {
-        PriorKind::Normal | PriorKind::LogNormal | PriorKind::Laplace | PriorKind::LogLaplace => {
+        PriorKind::Normal
+        | PriorKind::LogNormal
+        | PriorKind::Laplace
+        | PriorKind::LogLaplace
+        | PriorKind::Cauchy => {
             if second <= 0.0 {
                 return Err(format!(
                     "is a {name} prior of the scale {second}, which is not positive"
+                ));
+            }
+        }
+        PriorKind::Gamma => {
+            if first <= 0.0 || second <= 0.0 {
+                return Err(format!(
+                    "is a {name} prior of the shape {first} and the scale {second}, which are \
+                     not both positive"
+                ));
+            }
+        }
+        PriorKind::ChiSquare | PriorKind::Exponential | PriorKind::Rayleigh => {
+            if first <= 0.0 {
+                return Err(format!(
+                    "is a {name} prior of the parameter {first}, which is not positive"
                 ));
             }
         }
@@ -2931,10 +3128,10 @@ fn check_correlation(
             )));
         }
         let (lower, upper) = (correlation.lower[at], correlation.upper[at]);
-        if !lower.is_finite() || !upper.is_finite() || lower >= upper {
+        if lower.is_nan() || upper.is_nan() || lower >= upper {
             return Err(fault(format!(
                 "defines the prior of '{id}' between {lower} and {upper}, which are not \
-                 increasing and finite"
+                 increasing"
             )));
         }
         if correlation.log[at] && lower <= 0.0 {

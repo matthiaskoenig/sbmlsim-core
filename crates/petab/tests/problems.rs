@@ -8,7 +8,8 @@
 
 use std::collections::HashMap;
 
-use sbmlsim_fit::Settings;
+use sbmlsim_abi::{IntegratorSettings, Tolerance};
+use sbmlsim_fit::{JacobianChoice, Scale, Settings};
 use sbmlsim_petab::{Executor, InMemory, Options, PetabError, PetabProblem, Plan};
 
 const MODEL: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -351,4 +352,305 @@ fn the_validation_data_of_a_validation_problem_is_its_data() {
     assert!((fit - all).abs() > 1e-3, "{fit} == {all}");
     assert_eq!(llh_of_role(Some("training")), fit);
     assert_eq!(llh_of_role(Some("validation")), all);
+}
+
+/// The executor of the problem whose condition `high` sets `A` to a formula of the parameters
+/// and whose YAML file ends with `extension`.
+fn executor_of(condition: &str, parameters: &str, values: &[f64], extension: &str) -> Executor {
+    let mut files = files(parameters, values);
+    files.insert(
+        "conditions.tsv".to_string(),
+        CONDITIONS
+            .replace("high\tA\ta_high", &format!("high\tA\t{condition}"))
+            .into_bytes(),
+    );
+    files.insert(
+        "problem.yaml".to_string(),
+        format!("{YAML}{extension}").into_bytes(),
+    );
+    let problem = PetabProblem::read("problem.yaml", &files).unwrap();
+    // tolerances of the integrator far below the steps of the central differences the
+    // gradients are held to
+    let options = Options {
+        integrator: Some(IntegratorSettings {
+            relative_tolerance: 1e-12,
+            absolute_tolerance: Tolerance::Scalar(1e-12),
+            ..IntegratorSettings::default()
+        }),
+        ..Options::default()
+    };
+    Executor::new(Plan::new(&problem, &options).unwrap()).unwrap()
+}
+
+/// The gradient of the cost of a problem, `J' r`, and its central difference.
+fn gradients(problem: &sbmlsim_fit::Problem, x: &[f64]) -> (Vec<f64>, Vec<f64>) {
+    let k = x.len();
+    let residuals = problem.residuals(x).unwrap();
+    let jacobian = problem.jacobian(x).unwrap();
+    let gradient = (0..k)
+        .map(|column| {
+            residuals
+                .iter()
+                .enumerate()
+                .map(|(row, r)| r * jacobian[row * k + column])
+                .sum()
+        })
+        .collect();
+    let central = (0..k)
+        .map(|column| {
+            let step = 1e-6 * x[column].abs().max(1.0);
+            let (mut below, mut above) = (x.to_vec(), x.to_vec());
+            below[column] -= step;
+            above[column] += step;
+            (problem.cost(&above).unwrap() - problem.cost(&below).unwrap()) / (2.0 * step)
+        })
+        .collect();
+    (gradient, central)
+}
+
+/// Holds the cost of the fit of a problem to the negative log posterior of its evaluation,
+/// and the gradient of the jacobian of the sensitivities to its central difference, at the
+/// start of the fit and at points around it.
+fn assert_the_cost_is_the_posterior(executor: &Executor) {
+    let plan = executor.plan();
+    let mut definition = executor.definition(&plan.nominal()).unwrap();
+    definition.jacobian = JacobianChoice::Sensitivities;
+    let problem = executor.problem_of(definition, 2).unwrap();
+    let offset = executor.cost_offset().unwrap();
+    let start = problem.start();
+    for shift in [0.0, -0.1, 0.05, 0.2] {
+        let x: Vec<f64> = start.iter().map(|x| x + shift * x.abs().max(0.5)).collect();
+        let evaluation = executor.evaluate(&problem.values(&x));
+        let posterior = if plan.has_priors() {
+            evaluation.unnorm_log_posterior()
+        } else {
+            evaluation.llh
+        };
+        let cost = problem.cost(&x).unwrap() - offset;
+        assert!(
+            (cost + posterior).abs() < 1e-8 * posterior.abs().max(1.0),
+            "at {x:?}: the cost {cost} is not the negative log posterior {}",
+            -posterior
+        );
+        let (gradient, central) = gradients(&problem, &x);
+        for (k, (g, c)) in gradient.iter().zip(&central).enumerate() {
+            assert!(
+                (g - c).abs() <= 1e-4 * c.abs().max(1.0),
+                "at {x:?}: the gradient of the parameter {k} is {g} and its central difference \
+                 {c}"
+            );
+        }
+    }
+}
+
+const FITTED: &str = "parameterId\tlowerBound\tupperBound\tnominalValue\testimate\tpriorDistribution\tpriorParameters
+k1\t0.001\t10\t0.8\ttrue\tnormal\t1;0.5
+k2\t0.001\t10\t0.6\ttrue\t\t
+sigma_a\t0.01\t1\t0.05\tfalse\t\t
+scale_b\t0.1\t10\t2\ttrue\t\t
+a_high\t0.1\t10\t1.2\ttrue\t\t
+a_shift\t-1\t1\t0.0\ttrue\tcauchy\t0;0.5
+";
+
+#[test]
+fn a_value_of_a_first_period_which_is_no_linear_form_follows_its_parameters() {
+    // `A(0) = a_high^2 + exp(a_shift) - 1` of the experiment `e2`, which is 2 at
+    // `a_high = sqrt(2)` and `a_shift = 0`: a derived value whose form is its formula
+    let condition = "a_high^2 + exp(a_shift) - 1";
+    let mut data = exact(0.8, 0.6, 2.0);
+    for (k, value) in data.iter_mut().enumerate() {
+        *value *= 1.0 + 0.03 * ((k % 3) as f64 - 1.0);
+    }
+    let executor = executor_of(condition, FITTED, &data, "");
+    let definition = executor.definition(&executor.plan().nominal()).unwrap();
+    let derived = &definition.conditions[1].derived;
+    assert_eq!(derived.len(), 1, "{derived:?}");
+    assert!(derived[0].form.is_some() && derived[0].terms.is_empty());
+
+    assert_the_cost_is_the_posterior(&executor);
+
+    // a fit of the data of `A(0) = 2` without the priors finds `a_high = sqrt(2)`, with
+    // `a_shift` held at 0
+    let parameters = FITTED.replace("\tnormal\t1;0.5", "\t\t").replace(
+        "a_shift\t-1\t1\t0.0\ttrue\tcauchy\t0;0.5",
+        "a_shift\t-1\t1\t0.0\tfalse\t\t",
+    );
+    let executor = executor_of(condition, &parameters, &exact(0.5, 0.3, 3.0), "");
+    let answer = executor
+        .fit(
+            &Settings {
+                max_iterations: 200,
+                ..Settings::default()
+            },
+            2,
+        )
+        .unwrap();
+    for (value, expected) in answer.x.iter().zip([0.5, 0.3, 3.0, 2f64.sqrt()]) {
+        assert!((value - expected).abs() < 1e-4, "{:?}", answer.x);
+    }
+    let llh = executor.evaluate(&answer.x).llh;
+    assert!(
+        (answer.objective + llh).abs() < 1e-6,
+        "{} {llh}",
+        answer.objective
+    );
+}
+
+#[test]
+fn parameters_without_bounds_are_fitted() {
+    // `k1` is bounded below by zero alone, `k2` not at all (empty cells) and `scale_b` by
+    // the infinities of PEtab; the extension of the second problem searches `k1` on `log10`,
+    // whose space is the real line, and `scale_b` on `log`
+    let parameters = "parameterId\tlowerBound\tupperBound\tnominalValue\testimate
+k1\t0\tinf\t0.8\ttrue
+k2\t\t\t0.6\ttrue
+sigma_a\t0.01\t1\t0.05\tfalse
+scale_b\t-inf\tinf\t2\ttrue
+a_high\t\t\t2\tfalse
+";
+    let scales = "extensions:\n  sbmlsim:\n    version: 0.5.0\n    required: false\n    settings: {parameter_scale: LOG10}\n    parameters:\n      k2: {scale: LINEAR}\n";
+    for (extension, expected) in [
+        ("", [Scale::Lin, Scale::Lin, Scale::Lin]),
+        (scales, [Scale::Log10, Scale::Lin, Scale::Log10]),
+    ] {
+        let parameters = if extension.is_empty() {
+            parameters.to_string()
+        } else {
+            // a logarithmic scale needs a lower bound which is not negative
+            parameters.replace("scale_b\t-inf\tinf", "scale_b\t0\tinf")
+        };
+        let executor = executor_of("a_high", &parameters, &exact(0.5, 0.3, 3.0), extension);
+        let problem = executor.problem(2).unwrap();
+        let found: Vec<Scale> = problem.parameters().iter().map(|p| p.scale).collect();
+        assert_eq!(found, expected);
+        assert_the_cost_is_the_posterior(&executor);
+
+        let answer = executor
+            .fit(
+                &Settings {
+                    max_iterations: 200,
+                    ..Settings::default()
+                },
+                2,
+            )
+            .unwrap();
+
+        for (value, expected) in answer.x.iter().zip([0.5, 0.3, 3.0]) {
+            assert!(
+                (value - expected).abs() < 1e-4,
+                "{extension}: {:?}",
+                answer.x
+            );
+        }
+        let llh = executor.evaluate(&answer.x).llh;
+        assert!(
+            (answer.objective + llh).abs() < 1e-6,
+            "{} {llh}",
+            answer.objective
+        );
+    }
+}
+
+#[test]
+fn a_prior_without_bounds_and_a_prior_narrower_than_its_bounds_are_its_rows() {
+    // a normal prior of `k1` over the real line, a uniform prior of `k2` narrower than its
+    // bounds, whose fit is searched between the bounds of the prior, and the improper uniform
+    // prior of `scale_b`, a constant the objective leaves out
+    let parameters = "parameterId\tlowerBound\tupperBound\tnominalValue\testimate\tpriorDistribution\tpriorParameters
+k1\t-inf\tinf\t0.8\ttrue\tnormal\t1;0.5
+k2\t0.001\t10\t0.6\ttrue\tuniform\t0.2;2
+sigma_a\t0.01\t1\t0.05\tfalse\t\t
+scale_b\t0\tinf\t2\ttrue\t\t
+a_high\t\t\t2\tfalse\t\t
+";
+    let executor = executor_of("a_high", parameters, &exact(0.5, 0.3, 3.0), "");
+    let problem = executor.problem(2).unwrap();
+    let bounds: Vec<(f64, f64)> = problem
+        .parameters()
+        .iter()
+        .map(|p| (p.lower, p.upper))
+        .collect();
+    assert_eq!(
+        bounds,
+        [
+            (f64::NEG_INFINITY, f64::INFINITY),
+            (0.2, 2.0),
+            (0.0, f64::INFINITY)
+        ]
+    );
+    // PEtab's log prior of `scale_b` is `-inf`, the objective of the fit the one of the others
+    let x = executor.plan().nominal();
+    let evaluation = executor.evaluate(&x);
+    assert_eq!(evaluation.log_prior, f64::NEG_INFINITY);
+    let cost = problem.cost(&problem.start()).unwrap() - executor.cost_offset().unwrap();
+    let posterior = evaluation.llh
+        + evaluation
+            .log_priors
+            .iter()
+            .filter(|(id, _)| id != "scale_b")
+            .map(|(_, value)| value)
+            .sum::<f64>();
+    assert!(
+        (cost + posterior).abs() < 1e-8 * posterior.abs(),
+        "{cost} {posterior}"
+    );
+
+    let answer = executor
+        .fit(
+            &Settings {
+                max_iterations: 200,
+                ..Settings::default()
+            },
+            2,
+        )
+        .unwrap();
+    assert!(answer.objective.is_finite(), "{answer:?}");
+    assert!((0.2..=2.0).contains(&answer.x[1]), "{:?}", answer.x);
+}
+
+#[test]
+fn a_prior_whose_density_is_not_bounded_is_refused_in_a_fit() {
+    // `log-laplace(0, 2)` grows as `x^(-1/2)` at the lower bound 0, so the posterior has no
+    // largest value; its evaluation runs
+    let parameters = PARAMETERS.replace(
+        "k2\t0.001\t10\t0.6\ttrue\t\t",
+        "k2\t0\t10\t0.6\ttrue\tlog-laplace\t0;2",
+    );
+    let executor = executor(&parameters, &exact(0.8, 0.6, 2.0));
+    assert!(
+        executor
+            .evaluate(&executor.plan().nominal())
+            .log_prior
+            .is_finite()
+    );
+
+    let refusal = executor.problem(2).unwrap_err();
+
+    assert!(matches!(refusal, PetabError::Unsupported(_)), "{refusal}");
+    assert!(
+        refusal.to_string().contains(
+            "the log-laplace prior of 'k2' has a density which is not bounded between 0 and 10"
+        ),
+        "{refusal}"
+    );
+}
+
+#[test]
+fn a_scale_of_the_extension_which_is_none_is_refused() {
+    let extension = "extensions:\n  sbmlsim:\n    version: 0.5.0\n    required: false\n    parameters:\n      k1: {scale: LOG2}\n";
+    let mut files = files(PARAMETERS, &exact(0.8, 0.6, 2.0));
+    files.insert(
+        "problem.yaml".to_string(),
+        format!("{YAML}{extension}").into_bytes(),
+    );
+    let problem = PetabProblem::read("problem.yaml", &files).unwrap();
+
+    let refusal = Plan::new(&problem, &Options::default()).unwrap_err();
+
+    assert!(
+        refusal
+            .to_string()
+            .contains("gives 'k1' the scale \"LOG2\""),
+        "{refusal}"
+    );
 }

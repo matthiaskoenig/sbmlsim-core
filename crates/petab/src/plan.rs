@@ -68,9 +68,10 @@ pub enum ExtensionPolicy {
     /// (`settings.relative_tolerance`, `settings.absolute_tolerance`) and which observables are
     /// data of the likelihood (`observables.<id>.kind`: training data enter, validation data
     /// and outliers are simulated and do not; the validation data of a validation problem,
-    /// `role: validation`, enter). Its objective (the residuals, the weights and
-    /// the loss of sbmlsim's least squares) is not read: the plan evaluates the likelihood of
-    /// PEtab.
+    /// `role: validation`, enter), and the scale a fit searches a parameter on
+    /// (`parameters.<id>.scale`, else `settings.parameter_scale`, see [`ParameterScale`]). Its
+    /// objective (the residuals, the weights and the loss of sbmlsim's least squares) is not
+    /// read: the plan evaluates the likelihood of PEtab.
     #[default]
     Read,
     /// Ignore the extension, which reads the problem as a tool which does not know it.
@@ -94,6 +95,32 @@ pub struct Options {
     pub ignore_unknown_extensions: bool,
 }
 
+/// The scale a fit searches a parameter on, which PEtab v2 does not hold and the extension
+/// `sbmlsim` does: `LINEAR`, `LOG` or `LOG10` (the names of sbmlsim's `ParameterScaleType`,
+/// in any case, and `lin` for `LINEAR`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParameterScale {
+    /// The value itself.
+    Linear,
+    /// The natural logarithm of the value.
+    Log,
+    /// The decadic logarithm of the value.
+    Log10,
+}
+
+impl ParameterScale {
+    /// The scale of a name of the extension.
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<ParameterScale> {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "linear" | "lin" => Some(ParameterScale::Linear),
+            "log" | "ln" => Some(ParameterScale::Log),
+            "log10" => Some(ParameterScale::Log10),
+            _ => None,
+        }
+    }
+}
+
 /// A parameter of the parameter table.
 #[derive(Debug, Clone)]
 pub struct PlanParameter {
@@ -111,6 +138,10 @@ pub struct PlanParameter {
     pub estimate: bool,
     /// The prior the table gives it.
     pub prior: Option<Prior>,
+    /// The scale a fit searches it on, the one of the extension `sbmlsim`; `None` without
+    /// one, for which the fit takes `log10` for positive finite bounds and the linear scale
+    /// otherwise.
+    pub scale: Option<ParameterScale>,
 }
 
 /// A model of the problem with the parameters the plan adds to it.
@@ -280,10 +311,23 @@ struct SbmlsimExtension {
     absolute_tolerance: Option<f64>,
     /// The observables which are no data of the likelihood.
     excluded: HashSet<String>,
+    /// The scale of every parameter, `settings.parameter_scale`.
+    parameter_scale: Option<ParameterScale>,
+    /// The scales of the parameters which have one of their own, `parameters.<id>.scale`.
+    scales: HashMap<String, ParameterScale>,
 }
 
-fn read_extension(content: &serde_json::Value) -> SbmlsimExtension {
+fn read_extension(content: &serde_json::Value) -> Result<SbmlsimExtension, PetabError> {
     let mut extension = SbmlsimExtension::default();
+    let scale = |value: &serde_json::Value, of: &str| {
+        let name = value.as_str().unwrap_or_default();
+        ParameterScale::from_name(name).ok_or_else(|| {
+            PetabError::Unsupported(format!(
+                "the extension 'sbmlsim' gives {of} the scale {value}, which is none of \
+                 'LINEAR', 'LOG' and 'LOG10'"
+            ))
+        })
+    };
     let settings = content.get("settings");
     let setting = |name: &str| settings.and_then(|settings| settings.get(name));
     extension.data_at_change = match setting("data_at_change").and_then(|v| v.as_str()) {
@@ -292,6 +336,18 @@ fn read_extension(content: &serde_json::Value) -> SbmlsimExtension {
         _ => None,
     };
     extension.relative_tolerance = setting("relative_tolerance").and_then(|v| v.as_f64());
+    if let Some(value) = setting("parameter_scale") {
+        extension.parameter_scale = Some(scale(value, "every parameter")?);
+    }
+    if let Some(serde_json::Value::Object(parameters)) = content.get("parameters") {
+        for (id, parameter) in parameters {
+            if let Some(value) = parameter.get("scale") {
+                extension
+                    .scales
+                    .insert(id.clone(), scale(value, &format!("'{id}'"))?);
+            }
+        }
+    }
     extension.absolute_tolerance = match setting("absolute_tolerance") {
         Some(serde_json::Value::Number(number)) => number.as_f64(),
         // the tolerance of every kind of entity: the smallest of them is the one tolerance
@@ -314,7 +370,7 @@ fn read_extension(content: &serde_json::Value) -> SbmlsimExtension {
             }
         }
     }
-    extension
+    Ok(extension)
 }
 
 /// The math of a cell of a table, with the aliases of the mapping table resolved.
@@ -397,8 +453,9 @@ impl Plan {
     /// A part of the problem which does not fit another one (a measurement of an observable or
     /// an experiment the problem has not, a placeholder without a value, a condition of a
     /// target which is no entity of the model or a parameter of the table), a formula which is
-    /// no math of PEtab, a prior of PEtab with parameters outside of its domain and a required
-    /// extension the crate does not know.
+    /// no math of PEtab, a prior of PEtab with parameters outside of its domain, a required
+    /// extension the crate does not know and a scale of the extension `sbmlsim` which is none
+    /// of its scales.
     #[allow(clippy::too_many_lines)]
     pub fn new(problem: &PetabProblem, options: &Options) -> Result<Plan, PetabError> {
         let invalid = |message: String| PetabError::Invalid(message);
@@ -408,7 +465,7 @@ impl Plan {
         for (name, block) in &problem.extensions {
             if name == "sbmlsim" {
                 if options.extension == ExtensionPolicy::Read {
-                    extension = read_extension(&block.content);
+                    extension = read_extension(&block.content)?;
                 }
             } else if block.required && !options.ignore_unknown_extensions {
                 return Err(PetabError::Unsupported(format!(
@@ -481,6 +538,11 @@ impl Plan {
                 nominal: row.nominal.unwrap_or(f64::NAN),
                 estimate: row.estimate,
                 prior,
+                scale: extension
+                    .scales
+                    .get(&row.id)
+                    .copied()
+                    .or(extension.parameter_scale),
             });
         }
 
