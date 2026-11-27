@@ -14,6 +14,7 @@ members = [
     "crates/batch",
     "crates/fit",
     "crates/chaos",
+    "crates/thin",
     "crates/cli",
     "crates/plot",
     "crates/plot-wasm",

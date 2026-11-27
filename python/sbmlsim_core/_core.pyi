@@ -425,3 +425,21 @@ def image_png(pixels: numpy.typing.ArrayLike) -> str:
     Raises `ValueError` for another shape, for values out of their range and for an image of
     more than 64 Mpx.
     """
+
+def thin_kept_points(
+    x: numpy.typing.ArrayLike,
+    y: numpy.typing.ArrayLike,
+    tolerance: float,
+    keep: numpy.typing.ArrayLike | None = None,
+) -> numpy.typing.NDArray[numpy.bool_]:
+    """The points of a line which are kept, Ramer-Douglas-Peucker (since 0.35.0).
+
+    The first and the last point, the ones of `keep`, every point which is not finite and
+    its neighbours, and the points which keep every other one within `tolerance` of the
+    segment between the points kept around it, on every row of `y` (a two-dimensional
+    array, a row per column of the line over `x`). The core of `kept_points` of
+    `sbmlsim_core.chart.thinning`.
+
+    Raises `ValueError` for rows of another length than `x`, for no row, and for a `keep`
+    of another length.
+    """

@@ -38,6 +38,11 @@ those within the ends the spec gives the x axis, and on a logarithmic axis at
 most its `max_decades` (`LOG_DECADES` by default): never more than the span
 the renderer draws, so the tolerance is never more than `THIN_TOLERANCE` of
 the panel. An axis of categories, or one of no span, thins nothing.
+
+The algorithm runs in the extension of the package, the crate `sbmlsim-thin`
+(`kept_points`): this module chooses the coordinates and the points which are
+kept in any case, the extension the points which keep the others within the
+tolerance.
 """
 
 from __future__ import annotations
@@ -48,6 +53,8 @@ from dataclasses import dataclass
 from typing import Any, Final
 
 import numpy as np
+
+from sbmlsim_core._core import thin_kept_points
 
 __all__ = [
     "LOG_DECADES",
@@ -158,23 +165,25 @@ def _frame(axis: Mapping[str, Any], values: Iterable[np.ndarray]) -> _Frame | No
             return float(value)
         return math.log10(value) if value > 0 else math.nan
 
-    shown: list[np.ndarray] = []
+    # the extent of the values shown, without a copy of them
+    smallest, largest = math.inf, -math.inf
     for v in values:
-        v = v[np.isfinite(v) & (v > 0)] if log else v[np.isfinite(v)]
+        shown = np.isfinite(v) & (v > 0) if log else np.isfinite(v)
         if low is not None:
-            v = v[v >= low]
+            shown &= v >= low
         if high is not None:
-            v = v[v <= high]
-        shown.append(v)
-    data = np.concatenate(shown) if shown else np.empty(0)
+            shown &= v <= high
+        if shown.any():
+            smallest = min(smallest, float(np.min(v, where=shown, initial=np.inf)))
+            largest = max(largest, float(np.max(v, where=shown, initial=-np.inf)))
     lo = coordinate(low) if low is not None else None
     hi = coordinate(high) if high is not None else None
-    if (lo is None or hi is None) and data.size == 0:
+    if (lo is None or hi is None) and smallest > largest:
         return None
     if lo is None:
-        lo = coordinate(float(data.min()))
+        lo = coordinate(smallest)
     if hi is None:
-        hi = coordinate(float(data.max()))
+        hi = coordinate(largest)
     if log and (low is None or high is None):
         decades = axis.get("max_decades")
         lo = max(lo, hi - (LOG_DECADES if decades is None else float(decades)))
@@ -195,32 +204,6 @@ def _x_window(axis: Mapping[str, Any], x: np.ndarray) -> np.ndarray:
     return inside
 
 
-def _distances(
-    xu: np.ndarray, yu: np.ndarray, points: np.ndarray, a: np.ndarray, b: np.ndarray
-) -> np.ndarray:
-    """Get the distance of points to the segments between two points, the most over the columns.
-
-    Args:
-        xu: the x coordinates.
-        yu: the y coordinates, a row per column.
-        points: the indices of the points.
-        a: the index of the start of the segment of every point.
-        b: the index of the end of the segment of every point.
-
-    Returns:
-        The largest distance of every point over the columns.
-    """
-    dx = xu[b] - xu[a]
-    px = xu[points] - xu[a]
-    dy = yu[:, b] - yu[:, a]
-    py = yu[:, points] - yu[:, a]
-    length = dx * dx + dy * dy
-    with np.errstate(divide="ignore", invalid="ignore"):
-        t = np.where(length > 0, (px * dx + py * dy) / length, 0.0)
-    t = np.clip(t, 0.0, 1.0)
-    return np.hypot(px - t * dx, py - t * dy).max(axis=0)
-
-
 def kept_points(
     xu: np.ndarray,
     yu: np.ndarray,
@@ -229,9 +212,11 @@ def kept_points(
 ) -> np.ndarray:
     """Get the points of a line which are kept, Ramer-Douglas-Peucker.
 
-    The algorithm splits every segment at its point farthest from it while
-    that point is farther than the tolerance, all segments of a level at
-    once, so that a line costs a few passes of numpy over its points.
+    The algorithm splits every segment at its point farthest from it, the
+    first one on a tie, while that point is farther than the tolerance. It
+    runs in the extension of the package (the crate `sbmlsim-thin`), whose
+    kept points are bitwise the ones of the implementation on numpy before
+    it, which `python/tests/test_chart_thinning_reference.py` keeps.
 
     Args:
         xu: the x coordinates of the points, in units of the span of the axis.
@@ -246,47 +231,24 @@ def kept_points(
         `keep`, every point which is not finite and its neighbours, and the
         points which keep every other one within the tolerance.
     """
-    yu = np.atleast_2d(yu)
-    n = xu.size
-    kept = np.zeros(n, dtype=bool) if keep is None else keep.copy()
-    if n <= 2:
-        kept[:] = True
-        return kept
-    kept[[0, -1]] = True
-    gap = ~(np.isfinite(xu) & np.isfinite(yu).all(axis=0))
-    kept |= gap
-    kept[1:] |= gap[:-1]
-    kept[:-1] |= gap[1:]
-    todo = np.flatnonzero(~kept)
-    while todo.size:
-        ends = np.flatnonzero(kept)
-        segment = np.searchsorted(ends, todo) - 1
-        d = _distances(xu, yu, todo, ends[segment], ends[segment + 1])
-        first = np.r_[True, segment[1:] != segment[:-1]]
-        starts = np.flatnonzero(first)
-        group = np.cumsum(first) - 1
-        peak = np.maximum.reduceat(d, starts)
-        split = peak > tolerance
-        if not split.any():
-            break
-        farthest = np.flatnonzero((d == peak[group]) & split[group])
-        farthest = farthest[np.r_[True, group[farthest][1:] != group[farthest][:-1]]]
-        kept[todo[farthest]] = True
-        stay = split[group]
-        stay[farthest] = False
-        todo = todo[stay]
-    return kept
+    return thin_kept_points(xu, np.atleast_2d(yu), tolerance, keep)
 
 
 def _extremes(columns: Iterable[np.ndarray], where: np.ndarray) -> np.ndarray:
-    """Get the points of the smallest and the largest value of every column within a mask."""
+    """Get the points of the smallest and the largest value of every column within a mask.
+
+    The first point of the smallest and of the largest value, a point outside
+    the mask or not finite never.
+    """
     keep = np.zeros(where.shape, dtype=bool)
     for values in columns:
         ok = where & np.isfinite(values)
-        if ok.any():
-            index = np.flatnonzero(ok)
-            keep[index[np.argmin(values[ok])]] = True
-            keep[index[np.argmax(values[ok])]] = True
+        if ok.all():
+            keep[np.argmin(values)] = True
+            keep[np.argmax(values)] = True
+        elif ok.any():
+            keep[np.argmin(np.where(ok, values, np.inf))] = True
+            keep[np.argmax(np.where(ok, values, -np.inf))] = True
     return keep
 
 
@@ -304,7 +266,9 @@ def _thin(
     xu = x_frame.coordinates(x)
     yu = np.vstack([y_frame.coordinates(y) for y in ys])
     inside = _x_window(x_axis, x)
-    keep = _extremes([xu, *yu], inside) | _extremes([xu, *yu], np.ones_like(inside))
+    keep = _extremes([xu, *yu], inside)
+    if not inside.all():
+        keep |= _extremes([xu, *yu], np.ones_like(inside))
     # the two points around an end of the x axis, where the renderer cuts
     crossing = np.flatnonzero(inside[1:] != inside[:-1])
     keep[crossing] = True
