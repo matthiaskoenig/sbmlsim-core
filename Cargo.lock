@@ -2566,6 +2566,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 
 [[package]]
+name = "ryu"
+version = "1.0.23"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
+
+[[package]]
 name = "same-file"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2636,6 +2642,7 @@ dependencies = [
  "sbmlsim-fit",
  "sbmlsim-host",
  "sbmlsim-ode",
+ "sbmlsim-petab",
  "serde",
  "serde_json",
  "toml",
@@ -2760,6 +2767,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "sbmlsim-petab"
+version = "0.36.0"
+dependencies = [
+ "libm",
+ "rayon",
+ "sbmlsim-abi",
+ "sbmlsim-compiler",
+ "sbmlsim-fit",
+ "sbmlsim-host",
+ "sbmlsim-ir",
+ "sbmlsim-sbml",
+ "serde",
+ "serde_json",
+ "serde_norway",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "sbmlsim-plot"
 version = "0.36.0"
 dependencies = [
@@ -2797,6 +2822,7 @@ dependencies = [
  "sbmlsim-fit",
  "sbmlsim-host",
  "sbmlsim-ode",
+ "sbmlsim-petab",
  "sbmlsim-plot",
  "sbmlsim-sensitivity",
  "sbmlsim-thin",
@@ -2841,7 +2867,9 @@ version = "0.36.0"
 dependencies = [
  "sbmlsim-abi",
  "sbmlsim-compiler",
+ "sbmlsim-host",
  "sbmlsim-ode",
+ "sbmlsim-petab",
  "serde",
  "serde_json",
 ]
@@ -2909,6 +2937,19 @@ dependencies = [
  "serde",
  "serde_core",
  "zmij",
+]
+
+[[package]]
+name = "serde_norway"
+version = "0.9.42"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e408f29489b5fd500fab51ff1484fc859bb655f32c671f307dcd733b72e8168c"
+dependencies = [
+ "indexmap",
+ "itoa",
+ "ryu",
+ "serde",
+ "unsafe-libyaml-norway",
 ]
 
 [[package]]
@@ -3399,6 +3440,12 @@ name = "unicode-width"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ca718471876992059f251e33aafc334346ada08042b7661dd1fe313a9bced557"
+
+[[package]]
+name = "unsafe-libyaml-norway"
+version = "0.2.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b39abd59bf32521c7f2301b52d05a6a2c975b6003521cbd0c6dc1582f0a22104"
 
 [[package]]
 name = "usvg"

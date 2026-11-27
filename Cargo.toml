@@ -16,6 +16,7 @@ members = [
     "crates/host",
     "crates/batch",
     "crates/fit",
+    "crates/petab",
     "crates/chaos",
     "crates/thin",
     "crates/sensitivity",

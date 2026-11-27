@@ -56,7 +56,16 @@ pub struct CompiledModel {
 /// Compiles the text of an SBML Level 3 Version 2 document.
 pub fn compile(sbml: &str, options: &CompileOptions) -> Result<CompiledModel, CompileError> {
     let doc = sbmlsim_sbml::read(sbml).map_err(from_read_error)?;
-    let model = sbmlsim_ir::build(&doc)?;
+    compile_document(&doc, options)
+}
+
+/// Compiles a document [`sbmlsim_sbml::read`] gave, e.g. one a caller added parameters and
+/// rules to, as the PEtab problems of `sbmlsim-petab` add their observables to their models.
+pub fn compile_document(
+    doc: &sbmlsim_sbml::Document,
+    options: &CompileOptions,
+) -> Result<CompiledModel, CompileError> {
+    let model = sbmlsim_ir::build(doc)?;
     let (wasm, description) = sbmlsim_codegen::emit_with_options(
         &model,
         options.jacobian,

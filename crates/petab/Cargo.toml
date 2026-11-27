@@ -1,0 +1,41 @@
+[package]
+name = "sbmlsim-petab"
+version.workspace = true
+edition.workspace = true
+# not on crates.io yet, as the rest of the workspace
+publish = false
+# the license of sbmlsim-host, whose engine the feature `native` simulates on
+license = "MIT AND BSD-3-Clause AND LGPL-2.1-or-later"
+authors.workspace = true
+description = "PEtab v2 in sbmlsim-core: the reader of a problem, its plan of simulations and its likelihood, and its execution and fit on the engine"
+
+[features]
+default = ["native"]
+# the execution of a problem on the engine of `sbmlsim-host` and its fit with the optimizers of
+# `sbmlsim-fit`; without it the crate builds for `wasm32-unknown-unknown`, where a host of
+# JavaScript simulates the requests of the plan
+native = ["dep:sbmlsim-host", "dep:sbmlsim-fit", "dep:rayon"]
+
+[dependencies]
+sbmlsim-abi = { path = "../abi" }
+# the augmented models of a problem are compiled from their documents
+sbmlsim-compiler = { path = "../compiler" }
+# the math of a problem is evaluated with the operations of the compiled model
+sbmlsim-ir = { path = "../ir" }
+sbmlsim-sbml = { path = "../sbml" }
+# erf, erfc and lgamma of the distribution functions of the priors, the same bits on every
+# target
+libm = "0.2"
+serde.workspace = true
+serde_json.workspace = true
+# the YAML file of a problem
+serde_norway = "0.9"
+thiserror.workspace = true
+rayon = { version = "1.10", optional = true }
+sbmlsim-fit = { path = "../fit", optional = true }
+sbmlsim-host = { path = "../host", features = ["native"], optional = true }
+
+[dev-dependencies]
+serde_json.workspace = true
+sbmlsim-fit = { path = "../fit" }
+sbmlsim-host = { path = "../host", features = ["native"] }

@@ -18,6 +18,7 @@ nav = [
   { "ODE source exports" = "odes.md" },
   { "Simulation" = "simulating.md" },
   { "Fitting" = "fitting.md" },
+  { "PEtab" = "petab.md" },
   { "Sensitivity analysis" = "sensitivity.md" },
   { "Delay equations" = "delays.md" },
   { "Figures" = "plot.md" },

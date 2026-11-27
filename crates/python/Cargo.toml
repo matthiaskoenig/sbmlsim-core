@@ -31,6 +31,8 @@ sbmlsim-batch = { path = "../batch" }
 sbmlsim-chaos = { path = "../chaos" }
 # the fit of a model: the objective on the batch and the optimizers of basin (`fit/1`)
 sbmlsim-fit = { path = "../fit" }
+# the PEtab v2 problems of `sbmlsim_core.petab`, read, simulated and fitted in Rust
+sbmlsim-petab = { path = "../petab" }
 sbmlsim-compiler = { path = "../compiler" }
 # the figures: their SVG, PNG, geometry and picks (`figure/1`)
 sbmlsim-plot = { path = "../plot", features = ["png"] }
