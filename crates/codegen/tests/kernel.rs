@@ -592,11 +592,13 @@ fn kernel_step_size_underflow_flags_failed() {
 
 /// `x' = -k x` with the assignment rules `r = x t + c` (a state and the time) and
 /// `s = r^2 + k^0.75` (another rule and a power of a parameter alone, a constant of the
-/// optimizer), `x(0) = x0`.
+/// optimizer), `x(0) = x0`. The document declares `s` before `r`, so the rules are evaluated in
+/// their order of dependency only where the kernel orders them (`s` read before `r` is stored
+/// would be the value of the step before).
 fn assigned() -> String {
     let time = r#"<csymbol encoding="text" definitionURL="http://www.sbml.org/sbml/symbols/time">t</csymbol>"#;
     format!(
-        r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2"><model id="assigned"><listOfParameters><parameter id="k" value="0.7" constant="true"/><parameter id="c" value="2" constant="true"/><parameter id="x" value="1" constant="false"/><parameter id="r" constant="false"/><parameter id="s" constant="false"/></listOfParameters><listOfRules><rateRule variable="x"><math {MATH}><apply><times/><apply><minus/><ci>k</ci></apply><ci>x</ci></apply></math></rateRule><assignmentRule variable="r"><math {MATH}><apply><plus/><apply><times/><ci>x</ci>{time}</apply><ci>c</ci></apply></math></assignmentRule><assignmentRule variable="s"><math {MATH}><apply><plus/><apply><times/><ci>r</ci><ci>r</ci></apply><apply><power/><ci>k</ci><cn>0.75</cn></apply></apply></math></assignmentRule></listOfRules></model></sbml>"#
+        r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2"><model id="assigned"><listOfParameters><parameter id="k" value="0.7" constant="true"/><parameter id="c" value="2" constant="true"/><parameter id="x" value="1" constant="false"/><parameter id="r" constant="false"/><parameter id="s" constant="false"/></listOfParameters><listOfRules><rateRule variable="x"><math {MATH}><apply><times/><apply><minus/><ci>k</ci></apply><ci>x</ci></apply></math></rateRule><assignmentRule variable="s"><math {MATH}><apply><plus/><apply><times/><ci>r</ci><ci>r</ci></apply><apply><power/><ci>k</ci><cn>0.75</cn></apply></apply></math></assignmentRule><assignmentRule variable="r"><math {MATH}><apply><plus/><apply><times/><ci>x</ci>{time}</apply><ci>c</ci></apply></math></assignmentRule></listOfRules></model></sbml>"#
     )
 }
 

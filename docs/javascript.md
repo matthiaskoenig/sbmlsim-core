@@ -363,8 +363,8 @@ A precompiled `WebAssembly.Module` is a **trusted input**: JavaScript reflection
 ```js
 import { createCompiler } from "./js/compile.mjs";
 
-// compiler: a WebAssembly.Module or the bytes of compiler.wasm
-const compiler = await createCompiler({ compiler });
+// compilerWasm: a WebAssembly.Module or the bytes of compiler.wasm
+const compiler = await createCompiler({ compiler: compilerWasm });
 const { wasm, description } = compiler.compile(sbmlText);
 const instance = await runtime.instantiate(wasm, description);
 ```
@@ -382,8 +382,8 @@ import { createCompiler } from "./js/compile.mjs";
 import { createRuntime } from "./js/loader.mjs";
 import { openPetab } from "./js/petab.mjs";
 
-// compiler.wasm with the feature petab (the default)
-const compiler = await createCompiler({ compiler });
+// compilerWasm: compiler.wasm with the feature petab (the default), a Module or its bytes
+const compiler = await createCompiler({ compiler: compilerWasm });
 // or a pool of pool.mjs, openPetab({ compiler, pool, files })
 const runtime = await createRuntime({ engine, mathlib });
 // the files by their names, as text or bytes
@@ -760,8 +760,8 @@ if (root) {
 import { createCompiler } from "./js/compile.mjs";
 import { instantiateKernel } from "./js/kernel.mjs";
 
-// compiler: a WebAssembly.Module or the bytes of compiler.wasm
-const compiler = await createCompiler({ compiler });
+// compilerWasm: a WebAssembly.Module or the bytes of compiler.wasm
+const compiler = await createCompiler({ compiler: compilerWasm });
 const { wasm, description } = compiler.compileKernel(sbmlText);
 // the memory of the caller holds every array of the points; the kernel never grows it
 const memory = new WebAssembly.Memory({ initial: 16 });

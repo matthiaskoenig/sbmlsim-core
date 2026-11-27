@@ -320,7 +320,8 @@ pub struct KernelDescription {
     /// constants behind them, which the kernel computes).
     pub parameter_ids: Vec<String>,
     /// The parameters which `sbmlsim_kernel_assign` writes, the targets of the assignment rules,
-    /// in the order of the rules (each one of [`KernelDescription::parameter_ids`]).
+    /// in the order of dependency in which it evaluates them (each one of
+    /// [`KernelDescription::parameter_ids`]).
     pub assigned_ids: Vec<String>,
     /// The values of the control of a point: `t`, `h`, `done`, `failed` (4).
     pub control: u32,

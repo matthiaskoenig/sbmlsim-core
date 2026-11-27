@@ -7,7 +7,7 @@
 //
 //   import { createCompiler } from "sbmlsim-core/compile";
 //   import { instantiateKernel } from "sbmlsim-core/kernel";
-//   const compiler = await createCompiler({ compiler: compilerBytes });
+//   const compiler = await createCompiler({ compiler: compilerWasm }); // a Module or bytes
 //   const { wasm, description } = compiler.compileKernel(sbmlText);
 //   const memory = new WebAssembly.Memory({ initial: 16 });
 //   const kernel = await instantiateKernel({ wasm, mathlib, memory });
@@ -16,17 +16,17 @@
 //   kernel.assign(n, state, parameters, control);
 //
 // The arguments are byte offsets into `memory`, each a multiple of 8, of arrays of `f64` with the
-// values of the points one point after the other: the parameters
-// (`description.parameter_ids` per point; `init` takes a NaN as a parameter which is not given,
-// which then gets its SBML value and initial assignment, and writes the parameters and the
-// states), the states (`description.state_ids`),
-// the control (`t`, `h`, `done`, `failed` per point), the counts (the accepted steps and the
-// rejected step attempts per point), the context (`t1`, `rtol`, `atol`, `h_min`, `attempts`)
-// and the scratch (`description.scratch_per_point` per point). `advance` gives the number of
-// failed points. `assign` evaluates the assignment rules of every point at its time and its
-// states and writes their targets (`description.assigned_ids`) into its parameters, the values
-// of outputs which are targets of rules after an advance. All three give -1 for invalid
-// arguments (`crates/abi/src/lib.rs` documents the contract). The kernel never grows the memory: the caller sizes it for its points.
+// values of the points one point after the other: the parameters (`description.parameter_ids` per
+// point; `init` takes a NaN as a parameter which is not given, which then gets its SBML value and
+// initial assignment, and writes the parameters and the states), the states
+// (`description.state_ids`), the control (`t`, `h`, `done`, `failed` per point), the counts (the
+// accepted steps and the rejected step attempts per point), the context (`t1`, `rtol`, `atol`,
+// `h_min`, `attempts`) and the scratch (`description.scratch_per_point` per point). `advance` gives
+// the number of failed points. `assign` evaluates the assignment rules of every point at its time
+// and its states and writes their targets (`description.assigned_ids`) into its parameters, the
+// values of outputs which are targets of rules after an advance. All three give -1 for invalid
+// arguments (`crates/abi/src/lib.rs` documents the contract). The kernel never grows the memory:
+// the caller sizes it for its points.
 
 /** The contract of a kernel and its description. */
 export const KERNEL_CONTRACT = "kernel/1";
