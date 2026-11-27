@@ -15,6 +15,14 @@ Since 0.30.0: the sequential and the diverging colour maps of matplotlib in lowe
 """
 FIGURE_CONTRACT: str
 FIT_CONTRACT: str
+FIT_FIELDS: list[str]
+"""The additive fields of `fit/1` this build reads which an older release would not refuse.
+
+`curve.dimension`, a curve over the points of a dimension of a scan which interpolates
+between their conditions, and `condition.pinned`, a parameter whose target a condition holds
+at a value of its own. A release before them has no such constant, so a host reads it before
+it sends such a field.
+"""
 FIT_REDUCTIONS: list[str]
 """The kinds of the `reduction` of a curve of `fit/1` this build fits.
 

@@ -68,6 +68,7 @@ fn curve(reduction: Reduction, times: Vec<f64>, values: Vec<f64>) -> Curve {
         after_change: None,
         likelihood: None,
         reduction: Some(reduction),
+        dimension: None,
     }
 }
 

@@ -594,3 +594,54 @@ def test_a_curve_of_a_reduction_is_fitted_on_the_steps_of_the_integrator(decay):
 
     assert answer["parameters"][0]["value"] == pytest.approx(k, rel=1e-3)
     assert len(answer["residuals"]) == 3
+
+
+def test_a_curve_over_a_dimension_is_the_interpolation_of_numpy(decay):
+    """A scan of the initial value of `y`, a condition per point.
+
+    A measurement between two points is compared with `numpy.interp` of what the curve reads
+    in their conditions, and the last point pins `k` at a value of its own.
+    """
+    assert set(sbmlsim_core.FIT_FIELDS) == {"curve.dimension", "condition.pinned"}
+    points = [1.0, 2.0, 4.0]
+    x = [1.5, 2.0, 3.0, 4.0]
+    pin = 0.2
+    conditions = [
+        {
+            "id": f"y0 {at}",
+            "request": request(end=10.0, steps=10, preinit=[("y", y)]),
+        }
+        for at, y in enumerate(points)
+    ]
+    conditions[-1]["pinned"] = [{"parameter": 0, "value": pin}]
+    problem = decay.fit_problem(
+        {
+            "contract": sbmlsim_core.FIT_CONTRACT,
+            "parameters": [{"id": "k", "start": 0.5, "lower": 0.01, "upper": 10.0}],
+            "conditions": conditions,
+            "curves": [
+                {
+                    "column": "y",
+                    "times": [5.0] * len(x),
+                    "values": [0.0] * len(x),
+                    "dimension": {
+                        "conditions": [c["id"] for c in conditions],
+                        "values": points,
+                        "x": x,
+                    },
+                }
+            ],
+        },
+        threads=2,
+    )
+
+    residuals = problem.residuals([0.5])
+
+    instance = decay.instance()
+    at_five = [
+        instance.simulate(
+            request(end=10.0, steps=10, preinit=[("y", y), ("k", k)])
+        ).values[5, 1]
+        for y, k in zip(points, [0.5, 0.5, pin], strict=True)
+    ]
+    numpy.testing.assert_array_equal(residuals, numpy.interp(x, points, at_five))
