@@ -1,0 +1,16 @@
+[package]
+name = "sbmlsim-sensitivity"
+version.workspace = true
+edition.workspace = true
+# not on crates.io yet, as the rest of the workspace
+publish = false
+# the direction numbers of the Sobol' sequence of Joe and Kuo (`data/LICENSE-joe-kuo`)
+license = "MIT AND BSD-3-Clause"
+authors.workspace = true
+description = "The global sensitivity analysis of sbmlsim-core: the designs of Saltelli, the extended FAST and Morris, and the estimators of their indices with bootstrap intervals"
+
+[dependencies]
+# sin, asin, cos and log of the samplers and the estimators, the same bits on every target, so
+# one seed gives one answer natively and in wasm
+libm = "0.2"
+thiserror.workspace = true

@@ -444,6 +444,124 @@ def thin_kept_points(
     of another length.
     """
 
+def sensitivity_sobol_sequence(
+    d: int, n: int, *, seed: int | None, skip: int = 0
+) -> numpy.typing.NDArray[numpy.float64]:
+    """The points `skip..skip + n` of the Sobol' sequence of `d` dimensions (since 0.37.0).
+
+    The sequence of `scipy.stats.qmc.Sobol(d, bits=30)`, a row per point: bit for bit scipy's
+    without scrambling (`seed=None`), scrambled as scipy scrambles it (LMS+shift) with the
+    draws of `seed`. At most 2048 dimensions and `2^30` points.
+
+    Raises `ValueError` for arguments out of range.
+    """
+
+def sensitivity_saltelli(
+    d: int, n: int, *, seed: int | None, second_order: bool = False, skip: int = 0
+) -> numpy.typing.NDArray[numpy.float64]:
+    """The matrix of Saltelli of `d` parameters on the unit cube (since 0.37.0).
+
+    The design of `SALib.sample.sobol.sample` on the Sobol' sequence of `2 d` dimensions of
+    `sensitivity_sobol_sequence`: `n (d + 2)` points, `n (2 d + 2)` with the second order.
+
+    Raises `ValueError` for arguments out of range, e.g. more than 1024 parameters.
+    """
+
+def sensitivity_fast_sample(
+    d: int,
+    n: int,
+    *,
+    m: int = 4,
+    seed: int | None = None,
+    phases: Sequence[float] | None = None,
+) -> numpy.typing.NDArray[numpy.float64]:
+    """The design of the extended FAST of `d` parameters on the unit cube (since 0.37.0).
+
+    The search curves of `SALib.sample.fast_sampler.sample`, `n` points per parameter, with
+    the phases of the stream of `seed` or the given phases, one per parameter.
+
+    Raises `ValueError` for `n` not more than `4 m^2`, and unless one of `seed` and `phases`
+    is given.
+    """
+
+def sensitivity_morris_sample(
+    d: int, trajectories: int, *, levels: int = 4, seed: int
+) -> numpy.typing.NDArray[numpy.float64]:
+    """The design of Morris of `d` parameters on the grid of `levels` levels (since 0.37.0).
+
+    The trajectories of `SALib.sample.morris.sample`, `d + 1` points each, on `[0, 1]`.
+
+    Raises `ValueError` for arguments out of range.
+    """
+
+def sensitivity_sobol_indices(
+    y: numpy.typing.ArrayLike,
+    d: int,
+    *,
+    second_order: bool = False,
+    conf_level: float = 0.95,
+    num_resamples: int | None = None,
+    seed: int | None = None,
+    resamples: numpy.typing.ArrayLike | None = None,
+    threads: int | None = None,
+) -> dict[str, numpy.typing.NDArray[numpy.float64]]:
+    """The Sobol indices of the values of a matrix of Saltelli, every column at once (since 0.37.0).
+
+    `y` has a row per point and a column per element. `S1`, `S1_conf`, `ST` and `ST_conf`
+    of the shape `(d, elements)`, with the second order `S2` and `S2_conf` of the shape
+    `(d, d, elements)`; the intervals over `num_resamples` (100) resamples of the stream of
+    `seed`, or the given `resamples` of the shape `(resamples, n)`.
+
+    The elements are spread over `threads` threads (every CPU of the process by default),
+    and an index does not depend on them.
+
+    Raises `ValueError` for values which are no matrix of the design, and unless one of
+    `seed` and `resamples` is given.
+    """
+
+def sensitivity_fast_indices(
+    y: numpy.typing.ArrayLike,
+    d: int,
+    *,
+    m: int = 4,
+    conf_level: float = 0.95,
+    num_resamples: int | None = None,
+    seed: int | None = None,
+    resamples: numpy.typing.ArrayLike | None = None,
+    threads: int | None = None,
+) -> dict[str, numpy.typing.NDArray[numpy.float64]]:
+    """The indices of the extended FAST of the values of a FAST design (since 0.37.0).
+
+    `S1`, `S1_conf`, `ST` and `ST_conf` of the shape `(d, elements)`; the intervals over
+    windows from starts of the stream of `seed`, or the given `resamples` of the shape
+    `(d, resamples)`.
+
+    Raises `ValueError` for values which are no blocks of the design, and unless one of
+    `seed` and `resamples` is given.
+    """
+
+def sensitivity_morris_effects(
+    cube: numpy.typing.ArrayLike,
+    y: numpy.typing.ArrayLike,
+    *,
+    levels: int = 4,
+    conf_level: float = 0.95,
+    num_resamples: int | None = None,
+    seed: int | None = None,
+    resamples: numpy.typing.ArrayLike | None = None,
+    threads: int | None = None,
+) -> dict[str, numpy.typing.NDArray[numpy.float64]]:
+    """The elementary effects of the values of a Morris design (since 0.37.0).
+
+    `cube` holds the points of the design, `y` their values. `mu`, `mu_star`, `sigma` and
+    `mu_star_conf` of the shape `(d, elements)`; the interval over resamples of the
+    trajectories of the stream of `seed`, or the given `resamples` of the shape
+    `(d, resamples, trajectories)`.
+
+    Raises `ValueError` for points which are no trajectories, and unless one of `seed` and
+    `resamples` is given.
+    """
+
 ODE_CONTRACT: str
 
 class _EquationSystem:

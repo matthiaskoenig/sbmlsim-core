@@ -37,6 +37,7 @@ from sbmlsim_core import (
     SimulationError,
     SimulationOutput,
     UnsupportedError,
+    sensitivity,
 )
 from sbmlsim_core.chart import (
     LEGEND_LOCS,
@@ -202,6 +203,22 @@ def a_polynomial_chaos_expansion(u: numpy.typing.NDArray[numpy.float64]) -> None
     sbmlsim_core.chaos_expansion(22, 4, 0.75)  # ty: ignore[too-many-positional-arguments]
     sbmlsim_core.chaos_design_matrix(u, basis, threads=1.5)  # ty: ignore[invalid-argument-type]
     print(x, values)
+
+
+def a_global_sensitivity_analysis() -> None:
+    """The designs of the three global methods and the estimators of their indices."""
+    u: numpy.typing.NDArray[numpy.float64] = sensitivity.saltelli(3, 64, seed=1)
+    base = sensitivity.sobol_sequence(6, 64, seed=None, skip=0)
+    found: dict[str, numpy.typing.NDArray[numpy.float64]] = sensitivity.sobol_indices(
+        u[:, :1], 3, second_order=False, seed=1, threads=2
+    )
+    fast = sensitivity.fast_sample(3, 65, m=4, phases=[0.0, 1.0, 2.0])
+    sensitivity.fast_indices(fast[:, :1], 3, resamples=numpy.zeros((3, 10), dtype=int))
+    cube = sensitivity.morris_sample(3, 10, levels=4, seed=2)
+    effects = sensitivity.morris_effects(cube, cube[:, :1], num_resamples=50, seed=2)
+    sensitivity.saltelli(3, 64)  # ty: ignore[missing-argument]
+    sensitivity.sobol_indices(u, 3, seed=1.5)  # ty: ignore[invalid-argument-type]
+    print(base, found["S1"], effects["mu_star"])
 
 
 def the_figures(values: list[float]) -> None:

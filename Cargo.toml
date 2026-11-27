@@ -18,6 +18,7 @@ members = [
     "crates/fit",
     "crates/chaos",
     "crates/thin",
+    "crates/sensitivity",
     "crates/cli",
     "crates/plot",
     "crates/plot-wasm",
