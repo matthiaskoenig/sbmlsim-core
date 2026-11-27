@@ -1,11 +1,19 @@
 {
   "files": {
     "compile.mjs": "a784d488684beb67ef91d6df7ae00b3d13ac43347561079dab97011f71b824e5",
-    "compiler.wasm": "ee9f9d2313dc3b5bb6264613a8499ed7c9bb58ff7db7e6d03291e77156408fa8",
-    "engine.wasm": "6ab27aab16620c55fedfc96586a512e9ce738dcb2002cdf9b028c8a360afe4e2",
+    "compiler.wasm": "4acc0707613aa0051703511a0cbecf8cfb5e8fd2a3347a42f1f35dd400aea803",
+    "conversion/conditions.tsv": "96451aac887870922c172769a756f013524dc62c7ddc8f4ed06d49573c03b70c",
+    "conversion/experiments.tsv": "ea2a30eb8a699bb7abcb63de2c34295031110d5496fbfba8bf5189355d9c7682",
+    "conversion/measurements.tsv": "f806cbe015d3bb2eef1bf01c527d127ccfd8b8ae841f03eec540f61b2239f287",
+    "conversion/model.xml": "2e3a8051add53055208f14c4176d0521c6c9d0a0c4b1ff6d858ed37ee2d125d5",
+    "conversion/observables.tsv": "97f030af2baefcdc6dd97ab7f4383d5248317b0967fab86376af1d4cf6cd3af8",
+    "conversion/parameters.tsv": "cbe323db8a9afa688c9e473df671f0548804d6097e9325546105a6b28036d5d0",
+    "conversion/problem.yaml": "685ca06656569aa6ab20a4671553677f4374b30a6dbc4a7e5d64f0e221529394",
+    "engine.wasm": "f24224341a70f506ba5dae117ca27e57781893a15e246a60178ffa501d40b03c",
     "loader.mjs": "e5b29b0fd7954e28e37c83159b6967400b2836f2eda920b73d2f673de258369d",
-    "mathlib.wasm": "fa14dc2113d87abe36eb808055d164dc8a13aaabbe466da923196489a7f16f47",
+    "mathlib.wasm": "79ba2c65596ec5f2cd7540f8d8df6ea2b004506e3b4ffae69a01d9547d3cc17b",
+    "petab.mjs": "4ec8a19f3b2941f9403137ec3dfa218b3277eb71a7bb9f3495f1d06cbe059ea0",
     "repressilator.xml": "b6e05cc413d354597a4a0d2834cf7a27b72318c9a7af225058aa0c9151befdca"
   },
-  "npm_version": "0.37.0"
+  "npm_version": "0.39.0"
 }

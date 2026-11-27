@@ -2,15 +2,16 @@
 # requires-python = ">=3.14"
 # dependencies = []
 # ///
-"""Write the assets of the live demo of the documentation into `docs/demo/`.
+"""Write the assets of the live demos of the documentation into `docs/demo/`.
 
-The demo on [JavaScript](../docs/javascript.md) simulates the repressilator in the
-page of the reader. It needs the JavaScript loader and the two modules of the engine,
-which are vendored from the published npm package at `NPM_VERSION` with the integrity
-of the registry checked, and the compiler of the browser, which the page compiles the
-SBML committed next to them with, so nothing of the demo is compiled ahead of time.
-Every file is committed and the build of the documentation generates none of them, as
-with the tables of the benchmarks and the grid of the test suite.
+The demos on [JavaScript](../docs/javascript.md) simulate the repressilator and
+evaluate a small PEtab problem in the page of the reader. They need the JavaScript
+loader, the two modules of the engine and the module of PEtab, which are vendored from
+the published npm package at `NPM_VERSION` with the integrity of the registry checked,
+and the compiler of the browser, which the page compiles the SBML committed next to
+them with, so nothing of the demos is compiled ahead of time. Every file is committed
+and the build of the documentation generates none of them, as with the tables of the
+benchmarks and the grid of the test suite.
 
     uv run scripts/demo_assets.py            # write them
     uv run scripts/demo_assets.py --check    # compare them with VERSION.json
@@ -28,20 +29,31 @@ import urllib.request
 from pathlib import Path
 
 # the release of the npm package the demo runs, raised with a release
-NPM_VERSION = "0.37.0"
+NPM_VERSION = "0.39.0"
 REGISTRY = "https://registry.npmjs.org/sbmlsim-core"
 
 # what is taken out of the package, by its path in the tarball
 VENDORED: dict[str, str] = {
     "package/compile.mjs": "compile.mjs",
     "package/loader.mjs": "loader.mjs",
+    "package/petab.mjs": "petab.mjs",
     "package/runtime/compiler.wasm": "compiler.wasm",
     "package/runtime/engine.wasm": "engine.wasm",
     "package/runtime/mathlib.wasm": "mathlib.wasm",
 }
 
-# the model of the demo, which the page compiles with the vendored compiler
-MODEL_SBML = "repressilator.xml"
+# the files of the demos which are committed rather than vendored: the model of the
+# simulation and the PEtab problem, whose SBML the page compiles with the vendored compiler
+COMMITTED: tuple[str, ...] = (
+    "repressilator.xml",
+    "conversion/problem.yaml",
+    "conversion/model.xml",
+    "conversion/conditions.tsv",
+    "conversion/experiments.tsv",
+    "conversion/observables.tsv",
+    "conversion/measurements.tsv",
+    "conversion/parameters.tsv",
+)
 
 DEMO_DIR = Path("docs/demo")
 VERSION_FILE = "VERSION.json"
@@ -118,7 +130,7 @@ def digests(out: Path) -> dict[str, str]:
     Returns:
         The file names to their hex SHA-256, sorted.
     """
-    names = [*VENDORED.values(), MODEL_SBML]
+    names = [*VENDORED.values(), *COMMITTED]
     return {name: _sha256(out / name) for name in sorted(names)}
 
 
@@ -138,7 +150,14 @@ def check(out: Path) -> int:
             f"{VERSION_FILE} records npm {recorded.get('npm_version')}, "
             f"the script pins {NPM_VERSION}"
         )
-    for name, digest in recorded.get("files", {}).items():
+    files: dict[str, str] = recorded.get("files", {})
+    unlisted = set(files) ^ {*VENDORED.values(), *COMMITTED}
+    if unlisted:
+        problems.append(
+            f"{VERSION_FILE} and the script name different files: "
+            f"{', '.join(sorted(unlisted))}"
+        )
+    for name, digest in files.items():
         path = out / name
         if not path.exists():
             problems.append(f"{name} is missing")
@@ -149,7 +168,7 @@ def check(out: Path) -> int:
             print(f"demo assets: {problem}")
         print("run `uv run scripts/demo_assets.py` to write them again")
         return 1
-    print(f"demo assets: {len(recorded.get('files', {}))} files, npm {NPM_VERSION}")
+    print(f"demo assets: {len(files)} files, npm {NPM_VERSION}")
     return 0
 
 

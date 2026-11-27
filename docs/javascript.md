@@ -174,8 +174,8 @@ const { columns, nRows, values } = simulate(2.0); // values: a Float64Array, row
   --rp-line: var(--md-default-fg-color--lighter, #d6d6d3); }
 [data-md-color-scheme="slate"] .rp { --rp-a: #3987e5; --rp-b: #d95926; --rp-c: #199e70; }
 .rp-head { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem 1.4rem; margin-bottom: .5rem; }
-.rp-knob { display: flex; align-items: center; gap: .6rem; font-size: .82rem; }
-.rp-range { width: 15rem; max-width: 46vw; accent-color: var(--rp-a); }
+.rp-knob { display: flex; align-items: center; gap: .6rem; font-size: .82rem; white-space: nowrap; }
+.rp-range { width: 15rem; max-width: 40vw; accent-color: var(--rp-a); }
 .rp-value { font-variant-numeric: tabular-nums; font-weight: 600; min-width: 2.6rem; }
 .rp-state { margin: 0; font-size: .76rem; color: var(--rp-soft); font-variant-numeric: tabular-nums; }
 .rp-plot { width: 100%; height: auto; }
@@ -429,6 +429,253 @@ The fit of the pharmacokinetics of hydrochlorothiazide of pkdb_models ([A fit of
 `compiler.wasm` carries PEtab in every build since 0.39.0: the feature `petab` of `sbmlsim-wasm` is on by default and adds 340 kB to the 3.07 MB of the compiler alone (112 kB of 1.10 MB gzipped). A module of its own would have been larger in all: `petab_model` compiles the models of a plan, so a `petab.wasm` holds the whole compiler again (3.41 MB), and the package, the python wheels and the command line would carry both. `cargo build -p sbmlsim-wasm --no-default-features` builds the compiler alone. The inline build of the python package (`sbmlsim_core.web.script()`) carries the module as well (since 0.39.0), `sbmlsimCore.openPetab` with `sbmlsimCore.createCompiler` and `sbmlsimCore.createRuntime`, for a page of one file which evaluates a problem with the bytes of `sbmlsim_core.runtime_wasm()`.
 
 A fit of a problem in a page is not supported yet: the optimizers of the engine are `sbmlsim-fit`, which runs on the native host and its batch of threads, see [PEtab](petab.md#not-supported-yet).
+
+### A problem evaluated in this page
+
+A small problem of PEtab v2 runs below, with the `petab.mjs`, `compiler.wasm` and `engine.wasm` of the npm package. Its model converts A into B (`k1`) and B back into A (`k2`), an experiment starts with A at 1 and doses one more unit of A at time 5, and A and B are measured twelve times each, with a normal noise of 0.04 (the data are drawn at `k1 = 0.6` and `k2 = 0.25`, the nominal values of the problem). Move the slider: the problem is evaluated again at the new `k1` and the nominal `k2`, which gives the log-likelihood `llh` and `chi2` of PEtab and the simulated value of every measurement.
+
+<div class="pt" data-base="../demo/">
+<div class="pt-head">
+<label class="pt-knob">rate constant <b>k1</b><input class="pt-range" name="rate-constant-k1" type="range" min="0.2" max="1.5" step="0.01" value="0.6" aria-label="rate constant k1"><output class="pt-value">0.60</output></label>
+</div>
+<p class="pt-stats"><span>llh <b class="pt-llh">-</b></span><span>chi2 <b class="pt-chi2">-</b></span><span class="pt-nominal"></span></p>
+<p class="pt-state">loading the compiler, the engine and the problem ...</p>
+<svg class="pt-plot" viewBox="0 0 660 270" role="img" aria-label="The measurements of A and B over 20 time units, the simulation at the chosen k1 and the residual of every measurement. The same numbers are in the table below the figure."></svg>
+<details class="pt-table"><summary>The measurements and their simulated values</summary><div></div></details>
+</div>
+
+The dots are the measurements and the thin lines between a dot and its curve the residuals which `chi2` sums, each divided by its noise and squared. The `llh` is largest near the nominal `k1` and falls off on either side: a smaller `k1` leaves too much A, a larger one too much B. The problem is the seven files of `docs/demo/conversion/` (`problem.yaml`, the SBML of the model and the five tables, 3 kB), fetched and handed to `openPetab` as text: at the nominal values the page evaluates the llh of `sbmlsim_core.petab` in python, `47.29120890853149`, bit for bit, and a fit in python finds `k1 = 0.63` and `k2 = 0.27`. The curves are a second simulation of the model on a fine grid, with the dose of the experiment as an increment of A, since the simulations of a problem give only the times of its measurements.
+
+```js
+import { createCompiler } from "sbmlsim-core/compile";
+import { createRuntime } from "sbmlsim-core";
+import { openPetab } from "sbmlsim-core/petab";
+
+const NAMES = ["problem.yaml", "model.xml", "conditions.tsv", "experiments.tsv",
+  "observables.tsv", "measurements.tsv", "parameters.tsv"];
+const files = Object.fromEntries(await Promise.all(
+  NAMES.map(async (name) => [name, await fetch(name).then((r) => r.text())]),
+));
+const problem = await openPetab({ compiler, runtime, files });
+
+problem.parameters;                    // ["k1", "k2"], the order of a point
+const nominal = await problem.evaluate();
+const { llh, chi2, simulated } = await problem.evaluate([1.2, problem.nominal[1]]);
+```
+
+<style>
+.pt { margin: 1rem 0 1.4rem; --pt-a: #2a78d6; --pt-b: #eb6834;
+  --pt-ink: var(--md-default-fg-color, #1a1a19); --pt-soft: var(--md-default-fg-color--light, #6b6b68);
+  --pt-line: var(--md-default-fg-color--lighter, #d6d6d3); --pt-bg: var(--md-default-bg-color, #ffffff); }
+[data-md-color-scheme="slate"] .pt { --pt-a: #3987e5; --pt-b: #d95926; }
+.pt-head { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem 1.8rem; margin-bottom: .3rem; }
+.pt-knob { display: flex; align-items: center; gap: .6rem; font-size: .82rem; white-space: nowrap; }
+.pt-range { width: 15rem; max-width: 40vw; accent-color: var(--pt-a); }
+.pt-value { font-variant-numeric: tabular-nums; font-weight: 600; min-width: 2.6rem; }
+.pt-stats { display: flex; flex-wrap: wrap; align-items: baseline; gap: .2rem 1.4rem; margin: 0 0 .2rem;
+  font-size: .82rem; font-variant-numeric: tabular-nums; }
+.pt-stats b { display: inline-block; min-width: 4.4rem; margin-left: .35rem; }
+.pt-nominal { color: var(--pt-soft); font-size: .76rem; }
+.pt-state { margin: 0 0 .5rem; font-size: .76rem; color: var(--pt-soft); font-variant-numeric: tabular-nums; }
+.pt-plot { width: 100%; height: auto; }
+.pt-plot text { fill: var(--pt-soft); font-size: 11px;
+  font-family: var(--md-text-font-family, system-ui), sans-serif; }
+.pt-plot .pt-name { font-size: 12px; font-weight: 600; }
+.pt-plot .pt-axis { stroke: var(--pt-line); stroke-width: 1; }
+.pt-plot .pt-curve { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.pt-plot .pt-residual { stroke-width: 1; }
+.pt-plot .pt-dot { stroke: var(--pt-bg); stroke-width: 1.5; }
+.pt-table { margin-top: .4rem; font-size: .76rem; }
+.pt-table summary { cursor: pointer; color: var(--pt-soft); }
+.pt-table table { font-variant-numeric: tabular-nums; }
+.pt-failed { color: var(--pt-ink); }
+</style>
+<script type="module">
+const root = document.querySelector(".pt");
+if (root) {
+  const base = root.dataset.base;
+  const plot = root.querySelector(".pt-plot");
+  const state = root.querySelector(".pt-state");
+  const range = root.querySelector(".pt-range");
+  const value = root.querySelector(".pt-value");
+  const llhOut = root.querySelector(".pt-llh");
+  const chi2Out = root.querySelector(".pt-chi2");
+  const nominalOut = root.querySelector(".pt-nominal");
+  const table = root.querySelector(".pt-table div");
+  const NAMES = ["problem.yaml", "model.xml", "conditions.tsv", "experiments.tsv",
+    "observables.tsv", "measurements.tsv", "parameters.tsv"];
+  // the observables of the problem, the species they read and their colours
+  const SERIES = [
+    { observable: "obs_a", species: "A", color: "--pt-a" },
+    { observable: "obs_b", species: "B", color: "--pt-b" },
+  ];
+  // the experiment `dosing` of `experiments.tsv`: one unit of A more at this time
+  const DOSE_TIME = 5;
+  const END = 20, TOP = 2;
+  const SVG = "http://www.w3.org/2000/svg";
+  const W = 660, H = 270, L = 52, R = 42, T = 14, B = 34;
+  const node = (name, attrs, text) => {
+    const e = document.createElementNS(SVG, name);
+    for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+    if (text !== undefined) e.textContent = text;
+    return e;
+  };
+  const text = async (name) => {
+    const response = await fetch(base + "conversion/" + name);
+    if (!response.ok) throw new Error(`${name}: ${response.status} ${response.statusText}`);
+    return response.text();
+  };
+  const x = (t) => L + (t / END) * (W - L - R);
+  const y = (v) => H - B - (Math.min(v, TOP) / TOP) * (H - T - B);
+  const color = (s) => getComputedStyle(root).getPropertyValue(s.color).trim();
+
+  // the curves: the model alone on a fine grid, the dose as an increment of A
+  const curveRequest = (k1, k2) => ({
+    contract: "simulation/1",
+    start: 0,
+    end: END,
+    output: { uniform: { steps: 400 } },
+    preinit: [["k1", k1], ["k2", k2]],
+    changes: [{ time: DOSE_TIME, values: [], increments: [["A", 1]] }],
+    steady_state: null,
+    selections: ["time", "A", "B"],
+    settings: {
+      relative_tolerance: 1e-8,
+      absolute_tolerance: { scalar: 1e-10 },
+      maximum_num_steps: 100000,
+      maximum_time_step: 0,
+      initial_time_step: 0,
+      stiff: true,
+      linear_solver: "dense",
+      jacobian: "auto",
+    },
+    seed: 0,
+  });
+
+  const draw = (curve, measurements, simulated) => {
+    const index = Object.fromEntries(curve.columns.map((c, i) => [c, i]));
+    const at = (row, id) => curve.values[row * curve.columns.length + index[id]];
+    plot.replaceChildren();
+    plot.append(node("line", { class: "pt-axis", x1: L, y1: H - B, x2: W - R, y2: H - B }));
+    plot.append(node("line", { class: "pt-axis", x1: L, y1: T, x2: L, y2: H - B }));
+    for (const t of [0, 5, 10, 15, 20]) {
+      plot.append(node("text", { x: x(t), y: H - B + 16, "text-anchor": "middle" }, String(t)));
+    }
+    plot.append(node("text", { x: (L + W - R) / 2, y: H - 4, "text-anchor": "middle" }, "time"));
+    for (const v of [0, 0.5, 1, 1.5, 2]) {
+      plot.append(node("text", { x: L - 8, y: y(v) + 4, "text-anchor": "end" }, v.toFixed(1)));
+      if (v > 0) plot.append(node("line", { class: "pt-axis", x1: L, y1: y(v), x2: W - R, y2: y(v), "stroke-dasharray": "3 4" }));
+    }
+    plot.append(node("line", { class: "pt-axis", x1: x(DOSE_TIME), y1: T, x2: x(DOSE_TIME), y2: H - B }));
+    plot.append(node("text", { x: x(DOSE_TIME) + 6, y: T + 10 }, "dose of A"));
+    const labels = [];
+    for (const s of SERIES) {
+      const stroke = color(s);
+      const points = [];
+      for (let r = 0; r < curve.nRows; r += 1) points.push(x(at(r, "time")) + "," + y(at(r, s.species)));
+      plot.append(node("polyline", { class: "pt-curve", points: points.join(" "), stroke }));
+      labels.push({ id: s.species, stroke, y: y(at(curve.nRows - 1, s.species)) });
+    }
+    // the residual of every measurement, from the measurement to the simulated value of
+    // the problem, and the measurement on top
+    measurements.forEach((m, k) => {
+      const stroke = color(SERIES.find((s) => s.observable === m.observable));
+      plot.append(node("line", { class: "pt-residual", stroke,
+        x1: x(m.time), y1: y(m.value), x2: x(m.time), y2: y(simulated[k]) }));
+    });
+    measurements.forEach((m) => {
+      const fill = color(SERIES.find((s) => s.observable === m.observable));
+      plot.append(node("circle", { class: "pt-dot", cx: x(m.time), cy: y(m.value), r: 3.6, fill }));
+    });
+    labels.sort((a, b) => a.y - b.y);
+    for (let i = 1; i < labels.length; i += 1) {
+      labels[i].y = Math.max(labels[i].y, labels[i - 1].y + 13);
+    }
+    for (const label of labels) {
+      plot.append(node("text", { class: "pt-name", x: W - R + 6, y: label.y + 4, fill: label.stroke }, label.id));
+    }
+    // what the marks are, top right, where the curves leave room for it
+    const key = W - R - 150;
+    plot.append(node("circle", { cx: key + 4, cy: T + 8, r: 3.6, fill: color(SERIES[0]), class: "pt-dot" }));
+    plot.append(node("text", { x: key + 14, y: T + 12 }, "measured"));
+    plot.append(node("line", { x1: key + 78, y1: T + 8, x2: key + 96, y2: T + 8, stroke: color(SERIES[0]), "stroke-width": 2 }));
+    plot.append(node("text", { x: key + 102, y: T + 12 }, "simulated"));
+  };
+
+  const tabulate = (measurements, evaluation) => {
+    const rows = measurements.map((m, k) => {
+      const s = evaluation.simulated[k], sigma = evaluation.sigma[k];
+      return "<tr><td>" + m.observable + "</td><td>" + m.time + "</td><td>" + m.value.toFixed(3) +
+        "</td><td>" + s.toFixed(3) + "</td><td>" + sigma + "</td><td>" + ((m.value - s) / sigma).toFixed(2) + "</td></tr>";
+    });
+    table.innerHTML = "<table><thead><tr><th>observable</th><th>time</th><th>measured</th>" +
+      "<th>simulated</th><th>noise</th><th>residual</th></tr></thead><tbody>" + rows.join("") + "</tbody></table>";
+  };
+
+  try {
+    const { createCompiler } = await import(base + "compile.mjs");
+    const { createRuntime } = await import(base + "loader.mjs");
+    const { openPetab } = await import(base + "petab.mjs");
+    const bytes = (name) => fetch(base + name).then((r) => r.arrayBuffer());
+    const compiler = await createCompiler({ compiler: await bytes("compiler.wasm") });
+    const runtime = await createRuntime({
+      engine: await bytes("engine.wasm"),
+      mathlib: await bytes("mathlib.wasm"),
+    });
+    const files = Object.fromEntries(
+      await Promise.all(NAMES.map(async (name) => [name, await text(name)])),
+    );
+    const opened = performance.now();
+    const problem = await openPetab({ compiler, runtime, files });
+    const openMs = performance.now() - opened;
+    const { wasm, description } = compiler.compile(files["model.xml"]);
+    const model = await runtime.instantiate(wasm, description);
+    // the measurements in the order of the table, the order of `simulated` and `sigma`
+    const measurements = files["measurements.tsv"].trim().split("\n").slice(1).map((line) => {
+      const [observable, , time, value] = line.split("\t");
+      return { observable, time: Number(time), value: Number(value) };
+    });
+    const k1Nominal = problem.nominal[problem.parameters.indexOf("k1")];
+    const k2 = problem.nominal[problem.parameters.indexOf("k2")];
+    const nominal = await problem.evaluate();
+    nominalOut.textContent = "llh " + nominal.llh.toFixed(2) + " at the nominal k1 = " + k1Nominal.toFixed(2);
+    let busy = false, again = false;
+    const run = async () => {
+      if (busy) { again = true; return; }
+      busy = true;
+      try {
+        do {
+          again = false;
+          const k1 = Number(range.value);
+          value.textContent = k1.toFixed(2);
+          const point = problem.parameters.map((id) => (id === "k1" ? k1 : k2));
+          const started = performance.now();
+          const evaluation = await problem.evaluate(point);
+          const ms = performance.now() - started;
+          llhOut.textContent = evaluation.llh.toFixed(2);
+          chi2Out.textContent = evaluation.chi2.toFixed(2);
+          draw(model.simulate(curveRequest(k1, k2)), measurements, evaluation.simulated);
+          tabulate(measurements, evaluation);
+          state.textContent = problem.nMeasurements + " measurements evaluated in this page in " +
+            ms.toFixed(1) + " ms, the problem opened in " + openMs.toFixed(0) + " ms";
+        } while (again);
+      } finally {
+        busy = false;
+      }
+    };
+    range.addEventListener("input", () => {
+      run().catch((error) => {
+        state.classList.add("pt-failed");
+        state.textContent = "The evaluation failed: " + error.message;
+      });
+    });
+    await run();
+  } catch (error) {
+    state.classList.add("pt-failed");
+    state.textContent = "The demo could not run in this browser: " + error.message;
+  }
+}
+</script>
 
 ## The worker pool
 
