@@ -22,8 +22,8 @@ default = ["petab", "fit"]
 petab = ["dep:sbmlsim-petab"]
 # the fit of a PEtab problem in a page (`petab_fit_open`, `petab_fit_ask`, `petab_fit_tell`,
 # `petab_fit_stop` and `petab_fit_close`): the optimizers of `sbmlsim-fit` driven ask/tell by
-# `js/petab.mjs`, on by default (408 kB on top of the 3.41 MB of the compiler with PEtab,
-# 144 kB gzipped); `--no-default-features --features petab` evaluates a problem and fits none
+# `js/petab.mjs`, on by default (409 kB on top of the 3.42 MB of the compiler with PEtab,
+# 143 kB gzipped); `--no-default-features --features petab` evaluates a problem and fits none
 fit = ["petab", "dep:sbmlsim-fit"]
 
 [dependencies]

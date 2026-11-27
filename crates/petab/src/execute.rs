@@ -5,7 +5,6 @@
 //! the rest is the feature `native`.
 
 use std::collections::HashMap;
-#[cfg(feature = "native")]
 use std::sync::Arc;
 
 #[cfg(feature = "native")]
