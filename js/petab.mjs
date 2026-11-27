@@ -10,6 +10,7 @@
 //   const problem = await openPetab({ compiler, runtime, files }); // {name: text or bytes}
 //   const { llh, chi2, logPrior, simulationTable } = await problem.evaluate(); // the nominal values
 //   const simulations = await problem.simulations(x); // the results of the requests at x
+//   const { x: optimum, objective } = await problem.fit({ starts: 4 }); // the fit, ask/tell
 //   problem.close();
 //
 // What a problem is, its plan and its likelihood are the Rust of `sbmlsim-petab` in
@@ -19,6 +20,13 @@
 // requests of the plan with the engine of the page, the loader of `loader.mjs` on the thread
 // of the caller or the workers of `pool.mjs`. Since that engine is `engine.wasm`, which the
 // command line runs as well, an evaluation in a page gives the bits of the command line.
+//
+// A fit is the optimizer of `sbmlsim-fit` in `compiler.wasm` (`petab_fit_open`,
+// `petab_fit_ask`, `petab_fit_tell`, `petab_fit_stop` and `petab_fit_close`), driven ask/tell:
+// it asks for the simulations of its next evaluations (the `k + 1` evaluations of the finite
+// differences of a jacobian, the members of a generation), this module simulates them on the
+// engine of the page, on the workers of a pool next to each other, and tells their results.
+// The optimizer and its evaluations are the ones of `sbmlsim-core petab --fit`.
 
 import { EngineError } from "./loader.mjs";
 
@@ -32,6 +40,15 @@ const PETAB_EXPORTS = [
   "petab_requests",
   "petab_evaluate",
   "petab_close",
+];
+
+/** The exports of `compiler.wasm` a fit needs, the feature `fit` of `sbmlsim-wasm`. */
+const FIT_EXPORTS = [
+  "petab_fit_open",
+  "petab_fit_ask",
+  "petab_fit_tell",
+  "petab_fit_stop",
+  "petab_fit_close",
 ];
 
 /** The most simulations of a problem one evaluation queues on a pool at once. */
@@ -257,25 +274,7 @@ class PetabProblem {
     if (!Array.isArray(simulations) || simulations.length !== this.nSimulations) {
       throw new TypeError(`the problem has ${this.nSimulations} simulations`);
     }
-    let n = 0;
-    const results = simulations.map(({ result }) => {
-      if (result.error !== undefined) return { error: String(result.error) };
-      n += result.values.length;
-      return { columns: result.columns, n_rows: result.nRows };
-    });
-    const values = new Float64Array(n);
-    let at = 0;
-    for (const { result } of simulations) {
-      if (result.error === undefined) {
-        values.set(result.values, at);
-        at += result.values.length;
-      }
-    }
-    const bytes = new Uint8Array(values.buffer);
-    if (!LITTLE_ENDIAN) {
-      const view = new DataView(values.buffer);
-      for (let k = 0; k < values.length; k += 1) view.setFloat64(8 * k, values[k], true);
-    }
+    const { results, bytes } = encodeResults(simulations.map(({ result }) => result));
     const input = new TextEncoder().encode(JSON.stringify({ x: point, results }));
     const answer = this.api.json("petab_evaluate", [this.handle], [input, bytes]);
     return {
@@ -291,6 +290,148 @@ class PetabProblem {
     };
   }
 
+  /**
+   * Fits the estimated parameters: the maximum likelihood estimate of a problem without priors,
+   * the maximum a posteriori estimate of one with, by the optimizers of `sbmlsim-fit` in
+   * `compiler.wasm` whose simulations the engine of the problem runs. A fit from the nominal
+   * values with the default settings is the fit of `sbmlsim-core petab --fit`.
+   *
+   * The jacobian of a step is the forward differences of the simulations (`k + 1` evaluations
+   * at once), as on the command line: the tables of `engine.wasm` carry no sensitivities.
+   *
+   * @param {object} [options]
+   * @param {number|ArrayLike<number>[]} [options.starts] the points the fits start from, the
+   *   values of the estimated parameters, or their number: the nominal values and points drawn
+   *   uniformly in the space the optimizer searches (`log10` of a parameter of positive bounds)
+   *   with `seed`; the nominal values alone without it
+   * @param {number} [options.seed] the seed of the drawn starts (0)
+   * @param {"trustRegion"|"levenbergMarquardt"|{differentialEvolution: object}} [options.algorithm]
+   *   the optimizer, trust region reflective by default; a differential evolution takes
+   *   `{ seed, population, f, cr, polish }`
+   * @param {number} [options.maxIterations] the iterations of a fit (100)
+   * @param {number} [options.gradientTolerance] the tolerance of the scaled gradient
+   * @param {number} [options.stepTolerance] the relative tolerance of the step (`xtol`)
+   * @param {number} [options.costTolerance] the relative tolerance of the cost (`ftol`)
+   * @param {number} [options.maxSeconds] the time the fits may take, measured by the page,
+   *   after which they stop at the best point they reached
+   * @param {AbortSignal} [options.signal] stops the fits at their next step, with the best
+   *   point they reached
+   * @param {(step: {start: number, step: number, simulations: number, seconds: number}) => void} [options.onStep]
+   *   called after the simulations of every step of every fit
+   * @returns {Promise<{x: Float64Array, objective: number, cost: number, iterations: number,
+   *   evaluations: number, jacobians: number, status: string, simulations: number,
+   *   seconds: number, start: Float64Array, runs: object[]}>} the best fit, the one of the
+   *   lowest `objective` (the negative log posterior, the negative log-likelihood of a problem
+   *   without priors), and every fit as `runs`, in the order of the starts
+   */
+  async fit(options = {}) {
+    this.checkOpen();
+    const missing = FIT_EXPORTS.filter((name) => this.api.exports[name] === undefined);
+    if (missing.length > 0) {
+      throw new Error(
+        `compiler.wasm does not export ${missing.join(", ")}: it is built without the feature fit`,
+      );
+    }
+    const { starts, seed = 0, maxSeconds, signal, onStep, ...rest } = options;
+    const settings = fitSettings(rest);
+    const points = this.starts(starts, seed);
+    const began = performance.now();
+    const fits = [];
+    try {
+      for (const start of points) {
+        const input = new TextEncoder().encode(JSON.stringify({ settings, start: Array.from(start) }));
+        fits.push({ start, ...this.api.json("petab_fit_open", [this.handle], [input]) });
+      }
+    } catch (error) {
+      for (const { fit } of fits) this.api.exports.petab_fit_close(fit);
+      throw error;
+    }
+    const stopAll = () => {
+      for (const { fit } of fits) this.api.exports.petab_fit_stop(fit);
+    };
+    if (maxSeconds !== undefined && !(maxSeconds >= 0)) {
+      throw new TypeError("maxSeconds is a number of seconds");
+    }
+    // the clock and the signal are read between the steps of the fits, which yield to the
+    // page between them, so that its events (a click on stop) are not starved by a fit on the
+    // loader, whose simulations do not wait for anything
+    let stopped = false;
+    const check = () => {
+      const late = maxSeconds !== undefined && performance.now() - began >= 1000 * maxSeconds;
+      if (!stopped && (signal?.aborted || late)) {
+        stopped = true;
+        for (const { fit } of fits) this.api.exports.petab_fit_stop(fit);
+      }
+    };
+    try {
+      const runs = await Promise.all(fits.map((fit, k) => this.run(fit, k, { began, onStep, check })));
+      const best = runs.reduce((a, b) => (b.objective < a.objective || Number.isNaN(a.objective) ? b : a));
+      return { ...best, seconds: (performance.now() - began) / 1000, runs };
+    } finally {
+      for (const { fit } of fits) this.api.exports.petab_fit_close(fit);
+    }
+  }
+
+  /** The starts of a fit: the points given, or the nominal values and drawn points. */
+  starts(starts, seed) {
+    if (starts === undefined) return [this.nominal];
+    if (typeof starts === "number") {
+      if (!Number.isInteger(starts) || starts < 1) throw new TypeError("starts is a number of starts or a list of points");
+      const random = splitmix(seed);
+      const points = [this.nominal];
+      for (let n = 1; n < starts; n += 1) {
+        points.push(
+          Float64Array.from(this.parameters, (id, k) => {
+            const [lower, upper] = [this.lower[k], this.upper[k]];
+            if (!Number.isFinite(lower) || !Number.isFinite(upper)) {
+              throw new PetabError(`the parameter ${id} has a bound which is not finite: give the starts of its fits`);
+            }
+            const u = random();
+            // the scale of the optimizer: `log10` for positive bounds, as `Plan::definition`
+            return lower > 0 ? 10 ** (Math.log10(lower) + u * (Math.log10(upper) - Math.log10(lower))) : lower + u * (upper - lower);
+          }),
+        );
+      }
+      return points;
+    }
+    if (!Array.isArray(starts) || starts.length === 0) throw new TypeError("starts is a number of starts or a list of points");
+    return starts.map((start) => Float64Array.from(this.point(start)));
+  }
+
+  /** Runs one fit to its end: asks, simulates on the engine of the problem, tells. */
+  async run({ fit, offset, start }, k, { began, onStep, check }) {
+    let simulations = 0;
+    for (let step = 1; ; step += 1) {
+      this.checkOpen();
+      check();
+      const answer = this.api.json("petab_fit_ask", [fit], []);
+      if (answer.done !== undefined) {
+        const done = answer.done;
+        return {
+          x: numbers(done.x),
+          objective: number(done.objective),
+          cost: number(done.cost),
+          offset: number(offset),
+          iterations: done.iterations,
+          evaluations: done.evaluations,
+          jacobians: done.jacobians,
+          status: done.status,
+          simulations,
+          start: Float64Array.from(start),
+        };
+      }
+      // the simulations of a step run to their end: a fit is stopped between its steps
+      const results = await this.engine.simulate(answer.simulate);
+      simulations += results.length;
+      const encoded = encodeResults(results);
+      const input = new TextEncoder().encode(JSON.stringify({ results: encoded.results }));
+      const { status, answers } = this.api.call("petab_fit_tell", [fit], [input, encoded.bytes], 2);
+      if (status !== 1) throw new PetabError(new TextDecoder().decode(answers[0]) || "petab_fit_tell failed");
+      onStep?.({ start: k, step, simulations, seconds: (performance.now() - began) / 1000 });
+      await yieldToHost();
+    }
+  }
+
   /** Drops the problem, its plan in `compiler.wasm` and its models in the engine. */
   close() {
     if (this.closed) return;
@@ -302,6 +443,74 @@ class PetabProblem {
 
 /** Whether this host stores numbers little-endian, as WebAssembly does. */
 const LITTLE_ENDIAN = new Uint8Array(new Float64Array([1]).buffer)[7] === 0x3f;
+
+/**
+ * The results of simulations as `compiler.wasm` reads them: the shape of every table, or its
+ * error and the kind of the error, as JSON and the values of the tables one after the other
+ * as the little-endian bytes of their doubles.
+ */
+function encodeResults(simulated) {
+  let n = 0;
+  const results = simulated.map((result) => {
+    if (result.error !== undefined) {
+      return result.kind === undefined ? { error: String(result.error) } : { error: String(result.error), kind: result.kind };
+    }
+    n += result.values.length;
+    return { columns: result.columns, n_rows: result.nRows };
+  });
+  const values = new Float64Array(n);
+  let at = 0;
+  for (const result of simulated) {
+    if (result.error === undefined) {
+      values.set(result.values, at);
+      at += result.values.length;
+    }
+  }
+  const bytes = new Uint8Array(values.buffer);
+  if (!LITTLE_ENDIAN) {
+    const view = new DataView(values.buffer);
+    for (let k = 0; k < values.length; k += 1) view.setFloat64(8 * k, values[k], true);
+  }
+  return { results, bytes };
+}
+
+/** The settings of `sbmlsim_fit::Settings` from the options of `fit`. */
+function fitSettings({ algorithm, maxIterations, gradientTolerance, stepTolerance, costTolerance, ...rest }) {
+  const unknown = Object.keys(rest);
+  if (unknown.length > 0) throw new TypeError(`unknown options ${unknown.join(", ")}`);
+  const settings = {};
+  if (algorithm === "trustRegion") settings.algorithm = "trust_region";
+  else if (algorithm === "levenbergMarquardt") settings.algorithm = "levenberg_marquardt";
+  else if (algorithm?.differentialEvolution !== undefined) {
+    settings.algorithm = { differential_evolution: algorithm.differentialEvolution };
+  } else if (algorithm !== undefined) {
+    throw new TypeError("algorithm is trustRegion, levenbergMarquardt or { differentialEvolution }");
+  }
+  if (maxIterations !== undefined) settings.max_iterations = maxIterations;
+  if (gradientTolerance !== undefined) settings.gradient_tolerance = gradientTolerance;
+  if (stepTolerance !== undefined) settings.step_tolerance = stepTolerance;
+  if (costTolerance !== undefined) settings.cost_tolerance = costTolerance;
+  return settings;
+}
+
+/** Gives the event loop of the host a turn: `scheduler.yield` of a browser, else a timeout. */
+function yieldToHost() {
+  if (typeof globalThis.scheduler?.yield === "function") return globalThis.scheduler.yield();
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+/** A generator of uniform numbers in [0, 1) from a seed: SplitMix64. */
+function splitmix(seed) {
+  let state = BigInt.asUintN(64, BigInt(seed));
+  return () => {
+    state = BigInt.asUintN(64, state + 0x9e3779b97f4a7c15n);
+    let z = state;
+    z = BigInt.asUintN(64, (z ^ (z >> 30n)) * 0xbf58476d1ce4e5b9n);
+    z = BigInt.asUintN(64, (z ^ (z >> 27n)) * 0x94d049bb133111ebn);
+    z ^= z >> 31n;
+    return Number(z >> 11n) / 2 ** 53;
+  };
+}
 
 /** The engine of a problem on the thread of the caller: an instance of the loader per model. */
 class RuntimeEngine {
@@ -332,7 +541,7 @@ class RuntimeEngine {
         results.push(instance.simulate(request));
       } catch (error) {
         if (!isFailure(error)) throw error;
-        results.push({ error: error.message });
+        results.push({ error: error.message, kind: error.kind });
       }
     }
     return results;
@@ -365,7 +574,7 @@ class PoolEngine {
         return await this.pool.simulate(this.keys[model], request, { signal });
       } catch (error) {
         if (!isFailure(error)) throw error;
-        return { error: error.message };
+        return { error: error.message, kind: error.kind };
       }
     });
   }

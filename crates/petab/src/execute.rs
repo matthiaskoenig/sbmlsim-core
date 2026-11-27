@@ -1,29 +1,42 @@
 //! The execution of a plan on the engine: its simulations, its evaluation and its fit.
+//!
+//! The definition of the fit of a plan in `sbmlsim-fit` ([`Plan::definition`]) is pure, so a
+//! host of JavaScript which simulates the fit itself (`sbmlsim_fit::Asking`) takes it as well;
+//! the rest is the feature `native`.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
+#[cfg(feature = "native")]
 use rayon::prelude::*;
+#[cfg(feature = "native")]
 use sbmlsim_abi::SimulationResult;
 use sbmlsim_fit::{
-    Condition, Curve, Definition, Derived, Fit, Form, JacobianChoice, Likelihood, NoiseKind,
-    Parameter, Problem, Scale, Settings, Term,
+    Condition, Curve, Definition, Derived, Form, JacobianChoice, Likelihood, NoiseKind, Parameter,
+    Scale, Term,
 };
+#[cfg(feature = "native")]
+use sbmlsim_fit::{Fit, Problem, Settings};
+#[cfg(feature = "native")]
 use sbmlsim_host::{LoadedModel, Runtime};
 use sbmlsim_sbml::math::{Node, Op};
 
 use crate::PetabError;
 use crate::likelihood::{NoiseDistribution, PriorKind};
 use crate::math::{self, Formula};
-use crate::plan::{Evaluation, Noise, ParameterScale, Plan};
+#[cfg(feature = "native")]
+use crate::plan::Evaluation;
+use crate::plan::{Noise, ParameterScale, Plan};
 
 /// A plan whose models are compiled and loaded into the engine.
+#[cfg(feature = "native")]
 pub struct Executor {
     plan: Plan,
     models: Vec<Arc<LoadedModel>>,
 }
 
 /// The answer of a fit of a problem.
+#[cfg(feature = "native")]
 #[derive(Debug, Clone)]
 pub struct FitAnswer {
     /// The values of the estimated parameters at the optimum, in the order of
@@ -36,6 +49,7 @@ pub struct FitAnswer {
     pub fit: Fit,
 }
 
+#[cfg(feature = "native")]
 impl Executor {
     /// Compiles the models of a plan and loads them into the embedded engine.
     ///
@@ -94,6 +108,17 @@ impl Executor {
         self.plan.evaluate(x, &results)
     }
 
+    /// The definition of the fit of the problem, [`Plan::definition`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Plan::definition`].
+    pub fn definition(&self, start: &[f64]) -> Result<Definition, PetabError> {
+        self.plan.definition(start)
+    }
+}
+
+impl Plan {
     /// The definition of the fit of the problem in `sbmlsim-fit`, starting at the values of
     /// the estimated parameters `start`, see [`Executor::problem`].
     ///
@@ -106,7 +131,7 @@ impl Executor {
     /// `log-laplace(3, 5)` of the cases 0024 and 0025 of the test suite).
     #[allow(clippy::too_many_lines)]
     pub fn definition(&self, start: &[f64]) -> Result<Definition, PetabError> {
-        let plan = &self.plan;
+        let plan = self;
         let estimated = plan.estimated();
         let values = plan.values(start);
         let position: HashMap<usize, usize> = estimated
@@ -336,7 +361,10 @@ impl Executor {
             prior_correlation: None,
         })
     }
+}
 
+#[cfg(feature = "native")]
+impl Executor {
     /// The problem of `sbmlsim-fit` of the problem, whose optimizers fit its estimated
     /// parameters, starting at their nominal values.
     ///
@@ -356,7 +384,7 @@ impl Executor {
     /// estimated parameter without a nominal value, where the fit starts, or a logarithmic
     /// scale of the extension of a parameter whose lower bound is negative.
     pub fn problem(&self, threads: usize) -> Result<Problem, PetabError> {
-        self.problem_of(self.definition(&self.plan.nominal())?, threads)
+        self.problem_of(self.plan.definition(&self.plan.nominal())?, threads)
     }
 
     /// The problem of `sbmlsim-fit` of a definition of [`Executor::definition`] which a caller
@@ -381,6 +409,17 @@ impl Executor {
             .map_err(|err| PetabError::Engine(err.to_string()))
     }
 
+    /// The offset of the cost of [`Executor::problem`], [`Plan::cost_offset`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Plan::definition`].
+    pub fn cost_offset(&self) -> Result<f64, PetabError> {
+        self.plan.cost_offset()
+    }
+}
+
+impl Plan {
     /// What the cost of [`Executor::problem`] carries on top of the negative log posterior:
     /// the offsets of the rows of the scale of every measurement and of every prior, and the
     /// log density of the uniform priors PEtab gives a parameter without one when another
@@ -393,9 +432,9 @@ impl Executor {
     ///
     /// # Errors
     ///
-    /// As [`Executor::definition`].
+    /// As [`Plan::definition`].
     pub fn cost_offset(&self) -> Result<f64, PetabError> {
-        let definition = self.definition(&self.plan.nominal())?;
+        let definition = self.definition(&self.nominal())?;
         let mut offset = 0.0;
         for curve in &definition.curves {
             let log = curve.likelihood.as_ref().is_some_and(|l| {
@@ -410,13 +449,13 @@ impl Executor {
         for prior in &definition.priors {
             offset += 0.5 * prior.offset;
         }
-        let estimated = self.plan.estimated();
+        let estimated = self.estimated();
         if estimated
             .iter()
-            .any(|&k| self.plan.parameters[k].prior.is_some())
+            .any(|&k| self.parameters[k].prior.is_some())
         {
             for &k in &estimated {
-                let parameter = &self.plan.parameters[k];
+                let parameter = &self.parameters[k];
                 if parameter.prior.is_none() && (parameter.upper - parameter.lower).is_finite() {
                     // the cost lacks the negative log density of the uniform prior
                     offset -= (parameter.upper - parameter.lower).ln();
@@ -425,7 +464,10 @@ impl Executor {
         }
         Ok(offset)
     }
+}
 
+#[cfg(feature = "native")]
+impl Executor {
     /// Fits the estimated parameters with an optimizer of `sbmlsim-fit` from their nominal
     /// values.
     ///
@@ -434,7 +476,7 @@ impl Executor {
     /// As [`Executor::problem`], and a failure of the optimizer.
     pub fn fit(&self, settings: &Settings, threads: usize) -> Result<FitAnswer, PetabError> {
         let problem = self.problem(threads)?;
-        let offset = self.cost_offset()?;
+        let offset = self.plan.cost_offset()?;
         let fit = problem
             .optimize(settings)
             .map_err(|err| PetabError::Engine(err.to_string()))?;

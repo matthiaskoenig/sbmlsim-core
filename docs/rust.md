@@ -142,8 +142,8 @@ The pool is the one the [Python](python.md) bindings run `simulate_many` and `ba
 | `sbmlsim-c` | the C target: the model as native code for the engine, compiled with the C compiler of the machine; and the QFunction target: the model with a Rosenbrock integrator as a libCEED QFunction |
 | `sbmlsim-host` | the wasmtime host: `Runtime`, `LoadedModel`, `Instance` |
 | `sbmlsim-batch` | the pool of a batch of simulations: a thread per point, an instance per thread |
-| `sbmlsim-fit` | the fit of a model on the batch, the contract `fit/1`: its objective, the optimizers of basin, the profiles and the Fisher information |
-| `sbmlsim-petab` | PEtab v2 (since 0.38.0): the reader of a problem, its plan of simulations of the engine, its likelihood, and its execution and fit (feature `native`); the reader, the plan and the likelihood build for `wasm32-unknown-unknown`, see [PEtab](petab.md) |
+| `sbmlsim-fit` | the fit of a model on the batch, the contract `fit/1`: its objective, the optimizers of basin, the profiles and the Fisher information (feature `native`, the default); without it the objective of the tables of a host and the optimizers driven ask/tell, which build for `wasm32-unknown-unknown`, see [Fitting](fitting.md#a-fit-whose-host-simulates) |
+| `sbmlsim-petab` | PEtab v2 (since 0.38.0): the reader of a problem, its plan of simulations of the engine, its likelihood, and its execution and fit (feature `native`); the reader, the plan, the likelihood and the definition of the fit build for `wasm32-unknown-unknown`, see [PEtab](petab.md) |
 | `sbmlsim-chaos` | the basis of a polynomial chaos expansion: its multi-indices, its design matrix and its surrogate |
 | `sbmlsim-thin` | the thinning of a line of a figure to the points which can be seen, Ramer-Douglas-Peucker, the core of `sbmlsim_core.chart.thinning` |
 | `sbmlsim-csolvers` | CVODE and SuiteSparse, built from source for the engine and for the native host |

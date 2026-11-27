@@ -12,9 +12,9 @@ description = "PEtab v2 in sbmlsim-core: the reader of a problem, its plan of si
 [features]
 default = ["native"]
 # the execution of a problem on the engine of `sbmlsim-host` and its fit with the optimizers of
-# `sbmlsim-fit`; without it the crate builds for `wasm32-unknown-unknown`, where a host of
-# JavaScript simulates the requests of the plan
-native = ["dep:sbmlsim-host", "dep:sbmlsim-fit", "dep:rayon"]
+# `sbmlsim-fit` on the batch; without it the crate builds for `wasm32-unknown-unknown`, where a
+# host of JavaScript simulates the requests of the plan and of its fit (`sbmlsim_fit::Asking`)
+native = ["dep:sbmlsim-host", "sbmlsim-fit/native", "dep:rayon"]
 
 [dependencies]
 sbmlsim-abi = { path = "../abi" }
@@ -32,7 +32,9 @@ serde_json.workspace = true
 serde_norway = "0.9"
 thiserror.workspace = true
 rayon = { version = "1.10", optional = true }
-sbmlsim-fit = { path = "../fit", optional = true }
+# the definition of the fit of a plan, whose optimizers a host drives ask/tell without the
+# feature `native`
+sbmlsim-fit = { path = "../fit", default-features = false }
 sbmlsim-host = { path = "../host", features = ["native"], optional = true }
 
 [dev-dependencies]

@@ -1,0 +1,13 @@
+[package]
+# the clock of basin, without JavaScript: see `src/lib.rs`
+name = "web-time"
+# the version of web-time which basin asks for, which `[patch.crates-io]` of the workspace
+# replaces with this crate
+version = "1.1.0"
+edition.workspace = true
+publish = false
+license.workspace = true
+authors.workspace = true
+description = "The time of the standard library under the name of web-time, which basin reads its clock from"
+
+[dependencies]

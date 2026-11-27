@@ -7,12 +7,13 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(feature = "native")]
 use std::time::{Duration, Instant};
 
+#[cfg(feature = "native")]
 use basin::{
-    ApplicationStop, BoundedLevenbergMarquardt, BoxBounds, ConstraintDescription, ConstraintSet,
-    ConstraintSolveError, Constraints, CostFunction, De, DenseMatrix, Executor, Jacobian,
-    PopulationProgress, Residual, TrustRegionReflective,
+    ApplicationStop, BoxBounds, ConstraintDescription, ConstraintSet, ConstraintSolveError,
+    Constraints, CostFunction, DenseMatrix, Executor, Jacobian, PopulationProgress, Residual,
 };
 
 use serde::{Deserialize, Serialize};
@@ -35,7 +36,7 @@ use crate::problem::{FitError, Problem};
 /// of zero takes, which is one: the radius is the one of the space the bounds scale, where
 /// one is about half of the box, whatever the parameters measure. A bound which is not finite
 /// spans nothing a start can be measured against, so the box is the one of the finite bounds.
-fn radius(start: &[f64], lower: &[f64], upper: &[f64]) -> Option<f64> {
+pub(crate) fn radius(start: &[f64], lower: &[f64], upper: &[f64]) -> Option<f64> {
     let norm = start.iter().map(|value| value * value).sum::<f64>().sqrt();
     let span = lower
         .iter()
@@ -43,6 +44,89 @@ fn radius(start: &[f64], lower: &[f64], upper: &[f64]) -> Option<f64> {
         .filter(|bound| bound.is_finite())
         .fold(1.0_f64, |most, bound| most.max(bound.abs()));
     (norm <= 1e-6 * span).then_some(1.0)
+}
+
+/// The trust region reflective of the settings, which starts at `$start` in the box of
+/// `$lower` and `$upper`: the optimizer of [`Algorithm::TrustRegion`], of the batch and of a
+/// host which is asked for its evaluations ([`crate::Asking`]) alike.
+macro_rules! trust_region {
+    ($settings:expr, $start:expr, $lower:expr, $upper:expr) => {{
+        let settings: &$crate::Settings = $settings;
+        let mut solver = basin::TrustRegionReflective::new()
+            .with_initial_radius($crate::optimize::radius($start, $lower, $upper));
+        if let Some(tolerance) = settings.gradient_tolerance {
+            solver = solver.with_absolute_scaled_gradient_tolerance(tolerance);
+        }
+        // the step and the cost are disabled by `None`, which is the default of the
+        // optimizer, while `None` for the gradient would disable its own default
+        solver
+            .with_relative_step_tolerance::<Vec<f64>, f64>(settings.step_tolerance)
+            .with_relative_cost_change_tolerance(settings.cost_tolerance)
+    }};
+}
+pub(crate) use trust_region;
+
+/// The bounded Levenberg-Marquardt of the settings, the optimizer of
+/// [`Algorithm::LevenbergMarquardt`].
+macro_rules! levenberg_marquardt {
+    ($settings:expr) => {{
+        let settings: &$crate::Settings = $settings;
+        let mut solver = basin::BoundedLevenbergMarquardt::new();
+        if let Some(tolerance) = settings.gradient_tolerance {
+            solver = solver.with_absolute_scaled_gradient_tolerance(tolerance);
+        }
+        solver
+            .with_relative_step_tolerance::<Vec<f64>, f64>(settings.step_tolerance)
+            .with_relative_cost_change_tolerance(settings.cost_tolerance)
+    }};
+}
+pub(crate) use levenberg_marquardt;
+
+/// The differential evolution of the settings of an evolution, the optimizer of
+/// [`Algorithm::DifferentialEvolution`], over a problem.
+///
+/// # Errors
+///
+/// A population of fewer than four members, and a parameter of a bound which is not finite.
+pub(crate) fn evolution(
+    evolution: &Evolution,
+    problem: &Problem,
+) -> Result<basin::De<f64>, FitError> {
+    if let Some(population) = evolution.population
+        && population < 4
+    {
+        return Err(FitError::Optimizer(format!(
+            "needs a population of four members or more, not {population}"
+        )));
+    }
+    // the population is drawn in the box of the search space, which a bound that is not
+    // finite there leaves without a size
+    let (lower, upper) = problem.bounds();
+    if let Some((parameter, (low, high))) = problem
+        .parameters()
+        .iter()
+        .zip(lower.iter().zip(&upper))
+        .find(|(_, (low, high))| !low.is_finite() || !high.is_finite())
+    {
+        return Err(FitError::Parameter {
+            id: parameter.id.clone(),
+            message: format!(
+                "is searched between {low} and {high}, and a differential evolution draws its \
+                 population in a box whose bounds are finite"
+            ),
+        });
+    }
+    let mut solver = basin::De::<f64>::new(evolution.seed);
+    if let Some(population) = evolution.population {
+        solver = solver.with_pop_size(population);
+    }
+    if let Some(f) = evolution.f {
+        solver = solver.with_f(f);
+    }
+    if let Some(cr) = evolution.cr {
+        solver = solver.with_cr(cr);
+    }
+    Ok(solver)
 }
 
 /// A flag which stops a fit at its next iteration.
@@ -195,12 +279,14 @@ pub struct Fit {
 /// The residuals and their jacobian are the ones of the problem, so an evaluation of the
 /// optimizer is one batch of the engine and the jacobian of a step is one batch of
 /// `(parameters + 1) * conditions` points.
+#[cfg(feature = "native")]
 struct LeastSquares<'a> {
     problem: &'a Problem,
     lower: Vec<f64>,
     upper: Vec<f64>,
 }
 
+#[cfg(feature = "native")]
 impl Residual for LeastSquares<'_> {
     type Param = Vec<f64>;
     type Output = Vec<f64>;
@@ -211,6 +297,7 @@ impl Residual for LeastSquares<'_> {
     }
 }
 
+#[cfg(feature = "native")]
 impl Jacobian for LeastSquares<'_> {
     type Jacobian = DenseMatrix;
 
@@ -224,6 +311,7 @@ impl Jacobian for LeastSquares<'_> {
     }
 }
 
+#[cfg(feature = "native")]
 impl CostFunction for LeastSquares<'_> {
     type Param = Vec<f64>;
     type Output = f64;
@@ -234,6 +322,7 @@ impl CostFunction for LeastSquares<'_> {
     }
 }
 
+#[cfg(feature = "native")]
 impl Constraints for LeastSquares<'_> {
     type Set = ConstraintSet<BoxBounds<Vec<f64>>>;
 
@@ -243,6 +332,7 @@ impl Constraints for LeastSquares<'_> {
 }
 
 /// The error of the optimizer, which carries the one of an evaluation.
+#[cfg(feature = "native")]
 fn fault(error: ConstraintSolveError<FitError>) -> FitError {
     match error {
         ConstraintSolveError::Evaluation(error) => error,
@@ -257,6 +347,7 @@ fn fault(error: ConstraintSolveError<FitError>) -> FitError {
 ///
 /// The point is the start of the parameters of the problem for a fit, the best member of a
 /// population for the polish of an evolution and the optimum of a fit for a step of a profile.
+#[cfg(feature = "native")]
 pub(crate) fn run(
     problem: &Problem,
     settings: &Settings,
@@ -303,16 +394,7 @@ pub(crate) fn run(
     }
     let (mut x, mut iterations, mut counts, mut status) = match settings.algorithm {
         Algorithm::TrustRegion => {
-            let mut solver =
-                TrustRegionReflective::new().with_initial_radius(radius(&start, &lower, &upper));
-            if let Some(tolerance) = settings.gradient_tolerance {
-                solver = solver.with_absolute_scaled_gradient_tolerance(tolerance);
-            }
-            // the step and the cost are disabled by `None`, which is the default of the
-            // optimizer, while `None` for the gradient would disable its own default
-            let solver = solver
-                .with_relative_step_tolerance::<Vec<f64>, f64>(settings.step_tolerance)
-                .with_relative_cost_change_tolerance(settings.cost_tolerance);
+            let solver = trust_region!(settings, &start, &lower, &upper);
             let result = drive!(solver);
             (
                 result.param().clone(),
@@ -322,13 +404,7 @@ pub(crate) fn run(
             )
         }
         Algorithm::LevenbergMarquardt => {
-            let mut solver = BoundedLevenbergMarquardt::new();
-            if let Some(tolerance) = settings.gradient_tolerance {
-                solver = solver.with_absolute_scaled_gradient_tolerance(tolerance);
-            }
-            let solver = solver
-                .with_relative_step_tolerance::<Vec<f64>, f64>(settings.step_tolerance)
-                .with_relative_cost_change_tolerance(settings.cost_tolerance);
+            let solver = levenberg_marquardt!(settings);
             let result = drive!(solver);
             (
                 result.param().clone(),
@@ -338,39 +414,7 @@ pub(crate) fn run(
             )
         }
         Algorithm::DifferentialEvolution(evolution) => {
-            if let Some(population) = evolution.population
-                && population < 4
-            {
-                return Err(FitError::Optimizer(format!(
-                    "needs a population of four members or more, not {population}"
-                )));
-            }
-            // the population is drawn in the box of the search space, which a bound that is
-            // not finite there leaves without a size
-            if let Some((parameter, (low, high))) = problem
-                .parameters()
-                .iter()
-                .zip(lower.iter().zip(&upper))
-                .find(|(_, (low, high))| !low.is_finite() || !high.is_finite())
-            {
-                return Err(FitError::Parameter {
-                    id: parameter.id.clone(),
-                    message: format!(
-                        "is searched between {low} and {high}, and a differential evolution \
-                         draws its population in a box whose bounds are finite"
-                    ),
-                });
-            }
-            let mut solver = De::<f64>::new(evolution.seed);
-            if let Some(population) = evolution.population {
-                solver = solver.with_pop_size(population);
-            }
-            if let Some(f) = evolution.f {
-                solver = solver.with_f(f);
-            }
-            if let Some(cr) = evolution.cr {
-                solver = solver.with_cr(cr);
-            }
+            let solver = self::evolution(&evolution, problem)?;
             // the generation of the population spreads over the threads of the engine, and
             // every member of it fans its own conditions out on them; the executor of the
             // run is built on a thread of the pool, as what it holds does not cross threads

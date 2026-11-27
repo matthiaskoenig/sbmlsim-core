@@ -18,8 +18,13 @@ crate-type = ["cdylib", "rlib"]
 # `petab_evaluate` and `petab_close`), which `js/petab.mjs` drives: on by default, so the
 # `compiler.wasm` of the npm package, of the python package and of the command line carries
 # them (about 340 kB of 3.41 MB, 112 kB gzipped); `--no-default-features` is the compiler alone
-default = ["petab"]
+default = ["petab", "fit"]
 petab = ["dep:sbmlsim-petab"]
+# the fit of a PEtab problem in a page (`petab_fit_open`, `petab_fit_ask`, `petab_fit_tell`,
+# `petab_fit_stop` and `petab_fit_close`): the optimizers of `sbmlsim-fit` driven ask/tell by
+# `js/petab.mjs`, on by default (409 kB on top of the 3.42 MB of the compiler with PEtab,
+# 143 kB gzipped); `--no-default-features --features petab` evaluates a problem and fits none
+fit = ["petab", "dep:sbmlsim-fit"]
 
 [dependencies]
 sbmlsim-ode = { path = "../ode" }
@@ -28,6 +33,8 @@ sbmlsim-abi = { path = "../abi" }
 sbmlsim-compiler = { path = "../compiler" }
 serde_json.workspace = true
 sbmlsim-petab = { path = "../petab", default-features = false, optional = true }
+# the optimizers of a fit of a problem, driven ask/tell by the page (`petab_fit_*`)
+sbmlsim-fit = { path = "../fit", default-features = false, optional = true }
 
 [dev-dependencies]
 serde_json.workspace = true

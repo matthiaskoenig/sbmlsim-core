@@ -438,10 +438,12 @@ fn petab(
             .estimated()
             .into_iter()
             .zip(&answer.x)
-            .map(|(k, value)| format!("{} = {value:.6}", executor.plan().parameters[k].id))
+            .map(|(k, value)| format!("{} = {value:e}", executor.plan().parameters[k].id))
             .collect();
+        // every number at full precision (the shortest text which reads back as its double),
+        // which a page compares its fit with bit for bit
         println!(
-            "{} after {} evaluations in {:.3} s, objective {:.10e} ({})",
+            "{} after {} evaluations in {:.3} s, objective {:e} ({})",
             names.join(", "),
             answer.fit.evaluations,
             answer.fit.seconds,

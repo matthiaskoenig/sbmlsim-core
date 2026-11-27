@@ -25,6 +25,7 @@ members = [
     "crates/plot-wasm",
     "crates/python",
     "crates/wasm",
+    "crates/web-time",
 ]
 
 [workspace.package]
@@ -51,3 +52,8 @@ lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
+
+# the clock of basin is web-time, which is wasm-bindgen in wasm32-unknown-unknown: the time of
+# the standard library under its name instead, see `crates/web-time`
+[patch.crates-io]
+web-time = { path = "crates/web-time" }
