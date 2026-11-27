@@ -17,7 +17,7 @@ crate-type = ["cdylib", "rlib"]
 # the PEtab v2 problems of `sbmlsim-petab` (`petab_open`, `petab_model`, `petab_requests`,
 # `petab_evaluate` and `petab_close`), which `js/petab.mjs` drives: on by default, so the
 # `compiler.wasm` of the npm package, of the python package and of the command line carries
-# them (about 340 kB of 3.41 MB, 110 kB gzipped); `--no-default-features` is the compiler alone
+# them (about 340 kB of 3.41 MB, 112 kB gzipped); `--no-default-features` is the compiler alone
 default = ["petab"]
 petab = ["dep:sbmlsim-petab"]
 
