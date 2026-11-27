@@ -2,6 +2,19 @@
 use sbmlsim_ode::{RenderOptions, export};
 
 #[test]
+fn repeated_reserved_symbols_do_not_change_collision_resolution() {
+    let names = sbmlsim_ode::code::names(
+        ["class", "class_", "class__", "class", "class_"],
+        sbmlsim_ode::code::Target::Python,
+    )
+    .unwrap();
+    assert_eq!(names.len(), 3);
+    assert_eq!(names["class"], "class___");
+    assert_eq!(names["class_"], "class_");
+    assert_eq!(names["class__"], "class__");
+}
+
+#[test]
 fn standalone_code_targets_preserve_complete_exports() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/ode");
     let mut failures = vec![];
