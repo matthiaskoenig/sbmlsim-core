@@ -73,12 +73,20 @@ pub(crate) enum Stmt<'e> {
     Constant(Symbol, f64),
     /// `out[k] = x` for the `i32` vector in the local `ptr`.
     I32At { ptr: u32, k: u32, x: u32 },
-    /// `if fixed[k] == 0 { body }`: a scope of its own, whose lets are not read outside.
-    Unfixed {
-        fixed: u32,
-        k: u32,
-        body: Vec<Stmt<'e>>,
-    },
+    /// `if guard { body }`: a scope of its own, whose lets are not read outside.
+    Block { guard: Guard, body: Vec<Stmt<'e>> },
+}
+
+/// The condition of a [`Stmt::Block`].
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Guard {
+    /// `fixed[k] == 0`, `fixed` the pointer to bytes in the local `fixed` (`model_init`).
+    Unfixed { fixed: u32, k: u32 },
+    /// The value of the symbol in the memory is NaN (the initialization of a batched kernel,
+    /// which takes a parameter which is NaN as not given).
+    Unset(Symbol),
+    /// Always.
+    Always,
 }
 
 impl<'e> Stmt<'e> {
@@ -99,7 +107,7 @@ impl<'e> Stmt<'e> {
             | Stmt::Masked { expr: e, .. }
             | Stmt::Store(_, e) => e.visit_symbols(&mut |s| f(s)),
             Stmt::Constant(..) | Stmt::I32At { .. } => {}
-            Stmt::Unfixed { body, .. } => body.iter().for_each(|s| s.visit_symbols(f)),
+            Stmt::Block { body, .. } => body.iter().for_each(|s| s.visit_symbols(f)),
         }
     }
 
@@ -121,8 +129,12 @@ impl<'e> Stmt<'e> {
             Stmt::Store(target, e) => f.store(*target, e),
             Stmt::Constant(target, x) => f.store_constant(*target, *x),
             Stmt::I32At { ptr, k, x } => f.store_i32_at(*ptr, *k, *x),
-            Stmt::Unfixed { fixed, k, body } => {
-                f.if_not_fixed(*fixed, *k);
+            Stmt::Block { guard, body } => {
+                match *guard {
+                    Guard::Unfixed { fixed, k } => f.if_not_fixed(fixed, k),
+                    Guard::Unset(target) => f.if_unset(target),
+                    Guard::Always => f.block(),
+                }
                 emit_in_place(f, body);
                 f.end();
             }
@@ -171,9 +183,12 @@ impl Tail {
     }
 }
 
-/// The signature of a function of `model/2`.
+/// The signature of a function of `model/2` (or of a function of a kernel).
 pub(crate) struct Signature<'a> {
-    pub export: &'static str,
+    /// The name of the function, its export where `exported`.
+    pub name: &'static str,
+    /// Whether the module exports the function.
+    pub exported: bool,
     pub params: &'a [ValType],
     pub results: &'a [ValType],
     pub ctx: Ctx,
@@ -316,7 +331,12 @@ impl ModuleBuilder {
         sig: &Signature<'_>,
         stmts: &[Stmt<'_>],
     ) -> Result<(), CompileError> {
-        let mut f = self.body(Some(sig.export), sig.params, sig.results, sig.ctx);
+        let mut f = self.body(
+            sig.exported.then_some(sig.name),
+            sig.params,
+            sig.results,
+            sig.ctx,
+        );
         emit_in_place(&mut f, stmts);
         if f.within_limits() {
             f.finish()?;
@@ -347,19 +367,24 @@ impl ModuleBuilder {
                 continue;
             }
             if chunk.statements == 0 {
-                return Err(chunk.f.above_the_limits(sig.export, "one statement: "));
+                return Err(chunk.f.above_the_limits(sig.name, "one statement: "));
             }
             chunk.f.rollback(mark);
             helpers.push(chunk.finish()?);
             chunk = Chunk::new(self, sig);
             chunk.statement(stmts, &live, j);
             if !chunk.f.within_limits() {
-                return Err(chunk.f.above_the_limits(sig.export, "one statement: "));
+                return Err(chunk.f.above_the_limits(sig.name, "one statement: "));
             }
             chunk.statements += 1;
         }
         helpers.push(chunk.finish()?);
-        let mut f = self.body(Some(sig.export), sig.params, sig.results, sig.ctx);
+        let mut f = self.body(
+            sig.exported.then_some(sig.name),
+            sig.params,
+            sig.results,
+            sig.ctx,
+        );
         for helper in helpers {
             f.call_helper(helper);
         }
@@ -378,7 +403,12 @@ impl ModuleBuilder {
         branches: &[Option<Branch<'_>>],
         tail: Tail,
     ) -> Result<(), CompileError> {
-        let mut f = self.body(Some(sig.export), sig.params, sig.results, sig.ctx);
+        let mut f = self.body(
+            sig.exported.then_some(sig.name),
+            sig.params,
+            sig.results,
+            sig.ctx,
+        );
         emit_indexed_in_place(&mut f, prefix, branches);
         emit_tail(&mut f, tail);
         if f.within_limits() {
@@ -439,7 +469,7 @@ impl ModuleBuilder {
                 continue;
             }
             if in_helper == 0 {
-                return Err(f.above_the_limits(sig.export, "one event: "));
+                return Err(f.above_the_limits(sig.name, "one event: "));
             }
             f.rollback(mark);
             emit_tail(&mut f, tail);
@@ -448,7 +478,7 @@ impl ModuleBuilder {
             f = self.body(None, sig.params, sig.results, sig.ctx);
             emit_branch(&mut f, k as u32, branch, &before);
             if !f.within_limits_with(tail.bytes()) {
-                return Err(f.above_the_limits(sig.export, "one event: "));
+                return Err(f.above_the_limits(sig.name, "one event: "));
             }
             in_helper = 1;
         }
@@ -456,7 +486,12 @@ impl ModuleBuilder {
         let helper = f.finish()?;
         helpers.push((helper, branches.len() as u32));
         // the dispatch: the helper of the first range which holds the index
-        let mut f = self.body(Some(sig.export), sig.params, sig.results, sig.ctx);
+        let mut f = self.body(
+            sig.exported.then_some(sig.name),
+            sig.params,
+            sig.results,
+            sig.ctx,
+        );
         for (helper, end) in helpers {
             f.if_index_below(end);
             f.call_helper(helper);

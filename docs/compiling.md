@@ -110,6 +110,25 @@ A composed model of the package `comp` is flattened by the reader (since 0.40.0)
 
 An `<apply>` whose only child is an `<apply>` is read as that child, as libSBML reads it (`Beer_MolBioSystems2014` of the PEtab benchmark collection has one); an `<apply>` whose operator is an `<apply>` with arguments, a function of higher order, which the MathML of SBML has not, is refused.
 
+## A batched kernel
+
+`--kernel` compiles the batched kernel of a model instead: the model of ordinary differential equations together with its integrator in one WebAssembly module (the contract `kernel/1`), for a caller which advances many instances of one model at once, the cells of a tissue in a page, say, where a call per cell and step into `engine.wasm` would cost more than the step itself:
+
+```bash
+sbmlsim-core compile model.xml --kernel -o kernel-dir   # kernel.wasm and kernel.json
+```
+
+The integrator is the one of the [QFunction target](rust.md#the-qfunction-target): RODAS4, its step control and its first step, with the dense LU decomposition of the Jacobian. The kernel imports the memory of its caller (`env.memory`) and the functions of mathlib it calls (`math.*`), as `model.wasm` does, and exports two functions, whose arguments are byte offsets into that memory (each a multiple of 8) of arrays of `f64` with the values of the points one point after the other:
+
+| export | what it does |
+|---|---|
+| `sbmlsim_kernel_init(n, parameters, state) -> i32` | initializes `n` points at the time 0: a parameter which is NaN is not given and gets its SBML value and its initial assignment (or the initial value of its assignment rule), every other one is fixed, as a pre-initialization value of a simulation is; the states get their SBML values and initial assignments. The parameters of an initialized engine give its states, and NaN but for the parameters a caller changes gives its parameters as well. |
+| `sbmlsim_kernel_advance(n, state, parameters, control, counts, context, scratch) -> i32` | step attempts of RODAS4 for every point which is neither done nor failed, until it is done or failed, at most `attempts` per call; gives the number of failed points |
+
+`control` holds `t`, `h`, `done` and `failed` per point, `counts` the accepted steps and the rejected step attempts (cumulative), `context` the five values `t1`, `rtol`, `atol`, `h_min` and `attempts` (the context of the QFunction) and `scratch` `scratch_per_point` values per point, the work of the integrator. Both functions give -1 and change nothing for invalid arguments: a negative `n`, a pointer which is not a multiple of 8, an array past the end of the memory, a context which is not finite or not positive or whose `attempts` is not a whole number of at least 1. The kernel has no data segment and no global and never grows the memory, so one kernel serves any number of points in a memory the caller sizes for them, and a point's steps depend on nothing but the point: one call for all points and one call per point give the same bits.
+
+`kernel.json` is the description: the contract (`version`), the ids of the states and the parameters of a point in their order (`state_ids`, `parameter_ids`), the values of the control and the counts of a point (4 and 2), `scratch_per_point`, and the description of the model (`model`, the one of the C target). The kernel refuses what the QFunction refuses, naming the feature: events, delays, algebraic rules, a model without states or without an analytic Jacobian. The math is that of `model.wasm` with mathlib, so a point agrees with the QFunction of the C target within the tolerances of the integration (on the cell model of `testdata/models` by the same steps, its states within about `1e-14` relatively), not bitwise, since the C library computes the math functions differently in the last bits. The kernel advances one point after the other (no SIMD yet).
+
 ## Preparing a model
 
 A model is compiled as it is. `scripts/prepare_model.py` (libsbml, run with uv) writes a flat model of L3V2 where one is wanted as a file, e.g. for the benchmark against roadrunner:
@@ -142,5 +161,7 @@ import { createCompiler } from "sbmlsim-core/compile";
 const compiler = await createCompiler({ compiler: compilerWasm });
 const { wasm, description } = compiler.compile(sbmlText);
 ```
+
+`compiler.compileKernel(sbmlText)` gives the [batched kernel](#a-batched-kernel) of the model, the bytes of `sbmlsim-core compile --kernel`, which `sbmlsim-core/kernel` instantiates ([JavaScript](javascript.md#the-batched-kernel)).
 
 A page compiles a model of any level and version this way and runs it with the engine, so a model which a reader brings needs no server. The module is `sbmlsim-core/runtime/compiler.wasm` of the npm package, `compiler.wasm` of `sbmlsim-core runtime -o DIR` and the key `compiler` of `sbmlsim_core.runtime_wasm()` of the python package. The [live simulation](javascript.md#a-live-simulation-in-this-page) of this documentation compiles its SBML with it.

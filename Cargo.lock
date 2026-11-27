@@ -2655,11 +2655,15 @@ name = "sbmlsim-codegen"
 version = "0.40.0"
 dependencies = [
  "sbmlsim-abi",
+ "sbmlsim-c",
+ "sbmlsim-engine",
  "sbmlsim-ir",
  "sbmlsim-mathlib",
  "sbmlsim-sbml",
+ "serde_json",
  "wasm-encoder 0.263.0",
  "wasmparser 0.263.0",
+ "wasmtime",
 ]
 
 [[package]]

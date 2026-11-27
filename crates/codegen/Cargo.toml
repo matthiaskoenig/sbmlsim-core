@@ -15,6 +15,13 @@ sbmlsim-ir = { path = "../ir" }
 wasm-encoder = { version = "0.263", default-features = false, features = ["std"] }
 
 [dev-dependencies]
+# the QFunction of the C target and the stepper of the engine, which the tests of the batched
+# kernel compare it with (a cycle of dev-dependencies only: sbmlsim-c depends on this crate)
+sbmlsim-c = { path = "../c" }
+sbmlsim-engine = { path = "../engine" }
 sbmlsim-mathlib = { path = "../mathlib" }
 sbmlsim-sbml = { path = "../sbml" }
+serde_json.workspace = true
 wasmparser = "0.263"
+# runs the batched kernel in the tests, with the functions of mathlib natively
+wasmtime = { version = "50.0.1", default-features = false, features = ["std", "runtime", "cranelift"] }

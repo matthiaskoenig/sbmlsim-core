@@ -1,14 +1,17 @@
-//! The compiler: SBML to `model.wasm` and its [`ModelDescription`].
+//! The compiler: SBML to `model.wasm` and its [`ModelDescription`], or to a batched kernel and
+//! its [`KernelDescription`].
 //!
 //! [`compile`] reads the SBML ([`sbmlsim_sbml::read`]), builds the model representation
 //! ([`sbmlsim_ir::build`]) and emits the module and its description
 //! ([`sbmlsim_codegen::emit_optimized`], [`sbmlsim_codegen::emit_with`] without the optimizer),
 //! so a refusal of the reader, of the builder or of the code generation surfaces with its own
-//! message.
+//! message. [`compile_kernel`] emits the batched kernel of the model instead (`kernel/1`,
+//! [`sbmlsim_codegen::emit_kernel`]): the model with its RODAS4 integrator in one module, which
+//! advances many points per call.
 //!
 //! The crate does no file system or OS access, so it builds for `wasm32-unknown-unknown`.
 
-use sbmlsim_abi::{JacobianChoice, ModelDescription};
+use sbmlsim_abi::{JacobianChoice, KernelDescription, ModelDescription};
 use sbmlsim_sbml::ReadError;
 
 pub use sbmlsim_codegen::{COMPILER, Limits, is_above_the_limits};
@@ -96,6 +99,27 @@ pub fn compile_with_limits(
         limits,
     )?;
     Ok(CompiledModel { wasm, description })
+}
+
+/// A compiled batched kernel (`kernel/1`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct CompiledKernel {
+    /// The module `kernel.wasm`.
+    pub wasm: Vec<u8>,
+    /// The description of the kernel, `kernel.json`.
+    pub description: KernelDescription,
+}
+
+/// Compiles the text of an SBML Level 3 Version 2 document into a batched kernel: the model with
+/// its RODAS4 integrator in one module (`kernel/1`, see `sbmlsim_abi`). Refuses what the code
+/// generation of the kernel refuses ([`sbmlsim_codegen::emit_kernel`]: events, delays,
+/// algebraic rules, a model without states or without an analytic Jacobian) besides what
+/// [`compile`] refuses.
+pub fn compile_kernel(sbml: &str) -> Result<CompiledKernel, CompileError> {
+    let doc = sbmlsim_sbml::read(sbml).map_err(from_read_error)?;
+    let model = sbmlsim_ir::build(&doc)?;
+    let (wasm, description) = sbmlsim_codegen::emit_kernel(&model)?;
+    Ok(CompiledKernel { wasm, description })
 }
 
 /// A failure of the reader as a failure of the compiler.
@@ -203,6 +227,31 @@ mod tests {
             assert_eq!(c.description, d.description);
             assert_ne!(a.wasm, c.wasm, "split");
         }
+    }
+
+    #[test]
+    fn a_kernel_compiles_twice_to_the_same_bytes() {
+        let math = r#"xmlns="http://www.w3.org/1998/Math/MathML""#;
+        let decay = DECAY.replace(
+            "</model>",
+            &format!(
+                r#"<listOfRules><rateRule variable="y"><math {math}><apply><times/><apply><minus/><ci>k</ci></apply><ci>y</ci></apply></math></rateRule></listOfRules></model>"#
+            ),
+        )
+        .replace(
+            "</listOfParameters>",
+            r#"<parameter id="y" value="1" constant="false"/></listOfParameters>"#,
+        );
+        let a = compile_kernel(&decay).unwrap();
+        let b = compile_kernel(&decay).unwrap();
+        assert_eq!(a, b);
+        assert!(a.wasm.starts_with(b"\0asm"));
+        assert_eq!(a.description.version, sbmlsim_abi::KERNEL_CONTRACT);
+        assert_eq!(a.description.state_ids, ["y"]);
+        assert_eq!(a.description.parameter_ids, ["k"]);
+        // a model without states is refused with its feature
+        let error = compile_kernel(DECAY).unwrap_err();
+        assert!(error.to_string().contains("without states"), "{error}");
     }
 
     #[test]

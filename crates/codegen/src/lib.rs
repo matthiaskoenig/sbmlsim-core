@@ -56,6 +56,7 @@
 //!
 //! The crate does no file system or OS access, so it builds for `wasm32-unknown-unknown`.
 
+mod kernel;
 mod math;
 mod probes;
 mod split;
@@ -72,7 +73,8 @@ use sbmlsim_ir::optimize::{self, Plan, Program, Statement};
 use sbmlsim_ir::{CompileError, EntityKind, Event, Expr, Model, Op, SpeciesValue, Symbol};
 use wasm_encoder::ValType::{F64, I32};
 
-use split::{Branch, End, Signature, Stmt, Tail};
+pub use kernel::emit_kernel;
+use split::{Branch, End, Guard, Signature, Stmt, Tail};
 use wasm::{Ctx, ModuleBuilder};
 pub use wasm::{Limits, MAX_FUNCTION_BYTES, MAX_LOCALS, is_above_the_limits};
 
@@ -355,7 +357,8 @@ fn sig<'a>(
     ctx: Ctx,
 ) -> Signature<'a> {
     Signature {
-        export,
+        name: export,
+        exported: true,
         params,
         results,
         ctx,
@@ -480,9 +483,11 @@ fn module(
     let init: Vec<Stmt<'_>> = model
         .initial
         .iter()
-        .map(|a| Stmt::Unfixed {
-            fixed: 3,
-            k: fixed_index(model, a.target),
+        .map(|a| Stmt::Block {
+            guard: Guard::Unfixed {
+                fixed: 3,
+                k: fixed_index(model, a.target),
+            },
             body: vec![Stmt::Store(a.target, &a.expr)],
         })
         .collect();
@@ -795,9 +800,11 @@ fn optimized_module(
         .initial
         .iter()
         .zip(&plan.init)
-        .map(|(a, program)| Stmt::Unfixed {
-            fixed: 3,
-            k: fixed_index(model, a.target),
+        .map(|(a, program)| Stmt::Block {
+            guard: Guard::Unfixed {
+                fixed: 3,
+                k: fixed_index(model, a.target),
+            },
             body: program_stmts(program, |_, e| Stmt::Store(a.target, e)),
         })
         .chain(constants.iter().cloned())

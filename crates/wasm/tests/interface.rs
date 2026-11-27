@@ -6,7 +6,7 @@
 
 use std::slice;
 
-use sbmlsim_wasm::{allocate, compile, compile_with_options, deallocate};
+use sbmlsim_wasm::{allocate, compile, compile_kernel, compile_with_options, deallocate};
 
 /// A model with one species a reaction changes, which compiles.
 const MODEL: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -64,17 +64,29 @@ fn through_the_interface_with_options(
     sbml: &str,
     parameter_jacobian: bool,
 ) -> (u32, String, Vec<u8>) {
+    // SAFETY: the buffers are the ones of the interface
+    through(sbml, |input, len, words| unsafe {
+        if parameter_jacobian {
+            compile(input, len, 1, 0, words)
+        } else {
+            compile_with_options(input, len, 1, 0, 0, words)
+        }
+    })
+}
+
+/// A document through a function of the interface (`call(input, len, words)`), which writes
+/// its result to four words: the status, the description (or the message) and the module.
+fn through(
+    sbml: &str,
+    call: impl Fn(*const u8, usize, *mut usize) -> u32,
+) -> (u32, String, Vec<u8>) {
     let bytes = sbml.as_bytes();
     // SAFETY: the buffers are the ones of the interface and are freed below
     unsafe {
         let input = allocate(bytes.len());
         std::ptr::copy_nonoverlapping(bytes.as_ptr(), input, bytes.len());
         let words = allocate(4 * size_of::<usize>()).cast::<usize>();
-        let status = if parameter_jacobian {
-            compile(input, bytes.len(), 1, 0, words)
-        } else {
-            compile_with_options(input, bytes.len(), 1, 0, 0, words)
-        };
+        let status = call(input, bytes.len(), words);
         let description = bytes_of(*words, *words.add(1));
         let wasm = bytes_of(*words.add(2), *words.add(3));
         deallocate(*words as *mut u8, *words.add(1));
@@ -125,4 +137,32 @@ fn parameter_derivatives_are_optional_in_the_extended_interface() {
     assert!(wasm.starts_with(b"\0asm"));
     let description: serde_json::Value = serde_json::from_str(&description).unwrap();
     assert!(description.get("jacobian_p").is_none());
+}
+
+#[test]
+fn a_kernel_gives_its_module_and_its_description() {
+    // SAFETY: the buffers are the ones of the interface
+    let kernel = |sbml| {
+        through(sbml, |input, len, words| unsafe {
+            compile_kernel(input, len, words)
+        })
+    };
+    let (status, description, wasm) = kernel(MODEL);
+    assert_eq!(status, 1, "{description}");
+    assert!(wasm.starts_with(b"\0asm"));
+    let value: serde_json::Value = serde_json::from_str(&description).unwrap();
+    assert_eq!(value["version"], "kernel/1");
+    assert_eq!(value["state_ids"], serde_json::json!(["s"]));
+    assert_eq!(value["model"]["id"], "decay");
+    let compiled = sbmlsim_wasm::compile_kernel_model(MODEL).unwrap();
+    assert_eq!((compiled.description, compiled.wasm), (description, wasm));
+    // a model with an event is refused with the message of the code generation
+    let event = MODEL.replace(
+        "</listOfReactions>",
+        r#"</listOfReactions><listOfEvents><event useValuesFromTriggerTime="true"><trigger initialValue="false" persistent="true"><math xmlns="http://www.w3.org/1998/Math/MathML"><true/></math></trigger></event></listOfEvents>"#,
+    );
+    let (status, message, wasm) = kernel(&event);
+    assert_eq!(status, 0);
+    assert!(wasm.is_empty());
+    assert!(message.contains("events"), "{message}");
 }

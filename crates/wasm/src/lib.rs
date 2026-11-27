@@ -6,7 +6,7 @@
 //! which hands the `model.wasm` and the description of a compilation to `js/loader.mjs`, the
 //! host which runs them.
 //!
-//! The interface is the C ABI of four functions, since the module needs no binding generator
+//! The interface is the C ABI of five functions, since the module needs no binding generator
 //! and no tool beyond cargo. Every string crosses the boundary as the bytes of its UTF-8 in
 //! the memory of the module:
 //!
@@ -20,7 +20,10 @@
 //!    one empty,
 //! 3. `compile_with_options(pointer, len, optimize, jacobian, parameter_jacobian, out)` has
 //!    the same result, with 0 to omit analytic parameter derivatives and 1 to include them,
-//! 4. `deallocate(pointer, len)` gives a buffer back, the results included: every buffer of
+//! 4. `compile_kernel(pointer, len, out)` compiles the document into a batched kernel (the
+//!    model with its RODAS4 integrator in one module, `kernel/1`) with the same result: the
+//!    description is the JSON of `kernel.json`, the module `kernel.wasm`,
+//! 5. `deallocate(pointer, len)` gives a buffer back, the results included: every buffer of
 //!    the interface is a slice of bytes of exactly its length, so one function frees them all.
 //!
 //! `optimize` is whether the optimizer of the compiler runs (1 or 0, the results are the same
@@ -95,6 +98,23 @@ pub fn compile_model_with_options(
     let compiled = sbmlsim_compiler::compile(sbml, &options).map_err(|err| err.to_string())?;
     let description = serde_json::to_string(&compiled.description)
         .map_err(|err| format!("the description of the model is not JSON: {err}"))?;
+    Ok(Compiled {
+        description,
+        wasm: compiled.wasm,
+    })
+}
+
+/// Compiles an SBML document into a batched kernel (`kernel/1`): the description is the JSON of
+/// `kernel.json`, the module `kernel.wasm`.
+///
+/// # Errors
+///
+/// Gives the message of the reader, of the builder or of the code generation for a document
+/// which is not compiled, e.g. a model with events.
+pub fn compile_kernel_model(sbml: &str) -> Result<Compiled, String> {
+    let compiled = sbmlsim_compiler::compile_kernel(sbml).map_err(|err| err.to_string())?;
+    let description = serde_json::to_string(&compiled.description)
+        .map_err(|err| format!("the description of the kernel is not JSON: {err}"))?;
     Ok(Compiled {
         description,
         wasm: compiled.wasm,
@@ -292,6 +312,39 @@ pub unsafe extern "C" fn compile_with_options(
         }
         Err(_) => Err("the document is not UTF-8".to_owned()),
     };
+    // SAFETY: the caller gives four words of its own memory
+    unsafe { deliver(result, out) }
+}
+
+/// Compiles the SBML document of the buffer into a batched kernel, `kernel.wasm` and its
+/// description (the JSON of `kernel.json`), with the result of [`compile`].
+///
+/// # Safety
+///
+/// The input and output buffers satisfy the same requirements as [`compile`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn compile_kernel(pointer: *const u8, len: usize, out: *mut usize) -> u32 {
+    let bytes = if pointer.is_null() || len == 0 {
+        &[][..]
+    } else {
+        // SAFETY: the caller gives a buffer of `allocate` of exactly this length
+        unsafe { std::slice::from_raw_parts(pointer, len) }
+    };
+    let result = match std::str::from_utf8(bytes) {
+        Ok(text) => compile_kernel_model(text),
+        Err(_) => Err("the document is not UTF-8".to_owned()),
+    };
+    // SAFETY: the caller gives four words of its own memory
+    unsafe { deliver(result, out) }
+}
+
+/// Writes a compilation to the four words at `out`: the description and the module and 1, or
+/// the message, an empty module and 0.
+///
+/// # Safety
+///
+/// `out` points at four words which the caller allocated.
+unsafe fn deliver(result: Result<Compiled, String>, out: *mut usize) -> u32 {
     match result {
         Ok(compiled) => {
             // SAFETY: the caller gives four words of its own memory

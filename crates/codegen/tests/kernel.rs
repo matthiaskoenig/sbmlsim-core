@@ -1,0 +1,739 @@
+//! The batched kernel `kernel/1` of `sbmlsim_codegen::emit_kernel`: a model with its RODAS4
+//! integrator in one WebAssembly module, run in wasmtime with the functions of mathlib (natively,
+//! the same bits as `mathlib.wasm`) against the QFunction of the C target (`sbmlsim_c`, the same
+//! method and step control, compiled with the C compiler of the machine) and the initialization
+//! of the engine.
+//!
+//! The cell model and the small models are the ones of the tests of the QFunction (`common`,
+//! shared by its path). The cases of `testdata/cases` skip with a note when the directory is
+//! absent.
+
+#[path = "../../c/tests/common/mod.rs"]
+mod common;
+
+use std::sync::Arc;
+
+use common::{
+    ALGEBRAIC_CASES, Case, EVENT_CASES, MATH, Random, blow_up, cases, cell_model, linear,
+    with_event,
+};
+use sbmlsim_abi::{IntegratorSettings, KERNEL_CONTRACT, KernelDescription, Tolerance};
+use sbmlsim_c::{
+    CModel, CONTROL, CONTROL_DONE, CONTROL_FAILED, CONTROL_T, COUNTS, Library, Points,
+    RosenbrockContext, generate, generate_qfunction, run_points,
+};
+use sbmlsim_codegen::emit_kernel;
+use sbmlsim_engine::Stepper;
+use sbmlsim_ir::{CompileError, Model};
+use wasmparser::{Operator, Parser, Payload, TypeRef};
+use wasmtime::{Engine, Linker, Memory, MemoryType, Module, Store, TypedFunc};
+
+/// The model representation of an SBML document.
+fn model(sbml: &str) -> Model {
+    sbmlsim_ir::build(&sbmlsim_sbml::read(sbml).unwrap()).unwrap()
+}
+
+/// The decay model of the tests of the hosts: `y' = -k y`, `y(0) = 1`, `k = 0.5`, and the
+/// assignment rule `t_half = ln(2) / k`.
+fn decay() -> String {
+    std::fs::read_to_string(common::testdata().join("../crates/host/tests/decay.xml")).unwrap()
+}
+
+/// The functions of mathlib of one argument, natively.
+fn math1(name: &str) -> Option<fn(f64) -> f64> {
+    use sbmlsim_mathlib::f;
+    Some(match name {
+        "math_exp" => f::math_exp,
+        "math_log" => f::math_log,
+        "math_log10" => f::math_log10,
+        "math_sqrt" => f::math_sqrt,
+        "math_sin" => f::math_sin,
+        "math_cos" => f::math_cos,
+        "math_tan" => f::math_tan,
+        "math_asin" => f::math_asin,
+        "math_acos" => f::math_acos,
+        "math_atan" => f::math_atan,
+        "math_sinh" => f::math_sinh,
+        "math_cosh" => f::math_cosh,
+        "math_tanh" => f::math_tanh,
+        "math_asinh" => f::math_asinh,
+        "math_acosh" => f::math_acosh,
+        "math_atanh" => f::math_atanh,
+        "math_floor" => f::math_floor,
+        "math_ceil" => f::math_ceil,
+        "math_factorial" => f::math_factorial,
+        _ => return None,
+    })
+}
+
+/// The functions of mathlib of two arguments, natively.
+fn math2(name: &str) -> Option<fn(f64, f64) -> f64> {
+    use sbmlsim_mathlib::f;
+    Some(match name {
+        "math_pow" => f::math_pow,
+        "math_fmod" => f::math_fmod,
+        _ => return None,
+    })
+}
+
+/// The size of a page of WebAssembly.
+const PAGE: usize = 65536;
+
+/// The points of a kernel in its memory: where each array starts.
+struct Layout {
+    state: usize,
+    parameters: usize,
+    control: usize,
+    counts: usize,
+    context: usize,
+    scratch: usize,
+    end: usize,
+}
+
+/// The arguments of `sbmlsim_kernel_advance`: `n`, then the pointers to the states, the
+/// parameters, the controls, the counts, the context and the scratch.
+type AdvanceArgs = (i32, i32, i32, i32, i32, i32, i32);
+
+/// A kernel instantiated in wasmtime with a memory of its caller.
+struct Kernel {
+    description: KernelDescription,
+    store: Store<()>,
+    memory: Memory,
+    init: TypedFunc<(i32, i32, i32), i32>,
+    advance: TypedFunc<AdvanceArgs, i32>,
+}
+
+impl Kernel {
+    /// The kernel of an SBML document.
+    fn new(sbml: &str) -> Kernel {
+        let (wasm, description) = emit_kernel(&model(sbml)).unwrap();
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm).unwrap();
+        let mut store = Store::new(&engine, ());
+        let memory = Memory::new(&mut store, MemoryType::new(1, None)).unwrap();
+        let mut linker = Linker::new(&engine);
+        linker.define(&store, "env", "memory", memory).unwrap();
+        for import in module.imports() {
+            if import.module() != "math" {
+                continue;
+            }
+            let name = import.name();
+            if let Some(g) = math1(name) {
+                linker.func_wrap("math", name, move |x: f64| g(x)).unwrap();
+            } else if let Some(g) = math2(name) {
+                linker
+                    .func_wrap("math", name, move |x: f64, y: f64| g(x, y))
+                    .unwrap();
+            } else {
+                panic!("the kernel imports math.{name}, which mathlib does not export");
+            }
+        }
+        let instance = linker.instantiate(&mut store, &module).unwrap();
+        let init = instance
+            .get_typed_func(&mut store, "sbmlsim_kernel_init")
+            .unwrap();
+        let advance = instance
+            .get_typed_func(&mut store, "sbmlsim_kernel_advance")
+            .unwrap();
+        Kernel {
+            description,
+            store,
+            memory,
+            init,
+            advance,
+        }
+    }
+
+    /// The numbers of states and parameters.
+    fn sizes(&self) -> (usize, usize) {
+        (
+            self.description.state_ids.len(),
+            self.description.parameter_ids.len(),
+        )
+    }
+
+    /// Grows the memory to `bytes` at least.
+    fn reserve(&mut self, bytes: usize) {
+        let have = self.memory.data_size(&self.store);
+        if bytes > have {
+            let pages = (bytes - have).div_ceil(PAGE);
+            self.memory.grow(&mut self.store, pages as u64).unwrap();
+        }
+    }
+
+    fn write(&mut self, at: usize, values: &[f64]) {
+        let data = self.memory.data_mut(&mut self.store);
+        for (k, x) in values.iter().enumerate() {
+            data[at + 8 * k..at + 8 * k + 8].copy_from_slice(&x.to_le_bytes());
+        }
+    }
+
+    fn read(&self, at: usize, values: &mut [f64]) {
+        let data = self.memory.data(&self.store);
+        for (k, x) in values.iter_mut().enumerate() {
+            *x = f64::from_le_bytes(data[at + 8 * k..at + 8 * k + 8].try_into().unwrap());
+        }
+    }
+
+    /// The layout of `n` points, from the byte 64 on.
+    fn layout(&self, n: usize) -> Layout {
+        let (ns, np) = self.sizes();
+        let mut at = 64;
+        let mut next = |len: usize| {
+            let start = at;
+            at += 8 * len;
+            start
+        };
+        let state = next(n * ns);
+        let parameters = next(n * np);
+        let control = next(n * CONTROL);
+        let counts = next(n * COUNTS);
+        let context = next(5);
+        let scratch = next(n * self.description.scratch_per_point as usize);
+        Layout {
+            state,
+            parameters,
+            control,
+            counts,
+            context,
+            scratch,
+            end: at,
+        }
+    }
+
+    /// `sbmlsim_kernel_init` of the parameters of every point (in and out): the states.
+    fn init(&mut self, parameters: &mut [f64]) -> Vec<f64> {
+        let (ns, np) = self.sizes();
+        let n = parameters.len() / np.max(1);
+        let (p, y) = (64, 64 + 8 * parameters.len());
+        self.reserve(y + 8 * n * ns);
+        self.write(p, parameters);
+        let status = self
+            .init
+            .call(&mut self.store, (n as i32, p as i32, y as i32))
+            .unwrap();
+        assert_eq!(status, 0);
+        self.read(p, parameters);
+        let mut states = vec![0.0; n * ns];
+        self.read(y, &mut states);
+        states
+    }
+
+    /// Calls `sbmlsim_kernel_advance` once per block `(first, count)` of the points, on the
+    /// arrays of the points written once into the memory, and reads them back; the results.
+    fn advance_blocks(
+        &mut self,
+        points: &mut Points,
+        context: &RosenbrockContext,
+        blocks: &[(usize, usize)],
+    ) -> Vec<i32> {
+        let (ns, np) = self.sizes();
+        let spp = self.description.scratch_per_point as usize;
+        let layout = self.layout(points.len());
+        self.reserve(layout.end);
+        self.write(layout.state, &points.state);
+        self.write(layout.parameters, &points.parameters);
+        self.write(layout.control, &points.control);
+        self.write(layout.counts, &points.counts);
+        let RosenbrockContext {
+            t1,
+            rtol,
+            atol,
+            h_min,
+            attempts,
+        } = *context;
+        self.write(layout.context, &[t1, rtol, atol, h_min, attempts]);
+        let results = blocks
+            .iter()
+            .map(|&(first, count)| {
+                let at = |start: usize, size: usize| (start + 8 * size * first) as i32;
+                self.advance
+                    .call(
+                        &mut self.store,
+                        (
+                            count as i32,
+                            at(layout.state, ns),
+                            at(layout.parameters, np),
+                            at(layout.control, CONTROL),
+                            at(layout.counts, COUNTS),
+                            layout.context as i32,
+                            at(layout.scratch, spp),
+                        ),
+                    )
+                    .unwrap()
+            })
+            .collect();
+        self.read(layout.state, &mut points.state);
+        self.read(layout.parameters, &mut points.parameters);
+        self.read(layout.control, &mut points.control);
+        self.read(layout.counts, &mut points.counts);
+        results
+    }
+
+    /// One call of all points; the number of failed points.
+    fn advance(&mut self, points: &mut Points, context: &RosenbrockContext) -> i32 {
+        let n = points.len();
+        self.advance_blocks(points, context, &[(0, n)])[0]
+    }
+
+    /// `sbmlsim_kernel_advance` with raw arguments (for the refusals).
+    fn advance_raw(&mut self, args: AdvanceArgs) -> i32 {
+        self.advance.call(&mut self.store, args).unwrap()
+    }
+}
+
+/// The points of states and parameters (point by point) at `t = 0` without a step.
+fn points(states: Vec<f64>, parameters: Vec<f64>, n: usize) -> Points {
+    Points {
+        state: states,
+        parameters,
+        control: vec![0.0; n * CONTROL],
+        counts: vec![0.0; n * COUNTS],
+    }
+}
+
+/// The context of the tests to `t1`, with as many attempts per call as a point takes.
+fn context(t1: f64) -> RosenbrockContext {
+    RosenbrockContext {
+        t1,
+        rtol: 1e-6,
+        atol: 1e-9,
+        h_min: 1e-10,
+        attempts: 1e6,
+    }
+}
+
+/// `count` seeded parameter sets of the cell model: its pattern, the protein and the position
+/// of the cell, and, with `substrate`, the concentration of the external substrate (a state),
+/// as pre-initialization values.
+fn cell_sets(count: usize, seed: u64, substrate: bool) -> Vec<Vec<(String, f64)>> {
+    let mut random = Random(seed);
+    (0..count)
+        .map(|_| {
+            let mut set = vec![
+                ("pattern".to_string(), 7.0),
+                ("protein_ext".to_string(), random.uniform()),
+                ("position".to_string(), random.uniform()),
+            ];
+            if substrate {
+                set.push(("[S_ext]".to_string(), random.between(0.0, 5.0)));
+            }
+            set
+        })
+        .collect()
+}
+
+/// A stepper of the cell model per parameter set (the initialization of the engine).
+fn cell_steppers(sets: &[Vec<(String, f64)>]) -> Vec<Stepper> {
+    let source = generate(&cell_model()).unwrap();
+    let library = Library::build(&source.code).unwrap();
+    let model = CModel::new(library, &source.description).unwrap();
+    let description = Arc::new(source.description);
+    let settings = IntegratorSettings {
+        relative_tolerance: 1e-12,
+        absolute_tolerance: Tolerance::Scalar(1e-14),
+        ..IntegratorSettings::default()
+    };
+    sets.iter()
+        .map(|set| {
+            Stepper::new(
+                Box::new(model.clone()),
+                description.clone(),
+                settings.clone(),
+                set,
+            )
+            .unwrap()
+        })
+        .collect()
+}
+
+/// The points of the initial states and parameters of the cell model of `sets`.
+fn cell_points(sets: &[Vec<(String, f64)>]) -> Points {
+    let steppers = cell_steppers(sets);
+    let states: Vec<f64> = steppers.iter().flat_map(|s| s.state().to_vec()).collect();
+    let parameters: Vec<f64> = steppers
+        .iter()
+        .flat_map(|s| s.parameters().to_vec())
+        .collect();
+    points(states, parameters, sets.len())
+}
+
+/// The bound of the states of the kernel against the QFunction, both at 1e-6 and 1e-9:
+/// `RELATIVE |y| + ABSOLUTE`.
+const RELATIVE: f64 = 4e-6;
+const ABSOLUTE: f64 = 4e-9;
+
+/// The kernel and the QFunction advance the same points over the same intervals: every point
+/// is done (or failed) in both, and its states are within the bound.
+fn compare(name: &str, sbml: &str, initial: &Points, intervals: &[f64]) {
+    let q = generate_qfunction(sbml).unwrap();
+    let library = Library::build(&q.host_code()).unwrap();
+    let mut kernel = Kernel::new(sbml);
+    assert_eq!(kernel.description.state_ids, q.state_ids, "{name}");
+    assert_eq!(kernel.description.parameter_ids, q.parameter_ids, "{name}");
+    let n = q.state_ids.len();
+    let mut reference = initial.clone();
+    let mut mine = initial.clone();
+    let mut worst: f64 = 0.0;
+    for window in intervals.windows(2) {
+        let (t0, t1) = (window[0], window[1]);
+        reference.start(t0);
+        mine.start(t0);
+        run_points(&library, &q, &context(t1), &mut reference, 8).unwrap();
+        let failed = kernel.advance(&mut mine, &context(t1));
+        assert!(mine.finished(), "{name} at {t1}");
+        let expected = reference
+            .control
+            .chunks(CONTROL)
+            .filter(|c| c[CONTROL_FAILED] != 0.0)
+            .count();
+        assert_eq!(failed as usize, expected, "{name} at {t1}");
+        for i in 0..mine.len() {
+            let (a, b) = (
+                &mine.control[i * CONTROL..(i + 1) * CONTROL],
+                &reference.control[i * CONTROL..(i + 1) * CONTROL],
+            );
+            assert_eq!(
+                a[CONTROL_DONE], b[CONTROL_DONE],
+                "{name}, point {i} at {t1}"
+            );
+            assert_eq!(a[CONTROL_FAILED], b[CONTROL_FAILED], "{name}, point {i}");
+            assert_eq!(a[CONTROL_T], b[CONTROL_T], "{name}, point {i} at {t1}");
+            let (ya, yb) = (
+                &mine.state[i * n..(i + 1) * n],
+                &reference.state[i * n..(i + 1) * n],
+            );
+            for (s, (a, b)) in ya.iter().zip(yb).enumerate() {
+                let bound = RELATIVE * b.abs() + ABSOLUTE;
+                worst = worst.max((a - b).abs() / bound);
+                assert!(
+                    (a - b).abs() <= bound,
+                    "{name}, point {i}, {} at {t1}: kernel {a}, QFunction {b}",
+                    q.state_ids[s]
+                );
+            }
+        }
+    }
+    // the points moved, by as many steps as the QFunction took (within a step per point)
+    let steps = |p: &Points| p.counts.chunks(COUNTS).map(|c| c[0]).sum::<f64>();
+    assert!(steps(&mine) >= mine.len() as f64, "{name}");
+    assert!(
+        (steps(&mine) - steps(&reference)).abs() <= mine.len() as f64,
+        "{name}"
+    );
+    assert_ne!(mine.state, initial.state, "{name}");
+    let differing = (mine.counts.iter().zip(&reference.counts))
+        .filter(|(a, b)| a != b)
+        .count();
+    eprintln!(
+        "{name}: the largest difference is {worst:.3e} of the bound, {} steps, {differing} counts \
+         of the QFunction's differ",
+        steps(&mine)
+    );
+}
+
+#[test]
+fn kernel_matches_qfunction() {
+    // the cell model, 200 seeded parameter sets, 24 intervals of 60 min
+    let intervals: Vec<f64> = (0..=24).map(|k| 60.0 * k as f64).collect();
+    compare(
+        "cell",
+        &cell_model(),
+        &cell_points(&cell_sets(200, 3, true)),
+        &intervals,
+    );
+    // x' = -x, y' = k (cos t - y), 200 seeded points, 4 intervals of 0.25
+    let quarter: Vec<f64> = (0..=4).map(|k| 0.25 * k as f64).collect();
+    let mut random = Random(5);
+    let mut states = Vec::new();
+    let mut parameters = Vec::new();
+    for _ in 0..200 {
+        states.extend([random.between(0.5, 2.0), random.between(0.0, 3.0)]);
+        parameters.push(random.between(0.2, 3.0));
+    }
+    compare(
+        "linear",
+        &linear(),
+        &points(states, parameters, 200),
+        &quarter,
+    );
+    // y' = a y^2, 200 seeded points which do not blow up before t = 1
+    let mut random = Random(9);
+    let states = vec![1.0; 200];
+    let parameters: Vec<f64> = (0..200).map(|_| random.between(-2.0, 0.5)).collect();
+    compare(
+        "blow_up",
+        &blow_up(),
+        &points(states, parameters, 200),
+        &quarter,
+    );
+}
+
+/// Whether `a` is within `1e-14` of `b`, relatively (both NaN, or both the same infinity).
+fn close(a: f64, b: f64) -> bool {
+    (a.is_nan() && b.is_nan()) || a == b || (a - b).abs() <= 1e-14 * b.abs()
+}
+
+#[test]
+fn kernel_init_matches_engine() {
+    // the cell model: the initial states of the engine from the parameters of the engine, and
+    // the parameters and states of the engine from the pre-initialization values alone (NaN
+    // for every other parameter)
+    let sets = cell_sets(50, 13, false);
+    let steppers = cell_steppers(&sets);
+    let mut kernel = Kernel::new(&cell_model());
+    let ids = kernel.description.parameter_ids.clone();
+    for (i, (set, stepper)) in sets.iter().zip(&steppers).enumerate() {
+        let mut given = stepper.parameters().to_vec();
+        let states = kernel.init(&mut given);
+        for (k, (a, b)) in given.iter().zip(stepper.parameters()).enumerate() {
+            assert!(
+                close(*a, *b),
+                "set {i}, {} is kept: {a}, engine {b}",
+                ids[k]
+            );
+        }
+        for (k, (a, b)) in states.iter().zip(stepper.state()).enumerate() {
+            assert!(
+                close(*a, *b),
+                "set {i}, {}: kernel {a}, engine {b}",
+                kernel.description.state_ids[k]
+            );
+        }
+        let mut unset = vec![f64::NAN; ids.len()];
+        for (id, value) in set {
+            unset[ids.iter().position(|p| p == id).unwrap()] = *value;
+        }
+        let states = kernel.init(&mut unset);
+        for (k, (a, b)) in unset.iter().zip(stepper.parameters()).enumerate() {
+            assert!(close(*a, *b), "set {i}, {}: kernel {a}, engine {b}", ids[k]);
+        }
+        for (k, (a, b)) in states.iter().zip(stepper.state()).enumerate() {
+            assert!(
+                close(*a, *b),
+                "set {i}, {} from the changes: kernel {a}, engine {b}",
+                kernel.description.state_ids[k]
+            );
+        }
+    }
+    // the decay model of NaN parameters: k = 0.5 and t_half = ln(2) / k, y = 1
+    let mut kernel = Kernel::new(&decay());
+    assert_eq!(kernel.description.parameter_ids, ["k", "t_half"]);
+    let mut parameters = vec![f64::NAN, f64::NAN, 2.0, f64::NAN];
+    let states = kernel.init(&mut parameters);
+    assert_eq!(states, [1.0, 1.0]);
+    let ln2 = sbmlsim_mathlib::f::math_log(2.0);
+    assert_eq!(parameters, [0.5, ln2 / 0.5, 2.0, ln2 / 2.0]);
+}
+
+#[test]
+fn kernel_independent_of_block() {
+    let initial = cell_points(&cell_sets(60, 17, true));
+    let n = initial.len();
+    let run = |blocks: &[(usize, usize)], attempts: f64| {
+        let mut kernel = Kernel::new(&cell_model());
+        let mut points = initial.clone();
+        for k in 0..4 {
+            points.start(60.0 * k as f64);
+            let context = RosenbrockContext {
+                attempts,
+                ..context(60.0 * (k + 1) as f64)
+            };
+            while !points.finished() {
+                kernel.advance_blocks(&mut points, &context, blocks);
+            }
+        }
+        points
+    };
+    let all = run(&[(0, n)], 1e6);
+    assert!(all.control.chunks(CONTROL).all(|c| c[CONTROL_DONE] == 1.0));
+    let single: Vec<(usize, usize)> = (0..n).map(|i| (i, 1)).collect();
+    let uneven = [(0, 7), (7, 30), (37, n - 37)];
+    let bits = |v: &[f64]| v.iter().map(|x| x.to_bits()).collect::<Vec<u64>>();
+    for (name, other) in [
+        ("one call per point", run(&single, 1e6)),
+        (
+            "blocks of 7, 30 and 23, one attempt per call",
+            run(&uneven, 1.0),
+        ),
+    ] {
+        assert_eq!(bits(&other.state), bits(&all.state), "{name}");
+        assert_eq!(bits(&other.control), bits(&all.control), "{name}");
+        assert_eq!(bits(&other.counts), bits(&all.counts), "{name}");
+    }
+}
+
+/// The feature of the refusal of `sbml`.
+fn refused(sbml: &str) -> String {
+    match emit_kernel(&model(sbml)) {
+        Err(CompileError::Unsupported { feature, .. }) => feature,
+        other => panic!("{:?}", other.map(|(_, d)| d.version)),
+    }
+}
+
+#[test]
+fn kernel_refuses_events() {
+    let feature = refused(&with_event());
+    assert!(feature.contains("events"), "{feature}");
+    assert!(feature.contains("in a kernel"), "{feature}");
+    let delay = format!(
+        r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2"><model id="m"><listOfParameters><parameter id="x" value="1" constant="false"/></listOfParameters><listOfRules><rateRule variable="x"><math {MATH}><apply><minus/><apply><csymbol encoding="text" definitionURL="http://www.sbml.org/sbml/symbols/delay">delay</csymbol><ci>x</ci><cn>1</cn></apply></apply></math></rateRule></listOfRules></model></sbml>"#
+    );
+    let feature = refused(&delay);
+    assert!(feature.contains("delay"), "{feature}");
+    let stateless = r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2"><model id="m"><listOfParameters><parameter id="k" value="1" constant="true"/></listOfParameters></model></sbml>"#;
+    let feature = refused(stateless);
+    assert!(feature.contains("without states"), "{feature}");
+    let Some(cases) = cases() else { return };
+    for case in EVENT_CASES {
+        let feature = refused(&Case::read(&cases.join(case)).sbml);
+        assert!(feature.contains("events"), "{case}: {feature}");
+    }
+    for case in ALGEBRAIC_CASES {
+        let feature = refused(&Case::read(&cases.join(case)).sbml);
+        assert!(feature.contains("algebraic rules"), "{case}: {feature}");
+    }
+}
+
+#[test]
+fn kernel_module_imports_only_memory_and_math() {
+    for sbml in [cell_model(), linear(), blow_up(), decay()] {
+        let (wasm, description) = emit_kernel(&model(&sbml)).unwrap();
+        wasmparser::validate(&wasm).unwrap();
+        assert_eq!(description.version, KERNEL_CONTRACT);
+        assert_eq!(description.control, CONTROL as u32);
+        assert_eq!(description.counts, COUNTS as u32);
+        let q = generate_qfunction(&sbml).unwrap();
+        assert_eq!(
+            description.model, q.description,
+            "the description of the C target"
+        );
+        let mut memory = 0;
+        let mut exports = Vec::new();
+        for payload in Parser::new(0).parse_all(&wasm) {
+            match payload.unwrap() {
+                Payload::ImportSection(section) => {
+                    for import in section.into_imports() {
+                        let import = import.unwrap();
+                        match (import.module, import.ty) {
+                            ("env", TypeRef::Memory(ty)) if import.name == "memory" => {
+                                assert!(!ty.shared && !ty.memory64 && ty.maximum.is_none());
+                                memory += 1;
+                            }
+                            ("math", TypeRef::Func(_)) => {
+                                assert!(
+                                    math1(import.name).is_some() || math2(import.name).is_some(),
+                                    "math.{}",
+                                    import.name
+                                );
+                            }
+                            (module, ty) => panic!("an import {module}.{} {ty:?}", import.name),
+                        }
+                    }
+                }
+                Payload::ExportSection(section) => {
+                    for export in section {
+                        exports.push(export.unwrap().name.to_string());
+                    }
+                }
+                Payload::CodeSectionEntry(body) => {
+                    let mut reader = body.get_operators_reader().unwrap();
+                    while !reader.eof() {
+                        let op = reader.read().unwrap();
+                        assert!(!matches!(op, Operator::MemoryGrow { .. }), "memory.grow");
+                    }
+                }
+                Payload::DataSection(_)
+                | Payload::DataCountSection { .. }
+                | Payload::GlobalSection(_)
+                | Payload::MemorySection(_)
+                | Payload::TableSection(_)
+                | Payload::StartSection { .. }
+                | Payload::ElementSection(_) => panic!("a section the kernel has none of"),
+                _ => {}
+            }
+        }
+        assert_eq!(memory, 1);
+        exports.sort();
+        assert_eq!(exports, ["sbmlsim_kernel_advance", "sbmlsim_kernel_init"]);
+    }
+}
+
+#[test]
+fn kernel_refuses_invalid_arguments() {
+    let mut kernel = Kernel::new(&blow_up());
+    let mut points = points(vec![1.0, 1.0], vec![-1.0, -0.5], 2);
+    let valid = context(1.0);
+    // the points in the memory, without a call
+    kernel.advance_blocks(&mut points, &valid, &[]);
+    let layout = kernel.layout(2);
+    let base = (
+        2,
+        layout.state as i32,
+        layout.parameters as i32,
+        layout.control as i32,
+        layout.counts as i32,
+        layout.context as i32,
+        layout.scratch as i32,
+    );
+    let values = [
+        valid.t1,
+        valid.rtol,
+        valid.atol,
+        valid.h_min,
+        valid.attempts,
+    ];
+    // NaN t1, a tolerance of 0 or infinite, a negative h_min, attempts 0, 2.5 or infinite
+    for (k, x) in [
+        (0, f64::NAN),
+        (1, 0.0),
+        (2, f64::INFINITY),
+        (3, -1.0),
+        (4, 0.0),
+        (4, 2.5),
+        (4, f64::INFINITY),
+    ] {
+        let mut context = values;
+        context[k] = x;
+        kernel.write(layout.context, &context);
+        assert_eq!(kernel.advance_raw(base), -1, "context {context:?}");
+    }
+    kernel.write(layout.context, &values);
+    let size = kernel.memory.data_size(&kernel.store) as i32;
+    for args in [
+        (-1, base.1, base.2, base.3, base.4, base.5, base.6),
+        // a pointer which is not a multiple of 8
+        (base.0, base.1 + 4, base.2, base.3, base.4, base.5, base.6),
+        (base.0, base.1, base.2, base.3, base.4, base.5 + 1, base.6),
+        // arrays past the end of the memory
+        (base.0, base.1, base.2, base.3, base.4, base.5, size - 8),
+        (base.0, size - 8, base.2, base.3, base.4, base.5, base.6),
+        (base.0, base.1, base.2, base.3, base.4, size - 32, base.6),
+        (i32::MAX, base.1, base.2, base.3, base.4, base.5, base.6),
+    ] {
+        assert_eq!(kernel.advance_raw(args), -1, "{args:?}");
+    }
+    for args in [(-1, 64, 64), (1, 60, 64), (1, 64, size)] {
+        assert_eq!(
+            kernel.init.call(&mut kernel.store, args).unwrap(),
+            -1,
+            "{args:?}"
+        );
+    }
+    // nothing above changed the points, which advance once the arguments are valid
+    let mut read = points.clone();
+    kernel.read(layout.state, &mut read.state);
+    kernel.read(layout.control, &mut read.control);
+    kernel.read(layout.counts, &mut read.counts);
+    assert_eq!(read, points);
+    assert_eq!(kernel.advance(&mut points, &valid), 0);
+    assert!(points.finished());
+    for (i, a) in [-1.0f64, -0.5].iter().enumerate() {
+        let exact = 1.0 / (1.0 - a);
+        assert!(
+            (points.state[i] - exact).abs() < 1e-5,
+            "{}",
+            points.state[i]
+        );
+    }
+}

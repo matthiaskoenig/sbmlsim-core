@@ -131,6 +131,41 @@ fn compile_writes_a_model_which_simulates() {
 }
 
 #[test]
+fn compile_writes_a_kernel() {
+    let sbml = Path::new(env!("CARGO_MANIFEST_DIR")).join("../host/tests/decay.xml");
+    let out = Path::new(env!("CARGO_TARGET_TMPDIR")).join("compiled-decay-kernel");
+    let _ = std::fs::remove_dir_all(&out);
+    let output = run(&[
+        "compile".as_ref(),
+        sbml.as_os_str(),
+        "--kernel".as_ref(),
+        "-o".as_ref(),
+        out.as_os_str(),
+    ]);
+    assert!(output.status.success(), "{output:?}");
+    let compiled =
+        sbmlsim_compiler::compile_kernel(&std::fs::read_to_string(&sbml).unwrap()).unwrap();
+    assert_eq!(
+        std::fs::read(out.join("kernel.wasm")).unwrap(),
+        compiled.wasm
+    );
+    let description: sbmlsim_abi::KernelDescription =
+        serde_json::from_slice(&std::fs::read(out.join("kernel.json")).unwrap()).unwrap();
+    assert_eq!(description, compiled.description);
+    assert!(!out.join("model.wasm").exists());
+    // a kernel is always optimized
+    let output = run(&[
+        "compile".as_ref(),
+        sbml.as_os_str(),
+        "--kernel".as_ref(),
+        "--no-optimize".as_ref(),
+        "-o".as_ref(),
+        out.as_os_str(),
+    ]);
+    assert_eq!(output.status.code(), Some(2));
+}
+
+#[test]
 fn compile_can_omit_parameter_derivatives_without_changing_simulation() {
     let sbml = Path::new(env!("CARGO_MANIFEST_DIR")).join("../host/tests/decay.xml");
     let out = Path::new(env!("CARGO_TARGET_TMPDIR")).join("compiled-decay-ordinary");

@@ -754,6 +754,24 @@ if (root) {
 }
 </script>
 
+## The batched kernel
+
+```js
+import { createCompiler } from "./js/compile.mjs";
+import { instantiateKernel } from "./js/kernel.mjs";
+
+const { wasm, description } = compiler.compileKernel(sbmlText);
+// the memory of the caller holds every array of the points; the kernel never grows it
+const memory = new WebAssembly.Memory({ initial: 16 });
+const kernel = await instantiateKernel({ wasm, mathlib, memory });
+kernel.init(n, parameters, state);
+const failed = kernel.advance(n, state, parameters, control, counts, context, scratch);
+```
+
+`compiler.compileKernel(sbml)` compiles the [batched kernel](compiling.md#a-batched-kernel) of a model (`kernel/1`): the model with its RODAS4 integrator in one module, which advances any number of points per call, the cells of a tissue in a page, say. It gives `{ wasm, description }`, the `kernel.wasm` and the `kernel.json` of `sbmlsim-core compile --kernel` byte for byte (`js/test/kernel.test.mjs`), and raises a `CompileError` for a model the kernel does not integrate (events, delays, algebraic rules). It needs a `compiler.wasm` with the export `compile_kernel`.
+
+`instantiateKernel({ wasm, mathlib, memory })` checks that the module imports only `env.memory` and functions of mathlib and exports the two functions of the contract, and instantiates it with mathlib and the `WebAssembly.Memory` of the caller. It gives `{ module, memory, init, advance }`: the arguments of `init` and `advance` are byte offsets into `memory`, each a multiple of 8, of arrays of `f64` with the values of the points one point after the other (the parameters, `description.parameter_ids` per point; the states, `description.state_ids`; the control `t`, `h`, `done`, `failed`; the counts; the context `t1`, `rtol`, `atol`, `h_min`, `attempts`; the scratch, `description.scratch_per_point` per point). `init` takes a parameter which is NaN as not given (it gets its SBML value and initial assignment) and writes the states; `advance` makes step attempts for every point which is neither done nor failed and gives the number of failed points. Both give -1 for invalid arguments. The module exports `KERNEL_CONTRACT` as well.
+
 ## The worker pool
 
 A simulation is one synchronous call of the engine. `pool.mjs` runs them in a pool of workers, each with a runtime of its own, so a page stays responsive and the points of a scan run in parallel:
