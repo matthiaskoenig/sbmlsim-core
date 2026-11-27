@@ -253,6 +253,73 @@ class FitProblem:
     def jacobian(self, x: Sequence[float]) -> numpy.typing.NDArray[numpy.float64]:
         """The jacobian at a point, `(n_residuals, parameters)`, one batch of the engine."""
 
+class PetabProblem:
+    """A PEtab v2 problem read, compiled and evaluated in Rust (`sbmlsim_core.petab.Problem`)."""
+
+    @staticmethod
+    def from_yaml(
+        yaml: str | PathLike[str],
+        *,
+        relative_tolerance: float | None = None,
+        absolute_tolerance: float | None = None,
+        data_at_change: str | None = None,
+        extension: str = "read",
+    ) -> PetabProblem:
+        """Reads a problem from its YAML file, with the files it names next to it."""
+
+    @staticmethod
+    def from_files(
+        files: Mapping[str, bytes],
+        yaml: str,
+        *,
+        relative_tolerance: float | None = None,
+        absolute_tolerance: float | None = None,
+        data_at_change: str | None = None,
+        extension: str = "read",
+    ) -> PetabProblem:
+        """Reads a problem from the contents of its files, by their names."""
+
+    @property
+    def parameters(self) -> list[str]:
+        """The ids of the estimated parameters, in the order of a point."""
+
+    @property
+    def nominal(self) -> list[float]:
+        """The nominal values of the estimated parameters."""
+
+    @property
+    def bounds(self) -> tuple[list[float], list[float]]:
+        """The bounds of the estimated parameters."""
+
+    @property
+    def n_measurements(self) -> int:
+        """The number of measurements."""
+
+    @property
+    def n_simulations(self) -> int:
+        """The number of simulations of an evaluation."""
+
+    @property
+    def cost_offset(self) -> float:
+        """What the cost of `fit_problem` carries on top of the objective of PEtab."""
+
+    def requests(self, x: Sequence[float] | None = None) -> list[dict[str, Any]]:
+        """The requests of `simulation/1` of every simulation at a point."""
+
+    def evaluate(self, x: Sequence[float] | None = None) -> dict[str, Any]:
+        """The log-likelihood, chi2, the log priors and the simulations at a point."""
+
+    def llh(self, x: Sequence[float] | None = None) -> float:
+        """The log-likelihood of PEtab at a point, the nominal values without."""
+
+    def fit_problem(self, *, threads: int | None = None) -> FitProblem:
+        """The problem of the fit of the engine, for an optimizer of python."""
+
+    def fit(
+        self, settings: Mapping[str, Any] | None = None, *, threads: int | None = None
+    ) -> dict[str, Any]:
+        """Fits the estimated parameters from their nominal values in the engine."""
+
 class BatchExecutor:
     """A reusable batch pool. Concurrent calls raise RuntimeError."""
 

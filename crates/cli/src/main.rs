@@ -15,6 +15,10 @@
 //! values which are not finite as `NaN`, `inf` and `-inf` (`sbmlsim_cli::csv`, which
 //! `js/simulate.mjs` writes byte for byte alike).
 //!
+//! `sbmlsim-core petab <problem.yaml> [--simulations FILE] [--fit]` (with the feature `native`)
+//! evaluates a PEtab v2 problem at the nominal values of its parameter table, writes its
+//! simulation table and fits it (`sbmlsim_petab`).
+//!
 //! `sbmlsim-core bench <models.toml> [--json FILE]` measures the compilation, the instantiation
 //! and the simulations of the models of a benchmark file in wasmtime (`sbmlsim_cli::bench`).
 //!
@@ -111,6 +115,27 @@ enum Command {
         #[arg(short, long)]
         threads: Option<usize>,
     },
+    /// Evaluates a PEtab v2 problem at the nominal values of its parameters, or fits it.
+    #[cfg(feature = "native")]
+    Petab {
+        /// The YAML file of the problem.
+        problem: PathBuf,
+        /// The TSV file to write the simulation table of PEtab into.
+        #[arg(short, long)]
+        simulations: Option<PathBuf>,
+        /// Fits the estimated parameters from their nominal values (trust region reflective).
+        #[arg(long)]
+        fit: bool,
+        /// The relative tolerance of the integrator; the one of the problem, else `1e-8`.
+        #[arg(long)]
+        relative_tolerance: Option<f64>,
+        /// The absolute tolerance of the integrator; the one of the problem, else `1e-12`.
+        #[arg(long)]
+        absolute_tolerance: Option<f64>,
+        /// The threads of a fit; the CPUs of the machine without.
+        #[arg(short, long)]
+        threads: Option<usize>,
+    },
     /// Runs the prepared cases of the SBML Test Suite and compares them with the baseline.
     Testsuite(TestsuiteArgs),
     /// Measures the models of a benchmark file (`bench/models.toml`) in wasmtime.
@@ -161,6 +186,22 @@ fn main() -> ExitCode {
             output,
             threads,
         } => fit(&model_dir, &request, output.as_deref(), threads).map(|()| true),
+        #[cfg(feature = "native")]
+        Command::Petab {
+            problem,
+            simulations,
+            fit,
+            relative_tolerance,
+            absolute_tolerance,
+            threads,
+        } => petab(
+            &problem,
+            simulations.as_deref(),
+            fit,
+            (relative_tolerance, absolute_tolerance),
+            threads,
+        )
+        .map(|()| true),
         Command::Testsuite(args) => testsuite::run(&args),
         Command::Bench(args) => bench::run(&args),
         Command::Runtime { output } => testsuite::write_runtime(&output).map(|()| true),
@@ -328,6 +369,78 @@ fn export_ode(
         None => std::io::stdout()
             .lock()
             .write_all(export.content.as_bytes())?,
+    }
+    Ok(())
+}
+
+/// The command `petab`: the evaluation of a problem at its nominal values, and its fit.
+#[cfg(feature = "native")]
+fn petab(
+    problem: &Path,
+    simulations: Option<&Path>,
+    fit: bool,
+    (relative, absolute): (Option<f64>, Option<f64>),
+    threads: Option<usize>,
+) -> anyhow::Result<()> {
+    let started = std::time::Instant::now();
+    let read = sbmlsim_petab::PetabProblem::from_path(problem)?;
+    let mut options = sbmlsim_petab::Options::default();
+    if relative.is_some() || absolute.is_some() {
+        let mut settings = sbmlsim_abi::IntegratorSettings {
+            relative_tolerance: 1e-8,
+            ..sbmlsim_abi::IntegratorSettings::default()
+        };
+        if let Some(relative) = relative {
+            settings.relative_tolerance = relative;
+        }
+        if let Some(absolute) = absolute {
+            settings.absolute_tolerance = sbmlsim_abi::Tolerance::Scalar(absolute);
+        }
+        options.integrator = Some(settings);
+    }
+    let plan = sbmlsim_petab::Plan::new(&read, &options)?;
+    let executor = sbmlsim_petab::Executor::new(plan)?;
+    let loaded = started.elapsed().as_secs_f64();
+    let x = executor.plan().nominal();
+    let evaluation = executor.evaluate(&x);
+    for (simulation, message) in &evaluation.failures {
+        eprintln!("simulation {simulation}: {message}");
+    }
+    println!(
+        "{} measurements, {} simulations of {} models: llh {:.10e}, chi2 {:.10e}, log prior {:.10e} \
+         (read and compiled in {loaded:.3} s, evaluated in {:.3} s)",
+        executor.plan().measurements.len(),
+        executor.plan().simulations.len(),
+        executor.plan().models.len(),
+        evaluation.llh,
+        evaluation.chi2,
+        evaluation.log_prior,
+        started.elapsed().as_secs_f64() - loaded,
+    );
+    if let Some(path) = simulations {
+        fs::write(path, executor.plan().simulation_table(&evaluation))
+            .with_context(|| format!("cannot write {}", path.display()))?;
+    }
+    if fit {
+        let threads = threads.unwrap_or_else(|| {
+            std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get)
+        });
+        let answer = executor.fit(&sbmlsim_fit::Settings::default(), threads)?;
+        let names: Vec<String> = executor
+            .plan()
+            .estimated()
+            .into_iter()
+            .zip(&answer.x)
+            .map(|(k, value)| format!("{} = {value:.6}", executor.plan().parameters[k].id))
+            .collect();
+        println!(
+            "{} after {} evaluations in {:.3} s, objective {:.10e} ({})",
+            names.join(", "),
+            answer.fit.evaluations,
+            answer.fit.seconds,
+            answer.objective,
+            answer.fit.status
+        );
     }
     Ok(())
 }

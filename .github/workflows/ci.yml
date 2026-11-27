@@ -38,6 +38,9 @@ jobs:
       - run: cargo clippy -p sbmlsim-csolvers --all-targets --target wasm32-wasip1 -- -D warnings
       - run: cargo clippy -p sbmlsim-engine --all-targets --target wasm32-wasip1 -- -D warnings
       - run: cargo clippy -p sbmlsim-engine --lib --features exports --target wasm32-wasip1 -- -D warnings
+      # the cases of PEtab v2 and of its math of the PEtab test suite, which the test of
+      # crates/petab runs against its baseline (it skips without them)
+      - run: python3 scripts/petab_testsuite.py download
       # the tests of sbmlsim-host and sbmlsim-cli build engine.wasm and mathlib.wasm (WASI_SDK_PATH)
       - run: cargo test --all-features
       - run: cargo run -p sbmlsim-cli -- simulate crates/host/tests/decay-model crates/host/tests/decay-model/request.json
@@ -64,9 +67,13 @@ jobs:
       - run: cargo build -p sbmlsim-ode --target wasm32-unknown-unknown
       - run: cargo build -p sbmlsim-compiler --target wasm32-unknown-unknown --release
       - run: cargo build -p sbmlsim-sensitivity --target wasm32-unknown-unknown
+      # PEtab v2 read, planned and evaluated without an engine, as a page runs it
+      - run: cargo build -p sbmlsim-petab --no-default-features --target wasm32-unknown-unknown
+      - run: cargo build -p sbmlsim-wasm --features petab --target wasm32-unknown-unknown --profile wasm
       # `compiler.wasm`, the compiler of `js/compile.mjs`: the module of the npm package
       - run: cargo build -p sbmlsim-wasm --target wasm32-unknown-unknown --profile wasm
       - run: cargo test -p sbmlsim-wasm
+      - run: cargo test -p sbmlsim-wasm --features petab
       - uses: actions/setup-node@v4
         with:
           node-version: "24"

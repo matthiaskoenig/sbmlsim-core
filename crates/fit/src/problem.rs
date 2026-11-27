@@ -3160,7 +3160,13 @@ fn check_reduction(
 fn row_of(time: f64, times: &[f64], after: bool) -> Option<usize> {
     let mut best: Option<(usize, f64)> = None;
     for (row, output) in times.iter().enumerate() {
-        let distance = (output - time).abs();
+        // the row of the steady state after the end is at the time `inf`, which a measurement
+        // at steady state (PEtab's `inf`) reads, and whose difference to it is no number
+        let distance = if *output == time {
+            0.0
+        } else {
+            (output - time).abs()
+        };
         let closer = best.is_none_or(|(_, other)| {
             if after {
                 distance <= other

@@ -75,6 +75,7 @@ mod compile;
 mod errors;
 mod fit;
 mod ode;
+mod petab;
 mod plot;
 mod runtime;
 mod sensitivity;
@@ -133,6 +134,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<OutputLocalErrors>()?;
     m.add_function(wrap_pyfunction!(runtime::fit_models, m)?)?;
     m.add_function(wrap_pyfunction!(runtime::fit_problem_of_models, m)?)?;
+    m.add_class::<petab::PetabProblemPy>()?;
     m.add("ODE_CONTRACT", sbmlsim_ode::ODE_CONTRACT)?;
     m.add_class::<ode::EquationSystem>()?;
     m.add_function(wrap_pyfunction!(compile_sbml, m)?)?;

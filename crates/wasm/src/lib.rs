@@ -41,6 +41,9 @@
 
 use std::alloc::{Layout, alloc, dealloc};
 
+#[cfg(feature = "petab")]
+pub mod petab;
+
 use sbmlsim_abi::JacobianChoice;
 use sbmlsim_compiler::CompileOptions;
 

@@ -13,12 +13,19 @@ description = "Compiles SBML to model.wasm and its description in a browser, com
 name = "sbmlsim_wasm"
 crate-type = ["cdylib", "rlib"]
 
+[features]
+# the PEtab v2 problems of `sbmlsim-petab` (`petab_open`, `petab_model`, `petab_requests`,
+# `petab_evaluate` and `petab_close`), off by default: the module of the npm package keeps the
+# size of the compiler alone until a host of JavaScript drives them
+petab = ["dep:sbmlsim-petab"]
+
 [dependencies]
 sbmlsim-ode = { path = "../ode" }
 serde.workspace = true
 sbmlsim-abi = { path = "../abi" }
 sbmlsim-compiler = { path = "../compiler" }
 serde_json.workspace = true
+sbmlsim-petab = { path = "../petab", default-features = false, optional = true }
 
 [dev-dependencies]
 serde_json.workspace = true

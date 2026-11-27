@@ -294,3 +294,18 @@ def equation_exports(source: Path) -> None:
     document: str = system.render("typst", symbols="name", standalone=False)
     equations: dict[str, Any] = system.typeset({"symbols": {"S": "model/Species:S"}})
     formats: Mapping[str, sbmlsim_core.OdeFormat] = sbmlsim_core.ODE_FORMATS
+
+
+def petab_problem(directory: Path, files: Mapping[str, bytes]) -> None:
+    """A PEtab v2 problem read, evaluated and fitted in Rust."""
+    from sbmlsim_core import petab
+
+    problem: petab.Problem = petab.Problem.from_yaml(directory / "problem.yaml")
+    problem = petab.Problem.from_files(files, "problem.yaml", relative_tolerance=1e-8)
+    names: list[str] = problem.parameters
+    evaluation: dict[str, Any] = problem.evaluate(problem.nominal)
+    llh: float = problem.llh()
+    objective: FitProblem = problem.fit_problem(threads=2)
+    answer: dict[str, Any] = problem.fit({"max_iterations": 50}, threads=2)
+    problem.evaluate(1.0)  # ty: ignore[invalid-argument-type]
+    del names, evaluation, llh, objective, answer

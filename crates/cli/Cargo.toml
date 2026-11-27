@@ -20,7 +20,13 @@ path = "src/main.rs"
 default = []
 # the native engine, the fit of a model on its batch (`sbmlsim-core fit`), and the native model
 # code of the C target (`sbmlsim-core testsuite --model-code c`)
-native = ["sbmlsim-host/native", "dep:sbmlsim-fit", "dep:sbmlsim-c", "dep:sbmlsim-engine"]
+native = [
+    "sbmlsim-host/native",
+    "dep:sbmlsim-fit",
+    "dep:sbmlsim-c",
+    "dep:sbmlsim-engine",
+    "dep:sbmlsim-petab",
+]
 
 [dependencies]
 sbmlsim-ode = { path = "../ode", features = ["filesystem"] }
@@ -34,6 +40,8 @@ sbmlsim-engine = { path = "../engine", optional = true }
 # the fit of a model, which needs the native engine of its batch
 sbmlsim-fit = { path = "../fit", optional = true }
 sbmlsim-host = { path = "../host" }
+# the PEtab v2 problems of `sbmlsim-core petab`, which run on the native engine
+sbmlsim-petab = { path = "../petab", optional = true }
 rayon = "1.10"
 serde.workspace = true
 serde_json.workspace = true
