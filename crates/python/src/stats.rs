@@ -5,7 +5,9 @@
 //! the order numpy ravels it (C order), borrowed where it is contiguous and copied where it is
 //! not, as `np.asarray(values, dtype=float).ravel()` of the python. An error of the arguments
 //! is the exception of the python function the binding replaces, its class the kind of the
-//! error of the crate (a `ValueError` mostly) and its message the python's.
+//! error of the crate (a `ValueError` mostly) and its message the python's. A kernel on
+//! arrays runs with the GIL released (`py.detach`, as the sensitivity analysis does), so other
+//! threads of python run meanwhile; a `KeyboardInterrupt` is raised when it returns.
 
 use std::borrow::Cow;
 
@@ -124,14 +126,16 @@ fn values<'a>(array: &'a Values<'_>) -> Cow<'a, [f64]> {
 
 /// Sum of Squared Errors (SSE) of the residuals, 0 of none.
 #[pyfunction]
-pub(crate) fn stats_sse(residuals: Values<'_>) -> f64 {
-    metrics::sse(&values(&residuals))
+pub(crate) fn stats_sse(py: Python<'_>, residuals: Values<'_>) -> f64 {
+    let residuals = values(&residuals);
+    py.detach(|| metrics::sse(&residuals))
 }
 
 /// Mean Squared Error (MSE) of the residuals.
 #[pyfunction]
-pub(crate) fn stats_mse(residuals: Values<'_>) -> PyResult<f64> {
-    metrics::mse(&values(&residuals)).map_err(stats_error)
+pub(crate) fn stats_mse(py: Python<'_>, residuals: Values<'_>) -> PyResult<f64> {
+    let residuals = values(&residuals);
+    py.detach(|| metrics::mse(&residuals)).map_err(stats_error)
 }
 
 /// Root Mean Squared Error (RMSE) from the mean squared error.
@@ -157,8 +161,14 @@ pub(crate) fn stats_bic_from_mse(mse: Number, n: i64, k: i64) -> PyResult<f64> {
 /// Coefficient of determination (R²) of a prediction, `nan` for fewer than two data points
 /// and for data without variance.
 #[pyfunction]
-pub(crate) fn stats_r_squared(y_observed: Values<'_>, y_predicted: Values<'_>) -> PyResult<f64> {
-    metrics::r_squared(&values(&y_observed), &values(&y_predicted)).map_err(stats_error)
+pub(crate) fn stats_r_squared(
+    py: Python<'_>,
+    y_observed: Values<'_>,
+    y_predicted: Values<'_>,
+) -> PyResult<f64> {
+    let (y, f) = (values(&y_observed), values(&y_predicted));
+    py.detach(|| metrics::r_squared(&y, &f))
+        .map_err(stats_error)
 }
 
 /// The number of data points whose prediction is within the fold factor and the number of
@@ -167,11 +177,13 @@ pub(crate) fn stats_r_squared(y_observed: Values<'_>, y_predicted: Values<'_>) -
 #[pyo3(signature = (y_observed, y_predicted, fold = Number::TWOFOLD))]
 #[pyo3(text_signature = "(y_observed, y_predicted, fold=2.0)")]
 pub(crate) fn stats_fold_counts(
+    py: Python<'_>,
     y_observed: Values<'_>,
     y_predicted: Values<'_>,
     fold: Number,
 ) -> PyResult<(usize, usize)> {
-    metrics::fold_counts(&values(&y_observed), &values(&y_predicted), fold.value)
+    let (y, f, factor) = (values(&y_observed), values(&y_predicted), fold.value);
+    py.detach(|| metrics::fold_counts(&y, &f, factor))
         .map_err(|error| fold.error(error))
 }
 
@@ -186,7 +198,9 @@ pub(crate) fn stats_fold_accepted<'py>(
     y_predicted: Values<'py>,
     fold: Number,
 ) -> PyResult<Bound<'py, PyArray1<f64>>> {
-    let accepted = metrics::fold_accepted(&values(&y_observed), &values(&y_predicted), fold.value)
+    let (y, f, factor) = (values(&y_observed), values(&y_predicted), fold.value);
+    let accepted = py
+        .detach(|| metrics::fold_accepted(&y, &f, factor))
         .map_err(|error| fold.error(error))?;
     Ok(PyArray1::from_vec(py, accepted))
 }
@@ -203,35 +217,43 @@ pub(crate) fn stats_sd_accepted<'py>(
     y_sd: Values<'py>,
     k: f64,
 ) -> PyResult<Bound<'py, PyArray1<f64>>> {
-    let accepted = metrics::sd_accepted(
-        &values(&y_observed),
-        &values(&y_predicted),
-        &values(&y_sd),
-        k,
-    )
-    .map_err(stats_error)?;
+    let (y, f, sd) = (values(&y_observed), values(&y_predicted), values(&y_sd));
+    let accepted = py
+        .detach(|| metrics::sd_accepted(&y, &f, &sd, k))
+        .map_err(stats_error)?;
     Ok(PyArray1::from_vec(py, accepted))
 }
 
 /// The geometric mean fold error `10**mean(|log10(f/y)|)` of the points with a ratio, `nan`
 /// without one.
 #[pyfunction]
-pub(crate) fn stats_gmfe(y_observed: Values<'_>, y_predicted: Values<'_>) -> PyResult<f64> {
-    metrics::gmfe(&values(&y_observed), &values(&y_predicted)).map_err(stats_error)
+pub(crate) fn stats_gmfe(
+    py: Python<'_>,
+    y_observed: Values<'_>,
+    y_predicted: Values<'_>,
+) -> PyResult<f64> {
+    let (y, f) = (values(&y_observed), values(&y_predicted));
+    py.detach(|| metrics::gmfe(&y, &f)).map_err(stats_error)
 }
 
 /// The average fold error `10**mean(log10(f/y))` of the points with a ratio, `nan` without
 /// one.
 #[pyfunction]
-pub(crate) fn stats_afe(y_observed: Values<'_>, y_predicted: Values<'_>) -> PyResult<f64> {
-    metrics::afe(&values(&y_observed), &values(&y_predicted)).map_err(stats_error)
+pub(crate) fn stats_afe(
+    py: Python<'_>,
+    y_observed: Values<'_>,
+    y_predicted: Values<'_>,
+) -> PyResult<f64> {
+    let (y, f) = (values(&y_observed), values(&y_predicted));
+    py.detach(|| metrics::afe(&y, &f)).map_err(stats_error)
 }
 
 /// The root mean square of the normalized residuals, `nan` without one or with one which is
 /// not finite.
 #[pyfunction]
-pub(crate) fn stats_nrmse(nres: Values<'_>) -> f64 {
-    metrics::nrmse(&values(&nres))
+pub(crate) fn stats_nrmse(py: Python<'_>, nres: Values<'_>) -> f64 {
+    let nres = values(&nres);
+    py.detach(|| metrics::nrmse(&nres))
 }
 
 /// The lower and the upper limits of the predicted ratios of the observed ratios of the
@@ -241,10 +263,13 @@ pub(crate) fn stats_guest_limits<'py>(
     py: Python<'py>,
     observed: Values<'py>,
 ) -> (Bound<'py, PyArrayDyn<f64>>, Bound<'py, PyArrayDyn<f64>>) {
-    let (low, high): (Vec<f64>, Vec<f64>) = values(&observed)
-        .iter()
-        .map(|&ratio| metrics::guest_limits(ratio))
-        .unzip();
+    let ratios = values(&observed);
+    let (low, high): (Vec<f64>, Vec<f64>) = py.detach(|| {
+        ratios
+            .iter()
+            .map(|&ratio| metrics::guest_limits(ratio))
+            .unzip()
+    });
     let shape = IxDyn(observed.shape());
     let array = |limits: Vec<f64>| {
         let limits =
@@ -257,7 +282,11 @@ pub(crate) fn stats_guest_limits<'py>(
 /// The percentage (0 to 100) of the finite predicted ratios within the limits of Guest et al.,
 /// `nan` without one.
 #[pyfunction]
-pub(crate) fn stats_within_guest(observed: Values<'_>, predicted: Values<'_>) -> PyResult<f64> {
+pub(crate) fn stats_within_guest(
+    py: Python<'_>,
+    observed: Values<'_>,
+    predicted: Values<'_>,
+) -> PyResult<f64> {
     // the python compares the shapes and writes the sizes
     if observed.shape() != predicted.shape() {
         return Err(PyValueError::new_err(format!(
@@ -266,7 +295,8 @@ pub(crate) fn stats_within_guest(observed: Values<'_>, predicted: Values<'_>) ->
             predicted.len()
         )));
     }
-    match metrics::within_guest(&values(&observed), &values(&predicted)) {
+    let (ratios, predictions) = (values(&observed), values(&predicted));
+    match py.detach(|| metrics::within_guest(&ratios, &predictions)) {
         Ok(percentage) => Ok(percentage),
         Err(error) if observed.ndim() == 1 => Err(stats_error(error)),
         // of equal shapes the error is of the observed ratios, which the python writes as
@@ -284,10 +314,13 @@ pub(crate) fn stats_within_guest(observed: Values<'_>, predicted: Values<'_>) ->
 /// `MIN_POINTS_SUBSET_AGREEMENT` points with a ratio.
 #[pyfunction]
 pub(crate) fn stats_subset_agreement(
+    py: Python<'_>,
     y_observed: Values<'_>,
     y_predicted: Values<'_>,
 ) -> PyResult<Option<(f64, f64, f64, f64)>> {
-    metrics::subset_agreement(&values(&y_observed), &values(&y_predicted)).map_err(stats_error)
+    let (y, f) = (values(&y_observed), values(&y_predicted));
+    py.detach(|| metrics::subset_agreement(&y, &f))
+        .map_err(stats_error)
 }
 
 /// The values of a square matrix, row-major, and its number of rows; an error which names the
@@ -365,7 +398,10 @@ pub(crate) fn stats_gram<'py>(
             shape_text(jacobian.shape())
         )));
     };
-    let gram = linalg::gram(&values(&jacobian), n, k).map_err(stats_error)?;
+    let jacobian = values(&jacobian);
+    let gram = py
+        .detach(|| linalg::gram(&jacobian, n, k))
+        .map_err(stats_error)?;
     Ok(matrix(py, gram, k))
 }
 
@@ -386,7 +422,8 @@ pub(crate) fn stats_fisher_statistics<'py>(
     // the python takes any integer, a negative number of points has no degrees of freedom
     // as zero has (`n <= k`)
     let n = usize::try_from(n.max(0)).unwrap_or(usize::MAX);
-    let s = fisher::statistics(&information, k, cost, n, likelihood, rank_tolerance)
+    let s = py
+        .detach(|| fisher::statistics(&information, k, cost, n, likelihood, rank_tolerance))
         .map_err(stats_error)?;
     let dict = PyDict::new(py);
     dict.set_item("sigma2", s.sigma2)?;
@@ -412,7 +449,8 @@ pub(crate) fn stats_fisher_intervals<'py>(
     dof: Option<f64>,
 ) -> PyResult<Bounds<'py>> {
     let (values, se, scales) = parameters(&values, &standard_errors, scales);
-    let (lower, upper): (Vec<f64>, Vec<f64>) = fisher::intervals(&values, &se, &scales, level, dof)
+    let (lower, upper): (Vec<f64>, Vec<f64>) = py
+        .detach(|| fisher::intervals(&values, &se, &scales, level, dof))
         .map_err(stats_error)?
         .into_iter()
         .unzip();
@@ -428,7 +466,9 @@ pub(crate) fn stats_fisher_relative_errors<'py>(
     scales: Vec<ScaleArg>,
 ) -> PyResult<Bound<'py, PyArray1<f64>>> {
     let (values, se, scales) = parameters(&values, &standard_errors, scales);
-    let relative = fisher::relative_errors(&values, &se, &scales).map_err(stats_error)?;
+    let relative = py
+        .detach(|| fisher::relative_errors(&values, &se, &scales))
+        .map_err(stats_error)?;
     Ok(PyArray1::from_vec(py, relative))
 }
 
@@ -453,7 +493,8 @@ pub(crate) fn stats_posterior_laplace<'py>(
             .collect::<PyResult<Vec<String>>>()?,
         None => (0..k).map(|i| i.to_string()).collect(),
     };
-    let covariance = posterior::laplace_of(&precision, k, rank_tolerance, opid.as_deref(), &names)
+    let covariance = py
+        .detach(|| posterior::laplace_of(&precision, k, rank_tolerance, opid.as_deref(), &names))
         .map_err(stats_error)?;
     Ok(matrix(py, covariance, k))
 }
@@ -465,7 +506,9 @@ pub(crate) fn stats_rank_correlation<'py>(
     r: Values<'py>,
 ) -> PyResult<Bound<'py, PyArray2<f64>>> {
     let (r, k) = square(&r, "correlation")?;
-    let rank = posterior::rank_correlation(&r, k).map_err(stats_error)?;
+    let rank = py
+        .detach(|| posterior::rank_correlation(&r, k))
+        .map_err(stats_error)?;
     Ok(matrix(py, rank, k))
 }
 
@@ -476,7 +519,9 @@ pub(crate) fn stats_normal_correlation<'py>(
     r: Values<'py>,
 ) -> PyResult<Bound<'py, PyArray2<f64>>> {
     let (r, k) = square(&r, "correlation")?;
-    let normal = posterior::normal_correlation(&r, k).map_err(stats_error)?;
+    let normal = py
+        .detach(|| posterior::normal_correlation(&r, k))
+        .map_err(stats_error)?;
     Ok(matrix(py, normal, k))
 }
 
@@ -494,21 +539,25 @@ pub(crate) fn stats_lognormal_cv(sigma: f64) -> f64 {
 
 /// The mean, its standard error and the number of draws which are not `NaN`.
 #[pyfunction]
-pub(crate) fn stats_mean_se(x: Values<'_>) -> (f64, f64, usize) {
-    uncertainty::mean_se(&values(&x))
+pub(crate) fn stats_mean_se(py: Python<'_>, x: Values<'_>) -> (f64, f64, usize) {
+    let x = values(&x);
+    py.detach(|| uncertainty::mean_se(&x))
 }
 
 /// The standard deviation, its standard error by the delta method and the number of draws
 /// which are not `NaN`.
 #[pyfunction]
-pub(crate) fn stats_sd_se(x: Values<'_>) -> PyResult<(f64, f64, usize)> {
-    uncertainty::sd_se(&values(&x)).map_err(stats_error)
+pub(crate) fn stats_sd_se(py: Python<'_>, x: Values<'_>) -> PyResult<(f64, f64, usize)> {
+    let x = values(&x);
+    py.detach(|| uncertainty::sd_se(&x)).map_err(stats_error)
 }
 
 /// The quantile of the draws which are not `NaN`, numpy's linear one.
 #[pyfunction]
-pub(crate) fn stats_quantile(x: Values<'_>, q: f64) -> PyResult<f64> {
-    uncertainty::quantile(&values(&x), q).map_err(stats_error)
+pub(crate) fn stats_quantile(py: Python<'_>, x: Values<'_>, q: f64) -> PyResult<f64> {
+    let x = values(&x);
+    py.detach(|| uncertainty::quantile(&x, q))
+        .map_err(stats_error)
 }
 
 /// The quantiles of the draws which are not `NaN`, numpy's linear ones.
@@ -518,7 +567,10 @@ pub(crate) fn stats_quantiles<'py>(
     x: Values<'py>,
     qs: Values<'py>,
 ) -> PyResult<Bound<'py, PyArray1<f64>>> {
-    let found = uncertainty::quantiles(&values(&x), &values(&qs)).map_err(stats_error)?;
+    let (x, qs) = (values(&x), values(&qs));
+    let found = py
+        .detach(|| uncertainty::quantiles(&x, &qs))
+        .map_err(stats_error)?;
     Ok(PyArray1::from_vec(py, found))
 }
 
@@ -527,31 +579,43 @@ pub(crate) fn stats_quantiles<'py>(
 #[pyfunction]
 #[pyo3(signature = (x, q, level = 0.95))]
 pub(crate) fn stats_quantile_ci(
+    py: Python<'_>,
     x: Values<'_>,
     q: f64,
     level: f64,
 ) -> PyResult<(f64, f64, f64, usize)> {
-    uncertainty::quantile_ci(&values(&x), q, level).map_err(stats_error)
+    let x = values(&x);
+    py.detach(|| uncertainty::quantile_ci(&x, q, level))
+        .map_err(stats_error)
 }
 
 /// The first-order index of an input from given draws, by binning.
 #[pyfunction]
 #[pyo3(signature = (x, y, n_bins = None))]
 pub(crate) fn stats_first_order_given_data(
+    py: Python<'_>,
     x: Values<'_>,
     y: Values<'_>,
     n_bins: Option<i64>,
 ) -> PyResult<f64> {
     // a negative number of bins is refused as none, as numpy refuses it
     let n_bins = n_bins.map(|bins| usize::try_from(bins).unwrap_or(0));
-    uncertainty::first_order_given_data(&values(&x), &values(&y), n_bins).map_err(stats_error)
+    let (x, y) = (values(&x), values(&y));
+    py.detach(|| uncertainty::first_order_given_data(&x, &y, n_bins))
+        .map_err(stats_error)
 }
 
 /// Whether the statistics of the draws of an output are precise enough, and the largest half
 /// width relative to the standard deviation.
 #[pyfunction]
-pub(crate) fn stats_precise(values: Values<'_>, rel_tol: f64) -> PyResult<(bool, f64)> {
-    uncertainty::precise(&self::values(&values), rel_tol).map_err(stats_error)
+pub(crate) fn stats_precise(
+    py: Python<'_>,
+    values: Values<'_>,
+    rel_tol: f64,
+) -> PyResult<(bool, f64)> {
+    let values = self::values(&values);
+    py.detach(|| uncertainty::precise(&values, rel_tol))
+        .map_err(stats_error)
 }
 
 /// The parameters of the distribution of a reported interval: the median and the coefficient
@@ -673,8 +737,10 @@ pub(crate) fn stats_unit_points(
         return Err(shape_error());
     }
     let (d, n) = (d.unsigned_abs() as usize, n.unsigned_abs() as usize);
-    let points =
-        draws::unit_points(d, n, design, seed.0, start.unsigned_abs()).map_err(stats_error)?;
+    let (seed, start) = (seed.0, start.unsigned_abs());
+    let points = py
+        .detach(|| draws::unit_points(d, n, design, seed, start))
+        .map_err(stats_error)?;
     Ok(rectangle(py, points, n, d))
 }
 
@@ -700,7 +766,8 @@ pub(crate) fn stats_copula<'py>(
         )));
     }
     let mut points = values(&u).into_owned();
-    draws::copula(&mut points, n, d, &r).map_err(stats_error)?;
+    py.detach(|| draws::copula(&mut points, n, d, &r))
+        .map_err(stats_error)?;
     Ok(rectangle(py, points, n, d))
 }
 
@@ -786,7 +853,9 @@ pub(crate) fn stats_nearest_correlation<'py>(
     })?;
     // `range` of a negative number is no iteration
     let iterations = usize::try_from(max_iterations).unwrap_or(0);
-    let nearest = correlation::nearest_correlation(&m, k, iterations, tol).map_err(stats_error)?;
+    let nearest = py
+        .detach(|| correlation::nearest_correlation(&m, k, iterations, tol))
+        .map_err(stats_error)?;
     Ok(self::matrix(py, nearest, k))
 }
 
@@ -794,7 +863,7 @@ pub(crate) fn stats_nearest_correlation<'py>(
 /// least `-rtol` times its largest one.
 #[pyfunction]
 #[pyo3(signature = (matrix, rtol = correlation::PSD_RTOL))]
-pub(crate) fn stats_is_psd(matrix: Values<'_>, rtol: f64) -> PyResult<bool> {
+pub(crate) fn stats_is_psd(py: Python<'_>, matrix: Values<'_>, rtol: f64) -> PyResult<bool> {
     let (m, k) = eigen_matrix(&matrix, |_, _| {
         "Last 2 dimensions of the array must be square".to_owned()
     })?;
@@ -803,7 +872,7 @@ pub(crate) fn stats_is_psd(matrix: Values<'_>, rtol: f64) -> PyResult<bool> {
             "zero-size array to reduction operation minimum which has no identity",
         ));
     }
-    Ok(correlation::is_psd(&m, k, rtol))
+    Ok(py.detach(|| correlation::is_psd(&m, k, rtol)))
 }
 
 /// Checks the matrix of a `Covariance` of the targets (`kind` `covariance` or `correlation`,
@@ -811,6 +880,7 @@ pub(crate) fn stats_is_psd(matrix: Values<'_>, rtol: f64) -> PyResult<bool> {
 #[pyfunction]
 #[pyo3(signature = (targets, matrix, *, kind = "covariance", units = None))]
 pub(crate) fn stats_validate_covariance(
+    py: Python<'_>,
     targets: Vec<Bound<'_, PyAny>>,
     matrix: Values<'_>,
     kind: &str,
@@ -830,14 +900,10 @@ pub(crate) fn stats_validate_covariance(
                 .try_fold(0usize, |count, item| item.map(|_| count + 1))
         })
         .transpose()?;
-    correlation::validate(
-        &values(&matrix),
-        matrix.shape(),
-        &targets,
-        kind == "correlation",
-        units,
-    )
-    .map_err(stats_error)
+    let (m, shape) = (values(&matrix), matrix.shape().to_vec());
+    let is_correlation = kind == "correlation";
+    py.detach(|| correlation::validate(&m, &shape, &targets, is_correlation, units))
+        .map_err(stats_error)
 }
 
 /// The booleans of an array in the order numpy ravels it, `np.asarray(x, dtype=bool).ravel()`.
@@ -880,10 +946,9 @@ pub(crate) fn stats_p_values<'py>(
     side: SideArg,
     margin: f64,
 ) -> Bound<'py, PyArray1<f64>> {
-    PyArray1::from_vec(
-        py,
-        testing::p_values(&booleans(&satisfied), p0, side.0, margin),
-    )
+    let satisfied = booleans(&satisfied);
+    let p_values = py.detach(|| testing::p_values(&satisfied, p0, side.0, margin));
+    PyArray1::from_vec(py, p_values)
 }
 
 /// The confidence sequence of a probability after the draws at the level, its lower and its
@@ -891,16 +956,20 @@ pub(crate) fn stats_p_values<'py>(
 #[pyfunction]
 #[pyo3(signature = (satisfied, level = 0.95))]
 pub(crate) fn stats_confidence_sequence(
+    py: Python<'_>,
     satisfied: Booleans<'_>,
     level: f64,
 ) -> PyResult<(f64, f64)> {
-    testing::confidence_sequence(&booleans(&satisfied), 1.0 - level).map_err(stats_error)
+    let satisfied = booleans(&satisfied);
+    py.detach(|| testing::confidence_sequence(&satisfied, 1.0 - level))
+        .map_err(stats_error)
 }
 
 /// The number of draws at which a p-value first is at most `alpha`, `None` if it never is.
 #[pyfunction]
-pub(crate) fn stats_decide(p_values: Values<'_>, alpha: f64) -> Option<usize> {
-    testing::decide(&values(&p_values), alpha)
+pub(crate) fn stats_decide(py: Python<'_>, p_values: Values<'_>, alpha: f64) -> Option<usize> {
+    let p_values = values(&p_values);
+    py.detach(|| testing::decide(&p_values, alpha))
 }
 
 /// The decision of a statement from its p-values after every number of draws and the draws at
@@ -908,17 +977,14 @@ pub(crate) fn stats_decide(p_values: Values<'_>, alpha: f64) -> Option<usize> {
 /// (without a number of draws).
 #[pyfunction]
 pub(crate) fn stats_decision(
+    py: Python<'_>,
     p_greater: Values<'_>,
     p_less: Values<'_>,
     p_equivalent: Values<'_>,
     alpha: f64,
 ) -> (&'static str, Option<usize>) {
-    let (decision, n) = testing::decision(
-        &values(&p_greater),
-        &values(&p_less),
-        &values(&p_equivalent),
-        alpha,
-    );
+    let (greater, less, equivalent) = (values(&p_greater), values(&p_less), values(&p_equivalent));
+    let (decision, n) = py.detach(|| testing::decision(&greater, &less, &equivalent, alpha));
     let name = match decision {
         Decision::Accepted => "accepted",
         Decision::Rejected => "rejected",
@@ -972,16 +1038,25 @@ pub(crate) fn stats_group_means<'py>(
     if size != 1 && (size < 0 || groups < 0) {
         return Err(PyValueError::new_err("negative dimensions are not allowed"));
     }
-    let (statistics, rows) = variability::group_means(
-        &self::values(&values),
-        subjects,
-        points,
+    let predictions = self::values(&values);
+    let (size, groups, seed) = (
         size.unsigned_abs() as usize,
         groups.unsigned_abs() as usize,
-        geometric,
         seed.0,
-    )
-    .map_err(stats_error)?;
+    );
+    let (statistics, rows) = py
+        .detach(|| {
+            variability::group_means(
+                &predictions,
+                subjects,
+                points,
+                size,
+                groups,
+                geometric,
+                seed,
+            )
+        })
+        .map_err(stats_error)?;
     Ok(rectangle(py, statistics, rows, points))
 }
 
@@ -1002,7 +1077,10 @@ pub(crate) fn stats_bands<'py>(
         )));
     };
     let qs = values(&qs);
-    let bands = variability::bands(&values(&distribution), rows, cols, &qs).map_err(stats_error)?;
+    let distribution = values(&distribution);
+    let bands = py
+        .detach(|| variability::bands(&distribution, rows, cols, &qs))
+        .map_err(stats_error)?;
     Ok(rectangle(py, bands, cols, qs.len()))
 }
 
