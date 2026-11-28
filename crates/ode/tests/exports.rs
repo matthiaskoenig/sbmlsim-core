@@ -73,3 +73,47 @@ fn standalone_code_targets_preserve_complete_exports() {
         failures.join("\n")
     );
 }
+
+#[test]
+fn documents_list_the_unsupported_constructs_of_a_model() {
+    let source = br#"<?xml version="1.0" encoding="UTF-8"?>
+<sbml xmlns="http://www.sbml.org/sbml/level3/version1/core" xmlns:distrib="http://www.sbml.org/sbml/level3/version1/distrib/version1" level="3" version="1" distrib:required="true">
+  <model id="random">
+    <listOfParameters>
+      <parameter id="x" value="1" constant="false"/>
+      <parameter id="protein_random" constant="true"/>
+    </listOfParameters>
+    <listOfInitialAssignments>
+      <initialAssignment symbol="protein_random">
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+          <apply>
+            <csymbol encoding="text" definitionURL="http://www.sbml.org/sbml/symbols/distrib/uniform"> uniform </csymbol>
+            <cn> 0 </cn>
+            <cn> 1 </cn>
+          </apply>
+        </math>
+      </initialAssignment>
+    </listOfInitialAssignments>
+    <listOfRules>
+      <rateRule variable="x">
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+          <apply><times/><ci> protein_random </ci><ci> x </ci></apply>
+        </math>
+      </rateRule>
+    </listOfRules>
+  </model>
+</sbml>"#;
+    for fmt in ["markdown", "latex", "typst"] {
+        let file = export(source, fmt, &RenderOptions::default())
+            .unwrap_or_else(|error| panic!("{fmt}: {error}"));
+        let content = file.content;
+        let section = content
+            .find("Unsupported constructs")
+            .unwrap_or_else(|| panic!("{fmt}: no section of the unsupported constructs"));
+        let item = content[section..]
+            .lines()
+            .find(|line| line.contains("distrib function"))
+            .unwrap_or_else(|| panic!("{fmt}: the distrib function is not listed"));
+        assert!(item.contains("protein"), "{fmt}: {item}");
+    }
+}
