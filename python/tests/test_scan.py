@@ -6,10 +6,17 @@ from its SBML, the simulations on a batch executor and the observables of the ho
 compared with the `result` of the fixture under the rule of `crates/scan/tests/fixtures.rs`:
 the native values by their bits, the values interpolated onto a grid and the observables
 within 4 units in the last place, `NaN` equal to `NaN`.
+
+The bindings simulate on the native engine, whose CVODE takes the `pow` of the C library of the
+host for its step sizes (`crates/host/src/native.rs`). The fixtures were written on linux, so
+the native values are their bits where the C library is glibc; with another C library (macOS,
+windows) a step size may differ in its last bit and the values after it within the tolerances of
+the integration, here within a relative `NATIVE_RTOL`.
 """
 
 import json
 import math
+import platform
 from collections.abc import Callable
 from functools import cache
 from pathlib import Path
@@ -26,6 +33,13 @@ CASES = sorted(path.stem for path in TESTDATA.glob("*.json"))
 
 #: The units in the last place a derived value (a grid, an observable) may differ by.
 ULPS = 4.0
+
+#: Whether the C library is the one the fixtures were written with, so the native values are
+#: their bits.
+GLIBC = platform.libc_ver()[0] == "glibc"
+
+#: The relative difference of a native value with another C library than glibc.
+NATIVE_RTOL = 1e-7
 
 
 def fixture(case: str) -> dict[str, Any]:
@@ -153,7 +167,13 @@ def compare(
         assert list(variable["shape"]) == want["shape"], name
         assert values.shape == tuple(want["shape"]), name
         assert variable["unit"] == want["unit"], name
-        distance = ulps(values, numbers(want["values"])).max(initial=0.0)
+        reference = numbers(want["values"])
+        if not GLIBC and not derived(name):
+            assert np.allclose(
+                values.ravel(), reference, rtol=NATIVE_RTOL, atol=0.0, equal_nan=True
+            ), f"{case}: {name} differs by more than {NATIVE_RTOL} relative"
+            continue
+        distance = ulps(values, reference).max(initial=0.0)
         allowed = ULPS if derived(name) else 0.0
         assert distance <= allowed, f"{case}: {name} differs by {distance} ulps"
     assert [tuple(pair) for pair in result["units"]] == list(attrs["units"].items())
