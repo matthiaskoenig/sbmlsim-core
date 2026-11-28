@@ -488,13 +488,9 @@ fn unread_rules_are_not_computed() {
 
     let model = Model {
         n_algebraic: 0,
-
         rate_rules: vec![],
-
         rate_of: vec![],
-
         driven: vec![],
-
         t_ref: None,
         id: Some("m".to_string()),
         states: vec![entity("x")],

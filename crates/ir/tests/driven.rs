@@ -564,3 +564,121 @@ fn refuses_taken_ids() {
         "X__exchange",
     );
 }
+
+/// `A -> C -> B` with the rates `k1 * A` and `k2 * C`, `A` and `B` in `blood`, `C` in `cell`,
+/// in this order of the species, so `A` is before the kept state `C` and `B` after it; `model`
+/// the attributes of the model element.
+fn chain(model: &str) -> String {
+    let species = |id: &str, compartment: &str, value: &str| {
+        format!(
+            r#"<species id="{id}" compartment="{compartment}" initialConcentration="{value}" hasOnlySubstanceUnits="false" boundaryCondition="false" constant="false"/>"#
+        )
+    };
+    let reaction = |id: &str, from: &str, to: &str, k: &str| {
+        format!(
+            r#"<reaction id="{id}" reversible="false"><listOfReactants><speciesReference species="{from}" stoichiometry="1" constant="true"/></listOfReactants><listOfProducts><speciesReference species="{to}" stoichiometry="1" constant="true"/></listOfProducts><kineticLaw><math $>{}</math></kineticLaw></reaction>"#,
+            apply("times", &[&ci(k), &ci(from)])
+        )
+    };
+    format!(
+        r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2"><model id="m" {model}><listOfCompartments>{BLOOD}<compartment id="cell" size="1" constant="true"/></listOfCompartments><listOfSpecies>{}{}{}</listOfSpecies><listOfParameters><parameter id="k1" value="0.5" constant="true"/><parameter id="k2" value="0.25" constant="true"/><parameter id="cf" value="3" constant="true"/></listOfParameters><listOfReactions>{}{}</listOfReactions></model></sbml>"#,
+        species("A", "blood", "3"),
+        species("C", "cell", "0"),
+        species("B", "blood", "1"),
+        reaction("R1", "A", "C", "k1"),
+        reaction("R2", "C", "B", "k2"),
+    )
+    .replace('$', MATH)
+}
+
+fn read(xml: &str) -> Model {
+    build(&sbmlsim_sbml::read(xml).unwrap()).unwrap()
+}
+
+#[test]
+fn two_driven_species_around_a_kept_state() {
+    let before = read(&chain(""));
+    assert_eq!(ids(&before.states), ["A", "C", "B"]);
+    // given in the other order than the species: the new entities follow the given order
+    let m = drive(before, &["B", "A"]).unwrap();
+
+    assert_eq!(ids(&m.states), ["C", "B__exchange", "A__exchange"]);
+    assert_eq!(
+        ids(&m.parameters),
+        [
+            "blood",
+            "cell",
+            "k1",
+            "k2",
+            "cf",
+            "B__value",
+            "B__slope",
+            "A__value",
+            "A__slope",
+            "driven__t_ref"
+        ]
+    );
+    assert_eq!(
+        m.driven,
+        [
+            DrivenSpecies {
+                id: "B".into(),
+                value: 5,
+                slope: 6,
+                exchange: 1,
+                amount: false,
+            },
+            DrivenSpecies {
+                id: "A".into(),
+                value: 7,
+                slope: 8,
+                exchange: 2,
+                amount: false,
+            }
+        ]
+    );
+    assert_eq!(m.t_ref, Some(9));
+    assert_eq!(entity(&m, "A__value").default, 3.0);
+    assert_eq!(entity(&m, "B__value").default, 1.0);
+    // R1 reads the path of A, R2 the concentration of the kept C
+    let r1 = ap(Op::Times, vec![sym(&m, "k1"), path(&m, "A")]);
+    let r2 = ap(
+        Op::Times,
+        vec![
+            sym(&m, "k2"),
+            ap(Op::Divide, vec![sym(&m, "C"), sym(&m, "cell")]),
+        ],
+    );
+    assert_eq!(m.selection("R1").unwrap().expr, r1);
+    assert_eq!(m.selection("R2").unwrap().expr, r2);
+    // the exchange rates: A loses R1, B gains R2
+    assert_eq!(
+        m.rate("A__exchange").unwrap(),
+        &ap(Op::Minus, vec![ap(Op::Times, vec![Expr::Number(1.0), r1])])
+    );
+    assert_eq!(
+        m.rate("B__exchange").unwrap(),
+        &ap(Op::Times, vec![Expr::Number(1.0), r2])
+    );
+    for id in ["A__exchange", "B__exchange"] {
+        assert_eq!(m.selection(id).unwrap().expr, sym(&m, id));
+    }
+}
+
+#[test]
+fn driven_species_with_the_conversion_factor_of_the_model() {
+    let m = drive(read(&chain(r#"conversionFactor="cf""#)), &["A"]).unwrap();
+    assert_eq!(ids(&m.states), ["C", "B", "A__exchange"]);
+    let r1 = ap(Op::Times, vec![sym(&m, "k1"), path(&m, "A")]);
+    // the amount rate of A times the conversion factor of the model
+    assert_eq!(
+        m.rate("A__exchange").unwrap(),
+        &ap(
+            Op::Times,
+            vec![
+                sym(&m, "cf"),
+                ap(Op::Minus, vec![ap(Op::Times, vec![Expr::Number(1.0), r1])])
+            ]
+        )
+    );
+}
