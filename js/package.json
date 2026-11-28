@@ -1,7 +1,7 @@
 {
   "name": "sbmlsim-core",
   "version": "0.42.0",
-  "description": "Simulate SBML models compiled to WebAssembly in browsers and Node: the JavaScript host of sbmlsim-core with its engine (CVODE, KLU), its compiler, PEtab v2 problems, a pool of workers and the panel endpoint of sbmlsim",
+  "description": "Simulate SBML models compiled to WebAssembly in browsers and Node: the JavaScript host of sbmlsim-core with its engine (CVODE, KLU), its compiler, PEtab v2 problems, the statistics of the analyses, a pool of workers and the panel endpoint of sbmlsim",
   "keywords": [
     "sbml",
     "systems-biology",
@@ -30,6 +30,7 @@
     ".": "./loader.mjs",
     "./compile": "./compile.mjs",
     "./petab": "./petab.mjs",
+    "./stats": "./stats.mjs",
     "./kernel": "./kernel.mjs",
     "./pool": "./pool.mjs",
     "./panels": "./panels.mjs",
@@ -50,6 +51,7 @@
     "loader.mjs",
     "compile.mjs",
     "petab.mjs",
+    "stats.mjs",
     "kernel.mjs",
     "pool.mjs",
     "worker.mjs",

@@ -13,7 +13,16 @@ import { Worker } from "node:worker_threads";
 import { after, before, test } from "node:test";
 
 import { createPanelEndpoint } from "../panels.mjs";
-import { PANEL_MODEL, ROOT, fileFetch, nodeWorker, panelBundle, runtimeBytes, runtimeUrls } from "./helpers.mjs";
+import {
+  PANEL_MODEL,
+  ROOT,
+  compilerWasm,
+  fileFetch,
+  nodeWorker,
+  panelBundle,
+  runtimeBytes,
+  runtimeUrls,
+} from "./helpers.mjs";
 
 const SCRIPT = path.join(ROOT, "python", "sbmlsim_core", "web", "sbmlsim-core.js");
 const BASE = "local:toy";
@@ -80,6 +89,13 @@ test("the inline build is one classic script of the version of the package", () 
   for (const syntax of ["import.meta", "\nexport ", "\nimport "]) assert.ok(!text.includes(syntax), syntax);
   assert.equal(typeof core.WORKER_SOURCE, "string");
   assert.ok(!core.WORKER_SOURCE.includes("import.meta"));
+});
+
+test("the inline build has the statistics (since 0.43.0)", async () => {
+  const stats = core.createStats({ compiler: await core.createCompiler({ compiler: compilerWasm() }) });
+  assert.equal(stats.sse([3, 4]), 25);
+  assert.throws(() => stats.mse([]), { name: "StatsError", kind: "ValueError" });
+  assert.equal(typeof core.StatsError, "function");
 });
 
 test("the inline endpoint answers the routes of the bundle held in memory", async () => {
