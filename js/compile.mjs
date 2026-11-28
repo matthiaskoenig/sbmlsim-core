@@ -26,6 +26,169 @@
 // (`compile_kernel`, `kernel.wasm` and `kernel.json` of `kernel/2`), which `kernel.mjs`
 // instantiates. Both drive the species of `driven` (`sbmlsim_ir::driven`).
 
+// The buffers of a call into `compiler.wasm` (`Buffers`, `withBuffers`), which this module,
+// `petab.mjs`, `stats.mjs` and every other host of an export of the module use: the arguments
+// copied into the memory of the module, the words of the result read out of it, and every buffer
+// freed again, whatever the call throws.
+//
+// - Every buffer of a call (the arguments, the words of the result and the buffers the words
+//   point at) is freed when the call ends, also when the module traps or a result does not
+//   decode, so a page which calls the module many times does not lose its memory.
+// - `allocate` gives 0 for a buffer it cannot allocate (the memory of the module cannot grow): a
+//   host which wrote there would overwrite the memory at the address 0 of the module, so a failed
+//   allocation throws instead.
+// - A buffer of `allocate` has the alignment of bytes and every word of WebAssembly is
+//   little-endian, so a word is read with a `DataView`, little-endian at any address; a
+//   `Uint32Array` has the byte order of the host and refuses an address which is not a multiple
+//   of 4.
+
+/** The bytes of a word of `wasm32`, a `usize` of the module. */
+const WORD = 4;
+
+/** The buffers of one call into a module, freed together by `free`. */
+export class Buffers {
+  /** The exports of the module: `memory`, `allocate` and `deallocate`. */
+  #exports;
+  /** The name of the module in a message. */
+  #name;
+  /** The buffers to free, `[pointer, length]`. */
+  #owned = [];
+
+  /**
+   * @param {{memory: WebAssembly.Memory, allocate: (length: number) => number,
+   *   deallocate: (pointer: number, length: number) => void}} exports the exports of the module
+   * @param {string} name the name of the module, e.g. `compiler.wasm`
+   */
+  constructor(exports, name) {
+    this.#exports = exports;
+    this.#name = name;
+  }
+
+  /** The bytes of the memory of the module, read again for every view: the memory grows. */
+  #memory() {
+    return this.#exports.memory.buffer;
+  }
+
+  /**
+   * A new buffer of `length` bytes, freed with the others; 0 for a length of 0.
+   *
+   * @param {number} length the length in bytes
+   * @returns {number} the address of the buffer
+   * @throws {Error} when the module cannot allocate the buffer
+   */
+  allocate(length) {
+    if (length === 0) return 0;
+    // an address above 2 GiB is a negative i32 in JavaScript
+    const pointer = this.#exports.allocate(length) >>> 0;
+    if (pointer === 0) {
+      throw new Error(`${this.#name} could not allocate ${length} bytes`);
+    }
+    this.#owned.push([pointer, length]);
+    return pointer;
+  }
+
+  /**
+   * Copies bytes into a new buffer, freed with the others.
+   *
+   * @param {ArrayBufferView|ArrayBuffer} bytes the bytes: of a typed array its bytes, not its
+   *   elements (a `Float64Array` of 2 values is 16 bytes)
+   * @returns {[number, number]} the address and the length of the buffer, `[0, 0]` for no bytes
+   */
+  put(bytes) {
+    const source = ArrayBuffer.isView(bytes)
+      ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+      : new Uint8Array(bytes);
+    const pointer = this.allocate(source.length);
+    if (source.length > 0) new Uint8Array(this.#memory(), pointer, source.length).set(source);
+    return [pointer, source.length];
+  }
+
+  /**
+   * Takes a buffer the module gave to the caller, so it is freed with the others; the null
+   * pointer and a length of 0 are no buffer.
+   *
+   * @param {number} pointer the address of the buffer
+   * @param {number} length its length in bytes
+   */
+  adopt(pointer, length) {
+    if (pointer !== 0 && length !== 0) this.#owned.push([pointer >>> 0, length]);
+  }
+
+  /**
+   * The buffers of a result, which a call wrote as pairs of words (the address and the length of
+   * each) to `out`: the buffers are freed with the others, their bytes are copied.
+   *
+   * @param {number} out the address of the words, a buffer of `allocate` of `2 * pairs` words
+   * @param {number} pairs the number of the buffers
+   * @returns {Uint8Array[]} the bytes of each buffer, empty for a buffer the call left empty
+   */
+  results(out, pairs) {
+    const words = this.words(out, 2 * pairs);
+    const buffers = [];
+    for (let k = 0; k < words.length; k += 2) buffers.push([words[k], words[k + 1]]);
+    // every buffer is taken before any is read, so a read which throws frees them all
+    for (const [pointer, length] of buffers) this.adopt(pointer, length);
+    return buffers.map(([pointer, length]) =>
+      pointer === 0 || length === 0
+        ? new Uint8Array(0)
+        : new Uint8Array(this.#memory(), pointer, length).slice(),
+    );
+  }
+
+  /**
+   * The words of `wasm32` at an address, little-endian at any alignment.
+   *
+   * @param {number} pointer the address of the first word
+   * @param {number} count the number of the words
+   * @returns {number[]} the words, unsigned
+   */
+  words(pointer, count) {
+    const view = new DataView(this.#memory(), pointer, WORD * count);
+    return Array.from({ length: count }, (_, k) => view.getUint32(WORD * k, true));
+  }
+
+  /**
+   * Frees every buffer, the last first; a buffer is freed once, whatever a free throws.
+   *
+   * @returns {unknown} the first error a free threw, `undefined` when none did
+   */
+  free() {
+    let failure;
+    for (const [pointer, length] of this.#owned.splice(0).reverse()) {
+      try {
+        this.#exports.deallocate(pointer, length);
+      } catch (error) {
+        failure ??= error;
+      }
+    }
+    return failure;
+  }
+}
+
+/**
+ * Runs `body` with the buffers of a call and frees them when it ends. An error of `body` is
+ * thrown as it is; an error of a free is thrown when `body` threw none.
+ *
+ * @template T
+ * @param {object} exports the exports of the module: `memory`, `allocate` and `deallocate`
+ * @param {string} name the name of the module in a message
+ * @param {(buffers: Buffers) => T} body the call
+ * @returns {T} the result of `body`
+ */
+export function withBuffers(exports, name, body) {
+  const buffers = new Buffers(exports, name);
+  let result;
+  try {
+    result = body(buffers);
+  } catch (error) {
+    buffers.free();
+    throw error;
+  }
+  const failure = buffers.free();
+  if (failure !== undefined) throw failure;
+  return result;
+}
+
 /** The exports of `compiler.wasm` this host calls. */
 const COMPILER_EXPORTS = ["allocate", "compile", "compile_kernel", "deallocate", "memory"];
 
@@ -87,11 +250,6 @@ class Compiler {
     /** The compiled module, which a worker gets to create a compiler of its own. */
     this.module = module;
     this.exports = instance.exports;
-  }
-
-  /** The memory of the module, read again after every call: it grows while a model compiles. */
-  bytes() {
-    return new Uint8Array(this.exports.memory.buffer);
   }
 
   /**
@@ -169,55 +327,22 @@ class Compiler {
    * @throws {CompileError} for a document the compiler refuses
    */
   run(sbml, options, call) {
-    const { allocate, deallocate } = this.exports;
     const encoder = new TextEncoder();
     const document_ = encoder.encode(sbml);
     const config = encoder.encode(JSON.stringify(options));
-    const input = allocate(document_.length);
-    const settings = allocate(config.length);
-    const words = allocate(4 * 4);
-    try {
-      if (document_.length > 0) {
-        this.bytes().set(document_, input);
+    return withBuffers(this.exports, "compiler.wasm", (buffers) => {
+      const input = buffers.put(document_);
+      const settings = buffers.put(config);
+      const words = buffers.allocate(4 * 4);
+      const status = call(...input, ...settings, words);
+      const [text, wasm] = buffers.results(words, 2);
+      if (status !== 1) {
+        throw new CompileError(
+          new TextDecoder().decode(text) || "the compiler refused the document",
+        );
       }
-      this.bytes().set(config, settings);
-      const status = call(input, document_.length, settings, config.length, words);
-      const header = new Uint32Array(this.exports.memory.buffer, words, 4);
-      const [textPointer, textLength, wasmPointer, wasmLength] = header;
-      try {
-        const text = this.read(textPointer, textLength);
-        if (status !== 1) {
-          throw new CompileError(
-            new TextDecoder().decode(text) || "the compiler refused the document",
-          );
-        }
-        return {
-          wasm: this.read(wasmPointer, wasmLength).slice(),
-          description: JSON.parse(new TextDecoder().decode(text)),
-        };
-      } finally {
-        deallocate(textPointer, textLength);
-        deallocate(wasmPointer, wasmLength);
-      }
-    } finally {
-      deallocate(words, 4 * 4);
-      deallocate(settings, config.length);
-      deallocate(input, document_.length);
-    }
-  }
-
-  /**
-   * The bytes of a buffer of the module, as a view on its memory.
-   *
-   * @param {number} pointer the address of the buffer
-   * @param {number} length its length in bytes
-   * @returns {Uint8Array} the view, empty when the buffer is
-   */
-  read(pointer, length) {
-    if (pointer === 0 || length === 0) {
-      return new Uint8Array(0);
-    }
-    return new Uint8Array(this.exports.memory.buffer, pointer, length);
+      return { wasm, description: JSON.parse(new TextDecoder().decode(text)) };
+    });
   }
 
   /**
@@ -262,27 +387,17 @@ class Compiler {
     if (bytes.byteLength > 100 * 1024 * 1024 || config.byteLength > 100 * 1024 * 1024) {
       throw new RangeError("The source or options exceed 100 MB");
     }
-    const { allocate, deallocate, export_ode } = this.exports;
-    const input = allocate(bytes.length);
-    const options = allocate(config.length);
-    const words = allocate(16);
-    try {
-      this.bytes().set(bytes, input);
-      this.bytes().set(config, options);
-      const status = export_ode(input, bytes.length, options, config.length, words);
-      const [pointer, length] = new Uint32Array(this.exports.memory.buffer, words, 4);
-      try {
-        const text = new TextDecoder().decode(this.read(pointer, length));
-        if (status !== 1) throw new CompileError(text || "The source export failed");
-        return JSON.parse(text);
-      } finally {
-        deallocate(pointer, length);
-      }
-    } finally {
-      deallocate(words, 16);
-      deallocate(options, config.length);
-      deallocate(input, bytes.length);
-    }
+    const { export_ode } = this.exports;
+    return withBuffers(this.exports, "compiler.wasm", (buffers) => {
+      const input = buffers.put(bytes);
+      const options = buffers.put(config);
+      const words = buffers.allocate(4 * 4);
+      const status = export_ode(...input, ...options, words);
+      const [answer] = buffers.results(words, 2);
+      const text = new TextDecoder().decode(answer);
+      if (status !== 1) throw new CompileError(text || "The source export failed");
+      return JSON.parse(text);
+    });
   }
 }
 

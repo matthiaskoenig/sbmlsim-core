@@ -7,7 +7,9 @@
 
 use std::slice;
 
-use sbmlsim_wasm::{KernelOptions, ModelOptions, allocate, compile, compile_kernel, deallocate};
+use sbmlsim_wasm::{
+    KernelOptions, ModelOptions, allocate, compile, compile_kernel, deallocate, export_ode,
+};
 
 /// A model with one species a reaction changes, which compiles.
 const MODEL: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -302,4 +304,62 @@ fn a_driven_kernel_gives_its_module_and_its_description() {
         description.parameter_ids[description.model.t_ref.unwrap() as usize],
         "driven__t_ref"
     );
+}
+
+/// Calls a function of the interface with its four words of the result at an odd address, as a
+/// buffer of `allocate` (whose layout has the alignment of bytes) may be, and gives the status
+/// and the two buffers of the result, which it frees.
+fn at_an_odd_address(call: impl Fn(*mut usize) -> u32) -> (u32, Vec<u8>, Vec<u8>) {
+    let mut storage = vec![0_u8; 4 * size_of::<usize>() + 1];
+    let out = storage.as_mut_ptr().wrapping_add(1).cast::<usize>();
+    assert_ne!(
+        out as usize % align_of::<usize>(),
+        0,
+        "the words are not aligned"
+    );
+    let status = call(out);
+    // SAFETY: the four words are in `storage`, read unaligned, and their buffers are the
+    // interface's, freed once
+    unsafe {
+        let words: Vec<usize> = (0..4).map(|k| out.add(k).read_unaligned()).collect();
+        let first = bytes_of(words[0], words[1]);
+        let second = bytes_of(words[2], words[3]);
+        deallocate(words[0] as *mut u8, words[1]);
+        deallocate(words[2] as *mut u8, words[3]);
+        (status, first, second)
+    }
+}
+
+#[test]
+fn the_words_of_a_result_are_written_at_any_alignment() {
+    let model = MODEL.as_bytes();
+    let refused = b"<not-sbml/>";
+    // SAFETY: the documents are buffers of exactly their lengths, the words are four
+    let (status, description, wasm) = at_an_odd_address(|out| unsafe {
+        compile(model.as_ptr(), model.len(), std::ptr::null(), 0, out)
+    });
+    assert_eq!(status, 1, "{}", String::from_utf8_lossy(&description));
+    assert!(wasm.starts_with(b"\0asm"));
+    let (status, message, wasm) = at_an_odd_address(|out| unsafe {
+        compile(refused.as_ptr(), refused.len(), std::ptr::null(), 0, out)
+    });
+    assert_eq!(status, 0);
+    assert!(!message.is_empty() && wasm.is_empty());
+    let (status, _, kernel) = at_an_odd_address(|out| unsafe {
+        compile_kernel(model.as_ptr(), model.len(), std::ptr::null(), 0, out)
+    });
+    assert_eq!(status, 1);
+    assert!(kernel.starts_with(b"\0asm"));
+    let options = br#"{"format":"markdown"}"#;
+    let (status, export, empty) = at_an_odd_address(|out| unsafe {
+        export_ode(
+            model.as_ptr(),
+            model.len(),
+            options.as_ptr(),
+            options.len(),
+            out,
+        )
+    });
+    assert_eq!(status, 1, "{}", String::from_utf8_lossy(&export));
+    assert!(empty.is_empty());
 }

@@ -72,7 +72,7 @@ For ordinary simulations, `compile_sbml(sbml_text, parameter_jacobian=False)` om
 parameter derivatives and the constants used only by them. This reduces compilation and
 initialization work without changing simulation results. The default is `True` (0.26.0).
 Forward sensitivities remain available with `False`, using numerical parameter derivatives.
-`compile_sbml(sbml_text, driven=["S_ext", "P_ext"])` (0.43.0) drives the species of the ids, as
+`compile_sbml(sbml_text, driven=["S_ext", "P_ext"])` (0.44.0) drives the species of the ids, as
 `sbmlsim-core compile --driven` does ([Compiling a model](compiling.md)): each follows the path
 `X__value + X__slope * (time - driven__t_ref)` of three parameters, and the state `X__exchange`
 accumulates the amount the model gave to it.

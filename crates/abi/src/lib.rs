@@ -167,8 +167,8 @@
 //! amount of an interval writes 0 into it before. `init` gives `X__value` the initial value of
 //! the species in the quantity of its path and `X__slope` and `driven__t_ref` 0 (each where it
 //! is NaN), and the accumulator 0; `assign` evaluates the rules which read `X` at the path at
-//! the time of the point. The revision of the contract: `kernel/1` (0.41.0) had no driven
-//! species.
+//! the time of the point. The revision of the contract: `kernel/1` (0.41.0 to 0.43.0) had no
+//! driven species.
 //!
 //! The math of a kernel is the one of `model.wasm` (the programs of the optimizer, with mathlib)
 //! and its integrator the one of `sbmlsim_rosenbrock.h`, so a point agrees with the QFunction
