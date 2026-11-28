@@ -6,8 +6,9 @@
 //! flow. The modules:
 //!
 //! - [`special`]: the special functions of the distributions, the logarithm of the beta
-//!   function, the regularized incomplete beta function and the distribution functions and
-//!   quantiles of the normal, the Student t and the binomial distribution, as scipy gives them.
+//!   function, the regularized incomplete beta and gamma functions, the error function, the
+//!   gamma function and the distribution functions and quantiles of the normal, the Student
+//!   t, the chi-squared and the binomial distribution, as scipy gives them.
 //! - [`linalg`]: the linear algebra of symmetric matrices, the eigendecomposition (cyclic
 //!   Jacobi), the Cholesky factor, the factor of a correlation, the pseudo-inverse and `JᵀJ`
 //!   of a jacobian, as numpy gives them.
@@ -46,8 +47,10 @@
 //! functions of sbmlsim, computed once by `oracles/make_oracles.py` and stored next to it as
 //! JSON (`tests/oracle_<module>.rs`): the deterministic kernels (the metrics, the Fisher
 //! statistics, the posterior, the statistics of the draws, the logarithm of the beta function,
-//! the p-values and the confidence sequence) to 1e-12 relative, the normal distribution to
-//! 1e-13, the incomplete beta function and the t and binomial distributions to 1e-10, the
+//! the p-values and the confidence sequence) to 1e-12 relative, the normal distribution, the
+//! gamma function and the chi-squared quantile to 1e-13 and the error function to 1e-15 (of
+//! mpmath at 40 digits), the incomplete gamma function and the chi-squared distribution
+//! function to 1e-13 times their condition `max(1, min(|x - a|, (x - a)² / a))`, the incomplete beta function and the t and binomial distributions to 1e-10, the
 //! binomial quantiles to the same integers and the linear algebra of up to 200 parameters to
 //! 1e-10 of the largest value of the matrix (LAPACK sums in another order). Where the crate
 //! and scipy differ beyond the rounding, the crate is the more accurate: [`special::ln_beta`]

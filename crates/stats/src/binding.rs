@@ -14,6 +14,8 @@ use crate::draws::{self, Design};
 use crate::fisher::{self, FisherStatistics};
 use crate::metrics;
 use crate::python::{python_repr, python_str_repr, shape_text};
+use crate::size;
+use crate::special;
 use crate::testing::{self, Decision, Side};
 use crate::uncertainty;
 use crate::variability;
@@ -209,6 +211,212 @@ fn nested_list(values: &[f64], shape: &[usize]) -> String {
     }
 }
 
+/// A distribution function or a special function of one argument, which the bindings apply
+/// to an array of any shape, value by value, as the ufuncs of scipy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Unary {
+    /// `norm_cdf`, `scipy.stats.norm.cdf`.
+    NormCdf,
+    /// `norm_ppf`, `scipy.stats.norm.ppf`.
+    NormPpf,
+    /// `erf`, `scipy.special.erf`.
+    Erf,
+    /// `gamma`, `scipy.special.gamma`.
+    Gamma,
+}
+
+impl Unary {
+    /// The function of its name in `sbmlsim_core.stats`.
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "norm_cdf" => Some(Self::NormCdf),
+            "norm_ppf" => Some(Self::NormPpf),
+            "erf" => Some(Self::Erf),
+            "gamma" => Some(Self::Gamma),
+            _ => None,
+        }
+    }
+
+    /// The value of the function at `x`.
+    #[must_use]
+    pub fn at(self, x: f64) -> f64 {
+        match self {
+            Self::NormCdf => special::normal_cdf(x),
+            Self::NormPpf => special::normal_ppf(x),
+            Self::Erf => special::erf(x),
+            Self::Gamma => special::gamma(x),
+        }
+    }
+}
+
+/// A distribution function of a value and the degrees of freedom, which the bindings apply
+/// to two arrays broadcast against each other, as scipy broadcasts them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Binary {
+    /// `t_cdf(x, df)`, `scipy.stats.t.cdf`.
+    TCdf,
+    /// `t_ppf(q, df)`, `scipy.stats.t.ppf`.
+    TPpf,
+    /// `chi2_cdf(x, df)`, `scipy.stats.chi2.cdf`.
+    Chi2Cdf,
+    /// `chi2_ppf(q, df)`, `scipy.stats.chi2.ppf`.
+    Chi2Ppf,
+}
+
+impl Binary {
+    /// The function of its name in `sbmlsim_core.stats`.
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "t_cdf" => Some(Self::TCdf),
+            "t_ppf" => Some(Self::TPpf),
+            "chi2_cdf" => Some(Self::Chi2Cdf),
+            "chi2_ppf" => Some(Self::Chi2Ppf),
+            _ => None,
+        }
+    }
+
+    /// The value of the function at the value `x` (a quantile or a probability) and `df`
+    /// degrees of freedom.
+    #[must_use]
+    pub fn at(self, x: f64, df: f64) -> f64 {
+        match self {
+            Self::TCdf => special::t_cdf(x, df),
+            Self::TPpf => special::t_ppf(x, df),
+            Self::Chi2Cdf => special::chi2_cdf(x, df),
+            Self::Chi2Ppf => special::chi2_ppf(x, df),
+        }
+    }
+
+    /// Whether the function is a quantile, whose error of shapes which do not broadcast
+    /// names the degrees of freedom first, as scipy's.
+    fn is_quantile(self) -> bool {
+        matches!(self, Self::TPpf | Self::Chi2Ppf)
+    }
+}
+
+/// The function applied to every value of an array of any shape, the values of the same
+/// shape.
+///
+/// # Errors
+///
+/// An array the allocator refuses, numpy's error.
+pub fn unary(function: Unary, x: &[f64]) -> Result<Vec<f64>> {
+    let mut values = size::buffer(x.len())?;
+    values.extend(x.iter().map(|&value| function.at(value)));
+    Ok(values)
+}
+
+/// The function of two arrays broadcast against each other by the rules of numpy, the value
+/// `x` of the shape `x_shape` and the degrees of freedom `df` of the shape `df_shape`: the
+/// values and their shape.
+///
+/// # Errors
+///
+/// Shapes which do not broadcast, with the error of scipy, and a result past what an array
+/// holds, numpy's.
+pub fn binary(
+    function: Binary,
+    x: &[f64],
+    x_shape: &[usize],
+    df: &[f64],
+    df_shape: &[usize],
+) -> Result<(Vec<f64>, Vec<usize>)> {
+    let Some(shape) = broadcast_shape(x_shape, df_shape) else {
+        let (first, second) = if function.is_quantile() {
+            (df_shape, x_shape)
+        } else {
+            (x_shape, df_shape)
+        };
+        return Err(StatsError::value(format!(
+            "operands could not be broadcast together with shapes {} {} ",
+            numpy_shape_text(first),
+            numpy_shape_text(second)
+        )));
+    };
+    for (values, shape, what) in [(x, x_shape, "values"), (df, df_shape, "degrees of freedom")] {
+        if shape.iter().try_fold(1_usize, |len, &n| len.checked_mul(n)) != Some(values.len()) {
+            return Err(StatsError::value(format!(
+                "The {what} of the shape {} are not {} values.",
+                shape_text(shape),
+                values.len()
+            )));
+        }
+    }
+    let len = size::array_len::<f64>(&shape)?;
+    let mut values = size::buffer(len)?;
+    let x_strides = broadcast_strides(x_shape, shape.len());
+    let df_strides = broadcast_strides(df_shape, shape.len());
+    let mut index = vec![0_usize; shape.len()];
+    let (mut at_x, mut at_df) = (0_usize, 0_usize);
+    for _ in 0..len {
+        values.push(function.at(x[at_x], df[at_df]));
+        // the next index of the result in the order numpy ravels it, and the offsets of the
+        // values it reads
+        for axis in (0..shape.len()).rev() {
+            index[axis] += 1;
+            at_x += x_strides[axis];
+            at_df += df_strides[axis];
+            if index[axis] < shape[axis] {
+                break;
+            }
+            at_x -= x_strides[axis] * shape[axis];
+            at_df -= df_strides[axis] * shape[axis];
+            index[axis] = 0;
+        }
+    }
+    Ok((values, shape))
+}
+
+/// The shape two shapes broadcast to by the rules of numpy, aligned at their last
+/// dimensions, every pair of dimensions equal or one of them one; `None` of shapes which do
+/// not broadcast.
+fn broadcast_shape(a: &[usize], b: &[usize]) -> Option<Vec<usize>> {
+    let n = a.len().max(b.len());
+    let dimension = |shape: &[usize], axis: usize| {
+        (axis + shape.len())
+            .checked_sub(n)
+            .map_or(1, |at| shape[at])
+    };
+    (0..n)
+        .map(|axis| match (dimension(a, axis), dimension(b, axis)) {
+            (x, y) if x == y || y == 1 => Some(x),
+            (1, y) => Some(y),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The strides (in values) of an array of the shape in the `n` dimensions of the shape it is
+/// broadcast to: zero of a dimension it does not have or has once.
+fn broadcast_strides(shape: &[usize], n: usize) -> Vec<usize> {
+    let mut strides = vec![0; n];
+    let mut stride = 1;
+    for (axis, &dimension) in shape.iter().enumerate().rev() {
+        if dimension != 1 {
+            strides[n - shape.len() + axis] = stride;
+        }
+        stride *= dimension;
+    }
+    strides
+}
+
+/// The text numpy writes a shape with in its errors of broadcasting: `(2,3)`, `(3,)`, `()`.
+fn numpy_shape_text(shape: &[usize]) -> String {
+    match shape {
+        [n] => format!("({n},)"),
+        _ => format!(
+            "({})",
+            shape
+                .iter()
+                .map(usize::to_string)
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+    }
+}
+
 /// The Fisher information `JᵀJ` of a jacobian of the shape `(residuals, parameters)` and its
 /// number of parameters.
 ///
@@ -240,6 +448,63 @@ pub fn fisher_statistics(
     let k = square(shape, "Fisher information")?;
     let n = n.max(0).unsigned_abs();
     let statistics = fisher::statistics(information, k, cost, n, likelihood, rank_tolerance)?;
+    Ok((statistics, k))
+}
+
+/// The decomposition of a Fisher information of the shape `(k, k)`, [`fisher::decomposition`]:
+/// its eigenvalues, largest first, its pseudo-inverse and its number of parameters.
+///
+/// # Errors
+///
+/// An information which is not a square matrix, and the errors of
+/// [`fisher::decomposition`].
+pub fn fisher_decomposition(
+    information: &[f64],
+    shape: &[usize],
+) -> Result<(Vec<f64>, Vec<f64>, usize)> {
+    let k = square(shape, "Fisher information")?;
+    let (spectrum, inverse) = fisher::decomposition(information, k)?;
+    Ok((spectrum, inverse, k))
+}
+
+/// The statistics of a Fisher information of `n` data points (a negative number has no
+/// degrees of freedom, as zero has) from its eigenvalues of the shape `(k,)` and its
+/// pseudo-inverse of the shape `(k, k)`, [`fisher::statistics_of_decomposition`], and its
+/// number of parameters.
+///
+/// # Errors
+///
+/// A pseudo-inverse which is not a square matrix, eigenvalues which are not a vector of one
+/// value per parameter, and the errors of [`fisher::statistics_of_decomposition`].
+#[allow(clippy::too_many_arguments)]
+pub fn fisher_statistics_of_decomposition(
+    spectrum: &[f64],
+    spectrum_shape: &[usize],
+    inverse: &[f64],
+    inverse_shape: &[usize],
+    cost: f64,
+    n: i64,
+    likelihood: bool,
+    rank_tolerance: f64,
+) -> Result<(FisherStatistics, usize)> {
+    let k = square(inverse_shape, "pseudo-inverse of a Fisher information")?;
+    if spectrum_shape != [k] {
+        return Err(StatsError::value(format!(
+            "The eigenvalues of a Fisher information of {k} parameters must be a vector of \
+             {k} values, not of the shape {}.",
+            shape_text(spectrum_shape)
+        )));
+    }
+    let n = n.max(0).unsigned_abs();
+    let statistics = fisher::statistics_of_decomposition(
+        spectrum,
+        inverse,
+        k,
+        cost,
+        n,
+        likelihood,
+        rank_tolerance,
+    )?;
     Ok((statistics, k))
 }
 
@@ -518,6 +783,54 @@ mod tests {
         assert_eq!(Decision::Undecided.name(), "undecided");
         let error = unknown_scale("'x'");
         assert!(error.message.starts_with("The parameter scale 'x' is none"));
+    }
+
+    #[test]
+    fn two_arrays_broadcast_as_numpy_broadcasts_them() {
+        assert_eq!(broadcast_shape(&[2, 1], &[3]), Some(vec![2, 3]));
+        assert_eq!(broadcast_shape(&[], &[4]), Some(vec![4]));
+        assert_eq!(broadcast_shape(&[0], &[1]), Some(vec![0]));
+        assert_eq!(broadcast_shape(&[3, 1, 4], &[2, 1]), Some(vec![3, 2, 4]));
+        assert_eq!(broadcast_shape(&[2], &[3]), None);
+        // a column of probabilities and a row of degrees of freedom: every pair, row-major
+        let (values, shape) = binary(
+            Binary::Chi2Ppf,
+            &[0.5, 0.95],
+            &[2, 1],
+            &[1.0, 2.0, 3.0],
+            &[3],
+        )
+        .unwrap();
+        assert_eq!(shape, [2, 3]);
+        let expected: Vec<f64> = [0.5, 0.95]
+            .iter()
+            .flat_map(|&p| [1.0, 2.0, 3.0].map(|df| special::chi2_ppf(p, df)))
+            .collect();
+        assert_eq!(values, expected);
+        // the error of scipy, the degrees of freedom first of a quantile
+        let error = binary(Binary::TPpf, &[0.1, 0.2], &[2], &[1.0; 6], &[2, 3]).unwrap_err();
+        assert_eq!(
+            error.message,
+            "operands could not be broadcast together with shapes (2,3) (2,) "
+        );
+        let error = binary(Binary::TCdf, &[0.1, 0.2], &[2], &[1.0; 3], &[3]).unwrap_err();
+        assert_eq!(
+            error.message,
+            "operands could not be broadcast together with shapes (2,) (3,) "
+        );
+        // values which are not of their shape are an error, not a panic
+        let error = binary(Binary::TCdf, &[0.0], &[2], &[1.0], &[]).unwrap_err();
+        assert_eq!(
+            error.message,
+            "The values of the shape (2,) are not 1 values."
+        );
+        // a result past what an array holds is numpy's error, before any memory is asked for:
+        // empty arrays whose other dimensions broadcast past it, which numpy refuses as well
+        let half = 1usize << (usize::BITS / 2);
+        let error = binary(Binary::TCdf, &[], &[half, 1, 0], &[], &[1, half, 0])
+            .map(|_| ())
+            .unwrap_err();
+        assert!(error.message.starts_with("array is too big"), "{error}");
     }
 
     #[test]

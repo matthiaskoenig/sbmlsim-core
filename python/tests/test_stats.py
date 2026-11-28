@@ -1516,3 +1516,206 @@ def test_bands_too_many_to_hold_raise_a_value_error() -> None:
     with pytest.raises(ValueError) as raised:
         stats.bands(numpy.empty((0, 2**59)), [0.05, 0.95])
     assert str(raised.value) == ARRAY_TOO_BIG
+
+
+# --- the decomposition of a Fisher information ------------------------------------------
+
+
+def same_bits(found: Any, expected: Any) -> bool:
+    """Whether two arrays have the same doubles to the bit, `nan` as `nan`."""
+    found, expected = numpy.asarray(found, float), numpy.asarray(expected, float)
+    both_nan = numpy.isnan(found) & numpy.isnan(expected)
+    return found.shape == expected.shape and bool(
+        numpy.all((found.view(numpy.int64) == expected.view(numpy.int64)) | both_nan)
+    )
+
+
+@pytest.mark.parametrize(("name", "case"), of_fisher("fisher/"))
+def test_the_statistics_are_the_ones_of_their_decomposition_to_the_bit(
+    name: str, case: dict[str, Any]
+) -> None:
+    inputs = case["inputs"]
+    information = square(inputs["information"], inputs["k"])
+    arguments = (inputs["cost"], inputs["n"])
+    spectrum, inverse = stats.fisher_decomposition(information)
+    for likelihood in (False, True):
+        direct = stats.fisher_statistics(information, *arguments, likelihood=likelihood)
+        derived = stats.fisher_statistics_of_decomposition(
+            spectrum, inverse, *arguments, likelihood=likelihood
+        )
+        assert set(direct) == set(derived)
+        for key, value in direct.items():
+            assert same_bits(derived[key], value), (name, key)
+        assert same_bits(direct["spectrum"], spectrum)
+
+
+@pytest.mark.parametrize(
+    ("name", "case"), list(cases("fisher_decomposition", "decomposition/").items())
+)
+def test_the_statistics_of_a_decomposition_of_lapack_are_the_ones_of_sbmlsim(
+    name: str, case: dict[str, Any]
+) -> None:
+    inputs, expected = case["inputs"], case["expected"]
+    k = inputs["k"]
+    found = stats.fisher_statistics_of_decomposition(
+        inputs["spectrum"],
+        square(inputs["inverse"], k),
+        inputs["cost"],
+        inputs["n"],
+        likelihood=inputs["likelihood"],
+    )
+    assert found["rank"] == expected["rank"]
+    for key in ("sigma2", "condition", "standard_errors"):
+        assert same_bits(found[key], expected[key]), key
+    for key in ("covariance", "correlation"):
+        assert same_bits(found[key], square(expected[key], k)), key
+
+
+def test_a_decomposition_which_does_not_fit_is_refused() -> None:
+    inverse = numpy.eye(2)
+    with pytest.raises(
+        ValueError, match="must be a vector of 2 values, not of the shape"
+    ):
+        stats.fisher_statistics_of_decomposition([2.0, 1.0, 0.5], inverse, 1.0, 10)
+    with pytest.raises(ValueError, match="must be a square matrix"):
+        stats.fisher_statistics_of_decomposition([2.0], [1.0, 2.0], 1.0, 10)
+    with pytest.raises(ValueError, match="largest first"):
+        stats.fisher_statistics_of_decomposition([1.0, 2.0], inverse, 1.0, 10)
+    with pytest.raises(ValueError, match="no parameters"):
+        stats.fisher_decomposition(numpy.zeros((0, 0)))
+
+
+# --- the distributions and the special functions ----------------------------------------
+
+SPECIAL = cases("special", "")
+
+#: the tolerances of the functions against their cases, relative
+TOLERANCES = {
+    "normal_cdf": 1e-13,
+    "normal_ppf": 1e-13,
+    "t_cdf": DISTRIBUTION,
+    "t_ppf": DISTRIBUTION,
+    "erf": 1e-15,
+    "gamma": 1e-13,
+    "chi2_ppf": 1e-13,
+}
+
+
+def relative_error(found: Any, expected: Any) -> numpy.ndarray:
+    """The relative errors of `found` against `expected` as the oracle tests of the crate
+    count them: zero of the same values (`nan` of `nan`) and of two values below the smallest
+    normal double, which scipy flushes to zero."""
+    found, expected = numpy.asarray(found, float), numpy.asarray(expected, float)
+    tiny = numpy.finfo(float).tiny
+    with numpy.errstate(invalid="ignore"):
+        error = numpy.abs(found - expected) / numpy.maximum(numpy.abs(expected), tiny)
+        same = (found == expected) | (numpy.isnan(found) & numpy.isnan(expected))
+        same |= (numpy.abs(found) < tiny) & (numpy.abs(expected) < tiny)
+    return numpy.where(same, 0.0, numpy.where(numpy.isnan(error), numpy.inf, error))
+
+
+@pytest.mark.parametrize(
+    ("case", "function", "inputs"),
+    [
+        ("normal_cdf", "norm_cdf", ["x"]),
+        ("normal_ppf", "norm_ppf", ["p"]),
+        ("t_cdf", "t_cdf", ["x", "df"]),
+        ("t_cdf_large_df", "t_cdf", ["x", "df"]),
+        ("t_ppf", "t_ppf", ["p", "df"]),
+        ("erf", "erf", ["x"]),
+        ("gamma", "gamma", ["x"]),
+        ("chi2_ppf", "chi2_ppf", ["p", "df"]),
+    ],
+)
+def test_a_distribution_is_the_one_of_scipy_or_mpmath(
+    case: str, function: str, inputs: list[str]
+) -> None:
+    values = [numpy.asarray(SPECIAL[case]["inputs"][name]) for name in inputs]
+    expected = numpy.asarray(SPECIAL[case]["expected"])
+    found = getattr(stats, function)(*values)
+    tolerance = TOLERANCES[case.removesuffix("_large_df")]
+    assert relative_error(found, expected).max() <= tolerance
+
+
+def test_the_chi_squared_distribution_function_is_the_one_of_mpmath() -> None:
+    # the tolerance times the condition, max(1, min(|x - a|, (x - a)^2 / a)) of a = df / 2
+    # at x / 2, the rounding of the exponent of the incomplete gamma function
+    case = SPECIAL["chi2_cdf"]
+    x, df = numpy.asarray(case["inputs"]["x"]), numpy.asarray(case["inputs"]["df"])
+    d, a = numpy.abs(x - df) / 2.0, df / 2.0
+    condition = numpy.maximum(numpy.minimum(d, d * d / a), 1.0)
+    error = relative_error(stats.chi2_cdf(x, df), case["expected"])
+    assert (error / condition).max() <= 1e-13
+
+
+@pytest.mark.parametrize(
+    ("case", "function", "inputs"),
+    [
+        ("erf_edges", "erf", ["x"]),
+        ("gamma_edges", "gamma", ["x"]),
+        ("chi2_cdf_edges", "chi2_cdf", ["x", "df"]),
+        ("chi2_ppf_edges", "chi2_ppf", ["p", "df"]),
+        ("t_cdf_edges", "t_cdf", ["x", "df"]),
+        ("t_ppf_edges", "t_ppf", ["p", "df"]),
+    ],
+)
+def test_the_edges_of_a_distribution_are_the_ones_of_scipy(
+    case: str, function: str, inputs: list[str]
+) -> None:
+    values = [SPECIAL[case]["inputs"][name] for name in inputs]
+    expected = numpy.asarray(SPECIAL[case]["expected"], float)
+    found = numpy.asarray(getattr(stats, function)(*values), float)
+    # the normal distribution of infinitely many degrees of freedom differs in its last digit
+    tolerance = 1e-13 if case.startswith("t_") else 0.0
+    assert relative_error(found, expected).max() <= tolerance
+    exact = (relative_error(found, expected) == 0.0) & (found == 0.0)
+    # the sign of a zero is scipy's
+    assert numpy.array_equal(
+        numpy.signbit(found[exact & (expected == 0.0)]),
+        numpy.signbit(expected[exact & (expected == 0.0)]),
+    )
+
+
+@pytest.mark.parametrize(
+    ("name", "case"),
+    [(name, case) for name, case in SPECIAL.items() if name.startswith("broadcast/")],
+)
+def test_a_distribution_broadcasts_its_arguments_as_scipy(
+    name: str, case: dict[str, Any]
+) -> None:
+    function = getattr(stats, case["inputs"]["function"])
+    args = case["inputs"]["args"]
+    expected = case["expected"]
+    if isinstance(expected, dict) and "error" in expected:
+        with pytest.raises(ValueError) as raised:
+            function(*args)
+        assert str(raised.value) == expected["error"]
+        return
+    found = function(*args)
+    expected = numpy.asarray(expected, float)
+    if expected.ndim == 0:
+        assert type(found) is float
+    else:
+        assert isinstance(found, numpy.ndarray)
+        assert found.dtype == numpy.float64
+    assert numpy.shape(found) == expected.shape
+    numpy.testing.assert_allclose(found, expected, rtol=1e-13, atol=0.0)
+
+
+def test_a_number_gives_a_float_and_an_array_an_array_of_its_shape() -> None:
+    assert type(stats.norm_ppf(0.975)) is float
+    assert type(stats.chi2_ppf(numpy.float64(0.95), 1)) is float
+    assert type(stats.gamma(numpy.array(4.0))) is float
+    assert stats.gamma(4) == 6.0
+    assert stats.erf(-0.0) == 0.0 and math.copysign(1.0, stats.erf(-0.0)) == -1.0
+    found = stats.t_cdf(numpy.arange(6, dtype=numpy.int64).reshape(2, 3), [1, 2, 3])
+    assert isinstance(found, numpy.ndarray)
+    assert found.shape == (2, 3)
+    assert found[1, 2] == stats.t_cdf(5.0, 3.0)
+    strided = numpy.linspace(0.05, 0.95, 20)[::3]
+    numpy.testing.assert_array_equal(
+        stats.norm_ppf(strided), stats.norm_ppf(strided.copy())
+    )
+    assert stats.chi2_ppf(0.95, 1) == stats.chi2_ppf(0.95, 1.0)
+    # the quantile of the profile likelihood of one parameter, `chi2.ppf(0.95, 1)`
+    assert abs(stats.chi2_ppf(0.95, 1) - 3.841458820694124) <= 1e-15 * 3.85

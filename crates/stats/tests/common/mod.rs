@@ -26,6 +26,7 @@ pub fn source(module: &str) -> &'static str {
         "linalg" => include_str!("../../oracles/linalg.json"),
         "metrics" => include_str!("../../oracles/metrics.json"),
         "fisher" => include_str!("../../oracles/fisher.json"),
+        "fisher_decomposition" => include_str!("../../oracles/fisher_decomposition.json"),
         "uncertainty" => include_str!("../../oracles/uncertainty.json"),
         "draws" => include_str!("../../oracles/draws.json"),
         "testing" => include_str!("../../oracles/testing.json"),
@@ -277,6 +278,15 @@ pub const KERNEL: f64 = 1e-12;
 /// The tolerance of the distribution functions of the incomplete beta function: the incomplete
 /// beta itself and the t and binomial distributions.
 pub const DISTRIBUTION: f64 = 1e-10;
+/// The tolerance of the error function of libm.
+pub const ERF: f64 = 1e-15;
+/// The tolerance of the gamma function of libm.
+pub const GAMMA: f64 = 1e-13;
+/// The tolerance of the regularized incomplete gamma function and the chi-squared
+/// distribution function.
+pub const GAMMA_INC: f64 = 1e-13;
+/// The tolerance of the quantile of the chi-squared distribution.
+pub const CHI2_PPF: f64 = 1e-13;
 
 /// The FNV-1a hash of the bits of the values, every not a number as the one of `f64::NAN`: the
 /// sign of a not a number which an operation makes is the target's (x86 sets it, wasm does

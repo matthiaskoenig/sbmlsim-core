@@ -31,6 +31,9 @@ type Values<'py> = PyArrayLikeDyn<'py, f64, AllowTypeChange>;
 /// dtype=bool)` converts it: a value which is not zero, a not a number included, is true.
 type Booleans<'py> = PyArrayLikeDyn<'py, bool, AllowTypeChange>;
 
+/// The eigenvalues and the pseudo-inverse of a Fisher information.
+type Decomposition<'py> = (Bound<'py, PyArray1<f64>>, Bound<'py, PyArray2<f64>>);
+
 /// The lower and the upper bounds of intervals.
 type Bounds<'py> = (Bound<'py, PyArray1<f64>>, Bound<'py, PyArray1<f64>>);
 
@@ -387,6 +390,16 @@ pub(crate) fn stats_fisher_statistics<'py>(
             binding::fisher_statistics(&information, shape, cost, n, likelihood, rank_tolerance)
         })
         .map_err(stats_error)?;
+    fisher_dict(py, s, k)
+}
+
+/// The statistics of a Fisher information of `k` parameters as the dictionary of
+/// `fisher_statistics`.
+fn fisher_dict(
+    py: Python<'_>,
+    s: fisher::FisherStatistics,
+    k: usize,
+) -> PyResult<Bound<'_, PyDict>> {
     let dict = PyDict::new(py);
     dict.set_item("sigma2", s.sigma2)?;
     dict.set_item("spectrum", PyArray1::from_vec(py, s.spectrum))?;
@@ -396,6 +409,159 @@ pub(crate) fn stats_fisher_statistics<'py>(
     dict.set_item("standard_errors", PyArray1::from_vec(py, s.standard_errors))?;
     dict.set_item("correlation", matrix(py, s.correlation, k))?;
     Ok(dict)
+}
+
+/// The decomposition of a Fisher information the statistics come from: its eigenvalues,
+/// largest first, and its pseudo-inverse, of one eigendecomposition.
+#[pyfunction]
+pub(crate) fn stats_fisher_decomposition<'py>(
+    py: Python<'py>,
+    information: Values<'py>,
+) -> PyResult<Decomposition<'py>> {
+    let (shape, information) = (information.shape(), values(&information));
+    let (spectrum, inverse, k) = py
+        .detach(|| binding::fisher_decomposition(&information, shape))
+        .map_err(stats_error)?;
+    Ok((PyArray1::from_vec(py, spectrum), matrix(py, inverse, k)))
+}
+
+/// The statistics of a Fisher information from its eigenvalues, largest first, and its
+/// pseudo-inverse, as `FisherInformation` derives them from a record which stores them.
+#[pyfunction]
+#[pyo3(signature = (spectrum, inverse, cost, n, likelihood = false, rank_tolerance = fisher::DEFAULT_RANK_TOLERANCE))]
+pub(crate) fn stats_fisher_statistics_of_decomposition<'py>(
+    py: Python<'py>,
+    spectrum: Values<'py>,
+    inverse: Values<'py>,
+    cost: f64,
+    n: i64,
+    likelihood: bool,
+    rank_tolerance: f64,
+) -> PyResult<Bound<'py, PyDict>> {
+    let (spectrum_shape, spectrum) = (spectrum.shape(), values(&spectrum));
+    let (inverse_shape, inverse) = (inverse.shape(), values(&inverse));
+    let (s, k) = py
+        .detach(|| {
+            binding::fisher_statistics_of_decomposition(
+                &spectrum,
+                spectrum_shape,
+                &inverse,
+                inverse_shape,
+                cost,
+                n,
+                likelihood,
+                rank_tolerance,
+            )
+        })
+        .map_err(stats_error)?;
+    fisher_dict(py, s, k)
+}
+
+/// The values of a distribution or a special function of the shape `shape`: a float of no
+/// dimension, as scipy's scalar, an array of numpy of another shape.
+fn distribution_values<'py>(
+    py: Python<'py>,
+    values: Vec<f64>,
+    shape: &[usize],
+) -> PyResult<Bound<'py, PyAny>> {
+    if shape.is_empty() {
+        return Ok(PyFloat::new(py, values[0]).into_any());
+    }
+    let array = ArrayD::from_shape_vec(IxDyn(shape), values)
+        .map_err(|error| PyValueError::new_err(error.to_string()))?;
+    Ok(PyArrayDyn::from_owned_array(py, array).into_any())
+}
+
+/// A function of one argument of any shape, value by value.
+fn unary<'py>(
+    py: Python<'py>,
+    function: binding::Unary,
+    x: &Values<'py>,
+) -> PyResult<Bound<'py, PyAny>> {
+    let (shape, x) = (x.shape().to_vec(), values(x));
+    let result = py
+        .detach(|| binding::unary(function, &x))
+        .map_err(stats_error)?;
+    distribution_values(py, result, &shape)
+}
+
+/// A function of a value and the degrees of freedom, broadcast as scipy broadcasts them.
+fn binary<'py>(
+    py: Python<'py>,
+    function: binding::Binary,
+    x: &Values<'py>,
+    df: &Values<'py>,
+) -> PyResult<Bound<'py, PyAny>> {
+    let (x_shape, x) = (x.shape(), values(x));
+    let (df_shape, df) = (df.shape(), values(df));
+    let (result, shape) = py
+        .detach(|| binding::binary(function, &x, x_shape, &df, df_shape))
+        .map_err(stats_error)?;
+    distribution_values(py, result, &shape)
+}
+
+/// The distribution function of the standard normal distribution, `scipy.stats.norm.cdf`.
+#[pyfunction]
+pub(crate) fn stats_norm_cdf<'py>(py: Python<'py>, x: Values<'py>) -> PyResult<Bound<'py, PyAny>> {
+    unary(py, binding::Unary::NormCdf, &x)
+}
+
+/// The quantile of the standard normal distribution, `scipy.stats.norm.ppf`.
+#[pyfunction]
+pub(crate) fn stats_norm_ppf<'py>(py: Python<'py>, q: Values<'py>) -> PyResult<Bound<'py, PyAny>> {
+    unary(py, binding::Unary::NormPpf, &q)
+}
+
+/// The error function, `scipy.special.erf`.
+#[pyfunction]
+pub(crate) fn stats_erf<'py>(py: Python<'py>, x: Values<'py>) -> PyResult<Bound<'py, PyAny>> {
+    unary(py, binding::Unary::Erf, &x)
+}
+
+/// The gamma function, `scipy.special.gamma`.
+#[pyfunction]
+pub(crate) fn stats_gamma<'py>(py: Python<'py>, x: Values<'py>) -> PyResult<Bound<'py, PyAny>> {
+    unary(py, binding::Unary::Gamma, &x)
+}
+
+/// The distribution function of the Student t distribution, `scipy.stats.t.cdf`.
+#[pyfunction]
+pub(crate) fn stats_t_cdf<'py>(
+    py: Python<'py>,
+    x: Values<'py>,
+    df: Values<'py>,
+) -> PyResult<Bound<'py, PyAny>> {
+    binary(py, binding::Binary::TCdf, &x, &df)
+}
+
+/// The quantile of the Student t distribution, `scipy.stats.t.ppf`.
+#[pyfunction]
+pub(crate) fn stats_t_ppf<'py>(
+    py: Python<'py>,
+    q: Values<'py>,
+    df: Values<'py>,
+) -> PyResult<Bound<'py, PyAny>> {
+    binary(py, binding::Binary::TPpf, &q, &df)
+}
+
+/// The distribution function of the chi-squared distribution, `scipy.stats.chi2.cdf`.
+#[pyfunction]
+pub(crate) fn stats_chi2_cdf<'py>(
+    py: Python<'py>,
+    x: Values<'py>,
+    df: Values<'py>,
+) -> PyResult<Bound<'py, PyAny>> {
+    binary(py, binding::Binary::Chi2Cdf, &x, &df)
+}
+
+/// The quantile of the chi-squared distribution, `scipy.stats.chi2.ppf`.
+#[pyfunction]
+pub(crate) fn stats_chi2_ppf<'py>(
+    py: Python<'py>,
+    q: Values<'py>,
+    df: Values<'py>,
+) -> PyResult<Bound<'py, PyAny>> {
+    binary(py, binding::Binary::Chi2Ppf, &q, &df)
 }
 
 /// The lower and the upper bounds of the confidence intervals of the parameters in the units
@@ -961,6 +1127,19 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(stats_validate_covariance, m)?)?;
     m.add_function(wrap_pyfunction!(stats_gram, m)?)?;
     m.add_function(wrap_pyfunction!(stats_fisher_statistics, m)?)?;
+    m.add_function(wrap_pyfunction!(stats_fisher_decomposition, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        stats_fisher_statistics_of_decomposition,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(stats_norm_cdf, m)?)?;
+    m.add_function(wrap_pyfunction!(stats_norm_ppf, m)?)?;
+    m.add_function(wrap_pyfunction!(stats_t_cdf, m)?)?;
+    m.add_function(wrap_pyfunction!(stats_t_ppf, m)?)?;
+    m.add_function(wrap_pyfunction!(stats_chi2_cdf, m)?)?;
+    m.add_function(wrap_pyfunction!(stats_chi2_ppf, m)?)?;
+    m.add_function(wrap_pyfunction!(stats_erf, m)?)?;
+    m.add_function(wrap_pyfunction!(stats_gamma, m)?)?;
     m.add_function(wrap_pyfunction!(stats_fisher_intervals, m)?)?;
     m.add_function(wrap_pyfunction!(stats_fisher_relative_errors, m)?)?;
     m.add_function(wrap_pyfunction!(stats_posterior_laplace, m)?)?;

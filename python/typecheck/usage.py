@@ -264,6 +264,19 @@ def the_statistics(y: list[float], f: numpy.typing.NDArray[numpy.float64]) -> No
     normal: Float = stats.normal_correlation(covariance)
     log_sd: float = stats.log_sd("LOG10", 0.2)
     cv: float = stats.lognormal_cv(0.3)
+    spectrum, inverse = stats.fisher_decomposition(information)
+    stored: dict[str, Any] = stats.fisher_statistics_of_decomposition(
+        spectrum, inverse, 1.5, 10, likelihood=True, rank_tolerance=1e-8
+    )
+    stats.fisher_statistics_of_decomposition(spectrum, inverse, 1.5)  # ty: ignore[missing-argument]
+    # the distributions and the special functions of scipy, a float of numbers
+    z: float = stats.norm_ppf(0.975)
+    p: float = stats.norm_cdf(z) + stats.erf(0.5) + stats.gamma(4.5)
+    threshold: float = stats.chi2_ppf(0.95, 1) + stats.chi2_cdf(3.0, 2.0)
+    t: float = stats.t_ppf(0.975, 8.0) + stats.t_cdf(2.0, 8.0)
+    quantiles: float | Float = stats.chi2_ppf([0.9, 0.95], [1.0, 2.0])
+    scores: float | Float = stats.norm_ppf(f)
+    stats.chi2_ppf(0.95)  # ty: ignore[no-matching-overload]
     stats.fisher_statistics(information, 1.5)  # ty: ignore[missing-argument]
     stats.posterior_laplace(information, pids=[1, 2])  # ty: ignore[invalid-argument-type]
     # the statistics of the draws of an uncertainty analysis

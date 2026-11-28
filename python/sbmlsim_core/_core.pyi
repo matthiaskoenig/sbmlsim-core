@@ -3,7 +3,7 @@
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from os import PathLike
 from pathlib import Path
-from typing import Any, Literal, SupportsFloat
+from typing import Any, Literal, SupportsFloat, overload
 
 import numpy
 import numpy.typing
@@ -830,6 +830,169 @@ def stats_fisher_relative_errors(
 
     `|SE / value|` on the linear scale, `SE` on the natural and `ln(10) SE` on the decadic
     logarithm. Raises `ValueError` as `stats_fisher_intervals`.
+    """
+
+def stats_fisher_decomposition(
+    information: numpy.typing.ArrayLike,
+) -> tuple[numpy.typing.NDArray[numpy.float64], numpy.typing.NDArray[numpy.float64]]:
+    """The decomposition the statistics of a Fisher information come from (since 0.44.0).
+
+    The eigenvalues, largest first, and the pseudo-inverse (numpy's, the eigenvalues cut at
+    `1e-15` of the largest) of one eigendecomposition, `FisherInformation.spectrum` and
+    `.inverse`: `stats_fisher_statistics(m, ...)` is
+    `stats_fisher_statistics_of_decomposition(*stats_fisher_decomposition(m), ...)` to the
+    bit. Raises `ValueError` as `stats_fisher_statistics`.
+    """
+
+def stats_fisher_statistics_of_decomposition(
+    spectrum: numpy.typing.ArrayLike,
+    inverse: numpy.typing.ArrayLike,
+    cost: float,
+    n: int,
+    likelihood: bool = False,
+    rank_tolerance: float = 1e-8,
+) -> dict[str, Any]:
+    """The statistics of a Fisher information from its decomposition (since 0.44.0).
+
+    The dictionary of `stats_fisher_statistics` from the eigenvalues `spectrum` (largest
+    first) and the pseudo-inverse `inverse` instead of the matrix, as `FisherInformation`
+    derives them from a record which stores them, so a decomposition of LAPACK gives the
+    numbers it was written with, to the bit. The pseudo-inverse is taken as it is, without a
+    check of its symmetry or of its values. Raises `ValueError` for eigenvalues which are not
+    a vector of one value per row of the square pseudo-inverse and eigenvalues which are not
+    largest first.
+    """
+
+@overload
+def stats_norm_cdf(x: float) -> float: ...
+@overload
+def stats_norm_cdf(
+    x: numpy.typing.ArrayLike,
+) -> float | numpy.typing.NDArray[numpy.float64]: ...
+def stats_norm_cdf(
+    x: numpy.typing.ArrayLike,
+) -> float | numpy.typing.NDArray[numpy.float64]:
+    """The distribution function of the standard normal distribution, `scipy.stats.norm.cdf` (since 0.44.0).
+
+    Value by value of an array of any shape: a float of a number (or an array of no
+    dimension), an array of numpy of the shape of another array; `nan`, the infinities and
+    the arguments outside of the domain as scipy gives them.
+    """
+
+@overload
+def stats_norm_ppf(q: float) -> float: ...
+@overload
+def stats_norm_ppf(
+    q: numpy.typing.ArrayLike,
+) -> float | numpy.typing.NDArray[numpy.float64]: ...
+def stats_norm_ppf(
+    q: numpy.typing.ArrayLike,
+) -> float | numpy.typing.NDArray[numpy.float64]:
+    """The quantile of the standard normal distribution, `scipy.stats.norm.ppf` (since 0.44.0).
+
+    Value by value of an array of any shape: a float of a number (or an array of no
+    dimension), an array of numpy of the shape of another array; `nan`, the infinities and
+    the arguments outside of the domain as scipy gives them.
+    """
+
+@overload
+def stats_erf(x: float) -> float: ...
+@overload
+def stats_erf(
+    x: numpy.typing.ArrayLike,
+) -> float | numpy.typing.NDArray[numpy.float64]: ...
+def stats_erf(
+    x: numpy.typing.ArrayLike,
+) -> float | numpy.typing.NDArray[numpy.float64]:
+    """The error function, `scipy.special.erf` (since 0.44.0).
+
+    Value by value of an array of any shape: a float of a number (or an array of no
+    dimension), an array of numpy of the shape of another array; `nan`, the infinities and
+    the arguments outside of the domain as scipy gives them.
+    """
+
+@overload
+def stats_gamma(x: float) -> float: ...
+@overload
+def stats_gamma(
+    x: numpy.typing.ArrayLike,
+) -> float | numpy.typing.NDArray[numpy.float64]: ...
+def stats_gamma(
+    x: numpy.typing.ArrayLike,
+) -> float | numpy.typing.NDArray[numpy.float64]:
+    """The gamma function, `scipy.special.gamma` (since 0.44.0).
+
+    Value by value of an array of any shape: a float of a number (or an array of no
+    dimension), an array of numpy of the shape of another array; `nan`, the infinities and
+    the arguments outside of the domain as scipy gives them.
+    """
+
+@overload
+def stats_t_cdf(x: float, df: float) -> float: ...
+@overload
+def stats_t_cdf(
+    x: numpy.typing.ArrayLike, df: numpy.typing.ArrayLike
+) -> float | numpy.typing.NDArray[numpy.float64]: ...
+def stats_t_cdf(
+    x: numpy.typing.ArrayLike, df: numpy.typing.ArrayLike
+) -> float | numpy.typing.NDArray[numpy.float64]:
+    """The distribution function of the Student t distribution of `df` degrees of freedom, `scipy.stats.t.cdf` (since 0.44.0).
+
+    `x` and `df` of any shapes broadcast against each other as scipy broadcasts them: a
+    float of two numbers, an array of numpy of the broadcast shape else; `nan`, the
+    infinities and the arguments outside of the domain as scipy gives them. Raises
+    `ValueError` with the message of scipy for shapes which do not broadcast.
+    """
+
+@overload
+def stats_t_ppf(q: float, df: float) -> float: ...
+@overload
+def stats_t_ppf(
+    q: numpy.typing.ArrayLike, df: numpy.typing.ArrayLike
+) -> float | numpy.typing.NDArray[numpy.float64]: ...
+def stats_t_ppf(
+    q: numpy.typing.ArrayLike, df: numpy.typing.ArrayLike
+) -> float | numpy.typing.NDArray[numpy.float64]:
+    """The quantile of the Student t distribution of `df` degrees of freedom, `scipy.stats.t.ppf` (since 0.44.0).
+
+    `q` and `df` of any shapes broadcast against each other as scipy broadcasts them: a
+    float of two numbers, an array of numpy of the broadcast shape else; `nan`, the
+    infinities and the arguments outside of the domain as scipy gives them. Raises
+    `ValueError` with the message of scipy for shapes which do not broadcast.
+    """
+
+@overload
+def stats_chi2_cdf(x: float, df: float) -> float: ...
+@overload
+def stats_chi2_cdf(
+    x: numpy.typing.ArrayLike, df: numpy.typing.ArrayLike
+) -> float | numpy.typing.NDArray[numpy.float64]: ...
+def stats_chi2_cdf(
+    x: numpy.typing.ArrayLike, df: numpy.typing.ArrayLike
+) -> float | numpy.typing.NDArray[numpy.float64]:
+    """The distribution function of the chi-squared distribution of `df` degrees of freedom, `scipy.stats.chi2.cdf` (since 0.44.0).
+
+    `x` and `df` of any shapes broadcast against each other as scipy broadcasts them: a
+    float of two numbers, an array of numpy of the broadcast shape else; `nan`, the
+    infinities and the arguments outside of the domain as scipy gives them. Raises
+    `ValueError` with the message of scipy for shapes which do not broadcast.
+    """
+
+@overload
+def stats_chi2_ppf(q: float, df: float) -> float: ...
+@overload
+def stats_chi2_ppf(
+    q: numpy.typing.ArrayLike, df: numpy.typing.ArrayLike
+) -> float | numpy.typing.NDArray[numpy.float64]: ...
+def stats_chi2_ppf(
+    q: numpy.typing.ArrayLike, df: numpy.typing.ArrayLike
+) -> float | numpy.typing.NDArray[numpy.float64]:
+    """The quantile of the chi-squared distribution of `df` degrees of freedom, `scipy.stats.chi2.ppf` (since 0.44.0).
+
+    `q` and `df` of any shapes broadcast against each other as scipy broadcasts them: a
+    float of two numbers, an array of numpy of the broadcast shape else; `nan`, the
+    infinities and the arguments outside of the domain as scipy gives them. Raises
+    `ValueError` with the message of scipy for shapes which do not broadcast.
     """
 
 def stats_posterior_laplace(

@@ -188,11 +188,80 @@ def fisher() -> None:
         r = matrix(x["r"], x["k"], x["k"])
         call(name, "rank_correlation", r)
         call(name, "normal_correlation", r)
+    for name, x in cases("fisher", "fisher"):
+        information = stats.gram(matrix(x["j"], x["rows"], x["k"])).tolist()
+        call(name, "fisher_decomposition", information)
+        spectrum, inverse = stats.fisher_decomposition(information)
+        call(
+            name,
+            "fisher_statistics_of_decomposition",
+            spectrum,
+            inverse,
+            x["cost"],
+            x["n"],
+            likelihood=x["likelihood"],
+        )
+    for name, x in cases("fisher_decomposition", "decomposition"):
+        call(
+            name,
+            "fisher_statistics_of_decomposition",
+            x["spectrum"],
+            matrix(x["inverse"], x["k"], x["k"]),
+            x["cost"],
+            x["n"],
+            likelihood=x["likelihood"],
+        )
+    call(
+        "fisher_statistics_of_decomposition/order",
+        "fisher_statistics_of_decomposition",
+        [1.0, 2.0],
+        [[1.0, 0.0], [0.0, 0.5]],
+        1.0,
+        10,
+    )
+    call(
+        "fisher_statistics_of_decomposition/shape",
+        "fisher_statistics_of_decomposition",
+        [2.0, 1.0, 0.5],
+        [[1.0, 0.0], [0.0, 0.5]],
+        1.0,
+        10,
+    )
     call("gram/vector", "gram", [1.0, 2.0])
     call("fisher_statistics/not_square", "fisher_statistics", [[1.0, 2.0]], 1.0, 3)
     call("fisher_intervals/scale", "fisher_intervals", [1.0], [0.1], ["LOGX"])
     call("log_sd/scale", "log_sd", "ln", 0.3)
     call("rank_correlation/vector", "rank_correlation", [1.0, 0.5])
+
+
+def distributions() -> None:
+    """The distributions and the special functions, their edges and their broadcasts."""
+    special = oracle("special")
+    for name, function, inputs in [
+        ("normal_cdf", "norm_cdf", ["x"]),
+        ("normal_ppf", "norm_ppf", ["p"]),
+        ("t_cdf", "t_cdf", ["x", "df"]),
+        ("t_cdf_large_df", "t_cdf", ["x", "df"]),
+        ("t_ppf", "t_ppf", ["p", "df"]),
+        ("erf", "erf", ["x"]),
+        ("erf_edges", "erf", ["x"]),
+        ("gamma", "gamma", ["x"]),
+        ("gamma_edges", "gamma", ["x"]),
+        ("chi2_cdf", "chi2_cdf", ["x", "df"]),
+        ("chi2_cdf_edges", "chi2_cdf", ["x", "df"]),
+        ("chi2_ppf", "chi2_ppf", ["p", "df"]),
+        ("chi2_ppf_edges", "chi2_ppf", ["p", "df"]),
+        ("t_cdf_edges", "t_cdf", ["x", "df"]),
+        ("t_ppf_edges", "t_ppf", ["p", "df"]),
+    ]:
+        args = [special[name][key] for key in inputs]
+        # the arrays of the case, and its first values one by one as numbers
+        call(name, function, *args)
+        for k in range(min(3, len(args[0]))):
+            call(f"{name}/{k}", function, *(arg[k] for arg in args))
+    for name, x in special.items():
+        if name.startswith("broadcast/"):
+            call(name, x["function"], *x["args"])
 
 
 def uncertainty() -> None:
@@ -451,6 +520,7 @@ def errors() -> None:
 GENERATORS: list[Callable[[], None]] = [
     metrics,
     fisher,
+    distributions,
     uncertainty,
     draws,
     testing,
