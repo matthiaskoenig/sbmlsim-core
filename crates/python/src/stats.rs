@@ -20,11 +20,9 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyFloat, PyString};
 use sbmlsim_stats::correlation::{self, Marginal};
 use sbmlsim_stats::draws::{self, Design};
-use sbmlsim_stats::testing::{self, Decision, Side};
+use sbmlsim_stats::testing::{self, Side};
 use sbmlsim_stats::uncertainty;
-use sbmlsim_stats::{
-    ErrorKind, Scale, StatsError, fisher, linalg, metrics, posterior, shape_text, variability,
-};
+use sbmlsim_stats::{ErrorKind, Scale, StatsError, binding, fisher, metrics, posterior};
 
 /// The array of values of numpy the functions take, of any shape.
 type Values<'py> = PyArrayLikeDyn<'py, f64, AllowTypeChange>;
@@ -287,25 +285,10 @@ pub(crate) fn stats_within_guest(
     observed: Values<'_>,
     predicted: Values<'_>,
 ) -> PyResult<f64> {
-    // the python compares the shapes and writes the sizes
-    if observed.shape() != predicted.shape() {
-        return Err(PyValueError::new_err(format!(
-            "The observed and the predicted ratios have different lengths, {} and {}.",
-            observed.len(),
-            predicted.len()
-        )));
-    }
     let (ratios, predictions) = (values(&observed), values(&predicted));
-    match py.detach(|| metrics::within_guest(&ratios, &predictions)) {
-        Ok(percentage) => Ok(percentage),
-        Err(error) if observed.ndim() == 1 => Err(stats_error(error)),
-        // of equal shapes the error is of the observed ratios, which the python writes as
-        // `tolist` gives them, a nested list of a matrix and a number of a scalar
-        Err(_) => Err(PyValueError::new_err(format!(
-            "The observed ratios must be positive and finite: {}.",
-            observed.call_method0("tolist")?
-        ))),
-    }
+    let (observed_shape, predicted_shape) = (observed.shape(), predicted.shape());
+    py.detach(|| binding::within_guest(&ratios, observed_shape, &predictions, predicted_shape))
+        .map_err(stats_error)
 }
 
 /// The agreement of a subset of the data points of the points with a ratio (Bland and Altman
@@ -321,18 +304,6 @@ pub(crate) fn stats_subset_agreement(
     let (y, f) = (values(&y_observed), values(&y_predicted));
     py.detach(|| metrics::subset_agreement(&y, &f))
         .map_err(stats_error)
-}
-
-/// The values of a square matrix, row-major, and its number of rows; an error which names the
-/// matrix `what` of another shape.
-fn square<'a>(array: &'a Values<'_>, what: &str) -> PyResult<(Cow<'a, [f64]>, usize)> {
-    match array.shape() {
-        &[rows, columns] if rows == columns => Ok((values(array), rows)),
-        shape => Err(PyValueError::new_err(format!(
-            "The {what} must be a square matrix, not of the shape {}.",
-            shape_text(shape)
-        ))),
-    }
 }
 
 /// The `k x k` matrix of row-major values as an array of numpy.
@@ -357,14 +328,11 @@ impl<'a, 'py> FromPyObject<'a, 'py> for ScaleArg {
                 .ok()
                 .and_then(|name| name.extract().ok())
         };
-        match name.as_deref() {
-            Some("LINEAR" | "lin") => Ok(Self(Scale::Linear)),
-            Some("LOG" | "log") => Ok(Self(Scale::Log)),
-            Some("LOG10" | "log10") => Ok(Self(Scale::Log10)),
-            _ => Err(PyValueError::new_err(format!(
-                "The parameter scale {} is none of 'LINEAR', 'LOG' and 'LOG10' (of PEtab \
-                 'lin', 'log' and 'log10').",
-                object.repr()?
+        // the repr of the object only for its error
+        match name.as_deref().and_then(Scale::from_name) {
+            Some(scale) => Ok(Self(scale)),
+            None => Err(stats_error(binding::unknown_scale(
+                &object.repr()?.to_string(),
             ))),
         }
     }
@@ -391,16 +359,9 @@ pub(crate) fn stats_gram<'py>(
     py: Python<'py>,
     jacobian: Values<'py>,
 ) -> PyResult<Bound<'py, PyArray2<f64>>> {
-    let &[n, k] = jacobian.shape() else {
-        return Err(PyValueError::new_err(format!(
-            "The jacobian must be a matrix of the residuals by the parameters, not of the \
-             shape {}.",
-            shape_text(jacobian.shape())
-        )));
-    };
-    let jacobian = values(&jacobian);
-    let gram = py
-        .detach(|| linalg::gram(&jacobian, n, k))
+    let (shape, jacobian) = (jacobian.shape(), values(&jacobian));
+    let (gram, k) = py
+        .detach(|| binding::gram(&jacobian, shape))
         .map_err(stats_error)?;
     Ok(matrix(py, gram, k))
 }
@@ -418,12 +379,13 @@ pub(crate) fn stats_fisher_statistics<'py>(
     likelihood: bool,
     rank_tolerance: f64,
 ) -> PyResult<Bound<'py, PyDict>> {
-    let (information, k) = square(&information, "Fisher information")?;
     // the python takes any integer, a negative number of points has no degrees of freedom
     // as zero has (`n <= k`)
-    let n = usize::try_from(n.max(0)).unwrap_or(usize::MAX);
-    let s = py
-        .detach(|| fisher::statistics(&information, k, cost, n, likelihood, rank_tolerance))
+    let (shape, information) = (information.shape(), values(&information));
+    let (s, k) = py
+        .detach(|| {
+            binding::fisher_statistics(&information, shape, cost, n, likelihood, rank_tolerance)
+        })
         .map_err(stats_error)?;
     let dict = PyDict::new(py);
     dict.set_item("sigma2", s.sigma2)?;
@@ -484,17 +446,19 @@ pub(crate) fn stats_posterior_laplace<'py>(
     opid: Option<String>,
     rank_tolerance: f64,
 ) -> PyResult<Bound<'py, PyArray2<f64>>> {
-    let (precision, k) = square(&precision, "precision")?;
     // a pid as python writes it in a list, its repr
-    let names = match pids {
-        Some(pids) => pids
-            .iter()
-            .map(|pid| Ok(pid.repr()?.to_string()))
-            .collect::<PyResult<Vec<String>>>()?,
-        None => (0..k).map(|i| i.to_string()).collect(),
-    };
-    let covariance = py
-        .detach(|| posterior::laplace_of(&precision, k, rank_tolerance, opid.as_deref(), &names))
+    let names = pids
+        .map(|pids| {
+            pids.iter()
+                .map(|pid| Ok(pid.repr()?.to_string()))
+                .collect::<PyResult<Vec<String>>>()
+        })
+        .transpose()?;
+    let (shape, precision) = (precision.shape(), values(&precision));
+    let (covariance, k) = py
+        .detach(|| {
+            binding::posterior_laplace(&precision, shape, names, opid.as_deref(), rank_tolerance)
+        })
         .map_err(stats_error)?;
     Ok(matrix(py, covariance, k))
 }
@@ -505,9 +469,9 @@ pub(crate) fn stats_rank_correlation<'py>(
     py: Python<'py>,
     r: Values<'py>,
 ) -> PyResult<Bound<'py, PyArray2<f64>>> {
-    let (r, k) = square(&r, "correlation")?;
-    let rank = py
-        .detach(|| posterior::rank_correlation(&r, k))
+    let (shape, r) = (r.shape(), values(&r));
+    let (rank, k) = py
+        .detach(|| binding::rank_correlation(&r, shape))
         .map_err(stats_error)?;
     Ok(matrix(py, rank, k))
 }
@@ -518,9 +482,9 @@ pub(crate) fn stats_normal_correlation<'py>(
     py: Python<'py>,
     r: Values<'py>,
 ) -> PyResult<Bound<'py, PyArray2<f64>>> {
-    let (r, k) = square(&r, "correlation")?;
-    let normal = py
-        .detach(|| posterior::normal_correlation(&r, k))
+    let (shape, r) = (r.shape(), values(&r));
+    let (normal, k) = py
+        .detach(|| binding::normal_correlation(&r, shape))
         .map_err(stats_error)?;
     Ok(matrix(py, normal, k))
 }
@@ -598,10 +562,8 @@ pub(crate) fn stats_first_order_given_data(
     y: Values<'_>,
     n_bins: Option<i64>,
 ) -> PyResult<f64> {
-    // a negative number of bins is refused as none, as numpy refuses it
-    let n_bins = n_bins.map(|bins| usize::try_from(bins).unwrap_or(0));
     let (x, y) = (values(&x), values(&y));
-    py.detach(|| uncertainty::first_order_given_data(&x, &y, n_bins))
+    py.detach(|| binding::first_order_given_data(&x, &y, n_bins))
         .map_err(stats_error)
 }
 
@@ -672,7 +634,7 @@ impl<'a, 'py> FromPyObject<'a, 'py> for Seed {
 /// A design of the points of the unit cube: `sobol`, `lhs` or `random`; any other object is
 /// the ValueError of the python, raised when the points are drawn, so an explicit `None` is
 /// refused as the python refuses it.
-pub(crate) struct DesignArg(std::result::Result<Design, String>);
+pub(crate) struct DesignArg(sbmlsim_stats::Result<Design>);
 
 impl DesignArg {
     /// The design without one, the scrambled Sobol' sequence.
@@ -683,15 +645,17 @@ impl<'a, 'py> FromPyObject<'a, 'py> for DesignArg {
     type Error = PyErr;
 
     fn extract(object: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
-        Ok(Self(match object.extract::<String>().ok().as_deref() {
-            Some("sobol") => Ok(Design::Sobol),
-            Some("lhs") => Ok(Design::Lhs),
-            Some("random") => Ok(Design::Random),
-            _ => Err(format!(
-                "The design {} is none of 'sobol', 'lhs' and 'random'.",
-                object.repr()?
-            )),
-        }))
+        match object
+            .extract::<String>()
+            .ok()
+            .as_deref()
+            .and_then(Design::from_name)
+        {
+            Some(design) => Ok(Self(Ok(design))),
+            None => Ok(Self(Err(binding::unknown_design(
+                &object.repr()?.to_string(),
+            )))),
+        }
     }
 }
 
@@ -709,37 +673,9 @@ pub(crate) fn stats_unit_points(
     seed: Seed,
     start: i64,
 ) -> PyResult<Bound<'_, PyArray2<f64>>> {
-    let design = design.0.map_err(PyValueError::new_err)?;
-    // the errors of a negative argument in the order of the python: scipy's of the dimensions
-    // of a sampler, of `fast_forward` (an OverflowError) and numpy's of the shape
-    let dimension_error = || PyValueError::new_err("d must be a non-negative integer value");
-    let shape_error = || PyValueError::new_err("negative dimensions are not allowed");
-    match design {
-        Design::Sobol if d < 0 => return Err(dimension_error()),
-        Design::Sobol if start < 0 => {
-            return Err(PyOverflowError::new_err(
-                "can't convert negative value to npy_uint32",
-            ));
-        }
-        // a Latin hypercube refuses any start first, a negative one as well
-        Design::Lhs if start == 0 && d < 0 => return Err(dimension_error()),
-        Design::Random if d < 0 => return Err(shape_error()),
-        // numpy advances its generator back by a negative number of doubles, the stream of
-        // xoshiro256++ has no way back
-        Design::Random if start < 0 => {
-            return Err(PyValueError::new_err(format!(
-                "The start of random points must not be negative, not {start}."
-            )));
-        }
-        _ => {}
-    }
-    if n < 0 && (design != Design::Lhs || start == 0) {
-        return Err(shape_error());
-    }
-    let (d, n) = (d.unsigned_abs() as usize, n.unsigned_abs() as usize);
-    let (seed, start) = (seed.0, start.unsigned_abs());
-    let points = py
-        .detach(|| draws::unit_points(d, n, design, seed, start))
+    let design = design.0.map_err(stats_error)?;
+    let (points, n, d) = py
+        .detach(|| binding::unit_points(d, n, design, seed.0, start))
         .map_err(stats_error)?;
     Ok(rectangle(py, points, n, d))
 }
@@ -753,20 +689,10 @@ pub(crate) fn stats_copula<'py>(
     u: Values<'py>,
     r: Values<'py>,
 ) -> PyResult<Bound<'py, PyArray2<f64>>> {
-    let &[n, d] = u.shape() else {
-        return Err(PyValueError::new_err(format!(
-            "The points must be a matrix of the draws by the variables, not of the shape {}.",
-            shape_text(u.shape())
-        )));
-    };
-    let (r, k) = square(&r, "correlation")?;
-    if k != d {
-        return Err(PyValueError::new_err(format!(
-            "The correlation of {k} variables does not fit points of {d} variables."
-        )));
-    }
-    let mut points = values(&u).into_owned();
-    py.detach(|| draws::copula(&mut points, n, d, &r))
+    let (u_shape, r_shape) = (u.shape(), r.shape());
+    let (mut points, r) = (values(&u).into_owned(), values(&r));
+    let (n, d) = py
+        .detach(|| binding::copula(&mut points, u_shape, &r, r_shape))
         .map_err(stats_error)?;
     Ok(rectangle(py, points, n, d))
 }
@@ -789,17 +715,7 @@ impl Moments {
     /// The marginal of the crate on the scale of the covariance.
     fn marginal(&self, scale: &str) -> PyResult<Marginal> {
         let Self(family, mean, sd) = self;
-        match (family.as_str(), scale) {
-            ("normal", _) => Ok(Marginal::Normal { sd: *sd }),
-            ("log-normal", "log") => Ok(Marginal::Log { sd: *sd }),
-            ("log-normal", _) => Ok(Marginal::LogNormal {
-                mean: *mean,
-                sigma: *sd,
-            }),
-            _ => Err(PyValueError::new_err(format!(
-                "The family {family:?} of a marginal is none of 'normal' and 'log-normal'."
-            ))),
-        }
+        binding::marginal(family, *mean, *sd, scale).map_err(stats_error)
     }
 }
 
@@ -809,27 +725,6 @@ impl Moments {
 #[pyo3(signature = (m, a, b, scale = "linear"))]
 pub(crate) fn stats_normal_score_rho(m: f64, a: Moments, b: Moments, scale: &str) -> PyResult<f64> {
     correlation::normal_score_rho(m, a.marginal(scale)?, b.marginal(scale)?).map_err(stats_error)
-}
-
-/// The values of a matrix of the functions of numpy's eigendecompositions, with the
-/// errors numpy raises of another shape: `stacked` is the error of a matrix of two
-/// dimensions which is not square.
-fn eigen_matrix<'a>(
-    array: &'a Values<'_>,
-    not_square: impl FnOnce(usize, usize) -> String,
-) -> PyResult<(Cow<'a, [f64]>, usize)> {
-    match *array.shape() {
-        [rows, columns] if rows == columns => Ok((values(array), rows)),
-        [rows, columns] => Err(PyValueError::new_err(not_square(rows, columns))),
-        ref shape if shape.len() < 2 => Err(PyValueError::new_err(format!(
-            "{}-dimensional array given. Array must be at least two-dimensional",
-            shape.len()
-        ))),
-        ref shape => Err(PyValueError::new_err(format!(
-            "The matrix must be a square matrix, not of the shape {}.",
-            shape_text(shape)
-        ))),
-    }
 }
 
 /// The nearest correlation matrix in the Frobenius norm (Higham 2002), as
@@ -843,18 +738,9 @@ pub(crate) fn stats_nearest_correlation<'py>(
     max_iterations: i64,
     tol: f64,
 ) -> PyResult<Bound<'py, PyArray2<f64>>> {
-    // `y - correction` and `r + r.T` of the python: numpy broadcasts the shape against its
-    // transpose
-    let (m, k) = eigen_matrix(&matrix, |rows, columns| {
-        format!(
-            "operands could not be broadcast together with shapes ({rows},{columns}) \
-             ({columns},{rows}) "
-        )
-    })?;
-    // `range` of a negative number is no iteration
-    let iterations = usize::try_from(max_iterations).unwrap_or(0);
-    let nearest = py
-        .detach(|| correlation::nearest_correlation(&m, k, iterations, tol))
+    let (shape, m) = (matrix.shape(), values(&matrix));
+    let (nearest, k) = py
+        .detach(|| binding::nearest_correlation(&m, shape, max_iterations, tol))
         .map_err(stats_error)?;
     Ok(self::matrix(py, nearest, k))
 }
@@ -864,15 +750,9 @@ pub(crate) fn stats_nearest_correlation<'py>(
 #[pyfunction]
 #[pyo3(signature = (matrix, rtol = correlation::PSD_RTOL))]
 pub(crate) fn stats_is_psd(py: Python<'_>, matrix: Values<'_>, rtol: f64) -> PyResult<bool> {
-    let (m, k) = eigen_matrix(&matrix, |_, _| {
-        "Last 2 dimensions of the array must be square".to_owned()
-    })?;
-    if k == 0 {
-        return Err(PyValueError::new_err(
-            "zero-size array to reduction operation minimum which has no identity",
-        ));
-    }
-    Ok(py.detach(|| correlation::is_psd(&m, k, rtol)))
+    let (shape, m) = (matrix.shape(), values(&matrix));
+    py.detach(|| binding::is_psd(&m, shape, rtol))
+        .map_err(stats_error)
 }
 
 /// Checks the matrix of a `Covariance` of the targets (`kind` `covariance` or `correlation`,
@@ -922,13 +802,15 @@ impl<'a, 'py> FromPyObject<'a, 'py> for SideArg {
     type Error = PyErr;
 
     fn extract(object: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
-        match object.extract::<String>().ok().as_deref() {
-            Some("greater") => Ok(Self(Side::Greater)),
-            Some("less") => Ok(Self(Side::Less)),
-            Some("equivalent") => Ok(Self(Side::Equivalent)),
-            _ => Err(PyValueError::new_err(format!(
-                "The side {} is none of 'greater', 'less' and 'equivalent'.",
-                object.repr()?
+        match object
+            .extract::<String>()
+            .ok()
+            .as_deref()
+            .and_then(Side::from_name)
+        {
+            Some(side) => Ok(Self(side)),
+            None => Err(stats_error(binding::unknown_side(
+                &object.repr()?.to_string(),
             ))),
         }
     }
@@ -985,13 +867,7 @@ pub(crate) fn stats_decision(
 ) -> (&'static str, Option<usize>) {
     let (greater, less, equivalent) = (values(&p_greater), values(&p_less), values(&p_equivalent));
     let (decision, n) = py.detach(|| testing::decision(&greater, &less, &equivalent, alpha));
-    let name = match decision {
-        Decision::Accepted => "accepted",
-        Decision::Rejected => "rejected",
-        Decision::Equivalent => "equivalent",
-        Decision::Undecided => "undecided",
-    };
-    (name, n)
+    (decision.name(), n)
 }
 
 /// The draws which decide a statement at its estimate, `_needed`: `None` beyond `MAX_NEEDED`.
@@ -1004,12 +880,7 @@ pub(crate) fn stats_needed(
     alpha: f64,
 ) -> PyResult<Option<u64>> {
     // the python loops without an end on a negative number of draws
-    let n = u64::try_from(n).map_err(|_| {
-        PyValueError::new_err(format!(
-            "The number of draws must not be negative, not {n}."
-        ))
-    })?;
-    testing::needed(estimate, n, p0, margin, alpha).map_err(stats_error)
+    binding::needed(estimate, n, p0, margin, alpha).map_err(stats_error)
 }
 
 /// The level of a statement with a threshold in a report of `m` of them (Bonferroni),
@@ -1033,35 +904,9 @@ pub(crate) fn stats_group_means<'py>(
     geometric: bool,
     seed: Seed,
 ) -> PyResult<Bound<'py, PyArray2<f64>>> {
-    let &[subjects, points] = values.shape() else {
-        return Err(PyValueError::new_err(format!(
-            "The predictions must be a matrix of the subjects by the data points, not of the \
-             shape {}.",
-            shape_text(values.shape())
-        )));
-    };
-    // `rng.integers(0, n, size=(groups, size))` of numpy, which a group of one does not call
-    if size != 1 && (size < 0 || groups < 0) {
-        return Err(PyValueError::new_err("negative dimensions are not allowed"));
-    }
-    let predictions = self::values(&values);
-    let (size, groups, seed) = (
-        size.unsigned_abs() as usize,
-        groups.unsigned_abs() as usize,
-        seed.0,
-    );
-    let (statistics, rows) = py
-        .detach(|| {
-            variability::group_means(
-                &predictions,
-                subjects,
-                points,
-                size,
-                groups,
-                geometric,
-                seed,
-            )
-        })
+    let (shape, predictions) = (values.shape(), self::values(&values));
+    let (statistics, rows, points) = py
+        .detach(|| binding::group_means(&predictions, shape, size, groups, geometric, seed.0))
         .map_err(stats_error)?;
     Ok(rectangle(py, statistics, rows, points))
 }
@@ -1075,19 +920,12 @@ pub(crate) fn stats_bands<'py>(
     distribution: Values<'py>,
     qs: Values<'py>,
 ) -> PyResult<Bound<'py, PyArray2<f64>>> {
-    let &[rows, cols] = distribution.shape() else {
-        return Err(PyValueError::new_err(format!(
-            "The distribution must be a matrix of the groups by the data points, not of the \
-             shape {}.",
-            shape_text(distribution.shape())
-        )));
-    };
     let qs = values(&qs);
-    let distribution = values(&distribution);
-    let bands = py
-        .detach(|| variability::bands(&distribution, rows, cols, &qs))
+    let (shape, distribution) = (distribution.shape(), values(&distribution));
+    let (bands, rows, columns) = py
+        .detach(|| binding::bands(&distribution, shape, &qs))
         .map_err(stats_error)?;
-    Ok(rectangle(py, bands, cols, qs.len()))
+    Ok(rectangle(py, bands, rows, columns))
 }
 
 /// Adds the functions and the constants of the statistics to the module, by the names

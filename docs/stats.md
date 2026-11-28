@@ -1,6 +1,6 @@
 # Statistics
 
-The statistics of the analyses of sbmlsim run here (0.42.0): the special functions, the linear algebra and the kernels of the evaluation of a fit, of its Fisher information and posterior, of the uncertainty and of a variability, in the crate `sbmlsim-stats` and in python as `sbmlsim_core.stats`. They replace the arithmetic of numpy and the functions of scipy which sbmlsim called in `sbmlsim.fit` and `sbmlsim.uncertainty`, with the same names, the same edges and the same messages: an argument the python refuses raises the exception of the python with its message (a `ValueError`, and an `OverflowError`, a `ZeroDivisionError` or an `IndexError` where python raises one), and `nan` is returned where the python returns `nan`.
+The statistics of the analyses of sbmlsim run here (0.42.0): the special functions, the linear algebra and the kernels of the evaluation of a fit, of its Fisher information and posterior, of the uncertainty and of a variability, in the crate `sbmlsim-stats`, in python as `sbmlsim_core.stats` and (since 0.43.0) in JavaScript as `sbmlsim-core/stats`, see [JavaScript](#javascript). They replace the arithmetic of numpy and the functions of scipy which sbmlsim called in `sbmlsim.fit` and `sbmlsim.uncertainty`, with the same names, the same edges and the same messages: an argument the python refuses raises the exception of the python with its message (a `ValueError`, and an `OverflowError`, a `ZeroDivisionError` or an `IndexError` where python raises one), and `nan` is returned where the python returns `nan`.
 
 The crate knows no simulation, no problem and no table: a function takes numbers and returns numbers, and the caller keeps the flow. An array of any shape and of any type numpy converts to doubles is read as its values in the order numpy ravels it, strided and integer arrays included. Every function on arrays releases the GIL while it computes, so other python threads run meanwhile.
 
@@ -74,7 +74,22 @@ Where the crate and scipy differ beyond the rounding, the crate is the more accu
 
 ## Determinism
 
-Every transcendental function comes from the crate libm, and every random draw from xoshiro256++ seeded through SplitMix64, written out in sbmlsim-core, so one input and one seed give the same bits on every target, natively and in WebAssembly. The tests hold the hashes of the bits of every function over its fixtures and of the draws of fixed seeds, and the continuous integration runs them natively and under wasmtime (`cargo test -p sbmlsim-stats --target wasm32-wasip1`). The test of the nearest correlation matrix of 200 targets, which holds its bits as well, takes minutes in wasm and runs on request only (`cargo test -p sbmlsim-stats --release -- --ignored`), natively and not in the continuous integration; the python tests run the same case on every wheel. The crate also builds for `wasm32-unknown-unknown`; no JavaScript binding of it exists yet.
+Every transcendental function comes from the crate libm, and every random draw from xoshiro256++ seeded through SplitMix64, written out in sbmlsim-core, so one input and one seed give the same bits on every target, natively and in WebAssembly. The tests hold the hashes of the bits of every function over its fixtures and of the draws of fixed seeds, and the continuous integration runs them natively and under wasmtime (`cargo test -p sbmlsim-stats --target wasm32-wasip1`). The test of the nearest correlation matrix of 200 targets, which holds its bits as well, takes minutes in wasm and runs on request only (`cargo test -p sbmlsim-stats --release -- --ignored`), natively and not in the continuous integration; the python tests run the same case on every wheel. The crate also builds for `wasm32-unknown-unknown`, the build of its [JavaScript binding](#javascript).
+
+## JavaScript
+
+Since 0.43.0 every function of `sbmlsim_core.stats` runs in a page as well: `compiler.wasm` carries the crate (the feature `stats` of `sbmlsim-wasm`, on by default) and `sbmlsim-core/stats` calls it, the names in camelCase, the optional arguments of python in an object of options, the errors a `StatsError` with the message of python and its `kind`, the class of the exception (`ValueError`, `OverflowError`, `ZeroDivisionError`, `IndexError`):
+
+```js
+import { createCompiler } from "sbmlsim-core/compile";
+import { createStats } from "sbmlsim-core/stats";
+
+const stats = createStats({ compiler: await createCompiler({ compiler: compilerWasm }) });
+const u = stats.unitPoints(2, 1024, { design: "sobol", seed: 1 }); // 1024 rows, Float64Arrays
+const [q, low, high, n] = stats.quantileCi(u.map(([a, b]) => a + b), 0.95);
+```
+
+The arguments are checked by the functions both bindings share (`sbmlsim_stats::binding`), and every double crosses into the module and back as its bits (a `NaN` as a `NaN`), so a page gives the bits of python: `js/test/stats.test.mjs` holds `compiler.wasm` to about a thousand calls of python, bit for bit, the errors by kind and message. See [The statistics](javascript.md#the-statistics) of the JavaScript host.
 
 ## The random streams changed
 

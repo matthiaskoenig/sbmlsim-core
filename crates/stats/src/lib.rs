@@ -2,7 +2,8 @@
 //! replace the kernels of numpy and scipy in the python package sbmlsim.
 //!
 //! The crate knows no simulation, no problem and no table: a function takes numbers and returns
-//! numbers, and the caller (the python bindings, later the browser) keeps the flow. The modules:
+//! numbers, and the caller (the python bindings, the JavaScript ones of `compiler.wasm`) keeps the
+//! flow. The modules:
 //!
 //! - [`special`]: the special functions of the distributions, the logarithm of the beta
 //!   function, the regularized incomplete beta function and the distribution functions and
@@ -32,6 +33,9 @@
 //!   the anytime-valid p-values and the confidence sequence of the beta-binomial mixture, the
 //!   decision of a statement and the draws an undecided one needs, as
 //!   `sbmlsim.uncertainty.testing` gives them.
+//! - [`binding`]: the functions as the bindings take their arguments, arrays of any shape with
+//!   their shape, signed integers and names, checked with the messages of the python, which the
+//!   python and the JavaScript bindings share.
 //! - [`variability`]: the virtual groups of subjects and the bands of the visual predictive
 //!   check, as `predictive_check` of `sbmlsim.fit.variability` gives them, the groups resampled
 //!   from the streams of sbmlsim-core rather than numpy's.
@@ -75,6 +79,7 @@
 //! xoshiro256++, not from PCG64. The draws are held to their distributions, and a seed of a
 //! result from before reproduces it only with the release it was computed with.
 
+pub mod binding;
 pub mod correlation;
 pub mod draws;
 pub mod fisher;
@@ -83,8 +88,6 @@ pub mod metrics;
 mod numpy;
 pub mod posterior;
 mod python;
-#[doc(hidden)]
-pub use python::shape_text;
 mod size;
 pub mod special;
 pub mod testing;

@@ -7,6 +7,7 @@
 | `loader.mjs` | `.` | runs `engine.wasm`, `mathlib.wasm` and a `model.wasm` with the bits of wasmtime |
 | `compile.mjs` | `./compile` | compiles an SBML document into `model.wasm` and its description with `compiler.wasm` |
 | `petab.mjs` (since 0.39.0) | `./petab` | a problem of [PEtab v2](petab.md) read, simulated, evaluated and (since 0.40.0) fitted in a page |
+| `stats.mjs` (since 0.43.0) | `./stats` | the [statistics of the analyses](stats.md), every function of `sbmlsim_core.stats` with the bits of python, see [The statistics](#the-statistics) |
 | `kernel.mjs` (since 0.41.0) | `./kernel` | instantiates the [batched kernel](#the-batched-kernel) of a model, which advances many instances of it per call |
 | `pool.mjs` (with `worker.mjs`) | `./pool` | a pool of workers which run the loader off the main thread |
 | `panels.mjs` | `./panels` | the routes of the panel service of sbmlsim, answered inside a page from a bundle |
@@ -754,6 +755,49 @@ if (root) {
   }
 }
 </script>
+
+## The statistics
+
+`stats.mjs` (since 0.43.0) gives a page the [statistics of the analyses](stats.md), every function of `sbmlsim_core.stats` of python: the metrics of a fit, the Fisher information and the posterior, the statistics of draws, the draws and their correlations, the probability statements and the visual predictive check.
+
+```js
+import { createCompiler } from "./js/compile.mjs";
+import { createStats } from "./js/stats.mjs";
+
+// compilerWasm: compiler.wasm with the feature stats (the default), a Module or its bytes
+const stats = createStats({ compiler: await createCompiler({ compiler: compilerWasm }) });
+
+// a fit of two parameters to 20 data points: the jacobian of the residuals, a row per residual
+const jacobian = Array.from({ length: 20 }, (_, i) => {
+  const t = (10 * i) / 19;
+  return [Math.exp(-0.3 * t), -t * Math.exp(-0.3 * t)];
+});
+const fisher = stats.fisherStatistics(stats.gram(jacobian), 0.05, 20);
+const [low, high] = stats.fisherIntervals([1.0, 0.3], fisher.standardErrors, ["LINEAR", "LOG10"], { dof: 18 });
+// fisher.rank 2, low [0.89, 0.27], high [1.11, 0.34], Float64Arrays
+
+// 1024 draws of two uniform variables whose normal scores correlate, and their sum
+const u = stats.unitPoints(2, 1024, { design: "sobol", seed: 1 });
+const z = stats.copula(u, [[1.0, 0.8], [0.8, 1.0]]);
+const y = z.map(([a, b]) => a + b);
+const [q, qLow, qHigh, n] = stats.quantileCi(y, 0.95);
+
+// is the probability of y > 0.5 above 0.6?
+const sides = ["greater", "less", "equivalent"].map((side) => stats.pValues(y.map((v) => v > 0.5), 0.6, side));
+const [decision, draws] = stats.decision(...sides, 0.05); // ["accepted", 73]
+```
+
+The functions are the ones of python with their names in camelCase (`quantile_ci` is `quantileCi`), and their constants are members by their names (`stats.EPS`, `stats.MARGIN`, `stats.MIXTURE`, ...). `createStats({ compiler })` takes the compiler of `createCompiler` and is synchronous, as every function is.
+
+- The required arguments of python are the arguments of the function in their order; every optional or keyword-only argument of python is a key of an object of options after them, in camelCase: `stats.foldCounts(y, f, { fold: 3 })`, `stats.unitPoints(2, 64, { design: "lhs", seed: 7 })`, `stats.intervalParameters(1, 2, { level: 0.9, lognormal: true })`. An option `undefined` or `null` takes the default of python; an unknown option, a missing argument or a value of another type (a string for a number, a fraction for an integer) is a `TypeError`.
+- An array is an array of numbers or a typed array of numbers (not `BigInt64Array`); nested arrays are the dimensions of numpy, a matrix an array of its rows, and a number alone an array of no dimension. A matrix of no rows has no nested form: `[]` is a vector of no values. Booleans (`satisfied` of `pValues`) are numbers or booleans, a number true unless it is 0, as numpy converts them.
+- An integer is a number or a `BigInt` (a seed of 64 bits); one past the integers of python's binding (`i64`, `u64` of a seed) is a `RangeError`.
+- A vector of a result is a `Float64Array`, a matrix an array of `Float64Array` rows, a tuple of python an array (`const [mean, se, n] = stats.meanSe(x)`), the dictionary of `fisherStatistics` an object with its keys in camelCase (`standardErrors`), and `None` is `null`.
+- An argument python refuses throws a `StatsError` with the message of python and `kind`, the class of the exception python raises: `ValueError`, `OverflowError`, `ZeroDivisionError` or `IndexError`. Where python writes a number into a message as it was given (`'1'` of `fold=1`), JavaScript cannot tell 1 from 1.0 and the message has the double (`'1.0'`), as python gives it for `fold=1.0`; and an option `null` takes the default where python refuses `None` (`design=None`).
+
+What every function computes, and how it checks its arguments, is the Rust of `sbmlsim-stats` in `compiler.wasm` (the feature `stats` of `sbmlsim-wasm`, on by default), the code python runs; the module only converts the arguments and the results. One call of the C ABI runs every function, `stats_call(request, request_len, values, values_len, out)`: the request is the JSON of `{"function": <the name of python>, <its arguments by their names of python>}`, in which a double, alone or of an array, is `{"at", "shape"}` of the values, the little-endian bytes of the doubles, and an integer the string of its digits; the answer is the JSON of the result in the same form with the bytes of its doubles, or the JSON of `{"kind", "message"}` of an error, in the four words of `compile` (`crates/wasm/src/stats.rs`). Every double crosses as its bits, the infinities and `-0` included (a `NaN` arrives as a `NaN`, JavaScript keeps no payload), and the functions are deterministic, so a page gives the bits of python and of the crate natively: `js/test/stats.test.mjs` runs about a thousand calls of python with their results (`js/test/fixtures/stats.json`, written by `make_stats.py` from the inputs of the oracle fixtures of the crate, its draws and its errors of every kind) through `compiler.wasm` and compares them bit for bit, the errors by kind and message.
+
+The feature adds 441 kB to the 3.93 MB of `compiler.wasm` with PEtab and its fit (124 kB of 1.28 MB gzipped); `cargo build -p sbmlsim-wasm --no-default-features --features fit` leaves it out. The inline build of the python package carries it as `sbmlsimCore.createStats` with `sbmlsimCore.createCompiler`.
 
 ## The batched kernel
 

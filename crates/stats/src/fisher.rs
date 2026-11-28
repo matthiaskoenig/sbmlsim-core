@@ -46,11 +46,13 @@ pub struct FisherStatistics {
 }
 
 /// The variance of the residuals, `FisherInformation.sigma2`: 1 for a likelihood, else
-/// `2 cost / (n - k)`, not a number without degrees of freedom (`n <= k`).
-pub fn sigma2(cost: f64, n: usize, k: usize, likelihood: bool) -> f64 {
+/// `2 cost / (n - k)`, not a number without degrees of freedom (`n <= k`). The number of the
+/// data points is a `u64`, so it is counted alike where a `usize` has 32 bits (wasm).
+pub fn sigma2(cost: f64, n: u64, k: usize, likelihood: bool) -> f64 {
     if likelihood {
         return 1.0;
     }
+    let k = k as u64;
     if n <= k {
         return f64::NAN;
     }
@@ -71,7 +73,7 @@ pub fn statistics(
     information: &[f64],
     k: usize,
     cost: f64,
-    n: usize,
+    n: u64,
     likelihood: bool,
     rank_tolerance: f64,
 ) -> Result<FisherStatistics> {

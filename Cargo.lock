@@ -2887,6 +2887,7 @@ dependencies = [
  "sbmlsim-fit",
  "sbmlsim-ode",
  "sbmlsim-petab",
+ "sbmlsim-stats",
  "serde",
  "serde_json",
 ]

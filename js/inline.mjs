@@ -35,6 +35,10 @@ export { CompileError, createCompiler } from "./compile.mjs";
 export { createRuntime } from "./loader.mjs";
 export { PetabError, openPetab } from "./petab.mjs";
 
+// the statistics of the analyses (since 0.43.0): `sbmlsimCore.createStats({ compiler })` with the
+// compiler of `sbmlsimCore.createCompiler`
+export { StatsError, createStats } from "./stats.mjs";
+
 /** The source of the worker of the pool as one classic script, embedded by the build. */
 // eslint-disable-next-line no-undef
 export const WORKER_SOURCE = __SBMLSIM_CORE_WORKER__;

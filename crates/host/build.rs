@@ -74,6 +74,8 @@ fn main() {
         "plot-wasm",
         "petab",
         "fit",
+        "stats",
+        "sensitivity",
         "web-time",
     ] {
         let dir = workspace.join("crates").join(crate_dir);

@@ -26,6 +26,10 @@
 //! 5. `deallocate(pointer, len)` gives a buffer back, the results included: every buffer of
 //!    the interface is a slice of bytes of exactly its length, so one function frees them all.
 //!
+//! The features `petab` and `fit` add the calls of a PEtab problem and its fit ([`petab`]), and
+//! the feature `stats` the statistics of the analyses, `stats_call` ([`stats`]), all on by
+//! default.
+//!
 //! `optimize` is whether the optimizer of the compiler runs (1 or 0, the results are the same
 //! either way) and `jacobian` the source of the Jacobian of the model: 0 the analytic one
 //! where the model has one and the colored difference quotient otherwise, 1 the difference
@@ -46,6 +50,8 @@ use std::alloc::{Layout, alloc, dealloc};
 
 #[cfg(feature = "petab")]
 pub mod petab;
+#[cfg(feature = "stats")]
+pub mod stats;
 
 use sbmlsim_abi::JacobianChoice;
 use sbmlsim_compiler::CompileOptions;
