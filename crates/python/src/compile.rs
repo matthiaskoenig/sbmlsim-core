@@ -48,21 +48,26 @@ fn jacobian_choice(name: &str) -> PyResult<JacobianChoice> {
 /// `jacobian` is `"auto"`, `"analytic"` or `"difference_quotient"`. Raises `CompileError` for
 /// a model which cannot be compiled and `ValueError` for another `jacobian`.
 /// `parameter_jacobian=False` omits analytic parameter derivatives and their constants;
-/// forward sensitivities then use the numerical parameter-derivative fallback.
+/// forward sensitivities then use the numerical parameter-derivative fallback. `driven` are
+/// the SBML ids of the species to drive, in this order: each follows the path
+/// `X__value + X__slope * (time - driven__t_ref)` of three parameters instead of its rate, the
+/// state `X__exchange` accumulates the amount the model exchanged with it, and the description
+/// lists them (`driven`, `t_ref`).
 #[pyfunction]
-#[pyo3(signature = (sbml, *, optimize=true, jacobian="auto", parameter_jacobian=true))]
+#[pyo3(signature = (sbml, *, optimize=true, jacobian="auto", parameter_jacobian=true, driven=Vec::new()))]
 pub(crate) fn compile_sbml(
     py: Python<'_>,
     sbml: &str,
     optimize: bool,
     jacobian: &str,
     parameter_jacobian: bool,
+    driven: Vec<String>,
 ) -> PyResult<CompiledModel> {
     let options = CompileOptions {
         optimize,
         jacobian: jacobian_choice(jacobian)?,
         parameter_jacobian,
-        ..CompileOptions::default()
+        driven,
     };
     let compiled = py
         .detach(|| sbmlsim_compiler::compile(sbml, &options))
