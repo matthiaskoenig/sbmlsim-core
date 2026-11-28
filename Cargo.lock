@@ -2866,7 +2866,7 @@ dependencies = [
 
 [[package]]
 name = "sbmlsim-stats"
-version = "0.39.0"
+version = "0.41.0"
 dependencies = [
  "libm",
  "sbmlsim-sensitivity",
