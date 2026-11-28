@@ -8,7 +8,8 @@
 //! the constants behind them in every call, before its first attempt, so a path written into the
 //! parameters between the calls is the one the attempts read; `init` evaluates the initial values
 //! of each point from its parameters and `assign` the rules as written. The description lists
-//! the driven species and the reference time (`KernelDescription::driven`, `t_ref`).
+//! the driven species and the reference time in the description of its model
+//! (`ModelDescription::driven`, `t_ref`).
 //!
 //! [`emit_kernel`] emits the functions of the model from the programs of the optimizer
 //! (`sbmlsim_ir::optimize`, as the C target and its QFunction take them): the constants behind
@@ -271,8 +272,6 @@ pub fn emit_kernel(model: &Model) -> Result<(Vec<u8>, KernelDescription), Compil
         control: CONTROL,
         counts: COUNTS,
         scratch_per_point: work.per_point,
-        driven: description.driven.clone(),
-        t_ref: description.t_ref,
         model: description,
     };
     Ok((m.finish(), kernel))

@@ -266,8 +266,9 @@ fn a_kernel_gives_its_module_and_its_description() {
     let value: serde_json::Value = serde_json::from_str(&description).unwrap();
     assert_eq!(value["version"], "kernel/2");
     assert_eq!(value["state_ids"], serde_json::json!(["s"]));
-    assert_eq!(value["driven"], serde_json::json!([]));
     assert_eq!(value["model"]["id"], "decay");
+    // without driven species, neither the kernel nor its model names any
+    assert!(value.get("driven").is_none() && value["model"].get("driven").is_none());
     let compiled = sbmlsim_wasm::compile_kernel_model(MODEL, &KernelOptions::default()).unwrap();
     assert_eq!((compiled.description, compiled.wasm), (description, wasm));
     assert_eq!(kernel_through_the_interface(MODEL, "{}").0, 1);
@@ -296,9 +297,9 @@ fn a_driven_kernel_gives_its_module_and_its_description() {
     let description: sbmlsim_abi::KernelDescription = serde_json::from_str(&description).unwrap();
     assert_eq!(description, compiled.description);
     assert_eq!(description.state_ids, ["s__exchange"]);
-    assert_eq!(description.driven[0].id, "s");
+    assert_eq!(description.model.driven[0].id, "s");
     assert_eq!(
-        description.parameter_ids[description.t_ref.unwrap() as usize],
+        description.parameter_ids[description.model.t_ref.unwrap() as usize],
         "driven__t_ref"
     );
 }

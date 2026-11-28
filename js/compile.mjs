@@ -141,7 +141,7 @@ class Compiler {
    * @param {string} sbml the text of the document
    * @param {{driven?: string[]}} options `driven` are the ids of the species to drive, whose
    *   paths the caller writes into the parameters of every point before an advance
-   *   (`description.driven` and `description.t_ref` give their indices)
+   *   (`description.model.driven` and `description.model.t_ref` give their indices)
    * @returns {{wasm: Uint8Array, description: object}} `kernel.wasm` and `kernel.json`
    * @throws {CompileError} for a document the compiler refuses, e.g. a model with events
    */

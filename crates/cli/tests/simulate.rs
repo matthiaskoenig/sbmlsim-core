@@ -256,7 +256,7 @@ fn compile_drives_species() {
     let description: sbmlsim_abi::KernelDescription =
         serde_json::from_slice(&std::fs::read(out.join("kernel.json")).unwrap()).unwrap();
     assert_eq!(description, kernel.description);
-    assert_eq!(description.driven, compiled.description.driven);
+    assert_eq!(description.model.driven, compiled.description.driven);
     assert!(!out.join("model.wasm").exists());
     // an unknown species of a kernel is the error of the compiler
     let output = run(&[

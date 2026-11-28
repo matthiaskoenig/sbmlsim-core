@@ -153,14 +153,14 @@
 //!   a negative `n`, a pointer which is not a multiple of 8 or an array past the end of the
 //!   memory.
 //!
-//! A kernel may drive species (`kernel/2`, [`KernelDescription::driven`], the compiler's
-//! `KernelOptions::driven`, see `sbmlsim_ir::driven`): a driven species `X` left the states and
+//! A kernel may drive species (`kernel/2`, the [`ModelDescription::driven`] of its
+//! [`KernelDescription::model`], the compiler's `KernelOptions::driven`, see `sbmlsim_ir::driven`): a driven species `X` left the states and
 //! follows the path `X__value + X__slope * (t - driven__t_ref)` of three parameters wherever the
 //! math reads it, with the accumulator state `X__exchange`, the amount the model gave to `X`
 //! (negative where it took it). The drive goes through the parameters, so the arrays and the
 //! exports are those of an undriven kernel: the caller writes the path of each point into its
 //! parameters (at the indices `value`, `slope` of [`DrivenSpecies`] and
-//! [`KernelDescription::t_ref`]) before an `advance`, and every call computes what the kernel
+//! [`ModelDescription::t_ref`]) before an `advance`, and every call computes what the kernel
 //! derives from the parameters (the constants behind them) from the parameters of the call,
 //! point by point, so a path or any other parameter may change between the calls. The change of
 //! an accumulator over an interval is the amount exchanged over it: a caller which wants the
@@ -375,14 +375,10 @@ pub struct KernelDescription {
     pub counts: u32,
     /// The `f64` of the scratch of a point.
     pub scratch_per_point: u32,
-    /// The driven species, in the order they were given to the compiler; empty without. Their
-    /// indices are those of [`KernelDescription::parameter_ids`] (`value`, `slope`) and
-    /// [`KernelDescription::state_ids`] (`exchange`), the ones of the description of the model.
-    pub driven: Vec<DrivenSpecies>,
-    /// The parameter of the reference time `driven__t_ref` of the paths of the driven species,
-    /// an index of [`KernelDescription::parameter_ids`]; `None` without driven species.
-    pub t_ref: Option<u32>,
-    /// The description of the model, the one of the C target.
+    /// The description of the model, the one of the C target. Its driven species
+    /// ([`ModelDescription::driven`]) and reference time ([`ModelDescription::t_ref`]) are those
+    /// of the kernel: their indices are those of [`KernelDescription::parameter_ids`] (`value`,
+    /// `slope`, `t_ref`) and [`KernelDescription::state_ids`] (`exchange`).
     pub model: ModelDescription,
 }
 

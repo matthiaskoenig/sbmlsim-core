@@ -31,8 +31,9 @@
 // A kernel of driven species (`compiler.compileKernel(sbml, { driven: ["S_ext"] })`) has the same
 // arrays and functions: the drive goes through the parameters. Before an `advance` the caller
 // writes the path `X__value + X__slope * (t - driven__t_ref)` of each species and point into its
-// parameters, at the indices `value` and `slope` of `description.driven` and `description.t_ref`,
-// and every call computes what the kernel derives from them, point by point, so a path may change
+// parameters, at the indices `value` and `slope` of `description.model.driven` and
+// `description.model.t_ref` (the description of the model, absent without driven species), and
+// every call computes what the kernel derives from them, point by point, so a path may change
 // between the calls. The state `X__exchange` (index `exchange`) accumulates the amount the model
 // gave to the species (negative where it took it); written 0 before an advance, it is the amount
 // exchanged over that interval.

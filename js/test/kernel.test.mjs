@@ -37,8 +37,10 @@ test("a kernel compiles into the module and the description of the command line"
   assert.deepEqual(description.state_ids, ["y"]);
   assert.deepEqual(description.parameter_ids, ["k", "t_half"]);
   assert.deepEqual(description.assigned_ids, ["t_half"]);
-  assert.deepEqual(description.driven, []);
-  assert.equal(description.t_ref, null);
+  // the driven species and the reference time are those of the model, absent without
+  assert.equal(description.model.driven, undefined);
+  assert.equal(description.model.t_ref, undefined);
+  assert.ok(!("driven" in description) && !("t_ref" in description));
 });
 
 test("a driven kernel compiles into the module and the description of the command line", async () => {
@@ -50,17 +52,18 @@ test("a driven kernel compiles into the module and the description of the comman
   assert.deepEqual(Buffer.from(wasm), readFileSync(path.join(dir, "kernel.wasm")));
   assert.deepEqual(description, JSON.parse(readFileSync(path.join(dir, "kernel.json"), "utf8")));
   assert.equal(description.version, KERNEL_CONTRACT);
+  const { driven, t_ref } = description.model;
   assert.deepEqual(
-    description.driven.map((d) => d.id),
+    driven.map((d) => d.id),
     ["S_ext", "P_ext"],
   );
-  assert.deepEqual(description.driven, description.model.driven);
-  for (const d of description.driven) {
+  assert.ok(!("driven" in description) && !("t_ref" in description));
+  for (const d of driven) {
     assert.equal(description.parameter_ids[d.value], `${d.id}__value`);
     assert.equal(description.parameter_ids[d.slope], `${d.id}__slope`);
     assert.equal(description.state_ids[d.exchange], `${d.id}__exchange`);
   }
-  assert.equal(description.parameter_ids[description.t_ref], "driven__t_ref");
+  assert.equal(description.parameter_ids[t_ref], "driven__t_ref");
   // the undriven kernel of the same model is another one
   assert.notDeepEqual(Buffer.from(instance.compileKernel(sbml).wasm), Buffer.from(wasm));
 });
@@ -95,8 +98,8 @@ test("a driven kernel exchanges the closed form", async () => {
   const kernel = await instantiateKernel({ wasm, mathlib: runtimeBytes().mathlib, memory });
   const ns = description.state_ids.length;
   const np = description.parameter_ids.length;
-  const [x] = description.driven;
-  const tRef = description.t_ref;
+  const [x] = description.model.driven;
+  const tRef = description.model.t_ref;
   const k = description.parameter_ids.indexOf("k");
   // three points, each array behind the one before
   const n = 3;

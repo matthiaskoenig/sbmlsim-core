@@ -118,7 +118,7 @@ fn compile_limited(
 pub struct KernelOptions {
     /// The species to drive, SBML ids, in this order, as [`CompileOptions::driven`]: the caller
     /// writes the path of each species into the parameters of every point before an advance,
-    /// and the description lists them (`KernelDescription::driven`). Empty, the default, drives
+    /// and the description of its model lists them (`ModelDescription::driven`). Empty, the default, drives
     /// none.
     pub driven: Vec<String>,
 }
@@ -273,7 +273,7 @@ mod tests {
         assert_eq!(a.description.version, sbmlsim_abi::KERNEL_CONTRACT);
         assert_eq!(a.description.state_ids, ["y"]);
         assert_eq!(a.description.parameter_ids, ["k"]);
-        assert!(a.description.driven.is_empty());
+        assert!(a.description.model.driven.is_empty());
         // a model without states is refused with its feature
         let error = compile_kernel(DECAY, &options).unwrap_err();
         assert!(error.to_string().contains("without states"), "{error}");
@@ -377,12 +377,17 @@ mod tests {
         )
         .unwrap()
         .description;
-        assert_eq!(a.description.driven, model.driven);
-        assert_eq!(a.description.t_ref, model.t_ref);
         assert_eq!(a.description.model.driven, model.driven);
+        assert_eq!(a.description.model.t_ref, model.t_ref);
         let ids = &a.description.parameter_ids;
-        assert_eq!(ids[a.description.driven[0].value as usize], "X__value");
-        assert_eq!(ids[a.description.t_ref.unwrap() as usize], "driven__t_ref");
+        assert_eq!(
+            ids[a.description.model.driven[0].value as usize],
+            "X__value"
+        );
+        assert_eq!(
+            ids[a.description.model.t_ref.unwrap() as usize],
+            "driven__t_ref"
+        );
         assert_ne!(
             a.wasm,
             compile_kernel(&uptake(), &KernelOptions::default())

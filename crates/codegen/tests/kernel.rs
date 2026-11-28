@@ -608,21 +608,21 @@ fn kernel_driven_accumulators_at_1e_6() {
     }
 }
 
-/// The description of a driven kernel names its driven species and the reference time, at the
-/// indices of the description of the model (`ModelDescription::driven`, `t_ref`), which are
-/// those of `parameter_ids` and `state_ids`; an undriven kernel has none.
+/// The description of a driven kernel names its driven species and the reference time in the
+/// description of its model (`ModelDescription::driven`, `t_ref`), at the indices of
+/// `parameter_ids` and `state_ids`, and nowhere else; an undriven kernel has none.
 #[test]
 fn kernel_description_names_driven() {
     for model in driven_models() {
         let kernel = Kernel::driven(&model.sbml, &model.ids);
         let d = &kernel.description;
         let source = generate_with(&model.sbml, &model.ids).unwrap();
-        assert_eq!(d.driven, source.description.driven);
-        assert_eq!(d.t_ref, source.description.t_ref);
-        assert_eq!((&d.driven, d.t_ref), (&d.model.driven, d.model.t_ref));
-        let ids: Vec<&str> = d.driven.iter().map(|x| x.id.as_str()).collect();
+        let (driven, t_ref) = (&d.model.driven, d.model.t_ref);
+        assert_eq!(driven, &source.description.driven);
+        assert_eq!(t_ref, source.description.t_ref);
+        let ids: Vec<&str> = driven.iter().map(|x| x.id.as_str()).collect();
         assert_eq!(ids, model.ids);
-        for x in &d.driven {
+        for x in driven {
             assert_eq!(
                 d.parameter_ids[x.value as usize],
                 format!("{}__value", x.id)
@@ -637,20 +637,27 @@ fn kernel_description_names_driven() {
             );
             assert!(!x.amount, "{}", x.id);
         }
-        assert_eq!(d.parameter_ids[d.t_ref.unwrap() as usize], "driven__t_ref");
-        // `kernel.json` names them
-        let json = serde_json::to_value(d).unwrap();
-        assert_eq!(json["driven"], serde_json::to_value(&d.driven).unwrap());
-        assert_eq!(json["t_ref"], d.t_ref.unwrap());
-        let back: KernelDescription = serde_json::from_value(json).unwrap();
+        assert_eq!(d.parameter_ids[t_ref.unwrap() as usize], "driven__t_ref");
+        // `kernel.json` names them in its model, once
+        let mut json = serde_json::to_value(d).unwrap();
+        assert_eq!(
+            json["model"]["driven"],
+            serde_json::to_value(driven).unwrap()
+        );
+        assert_eq!(json["model"]["t_ref"], t_ref.unwrap());
+        assert!(json.get("driven").is_none() && json.get("t_ref").is_none());
+        let back: KernelDescription = serde_json::from_value(json.clone()).unwrap();
         assert_eq!(&back, d);
+        // a description with the fields of the model next to it is no `kernel/2`
+        json["driven"] = json["model"]["driven"].clone();
+        assert!(serde_json::from_value::<KernelDescription>(json).is_err());
     }
     let kernel = Kernel::new(&decay());
-    assert!(kernel.description.driven.is_empty());
-    assert_eq!(kernel.description.t_ref, None);
+    assert!(kernel.description.model.driven.is_empty());
+    assert_eq!(kernel.description.model.t_ref, None);
     let json = serde_json::to_value(&kernel.description).unwrap();
-    assert_eq!(json["driven"], serde_json::json!([]));
-    assert_eq!(json["t_ref"], serde_json::Value::Null);
+    assert!(json["model"].get("driven").is_none());
+    assert!(json["model"].get("t_ref").is_none());
 }
 
 #[test]
@@ -696,11 +703,11 @@ fn kernel_driven_constants_per_point_and_call() {
     let (n, m) = kernel.sizes();
     let at = |id: &str| d.parameter_ids.iter().position(|p| p == id).unwrap();
     let (k, vb, r) = (at("k"), at("Vb"), at("r"));
-    let x = &d.driven[0];
+    let x = &d.model.driven[0];
     let (value, slope, t_ref) = (
         x.value as usize,
         x.slope as usize,
-        d.t_ref.unwrap() as usize,
+        d.model.t_ref.unwrap() as usize,
     );
     let exchange = x.exchange as usize;
     assert!(d.model.n_constants > 0);
