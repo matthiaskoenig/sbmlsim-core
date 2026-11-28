@@ -110,12 +110,14 @@ pub fn decomposition(information: &[f64], k: usize) -> Result<(Vec<f64>, Vec<f64
 /// sbmlsim-core computed them) gives the numbers it was written with, to the bit: the rank
 /// and the condition from the eigenvalues, the covariance `σ² inverse`, the standard errors
 /// and the correlation from the covariance. The pseudo-inverse is taken as it is, without a
-/// check of its symmetry (one of LAPACK is not symmetric to the bit).
+/// check of its symmetry (one of LAPACK is not symmetric to the bit) and with the values which
+/// are not finite of a pseudo-inverse of numpy which overflows (of eigenvalues below
+/// `1 / f64::MAX`), which give the statistics of not a number and infinities numpy gives.
 ///
 /// # Errors
 ///
-/// No parameter, eigenvalues and a pseudo-inverse of other lengths than `k` and `k * k`,
-/// values which are not finite, and eigenvalues which are not largest first.
+/// No parameter, eigenvalues and a pseudo-inverse of other lengths than `k` and `k * k`, and
+/// eigenvalues which are not largest first.
 pub fn statistics_of_decomposition(
     spectrum: &[f64],
     inverse: &[f64],
@@ -135,11 +137,6 @@ pub fn statistics_of_decomposition(
             spectrum.len(),
             inverse.len()
         )));
-    }
-    if !spectrum.iter().chain(inverse).all(|v| v.is_finite()) {
-        return Err(StatsError::value(
-            "The eigenvalues and the pseudo-inverse of a Fisher information must be finite.",
-        ));
     }
     if spectrum.windows(2).any(|pair| pair[0] < pair[1]) {
         return Err(StatsError::value(

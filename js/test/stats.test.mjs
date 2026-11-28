@@ -99,7 +99,7 @@ test("every function of python is a function of the statistics", async () => {
   const stats = await statsOf();
   // the callables of `sbmlsim_core.stats.__all__`, each called by the fixture
   const functions = new Set(FIXTURE.functions.map(camel));
-  assert.equal(functions.size, 46);
+  assert.equal(functions.size, 56);
   assert.deepEqual(new Set(FIXTURE.calls.map((entry) => camel(entry.function))), functions);
   for (const name of functions) assert.equal(typeof stats[name], "function", name);
   const own = Object.keys(stats).filter((key) => typeof stats[key] === "function");

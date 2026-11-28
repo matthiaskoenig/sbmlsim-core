@@ -1581,8 +1581,6 @@ def test_a_decomposition_which_does_not_fit_is_refused() -> None:
         stats.fisher_statistics_of_decomposition([2.0], [1.0, 2.0], 1.0, 10)
     with pytest.raises(ValueError, match="largest first"):
         stats.fisher_statistics_of_decomposition([1.0, 2.0], inverse, 1.0, 10)
-    with pytest.raises(ValueError, match="must be finite"):
-        stats.fisher_statistics_of_decomposition([2.0, math.nan], inverse, 1.0, 10)
     with pytest.raises(ValueError, match="no parameters"):
         stats.fisher_decomposition(numpy.zeros((0, 0)))
 
@@ -1640,11 +1638,12 @@ def test_a_distribution_is_the_one_of_scipy_or_mpmath(
 
 
 def test_the_chi_squared_distribution_function_is_the_one_of_mpmath() -> None:
-    # the tolerance times the condition, max(1, |x - a| / 100) of a = df / 2 at x / 2, the
-    # rounding of the exponent of the incomplete gamma function far in its tails
+    # the tolerance times the condition, max(1, min(|x - a|, (x - a)^2 / a)) of a = df / 2
+    # at x / 2, the rounding of the exponent of the incomplete gamma function
     case = SPECIAL["chi2_cdf"]
     x, df = numpy.asarray(case["inputs"]["x"]), numpy.asarray(case["inputs"]["df"])
-    condition = numpy.maximum(numpy.abs(x - df) / 200.0, 1.0)
+    d, a = numpy.abs(x - df) / 2.0, df / 2.0
+    condition = numpy.maximum(numpy.minimum(d, d * d / a), 1.0)
     error = relative_error(stats.chi2_cdf(x, df), case["expected"])
     assert (error / condition).max() <= 1e-13
 

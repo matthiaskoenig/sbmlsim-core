@@ -858,9 +858,9 @@ def stats_fisher_statistics_of_decomposition(
     first) and the pseudo-inverse `inverse` instead of the matrix, as `FisherInformation`
     derives them from a record which stores them, so a decomposition of LAPACK gives the
     numbers it was written with, to the bit. The pseudo-inverse is taken as it is, without a
-    check of its symmetry. Raises `ValueError` for eigenvalues which are not a vector of one
-    value per row of the square pseudo-inverse, values which are not finite and eigenvalues
-    which are not largest first.
+    check of its symmetry or of its values. Raises `ValueError` for eigenvalues which are not
+    a vector of one value per row of the square pseudo-inverse and eigenvalues which are not
+    largest first.
     """
 
 @overload

@@ -50,7 +50,7 @@
 //! the p-values and the confidence sequence) to 1e-12 relative, the normal distribution, the
 //! gamma function and the chi-squared quantile to 1e-13 and the error function to 1e-15 (of
 //! mpmath at 40 digits), the incomplete gamma function and the chi-squared distribution
-//! function to 1e-13 times their condition `max(1, |x - a| / 100)`, the incomplete beta function and the t and binomial distributions to 1e-10, the
+//! function to 1e-13 times their condition `max(1, min(|x - a|, (x - a)² / a))`, the incomplete beta function and the t and binomial distributions to 1e-10, the
 //! binomial quantiles to the same integers and the linear algebra of up to 200 parameters to
 //! 1e-10 of the largest value of the matrix (LAPACK sums in another order). Where the crate
 //! and scipy differ beyond the rounding, the crate is the more accurate: [`special::ln_beta`]

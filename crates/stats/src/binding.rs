@@ -335,6 +335,15 @@ pub fn binary(
             numpy_shape_text(second)
         )));
     };
+    for (values, shape, what) in [(x, x_shape, "values"), (df, df_shape, "degrees of freedom")] {
+        if shape.iter().try_fold(1_usize, |len, &n| len.checked_mul(n)) != Some(values.len()) {
+            return Err(StatsError::value(format!(
+                "The {what} of the shape {} are not {} values.",
+                shape_text(shape),
+                values.len()
+            )));
+        }
+    }
     let len = size::array_len::<f64>(&shape)?;
     let mut values = size::buffer(len)?;
     let x_strides = broadcast_strides(x_shape, shape.len());
@@ -809,9 +818,16 @@ mod tests {
             error.message,
             "operands could not be broadcast together with shapes (2,) (3,) "
         );
-        // a result past what an array holds is numpy's error, before any memory is asked for
+        // values which are not of their shape are an error, not a panic
+        let error = binary(Binary::TCdf, &[0.0], &[2], &[1.0], &[]).unwrap_err();
+        assert_eq!(
+            error.message,
+            "The values of the shape (2,) are not 1 values."
+        );
+        // a result past what an array holds is numpy's error, before any memory is asked for:
+        // empty arrays whose other dimensions broadcast past it, which numpy refuses as well
         let half = 1usize << (usize::BITS / 2);
-        let error = binary(Binary::TCdf, &[0.0], &[half, 1], &[1.0], &[1, half])
+        let error = binary(Binary::TCdf, &[], &[half, 1, 0], &[], &[1, half, 0])
             .map(|_| ())
             .unwrap_err();
         assert!(error.message.starts_with("array is too big"), "{error}");

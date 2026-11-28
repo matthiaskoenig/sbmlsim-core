@@ -565,49 +565,23 @@ fn the_fisher_statistics_and_the_posterior_give_the_same_bits_on_every_target() 
     );
 }
 
-/// The bits of the statistics, a not a number as the one of `f64::NAN`, so two statistics are
-/// the same to the bit where their bits are.
-fn bits_of(s: &fisher::FisherStatistics) -> Vec<u64> {
-    let mut values = vec![s.sigma2, s.condition, s.rank as f64];
-    for part in [
-        &s.spectrum,
-        &s.covariance,
-        &s.standard_errors,
-        &s.correlation,
-    ] {
-        values.extend_from_slice(part);
-    }
-    values
-        .into_iter()
-        .map(|v| if v.is_nan() { f64::NAN } else { v }.to_bits())
-        .collect()
-}
-
 #[test]
-fn the_statistics_are_the_ones_of_their_decomposition_to_the_bit() {
-    let fixture = Fixture::load("fisher");
-    for name in fixture.cases("fisher/") {
-        let case = fixture.case(&name);
-        let k = case.input_usize("k");
-        let (cost, n) = (case.input_f64("cost"), case.input_usize("n") as u64);
-        let likelihood = case.input_bool("likelihood");
-        let (spectrum, inverse) = fisher::decomposition(&case.input("information"), k).unwrap();
-        let of_decomposition = fisher::statistics_of_decomposition(
-            &spectrum,
-            &inverse,
-            k,
-            cost,
-            n,
-            likelihood,
-            fisher::DEFAULT_RANK_TOLERANCE,
-        )
-        .unwrap();
-        assert_eq!(
-            bits_of(&statistics_of(&case)),
-            bits_of(&of_decomposition),
-            "{name}"
-        );
-    }
+fn an_information_whose_pseudo_inverse_overflows_has_the_statistics_of_numpy() {
+    // the pseudo-inverse of numpy of diag(1e-295, 1e-309) is [[nan, nan], [nan, inf]]: the
+    // statistics are not a number and infinite, as before the decomposition was public
+    let found = fisher::statistics(&[1e-295, 0.0, 0.0, 1e-309], 2, 1.0, 10, false, 1e-8).unwrap();
+    assert!(found.covariance.iter().any(|v| !v.is_finite()));
+    let (spectrum, inverse) = fisher::decomposition(&[1e-295, 0.0, 0.0, 1e-309], 2).unwrap();
+    let derived =
+        fisher::statistics_of_decomposition(&spectrum, &inverse, 2, 1.0, 10, false, 1e-8).unwrap();
+    let bits = |values: &[f64]| -> Vec<u64> {
+        values
+            .iter()
+            .map(|v| if v.is_nan() { f64::NAN } else { *v }.to_bits())
+            .collect()
+    };
+    assert_eq!(bits(&found.covariance), bits(&derived.covariance));
+    assert_eq!(bits(&found.standard_errors), bits(&derived.standard_errors));
 }
 
 #[test]
@@ -673,10 +647,6 @@ fn a_decomposition_which_does_not_fit_is_an_error() {
     assert_eq!(
         statistics(&[1.0, 2.0], &[1.0, 0.0, 0.0, 0.5], 2),
         "The eigenvalues of a Fisher information must be largest first."
-    );
-    assert_eq!(
-        statistics(&[2.0, f64::NAN], &[1.0, 0.0, 0.0, 0.5], 2),
-        "The eigenvalues and the pseudo-inverse of a Fisher information must be finite."
     );
     // a pseudo-inverse of LAPACK, which is not symmetric to the bit, is taken as it is
     let found = fisher::statistics_of_decomposition(

@@ -64,6 +64,29 @@ fn beta_inc_is_betainc_of_scipy() {
 }
 
 #[test]
+fn beta_inc_of_a_small_second_parameter_close_to_one_is_the_one_of_mpmath() {
+    // the expansion BGRAT, whose first term is Q(b, u) of a small b, which the series of Q
+    // keeps (1 - P lost 7e-7 relative of beta_inc(1e4, 1e-8, 0.9999) before 0.44.0)
+    let fixture = Fixture::load("special");
+    let case = fixture.case("beta_inc_small_b");
+    let rows = case
+        .input("a")
+        .into_iter()
+        .zip(case.input("b"))
+        .zip(case.input("x"))
+        .zip(case.expected())
+        .map(|(((a, b), x), expected)| {
+            (
+                format!("{a}, {b}, {x}"),
+                special::beta_inc(a, b, x),
+                expected,
+            )
+        })
+        .collect();
+    assert_close("beta_inc_small_b", DISTRIBUTION, rows);
+}
+
+#[test]
 fn beta_inc_is_not_a_number_outside_of_its_domain() {
     for (a, b, x) in [
         (0.0, 1.0, 0.5),
@@ -385,7 +408,7 @@ fn the_special_functions_give_the_same_bits_on_every_target() {
     }
     assert_eq!(
         hash(&values),
-        0xd800_ea5c_0a1d_4805,
+        0xc14f_d1b8_23ed_a9f1,
         "{} values",
         values.len()
     );
@@ -407,13 +430,14 @@ fn assert_same(name: &str, rows: Vec<(String, f64, f64)>) {
 }
 
 /// Holds every value of the incomplete gamma function of `a` at `x` to the expected one at
-/// the tolerance [`GAMMA_INC`] times its condition, `max(1, |x - a| / 100)`: a relative
-/// change of `x` by one rounding changes `P` and `Q` by about `|x - a|` roundings, so the
-/// rounding of the exponent `a (ln λ - (λ - 1))` bounds every method far in the tails.
+/// the tolerance [`GAMMA_INC`] times its condition, `max(1, min(|x - a|, (x - a)² / a))`: the
+/// exponent `x^a e^-x` of the methods is `a (ln λ - (λ - 1))` of `λ = x / a`, about
+/// `-(x - a)² / (2a)` close to `a`, whose rounding grows with it (of `|x - a|` far out).
 fn assert_close_conditioned(name: &str, a: &[f64], x: &[f64], found: &[f64], expected: &[f64]) {
     let mut worst = 0.0_f64;
     for (((&a, &x), &found), &expected) in a.iter().zip(x).zip(found).zip(expected) {
-        let condition = ((x - a).abs() / 100.0).max(1.0);
+        let d = (x - a).abs();
+        let condition = d.min(d * d / a).max(1.0);
         let error = relative_error(found, expected) / condition;
         worst = worst.max(error);
         assert!(
@@ -582,9 +606,18 @@ fn the_chi_squared_quantile_inverts_the_distribution_function() {
 
 #[test]
 fn the_new_special_functions_give_the_same_bits_on_every_target() {
-    // the values of the cases of the functions of 0.44.0, natively and in wasm
+    // the values of the cases of 0.44.0, natively and in wasm
     let fixture = Fixture::load("special");
     let mut values = Vec::new();
+    let case = fixture.case("beta_inc_small_b");
+    for ((a, b), x) in case
+        .input("a")
+        .into_iter()
+        .zip(case.input("b"))
+        .zip(case.input("x"))
+    {
+        values.push(special::beta_inc(a, b, x));
+    }
     for name in ["erf", "erf_edges"] {
         values.extend(fixture.case(name).input("x").into_iter().map(special::erf));
     }
@@ -618,8 +651,23 @@ fn the_new_special_functions_give_the_same_bits_on_every_target() {
     }
     assert_eq!(
         hash(&values),
-        0x04dc_c12b_cefb_43ce,
+        0x7a82_9051_2a4e_b8f3,
         "{} values",
         values.len()
     );
+}
+
+#[test]
+fn the_incomplete_gamma_function_of_a_tiny_parameter_is_a_probability() {
+    // the series of P starts at one, so a tiny a neither overflows 1 / a nor carries the
+    // rounding of ln Γ(a) into P, and Q is the series of scipy's igamc_series
+    for a in [5e-324, 1e-310, 1e-300, 1e-15, 1e-10] {
+        for x in [1e-300, 1e-10, 0.5, 1.0, 1.1, 2.0, 50.0] {
+            let (p, q) = (special::gamma_p(a, x), special::gamma_q(a, x));
+            assert!((0.0..=1.0).contains(&p), "P({a}, {x}) = {p}");
+            assert!((0.0..=1.0).contains(&q), "Q({a}, {x}) = {q}");
+        }
+    }
+    assert!((0.0..=1.0).contains(&special::chi2_cdf(1.0, 2e-15)));
+    assert!((0.0..=1.0).contains(&special::chi2_cdf(1.0, 2e-310)));
 }

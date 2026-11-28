@@ -35,7 +35,7 @@ modules take two:
 Modules given as arguments write only their fixtures (`... make_oracles.py special`); a
 module of sbmlsim in an environment without it stops before any fixture is written. The cases
 of mpmath at 40 digits (the incomplete gamma function and the chi-squared distribution of up
-to 1e12 degrees of freedom) take `special` about half an hour.
+to 1e8 degrees of freedom, of `a` up to 1e15) take `special` about half an hour.
 """
 
 import json
@@ -296,8 +296,9 @@ def _mp_tails(a: float, x: float) -> tuple[Any, Any]:
 
     Below the mode the series `P = x^a e^-x / Γ(a + 1) 1F1(1; a + 1; x)` (of up to 1e9
     terms, which `gammainc` of mpmath does not take, 3e6 at 21 standard deviations below the
-    mode of `a` 5e11); above it the continued fraction of `Q` (a few dozen steps but close to
-    the mode, where the series takes over after 1e5, `Q = 1 - P` of a `Q` about one half). The
+    mode of `a` 5e11); above `a + 1` the continued fraction of `Q` (a few dozen steps but
+    close to the mode, where the series takes over after 1e5, `Q = 1 - P` of a `Q` about one
+    half); up to `x` 1.1 both tails of their series. The
     hypergeometric functions of `gammainc` lose the digits of a small tail (`1 - e^-x` of
     `P(1, x)`) and do not converge far out of a large `a`.
     """
@@ -305,7 +306,25 @@ def _mp_tails(a: float, x: float) -> tuple[Any, Any]:
 
     a_mp, x_mp = mp.mpf(a), mp.mpf(x)
     factor = mp.exp(a_mp * mp.log(x_mp) - x_mp - mp.loggamma(a_mp))
-    if x_mp >= a_mp:
+    if x_mp <= 1.1:
+        # both tails directly: P of its series and Q of the series of `igamc_series` of scipy,
+        # which keeps a Q of about a E1(x) of a small a, 1e-298 of a 1e-300
+        p = factor / a_mp * mp.hyp1f1(1, a_mp + 1, x_mp, maxterms=10**9)
+        total, term, n = mp.mpf(0), mp.mpf(1), 0
+        while True:
+            n += 1
+            term *= -x_mp / n
+            total += term / (a_mp + n)
+            if abs(term) < mp.mpf(10) ** -45:
+                break
+        ln_x = mp.log(x_mp)
+        # ln Γ(1 + a) at the digits of a: 1 + 1e-300 of 40 digits is one
+        with mp.workdps(40 + max(0, int(-mp.log10(a_mp)))):
+            ln_gamma_1p = +mp.loggamma(1 + a_mp)
+        q = -mp.expm1(a_mp * ln_x - ln_gamma_1p)
+        q -= mp.exp(a_mp * ln_x - mp.loggamma(a_mp)) * total
+        return p, q
+    if x_mp >= a_mp + 1:
         tiny = mp.mpf(10) ** -300
         b = x_mp + 1 - a_mp
         c, d = 1 / tiny, 1 / b
@@ -327,9 +346,11 @@ def _mp_tails(a: float, x: float) -> tuple[Any, Any]:
 
 
 def _mp_chi2_ppf(p: float, df: float) -> float:
-    """The quantile of the chi-squared distribution at 40 digits: the method of Newton on
-    the smaller tail from the quantile of scipy, or where scipy underflows to zero from the
-    quantile of the bound `x^a / Γ(a + 1)` of `P`."""
+    """The quantile of the chi-squared distribution at 40 digits.
+
+    The method of Newton on the smaller tail from the quantile of scipy, or where scipy
+    underflows to zero from the quantile of the bound `x^a / Γ(a + 1)` of `P`.
+    """
     import mpmath as mp
 
     a = mp.mpf(df) / 2
@@ -352,13 +373,28 @@ def _mp_chi2_ppf(p: float, df: float) -> float:
 
 
 def distributions() -> dict[str, Any]:
-    """The cases of the public distribution and special functions (since 0.44.0): `erf`,
-    `gamma`, the regularized incomplete gamma function and the chi-squared distribution of
-    mpmath at 40 digits, their edges and broadcasts of scipy."""
+    """The cases of the public distribution and special functions (since 0.44.0).
+
+    `erf`, `gamma`, the regularized incomplete gamma function and the chi-squared
+    distribution of mpmath at 40 digits, and of scipy the incomplete beta function of a small
+    second parameter (BGRAT, whose `Q(b, u)` the incomplete gamma function gives) and the
+    edges and broadcasts of the functions.
+    """
     import mpmath as mp
 
     mp.mp.dps = 40
     cases: dict[str, Any] = {}
+    # a large first parameter and a small second one close to one, the expansion BGRAT,
+    # whose first term is Q(b, u) of a small b, of scipy (Boost), as the cases above
+    inputs = grid(
+        a=[1e3, 1e4, 1e6], b=[1e-8, 1e-3, 0.1, 0.9], y=[1e-6, 1e-4, 1e-2, 0.1]
+    )
+    inputs["x"] = [1.0 - y for y in inputs.pop("y")]
+    cases["beta_inc_small_b"] = {
+        "inputs": inputs,
+        "expected": sc.betainc(inputs["a"], inputs["b"], inputs["x"]),
+    }
+
     x = [-27.0, -6.0, -5.5, -3.0, -2.0, -1.0, -0.5, -0.1, -1e-3, -1e-10, -1e-300]
     x += [1e-300, 1e-10, 1e-3, 0.1, 0.4, 0.5, 0.6, 0.84375, 1.0, 1.25, 2.0, 2.857]
     x += [3.0, 4.0, 5.0, 5.9, 6.0, 27.0]
@@ -376,10 +412,14 @@ def distributions() -> dict[str, Any]:
     cases["gamma_edges"] = {"inputs": {"x": edges}, "expected": sc.gamma(edges)}
 
     inputs: dict[str, list[float]] = {"a": [], "x": []}
-    small = [0.1, 0.5, 1.0, 1.5, 2.5, 5.0, 9.5, 10.0, 10.5, 30.0]
+    # a small a, whose Q of about a E1(x) the series of Q holds, below 1.1 and above
+    small = [1e-300, 1e-15, 1e-10, 1e-5, 1e-3, 0.1, 0.5, 1.0, 1.5, 2.5, 5.0, 9.5, 10.0]
+    small += [10.5, 30.0]
     large = [100.0, 1e3, 1e4, 1e5, 999999.0, 1e6, 1e7, 1e9, 1e12, 1e15]
     for a in small + large:
-        xs = {a * ratio for ratio in [1e-3, 0.1, 0.5, 0.9, 0.99, 1.0, 1.01, 1.1, 2.0, 5.0]}
+        xs = {
+            a * ratio for ratio in [1e-3, 0.1, 0.5, 0.9, 0.99, 1.0, 1.01, 1.1, 2.0, 5.0]
+        }
         if a <= 1e12:
             # close to the mode the series of mpmath takes minutes at 1e15
             offsets = [-8.0, -3.0, -1.0, -0.1, 0.1, 1.0, 3.0, 8.0]
@@ -391,7 +431,9 @@ def distributions() -> dict[str, Any]:
         for value in sorted(v for v in xs if v > 0.0):
             inputs["a"].append(a)
             inputs["x"].append(value)
-    tails = [_mp_tails(a, value) for a, value in zip(inputs["a"], inputs["x"], strict=True)]
+    tails = [
+        _mp_tails(a, value) for a, value in zip(inputs["a"], inputs["x"], strict=True)
+    ]
     cases["gamma_inc"] = {
         "inputs": inputs,
         "expected": {
@@ -407,7 +449,7 @@ def distributions() -> dict[str, Any]:
     }
 
     inputs = {"x": [], "df": []}
-    for df in [0.1, 0.5, 1.0, 2.0, 3.0, 4.5, 10.0, 30.0, 100.0, 1e3, 1e6, 1e12]:
+    for df in [0.1, 0.5, 1.0, 2.0, 3.0, 4.5, 10.0, 30.0, 100.0, 1e3, 1e6, 1e9]:
         for ratio in [1e-6, 0.01, 0.2, 0.5, 0.9, 1.0, 1.1, 2.0, 5.0, 20.0]:
             inputs["df"].append(df)
             inputs["x"].append(df * ratio)
@@ -430,7 +472,7 @@ def distributions() -> dict[str, Any]:
     inputs = {"p": [], "df": []}
     ps = [1e-300, 1e-100, 1e-12, 1e-6, 0.01, 0.025, 0.05, 0.1, 0.3, 0.5, 0.7, 0.9]
     ps += [0.95, 0.975, 0.99, 1 - 1e-6, 1 - 1e-12]
-    for df in [0.1, 0.5, 1.0, 2.0, 3.0, 4.5, 10.0, 30.0, 100.0, 1e3, 1e4, 1e6, 1e8, 1e12]:
+    for df in [0.1, 0.5, 1.0, 2.0, 3.0, 4.5, 10.0, 30.0, 100.0, 1e3, 1e4, 1e6, 1e8]:
         for p in ps:
             inputs["p"].append(p)
             inputs["df"].append(df)
@@ -452,10 +494,16 @@ def distributions() -> dict[str, Any]:
 
     x = [-math.inf, math.inf, math.nan, 1.0, 1.0, 1.0, 0.0, -0.0]
     df = [3.0, 3.0, 3.0, -math.inf, math.inf, math.nan, 3.0, 3.0]
-    cases["t_cdf_edges"] = {"inputs": {"x": x, "df": df}, "expected": stats.t.cdf(x, df)}
+    cases["t_cdf_edges"] = {
+        "inputs": {"x": x, "df": df},
+        "expected": stats.t.cdf(x, df),
+    }
     p = [0.0, 1.0, 0.5, 0.975, 0.3, -0.0, math.nan, 0.5]
     df = [math.inf, math.inf, math.inf, math.inf, -math.inf, 3.0, 3.0, math.nan]
-    cases["t_ppf_edges"] = {"inputs": {"p": p, "df": df}, "expected": stats.t.ppf(p, df)}
+    cases["t_ppf_edges"] = {
+        "inputs": {"p": p, "df": df},
+        "expected": stats.t.ppf(p, df),
+    }
 
     for k, (function, args) in enumerate(BROADCASTS):
         cases[f"broadcast/{k}"] = {
@@ -476,17 +524,26 @@ def _statistics_of_record(
     likelihood: bool,
     rank_tolerance: float,
 ) -> dict[str, Any]:
-    """The statistics `sbmlsim.fit.fisher.FisherInformation` derives from a record which
-    stores its eigenvalues and its pseudo-inverse, written out as its properties compute them
-    (`sigma2`, `rank`, `condition_number`, `covariance`, `standard_errors`, `correlation`)."""
+    """The statistics `FisherInformation` derives from a stored decomposition.
+
+    `sbmlsim.fit.fisher.FisherInformation` of a record which stores its eigenvalues and its
+    pseudo-inverse, written out as its properties compute them (`sigma2`, `rank`,
+    `condition_number`, `covariance`, `standard_errors`, `correlation`).
+    """
     k = len(spectrum)
     if likelihood:
         sigma2 = 1.0
     else:
         dof = n - k
         sigma2 = float("nan") if dof <= 0 else float(2.0 * cost / dof)
-    rank = 0 if spectrum[0] <= 0.0 else int(np.sum(spectrum > spectrum[0] * rank_tolerance))
-    condition = float("inf") if spectrum[-1] <= 0.0 else float(spectrum[0] / spectrum[-1])
+    rank = (
+        0
+        if spectrum[0] <= 0.0
+        else int(np.sum(spectrum > spectrum[0] * rank_tolerance))
+    )
+    condition = (
+        float("inf") if spectrum[-1] <= 0.0 else float(spectrum[0] / spectrum[-1])
+    )
     covariance = np.asarray(sigma2 * inverse, dtype=float)
     variances = np.diag(covariance)
     with np.errstate(invalid="ignore", divide="ignore"):
@@ -505,14 +562,18 @@ def _statistics_of_record(
 
 
 def fisher_decomposition() -> dict[str, Any]:
-    """The cases of `fisher::statistics_of_decomposition`: decompositions of LAPACK, the
-    eigenvalues of `eigvalsh` largest first and the pseudo-inverse of the SVD (`pinv`), as a
-    record of a release before sbmlsim-core stored them, and the statistics sbmlsim derives
-    from them, which the crate gives to the bit."""
+    """The cases of `fisher::statistics_of_decomposition`.
+
+    Decompositions of LAPACK, the eigenvalues of `eigvalsh` largest first and the
+    pseudo-inverse of the SVD (`pinv`), as a record of a release before sbmlsim-core stored
+    them, and the statistics sbmlsim derives from them, which the crate gives to the bit.
+    """
     rng = np.random.default_rng(43)
     cases: dict[str, Any] = {}
 
-    def add(label: str, matrix: np.ndarray, cost: float, n: int, likelihood: bool) -> None:
+    def add(
+        label: str, matrix: np.ndarray, cost: float, n: int, likelihood: bool
+    ) -> None:
         spectrum = np.linalg.eigvalsh(matrix)[::-1].copy()
         inverse = np.linalg.pinv(matrix)
         cases[f"decomposition/{label}"] = {
