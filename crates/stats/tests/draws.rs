@@ -7,24 +7,14 @@
 //! of the copula. A seed gives the same bits on every target, which a hash of a few draws holds
 //! natively and in wasm (`cargo test -p sbmlsim-stats --target wasm32-wasip1`).
 
+mod common;
+
 use sbmlsim_stats::draws::{self, Design};
 use sbmlsim_stats::special;
 
-const DESIGNS: [Design; 3] = [Design::Sobol, Design::Lhs, Design::Random];
+use common::hash;
 
-/// The FNV-1a hash of the bits of the values, as the one of `tests/oracle.rs`.
-fn hash(values: &[f64]) -> u64 {
-    values.iter().fold(0xcbf2_9ce4_8422_2325, |state, value| {
-        let value = if value.is_nan() { f64::NAN } else { *value };
-        value
-            .to_bits()
-            .to_le_bytes()
-            .iter()
-            .fold(state, |s, &byte| {
-                (s ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
-            })
-    })
-}
+const DESIGNS: [Design; 3] = [Design::Sobol, Design::Lhs, Design::Random];
 
 /// The column `j` of a matrix of `d` columns, row-major.
 fn column(points: &[f64], d: usize, j: usize) -> Vec<f64> {

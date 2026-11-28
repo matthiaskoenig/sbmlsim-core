@@ -8,21 +8,11 @@
 //! at most its mean. A seed gives the same bits on every target, which a hash holds natively
 //! and in wasm (`cargo test -p sbmlsim-stats --target wasm32-wasip1`).
 
+mod common;
+
 use sbmlsim_stats::variability;
 
-/// The FNV-1a hash of the bits of the values, as the one of `tests/oracle.rs`.
-fn hash(values: &[f64]) -> u64 {
-    values.iter().fold(0xcbf2_9ce4_8422_2325, |state, value| {
-        let value = if value.is_nan() { f64::NAN } else { *value };
-        value
-            .to_bits()
-            .to_le_bytes()
-            .iter()
-            .fold(state, |s, &byte| {
-                (s ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
-            })
-    })
-}
+use common::hash;
 
 /// The predictions of `subjects` subjects at `points` data points of a formula of integers,
 /// positive: `1 + ((s * 7 + j * 3) % 11) / 4 + j` of the subject `s` at the point `j`.

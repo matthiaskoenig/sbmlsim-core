@@ -60,7 +60,7 @@ The kernels of `predictive_check` of `sbmlsim.fit.variability`: `group_means` (`
 
 ## Accuracy
 
-The tests hold every function to numpy, scipy and the functions of sbmlsim, whose values `crates/stats/oracles/make_oracles.py` computed once and stored as JSON next to it (`crates/stats/tests/oracle.rs`), and the bindings to the edges and the messages of the python (`python/tests/test_stats.py`):
+The tests hold every function to numpy, scipy and the functions of sbmlsim, whose values `crates/stats/oracles/make_oracles.py` computed once and stored as JSON next to it (`crates/stats/tests/oracle_<module>.rs`), and the bindings to the edges and the messages of the python (`python/tests/test_stats.py`):
 
 | Function | Tolerance |
 |---|---|

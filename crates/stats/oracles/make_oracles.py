@@ -8,8 +8,8 @@ them as `<module>.json` next to itself:
 The numbers are written by `repr`, so a double is read back as the double it was; the numbers
 which JSON cannot hold are the strings "nan", "inf" and "-inf", and a call which raised is
 `{"error": "<the message>"}`. The fixtures are committed, the Rust tests read them
-(`tests/oracle.rs`), and the tests of the python bindings read the ones of the functions they
-bind (`python/tests/test_stats.py`). The script runs in a throwaway environment, and the
+(`tests/oracle_<module>.rs`), and the tests of the python bindings read the ones of the
+functions they bind (`python/tests/test_stats.py`). The script runs in a throwaway environment, and the
 modules take two:
 
 - `special` and `linalg` call numpy and scipy only. Without an argument the script writes

@@ -40,7 +40,7 @@
 //!
 //! The tests hold every function to the values of numpy and scipy, and the metrics to the
 //! functions of sbmlsim, computed once by `oracles/make_oracles.py` and stored next to it as
-//! JSON (`tests/oracle.rs`): the deterministic kernels (the metrics, the Fisher
+//! JSON (`tests/oracle_<module>.rs`): the deterministic kernels (the metrics, the Fisher
 //! statistics, the posterior, the statistics of the draws, the logarithm of the beta function,
 //! the p-values and the confidence sequence) to 1e-12 relative, the normal distribution to
 //! 1e-13, the incomplete beta function and the t and binomial distributions to 1e-10, the
