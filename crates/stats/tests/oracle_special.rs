@@ -390,3 +390,221 @@ fn the_special_functions_give_the_same_bits_on_every_target() {
         values.len()
     );
 }
+
+/// Holds every value found to the expected one of scipy to the bit, the sign of a zero
+/// included (the edges of a function, which are no rounding); two values below the smallest
+/// normal double are the same, as in [`relative_error`], where scipy flushes a subnormal
+/// value to zero (`gamma(-171.5)`).
+fn assert_same(name: &str, rows: Vec<(String, f64, f64)>) {
+    for (inputs, found, expected) in rows {
+        let same = found.to_bits() == expected.to_bits()
+            || (found.is_nan() && expected.is_nan())
+            || (found.abs() < f64::MIN_POSITIVE
+                && expected.abs() < f64::MIN_POSITIVE
+                && (found != 0.0 || expected != 0.0 || found.signum() == expected.signum()));
+        assert!(same, "{name}({inputs}) = {found:e}, expected {expected:e}");
+    }
+}
+
+/// Holds every value of the incomplete gamma function of `a` at `x` to the expected one at
+/// the tolerance [`GAMMA_INC`] times its condition, `max(1, |x - a| / 100)`: a relative
+/// change of `x` by one rounding changes `P` and `Q` by about `|x - a|` roundings, so the
+/// rounding of the exponent `a (ln λ - (λ - 1))` bounds every method far in the tails.
+fn assert_close_conditioned(name: &str, a: &[f64], x: &[f64], found: &[f64], expected: &[f64]) {
+    let mut worst = 0.0_f64;
+    for (((&a, &x), &found), &expected) in a.iter().zip(x).zip(found).zip(expected) {
+        let condition = ((x - a).abs() / 100.0).max(1.0);
+        let error = relative_error(found, expected) / condition;
+        worst = worst.max(error);
+        assert!(
+            error <= GAMMA_INC,
+            "{name}({a}, {x}) = {found:e}, expected {expected:e}: {error:e} of the condition"
+        );
+    }
+    println!("{name}: largest relative error per condition {worst:.3e}");
+}
+
+/// The rows of a function of one input of a case.
+fn rows_of(case: &Case<'_>, input: &str, function: fn(f64) -> f64) -> Vec<(String, f64, f64)> {
+    case.input(input)
+        .into_iter()
+        .zip(case.expected())
+        .map(|(x, expected)| (format!("{x}"), function(x), expected))
+        .collect()
+}
+
+/// The rows of a function of two inputs of a case.
+fn rows_of_two(
+    case: &Case<'_>,
+    inputs: [&str; 2],
+    function: fn(f64, f64) -> f64,
+) -> Vec<(String, f64, f64)> {
+    case.input(inputs[0])
+        .into_iter()
+        .zip(case.input(inputs[1]))
+        .zip(case.expected())
+        .map(|((x, y), expected)| (format!("{x}, {y}"), function(x, y), expected))
+        .collect()
+}
+
+#[test]
+fn erf_is_the_error_function_of_mpmath() {
+    let fixture = Fixture::load("special");
+    let case = fixture.case("erf");
+    assert_close("erf", ERF, rows_of(&case, "x", special::erf));
+    let case = fixture.case("erf_edges");
+    assert_same("erf", rows_of(&case, "x", special::erf));
+}
+
+#[test]
+fn gamma_is_the_gamma_function_of_mpmath() {
+    let fixture = Fixture::load("special");
+    let case = fixture.case("gamma");
+    assert_close("gamma", GAMMA, rows_of(&case, "x", special::gamma));
+    let case = fixture.case("gamma_edges");
+    assert_same("gamma", rows_of(&case, "x", special::gamma));
+    // the factorials are exact
+    let mut factorial = 1.0;
+    for n in 1..=22_u32 {
+        factorial *= f64::from(n);
+        assert_eq!(special::gamma(f64::from(n) + 1.0), factorial, "{n}!");
+    }
+}
+
+#[test]
+fn the_incomplete_gamma_function_is_the_one_of_mpmath() {
+    let fixture = Fixture::load("special");
+    let case = fixture.case("gamma_inc");
+    let (a, x) = (case.input("a"), case.input("x"));
+    for (name, function, expected) in [
+        (
+            "gamma_p",
+            special::gamma_p as fn(f64, f64) -> f64,
+            case.required("p"),
+        ),
+        ("gamma_q", special::gamma_q, case.required("q")),
+    ] {
+        let found: Vec<f64> = a.iter().zip(&x).map(|(&a, &x)| function(a, x)).collect();
+        assert_close_conditioned(name, &a, &x, &found, &expected);
+    }
+    let case = fixture.case("gamma_inc_edges");
+    let (a, x) = (case.input("a"), case.input("x"));
+    for (name, function, expected) in [
+        (
+            "gamma_p",
+            special::gamma_p as fn(f64, f64) -> f64,
+            case.required("p"),
+        ),
+        ("gamma_q", special::gamma_q, case.required("q")),
+    ] {
+        let rows = a
+            .iter()
+            .zip(&x)
+            .zip(expected)
+            .map(|((&a, &x), expected)| (format!("{a}, {x}"), function(a, x), expected))
+            .collect();
+        assert_same(name, rows);
+    }
+}
+
+#[test]
+fn the_chi_squared_distribution_is_the_one_of_mpmath() {
+    let fixture = Fixture::load("special");
+    let case = fixture.case("chi2_cdf");
+    let (x, df) = (case.input("x"), case.input("df"));
+    let found: Vec<f64> = x
+        .iter()
+        .zip(&df)
+        .map(|(&x, &df)| special::chi2_cdf(x, df))
+        .collect();
+    let half = |values: &[f64]| values.iter().map(|v| v / 2.0).collect::<Vec<f64>>();
+    assert_close_conditioned("chi2_cdf", &half(&df), &half(&x), &found, &case.expected());
+    let case = fixture.case("chi2_ppf");
+    assert_close(
+        "chi2_ppf",
+        CHI2_PPF,
+        rows_of_two(&case, ["p", "df"], special::chi2_ppf),
+    );
+}
+
+#[test]
+fn the_edges_of_the_chi_squared_and_the_t_distribution_are_the_ones_of_scipy() {
+    let fixture = Fixture::load("special");
+    for (name, inputs, function) in [
+        (
+            "chi2_cdf_edges",
+            ["x", "df"],
+            special::chi2_cdf as fn(f64, f64) -> f64,
+        ),
+        ("chi2_ppf_edges", ["p", "df"], special::chi2_ppf),
+        ("t_cdf_edges", ["x", "df"], special::t_cdf),
+        ("t_ppf_edges", ["p", "df"], special::t_ppf),
+    ] {
+        let case = fixture.case(name);
+        let rows = rows_of_two(&case, inputs, function);
+        if name.starts_with("t_") {
+            // the normal distribution of infinitely many degrees of freedom, of AS 241 and
+            // erf of libm, and scipy's t distribution differ in their last digit
+            assert_close(name, NORMAL, rows);
+        } else {
+            assert_same(name, rows);
+        }
+    }
+}
+
+#[test]
+fn the_chi_squared_quantile_inverts_the_distribution_function() {
+    for df in [0.1, 0.5, 1.0, 2.0, 3.0, 7.5, 40.0, 1e3, 1e5, 1e7, 1e10] {
+        for p in [1e-200, 1e-12, 0.01, 0.3, 0.5, 0.8, 0.99, 1.0 - 1e-9] {
+            let x = special::chi2_ppf(p, df);
+            let back = special::chi2_cdf(x, df);
+            // the condition of the distribution function, the factor of a relative error of x
+            let condition = (x / 2.0 - df / 2.0).abs().max(1.0);
+            let error = if p < 0.5 {
+                (back - p).abs() / p
+            } else {
+                ((1.0 - back) - (1.0 - p)).abs() / (1.0 - p)
+            };
+            assert!(error <= 1e-13 * condition, "{p}, {df}: {x} gives {back}");
+        }
+    }
+}
+
+#[test]
+fn the_new_special_functions_give_the_same_bits_on_every_target() {
+    // the values of the cases of the functions of 0.43.0, natively and in wasm
+    let fixture = Fixture::load("special");
+    let mut values = Vec::new();
+    for name in ["erf", "erf_edges"] {
+        values.extend(fixture.case(name).input("x").into_iter().map(special::erf));
+    }
+    for name in ["gamma", "gamma_edges"] {
+        values.extend(
+            fixture
+                .case(name)
+                .input("x")
+                .into_iter()
+                .map(special::gamma),
+        );
+    }
+    for name in ["gamma_inc", "gamma_inc_edges"] {
+        let case = fixture.case(name);
+        for (a, x) in case.input("a").into_iter().zip(case.input("x")) {
+            values.push(special::gamma_p(a, x));
+            values.push(special::gamma_q(a, x));
+        }
+    }
+    for name in ["chi2_cdf", "chi2_cdf_edges"] {
+        let case = fixture.case(name);
+        for (x, df) in case.input("x").into_iter().zip(case.input("df")) {
+            values.push(special::chi2_cdf(x, df));
+        }
+    }
+    for name in ["chi2_ppf", "chi2_ppf_edges"] {
+        let case = fixture.case(name);
+        for (p, df) in case.input("p").into_iter().zip(case.input("df")) {
+            values.push(special::chi2_ppf(p, df));
+        }
+    }
+    assert_eq!(hash(&values), 0, "{} values", values.len());
+}

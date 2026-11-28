@@ -309,55 +309,362 @@ fn bgrat(a: f64, b: f64, x: f64, y: f64) -> f64 {
     ratio * sum
 }
 
-/// The regularized upper incomplete gamma function `Q(b, u)` of `b` in `(0, 1]`: the closed
-/// forms of one half (`erfc √u`) and one (`e^-u`), else the series of `P = 1 - Q` below
-/// `u = b + 1` and the continued fraction of `Q` above (Numerical Recipes, `gser`, `gcf`), not
-/// a number if either does not converge in [`MAX_STEPS`] steps.
-fn gamma_q(b: f64, u: f64) -> f64 {
-    if b == 0.5 {
-        return libm::erfc(libm::sqrt(u));
+/// The smallest parameter `a` of the incomplete gamma function which takes the uniform
+/// asymptotic expansion of Temme with its first two terms: the first one left out is below
+/// about `1e-3 / a^2` of the remainder, and the series and the continued fraction take about
+/// `8.5 sqrt(a)` steps at the mean, 8500 at 1e6.
+const TEMME_A_MIN: f64 = 1e6;
+
+/// The coefficients of the Taylor series of `c0(η)` of the expansion of Temme, of `η^0` to
+/// `η^23`, written exactly from their rational values (the first ones `-1/3`, `1/12`, `-2/135`,
+/// `1/864`, as DiDonato and Morris give them).
+const TEMME_C0: [f64; 24] = [
+    -3.333_333_333_333_333e-1,
+    8.333_333_333_333_333e-2,
+    -1.481_481_481_481_481_5e-2,
+    1.157_407_407_407_407_3e-3,
+    3.527_336_860_670_194e-4,
+    -1.787_551_440_329_218e-4,
+    3.919_263_178_522_438e-5,
+    -2.185_448_510_679_992e-6,
+    -1.854_062_210_715_16e-6,
+    8.296_711_340_953_087e-7,
+    -1.766_595_273_682_607_8e-7,
+    6.707_853_543_401_498e-9,
+    1.026_180_978_424_030_9e-8,
+    -4.382_036_018_453_353e-9,
+    9.147_699_582_236_79e-10,
+    -2.551_419_399_494_624_8e-11,
+    -5.830_772_132_550_426e-11,
+    2.436_194_802_066_741_5e-11,
+    -5.027_669_280_114_175_5e-12,
+    1.100_439_203_195_613_5e-13,
+    3.371_763_262_400_985e-13,
+    -1.392_388_722_418_162e-13,
+    2.853_489_380_704_744_5e-14,
+    -5.139_111_834_242_572e-16,
+];
+
+/// The coefficients of the Taylor series of `c1(η)`, of `η^0` to `η^19` (the first ones
+/// `-1/540`, `-1/288`, `1/378`, `-77/77760`).
+const TEMME_C1: [f64; 20] = [
+    -1.851_851_851_851_852e-3,
+    -3.472_222_222_222_222e-3,
+    2.645_502_645_502_645_4e-3,
+    -9.902_263_374_485_596e-4,
+    2.057_613_168_724_279_8e-4,
+    -4.018_775_720_164_609e-7,
+    -1.809_855_033_448_997_7e-5,
+    7.649_160_916_081_11e-6,
+    -1.612_090_089_456_344_6e-6,
+    4.647_127_802_807_434e-9,
+    1.378_633_446_915_721e-7,
+    -5.752_545_603_517_705e-8,
+    1.195_162_859_977_814_8e-8,
+    -1.754_324_171_974_764_7e-11,
+    -1.009_154_371_060_041_3e-9,
+    4.162_792_991_842_583e-10,
+    -8.563_907_026_492_98e-11,
+    6.067_215_101_604_758e-14,
+    7.162_498_964_811_485_6e-12,
+    -2.933_186_643_771_437e-12,
+];
+
+/// `ln(1 + u) - u` of `u > -1`, to a few roundings of itself: for `|u| < 1/2` by the series
+/// of `ln(1 + u) = 2 atanh(r)`, `r = u / (2 + u)`, whose first term `2r - u = -u r` holds the
+/// digits the difference would lose.
+fn ln1p_minus(u: f64) -> f64 {
+    if u.abs() >= 0.5 {
+        return libm::log1p(u) - u;
     }
-    if b == 1.0 {
-        return libm::exp(-u);
-    }
-    if u <= 0.0 {
-        return 1.0;
-    }
-    let front = b * libm::log(u) - u;
-    if u < b + 1.0 {
-        let mut term = 1.0 / b;
-        let mut sum = term;
-        let mut denominator = b;
-        for _ in 0..MAX_STEPS {
-            denominator += 1.0;
-            term *= u / denominator;
-            sum += term;
-            if term.abs() <= sum.abs() * f64::EPSILON {
-                return 1.0 - sum * libm::exp(front - ln_gamma(b));
-            }
+    let r = u / (2.0 + u);
+    let r2 = r * r;
+    let mut power = r * r2;
+    let mut sum = 0.0;
+    let mut k = 3.0;
+    loop {
+        let term = power / k;
+        sum += term;
+        if term.abs() <= f64::EPSILON * sum.abs() {
+            break;
         }
-        f64::NAN
+        power *= r2;
+        k += 2.0;
+    }
+    2.0 * sum - u * r
+}
+
+/// `ln(λ) - (λ - 1)` of `λ = x / a`, the exponent of the incomplete gamma function per unit of
+/// `a`, without the loss of the difference close to `λ = 1`, where `x - a` is exact.
+fn ln_ratio_minus(a: f64, x: f64) -> f64 {
+    let ratio = x / a;
+    if (0.5..=2.0).contains(&ratio) {
+        ln1p_minus((x - a) / a)
     } else {
-        const TINY: f64 = 1e-300;
-        let guard = |value: f64| if value.abs() < TINY { TINY } else { value };
-        let mut bn = u + 1.0 - b;
-        let mut c = 1.0 / TINY;
-        let mut d = 1.0 / bn;
-        let mut h = d;
-        for step in 1..=MAX_STEPS {
-            let i = step as f64;
-            let an = -i * (i - b);
-            bn += 2.0;
-            d = 1.0 / guard(an * d + bn);
-            c = guard(bn + an / c);
-            let delta = d * c;
-            h *= delta;
-            if (delta - 1.0).abs() <= f64::EPSILON {
-                return libm::exp(front - ln_gamma(b)) * h;
+        libm::log(ratio) - (ratio - 1.0)
+    }
+}
+
+/// The logarithm of `x^a e^-x / Γ(a)`, the factor of the series and the continued fraction of
+/// the incomplete gamma function. From ten on through the formula of Stirling, `a (ln λ -
+/// (λ - 1)) + ln √(a / 2π) - remainder(a)`, so the logarithms of `x^a` and `Γ(a)`, which grow
+/// as `a ln a`, do not cancel.
+fn ln_gamma_factor(a: f64, x: f64) -> f64 {
+    if a < 10.0 {
+        a * libm::log(x) - x - ln_gamma(a)
+    } else {
+        a * ln_ratio_minus(a, x) + 0.5 * libm::log(a) - LN_SQRT_2PI - stirling_remainder(a)
+    }
+}
+
+/// `P(a, x)` of `x < a + 1` by its series `x^a e^-x / Γ(a + 1) Σ x^n / ((a + 1) ... (a + n))`
+/// of positive terms (Numerical Recipes, `gser`), not a number if it does not converge in
+/// [`MAX_STEPS`] steps.
+fn gamma_p_series(a: f64, x: f64) -> f64 {
+    let mut term = 1.0 / a;
+    let mut sum = term;
+    let mut denominator = a;
+    for _ in 0..MAX_STEPS {
+        denominator += 1.0;
+        term *= x / denominator;
+        sum += term;
+        if term.abs() <= sum.abs() * f64::EPSILON {
+            return sum * libm::exp(ln_gamma_factor(a, x));
+        }
+    }
+    f64::NAN
+}
+
+/// `Q(a, x)` of `x >= a + 1` by its continued fraction, by the modified method of Lentz
+/// (Numerical Recipes, `gcf`), not a number if it does not converge in [`MAX_STEPS`] steps.
+fn gamma_q_continued_fraction(a: f64, x: f64) -> f64 {
+    const TINY: f64 = 1e-300;
+    let guard = |value: f64| if value.abs() < TINY { TINY } else { value };
+    let mut bn = x + 1.0 - a;
+    let mut c = 1.0 / TINY;
+    let mut d = 1.0 / bn;
+    let mut h = d;
+    for step in 1..=MAX_STEPS {
+        let i = step as f64;
+        let an = -i * (i - a);
+        bn += 2.0;
+        d = 1.0 / guard(an * d + bn);
+        c = guard(bn + an / c);
+        let delta = d * c;
+        h *= delta;
+        if (delta - 1.0).abs() <= f64::EPSILON {
+            return libm::exp(ln_gamma_factor(a, x)) * h;
+        }
+    }
+    f64::NAN
+}
+
+/// A polynomial of the coefficients, lowest power first, at `x` (the scheme of Horner).
+fn polynomial(coefficients: &[f64], x: f64) -> f64 {
+    coefficients
+        .iter()
+        .rev()
+        .fold(0.0, |sum, &coefficient| sum * x + coefficient)
+}
+
+/// `P(a, x)` and `Q(a, x)` of a large `a` by the uniform asymptotic expansion of Temme (DLMF
+/// 8.12.3, 8.12.8): `Q = erfc(η √(a/2)) / 2 + e^(-a η²/2) / √(2πa) (c0(η) + c1(η) / a)` with
+/// `η²/2 = λ - 1 - ln λ` of the sign of `λ - 1`, `λ = x / a`, and `P` the same with the signs
+/// of `η` and of the sum turned. The coefficients are their Taylor series for `|η| <= 1` and
+/// `c0 = 1/(λ-1) - 1/η`, `c1 = 1/η³ - 1/(λ-1)³ - 1/(λ-1)² - 1/(12 (λ-1))` above, where the
+/// differences lose at most a few digits of a term below `1e-3` of the result.
+fn gamma_temme(a: f64, x: f64) -> (f64, f64) {
+    let exponent = ln_ratio_minus(a, x);
+    let eta = libm::sqrt(-2.0 * exponent).copysign(x - a);
+    let (c0, c1) = if eta.abs() <= 1.0 {
+        (polynomial(&TEMME_C0, eta), polynomial(&TEMME_C1, eta))
+    } else {
+        let mu = x / a - 1.0;
+        (
+            1.0 / mu - 1.0 / eta,
+            1.0 / (eta * eta * eta) - 1.0 / (mu * mu * mu) - 1.0 / (mu * mu) - 1.0 / (12.0 * mu),
+        )
+    };
+    let z = eta * libm::sqrt(a / 2.0);
+    let remainder =
+        libm::exp(a * exponent) / libm::sqrt(2.0 * std::f64::consts::PI * a) * (c0 + c1 / a);
+    (
+        0.5 * libm::erfc(-z) - remainder,
+        0.5 * libm::erfc(z) + remainder,
+    )
+}
+
+/// The regularized lower and upper incomplete gamma functions `P(a, x)` and `Q(a, x)` of
+/// positive `a` and `x` at least zero, both of one computation.
+fn gamma_tails(a: f64, x: f64) -> (f64, f64) {
+    if !(a > 0.0 && x >= 0.0) || (a.is_infinite() && x.is_infinite()) {
+        return (f64::NAN, f64::NAN);
+    }
+    if x == 0.0 || a.is_infinite() {
+        return (0.0, 1.0);
+    }
+    if x.is_infinite() {
+        return (1.0, 0.0);
+    }
+    // the closed forms of one half (the chi-squared distribution of one degree of freedom)
+    // and of one (of two)
+    if a == 0.5 {
+        let root = libm::sqrt(x);
+        return (libm::erf(root), libm::erfc(root));
+    }
+    if a == 1.0 {
+        return (-libm::expm1(-x), libm::exp(-x));
+    }
+    if a >= TEMME_A_MIN {
+        return gamma_temme(a, x);
+    }
+    if x < a + 1.0 {
+        let p = gamma_p_series(a, x);
+        (p, 1.0 - p)
+    } else {
+        let q = gamma_q_continued_fraction(a, x);
+        (1.0 - q, q)
+    }
+}
+
+/// The regularized lower incomplete gamma function `P(a, x) = γ(a, x) / Γ(a)` of a positive
+/// `a` and `x` at least zero, `scipy.special.gammainc`.
+///
+/// The series of `P` below `x = a + 1` and the continued fraction of `Q = 1 - P` above
+/// (Numerical Recipes, section 6.2), their factor `x^a e^-x / Γ(a)` through the formula of
+/// Stirling from ten on, the closed forms of `a` one half and one, and from 1e6 on the uniform
+/// asymptotic expansion of Temme. The tests hold it to mpmath at 40 digits
+/// (`oracles/special.json`); its condition is about `|x - a|` (the relative change of `P` of
+/// a relative change of `x` of one rounding), which bounds the digits of every method far in
+/// the tails. Not a number for a parameter which is not positive or an `x` below zero; `P(∞,
+/// x)` of a finite `x` is zero, as in scipy.
+#[must_use]
+pub fn gamma_p(a: f64, x: f64) -> f64 {
+    gamma_tails(a, x).0
+}
+
+/// The regularized upper incomplete gamma function `Q(a, x) = Γ(a, x) / Γ(a) = 1 - P(a, x)`,
+/// `scipy.special.gammaincc`, of the same computation as [`gamma_p`], the smaller of the two
+/// directly.
+#[must_use]
+pub fn gamma_q(a: f64, x: f64) -> f64 {
+    gamma_tails(a, x).1
+}
+
+/// The `x` of `P(a, x) = p` of a positive finite `a` and a `p` in `[0, 1]`,
+/// `scipy.special.gammaincinv`: zero at zero, infinite at one.
+///
+/// The smaller tail, `P` below one half and `Q = 1 - p` (exact) above, by the method of
+/// Newton on its logarithm in `ln x`, in which both tails are concave (the logarithm of a
+/// gamma variable has a log-concave density), from the quantile of Wilson and Hilferty, and
+/// guarded by bisection between bounds of the quantile: below, `x^a / Γ(a + 1)` bounds `P`
+/// from above; between, the median, which is between `a - 1/3` and `a` (Chen and Rubin 1986);
+/// above, the bound of Chernoff `Q <= e^-x (e x / a)^a`, whose root is below `(√a + √(-ln
+/// q))²`. A quantile below 1e-300 is the one of `x^a / Γ(a + 1)`, which `P` is there to a
+/// rounding.
+#[must_use]
+pub fn gamma_p_inv(a: f64, p: f64) -> f64 {
+    if !(a > 0.0 && a.is_finite() && (0.0..=1.0).contains(&p)) {
+        return f64::NAN;
+    }
+    if p == 0.0 {
+        return 0.0;
+    }
+    if p == 1.0 {
+        return f64::INFINITY;
+    }
+    let upper = p >= 0.5;
+    // 1 - p is exact for p of at least one half
+    let tail = if upper { 1.0 - p } else { p };
+    let ln_p = libm::log(p);
+    // P(a, x) <= x^a / Γ(a + 1): the quantile is at least the one of the bound, and below
+    // 1e-300 it is that one, where the factor e^-x of P is one to a rounding
+    let ln_power = (ln_p + ln_gamma(a + 1.0)) / a;
+    if ln_power <= LN_TINY_QUANTILE {
+        return libm::exp(ln_power);
+    }
+    let ln_a = libm::log(a);
+    let (low, high) = if upper {
+        let median_low = if a > 1.0 / 3.0 {
+            libm::log(a - 1.0 / 3.0)
+        } else {
+            f64::NEG_INFINITY
+        };
+        let chernoff = 2.0 * libm::log(libm::sqrt(a) + libm::sqrt(-libm::log(tail)));
+        (ln_power.max(median_low), chernoff.max(ln_a))
+    } else {
+        (ln_power, ln_a)
+    };
+    let (low, high) = (low - 1e-3, high + 1e-3);
+    // the quantile of Wilson and Hilferty, `a (1 - 1/(9a) + z / (3 √a))³`
+    let z = if upper {
+        -normal_ppf(tail)
+    } else {
+        normal_ppf(tail)
+    };
+    let cube = 1.0 - 1.0 / (9.0 * a) + z / (3.0 * libm::sqrt(a));
+    let guess = a * cube * cube * cube;
+    let start = if guess > 0.0 && libm::log(guess) > low && libm::log(guess) < high {
+        guess
+    } else {
+        libm::exp(0.5 * (low.max(-700.0) + high))
+    };
+    gamma_newton(a, libm::log(tail), upper, start, low, high)
+}
+
+/// The logarithm of the smallest quantile of the incomplete gamma function which the method
+/// of Newton looks for: below, `P(a, x)` is `x^a / Γ(a + 1)` to a rounding.
+const LN_TINY_QUANTILE: f64 = -690.775_527_898_213_7;
+
+/// The `x` of `ln T(a, x) = ln_tail`, `T` the lower tail `P` or the upper tail `Q`, by the
+/// method of Newton in `s = ln x` from `x`, guarded by bisection in `[low, high]` of `s`; the
+/// steps in `x` itself (`x + x expm1(δs)`), so the quantile keeps the digits of `x` and not
+/// only those of `ln x`.
+fn gamma_newton(a: f64, ln_tail: f64, upper: bool, start: f64, low: f64, high: f64) -> f64 {
+    let (mut low, mut high) = (low, high);
+    let mut x = start;
+    for _ in 0..400 {
+        let (p, q) = gamma_tails(a, x);
+        let tail = if upper { q } else { p };
+        if tail.is_nan() {
+            return f64::NAN;
+        }
+        let ln_value = libm::log(tail);
+        let f = ln_value - ln_tail;
+        if f == 0.0 {
+            break;
+        }
+        let s = libm::log(x);
+        // the lower tail grows with x, the upper one falls
+        if (f > 0.0) != upper {
+            high = s;
+        } else {
+            low = s;
+        }
+        // d ln P / d ln x = x^a e^-x / (Γ(a) P), and minus that of Q
+        let slope = libm::exp(ln_gamma_factor(a, x) - ln_value);
+        let step = if upper { f / slope } else { -f / slope };
+        if step.is_finite() && s + step > low && s + step < high {
+            // a small step in x itself, which keeps the digits of x, a large one in ln x
+            if step.abs() > 0.5 {
+                x = libm::exp(s + step);
+                continue;
+            }
+            let change = libm::expm1(step);
+            x += x * change;
+            if change.abs() <= 2.0 * f64::EPSILON {
+                break;
+            }
+        } else {
+            let middle = 0.5 * (low + high);
+            x = libm::exp(middle);
+            let scale = low.abs().max(high.abs()).max(1.0);
+            if high - low <= 2.0 * f64::EPSILON * scale {
+                break;
             }
         }
-        f64::NAN
     }
+    x
 }
 
 /// The distribution function of the standard normal distribution, `scipy.stats.norm.cdf`:
@@ -555,6 +862,64 @@ pub fn binom_ppf(q: f64, n: u64, p: f64) -> f64 {
         }
     }
     low as f64
+}
+
+/// The distribution function of the chi-squared distribution of `df` degrees of freedom,
+/// `scipy.stats.chi2.cdf`: `P(df / 2, x / 2)` of [`gamma_p`]. As scipy, zero below the
+/// support (an `x` of at most zero), one at infinity, and not a number of degrees of freedom
+/// which are not positive or not a number; infinitely many give zero of a finite `x`, and
+/// degrees of freedom whose half underflows to zero give one above zero.
+#[must_use]
+pub fn chi2_cdf(x: f64, df: f64) -> f64 {
+    if x.is_nan() || df.is_nan() || df <= 0.0 {
+        return f64::NAN;
+    }
+    if x <= 0.0 {
+        return 0.0;
+    }
+    if x.is_infinite() {
+        return 1.0;
+    }
+    let a = df / 2.0;
+    if a == 0.0 {
+        return 1.0;
+    }
+    gamma_p(a, x / 2.0)
+}
+
+/// The quantile of the chi-squared distribution of `df` degrees of freedom,
+/// `scipy.stats.chi2.ppf`: `2 x` of `P(df / 2, x) = p` of [`gamma_p_inv`]. As scipy, zero at
+/// zero and infinite at one of any positive degrees of freedom, infinitely many included, not
+/// a number in between of infinitely many or of degrees of freedom whose half underflows to
+/// zero, and not a number of a `p` outside of `[0, 1]` and of degrees of freedom which are not
+/// positive or not a number.
+#[must_use]
+pub fn chi2_ppf(p: f64, df: f64) -> f64 {
+    if !((0.0..=1.0).contains(&p) && df > 0.0) {
+        return f64::NAN;
+    }
+    if p == 0.0 {
+        return 0.0;
+    }
+    if p == 1.0 {
+        return f64::INFINITY;
+    }
+    2.0 * gamma_p_inv(df / 2.0, p)
+}
+
+/// The error function `erf(x) = 2 / √π ∫_0^x e^(-t²) dt`, `scipy.special.erf`, of libm:
+/// `±1` at `±∞`, the sign of a zero kept, not a number of not a number.
+#[must_use]
+pub fn erf(x: f64) -> f64 {
+    libm::erf(x)
+}
+
+/// The gamma function, `scipy.special.gamma`, of libm: infinite past about 171.62 and
+/// at a zero of its sign, not a number at a negative whole number and at minus infinity, a
+/// zero of the sign of the function below about -184.
+#[must_use]
+pub fn gamma(x: f64) -> f64 {
+    libm::tgamma(x)
 }
 
 #[cfg(test)]

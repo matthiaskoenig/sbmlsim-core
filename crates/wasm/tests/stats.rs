@@ -85,6 +85,74 @@ fn a_matrix_keeps_its_shape_and_a_dictionary_its_keys() {
 }
 
 #[test]
+fn a_distribution_broadcasts_its_arguments_and_keeps_a_scalar_a_scalar() {
+    let request = json!({
+        "function": "chi2_ppf",
+        "q": {"at": 0, "shape": [2, 1]},
+        "df": {"at": 2, "shape": [3]},
+    });
+    let (json, values) = answer(&request, &[0.5, 0.95, 1.0, 2.0, 10.0]);
+    let (found, shape) = doubles(&json, &values);
+    assert_eq!(shape, [2, 3]);
+    assert_eq!(found[4], sbmlsim_stats::special::chi2_ppf(0.95, 2.0));
+    let request = json!({"function": "erf", "x": {"at": 0, "shape": []}});
+    let (json, values) = answer(&request, &[-0.0]);
+    let (found, shape) = doubles(&json, &values);
+    assert!(shape.is_empty());
+    assert_eq!(found[0].to_bits(), (-0.0_f64).to_bits());
+    let request = json!({
+        "function": "t_ppf",
+        "q": {"at": 0, "shape": [2]},
+        "df": {"at": 2, "shape": [3]},
+    });
+    let Err(Failure { kind, message }) = call(
+        request.to_string().as_bytes(),
+        &bytes(&[0.1, 0.2, 1.0, 2.0, 3.0]),
+    ) else {
+        panic!("shapes which do not broadcast answer");
+    };
+    assert_eq!(kind, "ValueError");
+    assert_eq!(
+        message,
+        "operands could not be broadcast together with shapes (3,) (2,) "
+    );
+}
+
+#[test]
+fn the_statistics_of_a_decomposition_are_those_of_the_information() {
+    let decomposition = json!({
+        "function": "fisher_decomposition",
+        "information": {"at": 0, "shape": [2, 2]},
+    });
+    let (json, values) = answer(&decomposition, &[2.0, 1.0, 1.0, 5.0]);
+    let (spectrum, _) = doubles(&json[0], &values);
+    let (inverse, shape) = doubles(&json[1], &values);
+    assert_eq!(shape, [2, 2]);
+    let mut given = spectrum.to_vec();
+    given.extend_from_slice(inverse);
+    given.push(0.05);
+    let request = json!({
+        "function": "fisher_statistics_of_decomposition",
+        "spectrum": {"at": 0, "shape": [2]},
+        "inverse": {"at": 2, "shape": [2, 2]},
+        "cost": {"at": 6, "shape": []},
+        "n": "20",
+    });
+    let (json, values) = answer(&request, &given);
+    let native =
+        sbmlsim_stats::fisher::statistics(&[2.0, 1.0, 1.0, 5.0], 2, 0.05, 20, false, 1e-8).unwrap();
+    assert_eq!(json["rank"], json!(2));
+    assert_eq!(
+        doubles(&json["covariance"], &values).0,
+        native.covariance.as_slice()
+    );
+    assert_eq!(
+        doubles(&json["standard_errors"], &values).0,
+        native.standard_errors.as_slice()
+    );
+}
+
+#[test]
 fn the_defaults_are_those_of_python() {
     let points = |extra: Value| {
         let mut request = json!({"function": "unit_points", "d": "2", "n": "4", "seed": "9"});

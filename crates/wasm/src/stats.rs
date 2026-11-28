@@ -341,6 +341,49 @@ struct FisherArguments {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct Information {
+    information: Doubles,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OfDecomposition {
+    spectrum: Doubles,
+    inverse: Doubles,
+    cost: Doubles,
+    n: Integer,
+    likelihood: Option<bool>,
+    rank_tolerance: Option<Doubles>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OfX {
+    x: Doubles,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OfQ {
+    q: Doubles,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OfXDf {
+    x: Doubles,
+    df: Doubles,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OfQDf {
+    q: Doubles,
+    df: Doubles,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Intervals {
     values: Doubles,
     standard_errors: Doubles,
@@ -711,15 +754,46 @@ fn run(
                 a.likelihood.unwrap_or(false),
                 rank_tolerance,
             )?;
-            json!({
-                "sigma2": out.number(s.sigma2),
-                "spectrum": out.vector(s.spectrum),
-                "rank": s.rank,
-                "condition": out.number(s.condition),
-                "covariance": out.array(s.covariance, &[k, k]),
-                "standard_errors": out.vector(s.standard_errors),
-                "correlation": out.array(s.correlation, &[k, k]),
-            })
+            fisher_json(out, s, k)
+        }
+        "fisher_decomposition" => {
+            let a: Information = arguments(function, request)?;
+            let (information, shape) = v.array(&a.information)?;
+            let (spectrum, inverse, k) = binding::fisher_decomposition(information, shape)?;
+            json!([out.vector(spectrum), out.array(inverse, &[k, k])])
+        }
+        "fisher_statistics_of_decomposition" => {
+            let a: OfDecomposition = arguments(function, request)?;
+            let (spectrum, spectrum_shape) = v.array(&a.spectrum)?;
+            let (inverse, inverse_shape) = v.array(&a.inverse)?;
+            let rank_tolerance = v.number_or(a.rank_tolerance.as_ref(), DEFAULT_RANK_TOLERANCE)?;
+            let (s, k) = binding::fisher_statistics_of_decomposition(
+                spectrum,
+                spectrum_shape,
+                inverse,
+                inverse_shape,
+                v.number(&a.cost)?,
+                a.n.i64()?,
+                a.likelihood.unwrap_or(false),
+                rank_tolerance,
+            )?;
+            fisher_json(out, s, k)
+        }
+        "norm_cdf" | "erf" | "gamma" => {
+            let a: OfX = arguments(function, request)?;
+            unary(function, v, out, &a.x)?
+        }
+        "norm_ppf" => {
+            let a: OfQ = arguments(function, request)?;
+            unary(function, v, out, &a.q)?
+        }
+        "t_cdf" | "chi2_cdf" => {
+            let a: OfXDf = arguments(function, request)?;
+            binary(function, v, out, &a.x, &a.df)?
+        }
+        "t_ppf" | "chi2_ppf" => {
+            let a: OfQDf = arguments(function, request)?;
+            binary(function, v, out, &a.q, &a.df)?
         }
         "fisher_intervals" => {
             let a: Intervals = arguments(function, request)?;
@@ -973,6 +1047,45 @@ fn run(
         }
     };
     Ok(answer)
+}
+
+/// The statistics of a Fisher information of `k` parameters as the dictionary of
+/// `fisher_statistics`.
+fn fisher_json(out: &mut Out, s: fisher::FisherStatistics, k: usize) -> Value {
+    json!({
+        "sigma2": out.number(s.sigma2),
+        "spectrum": out.vector(s.spectrum),
+        "rank": s.rank,
+        "condition": out.number(s.condition),
+        "covariance": out.array(s.covariance, &[k, k]),
+        "standard_errors": out.vector(s.standard_errors),
+        "correlation": out.array(s.correlation, &[k, k]),
+    })
+}
+
+/// A function of one argument of any shape, value by value, by its name.
+fn unary(function: &str, v: &Values, out: &mut Out, x: &Doubles) -> Result<Value, Failure> {
+    let unary = binding::Unary::from_name(function)
+        .ok_or_else(|| type_error(format!("{function} is no function of one argument")))?;
+    let (x, shape) = v.array(x)?;
+    Ok(out.array(binding::unary(unary, x)?, shape))
+}
+
+/// A function of a value and the degrees of freedom, broadcast as scipy broadcasts them, by
+/// its name.
+fn binary(
+    function: &str,
+    v: &Values,
+    out: &mut Out,
+    x: &Doubles,
+    df: &Doubles,
+) -> Result<Value, Failure> {
+    let binary = binding::Binary::from_name(function)
+        .ok_or_else(|| type_error(format!("{function} is no function of two arguments")))?;
+    let (x, x_shape) = v.array(x)?;
+    let (df, df_shape) = v.array(df)?;
+    let (values, shape) = binding::binary(binary, x, x_shape, df, df_shape)?;
+    Ok(out.array(values, &shape))
 }
 
 /// [`call`] of the C ABI: writes the JSON of the answer and the little-endian bytes of its

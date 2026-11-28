@@ -758,7 +758,7 @@ if (root) {
 
 ## The statistics
 
-`stats.mjs` (since 0.43.0) gives a page the [statistics of the analyses](stats.md), every function of `sbmlsim_core.stats` of python: the metrics of a fit, the Fisher information and the posterior, the statistics of draws, the draws and their correlations, the probability statements and the visual predictive check.
+`stats.mjs` (since 0.43.0) gives a page the [statistics of the analyses](stats.md), every function of `sbmlsim_core.stats` of python: the metrics of a fit, the Fisher information and the posterior, the statistics of draws, the draws and their correlations, the probability statements, the visual predictive check and the distributions and special functions of scipy (`normCdf`, `normPpf`, `tCdf`, `tPpf`, `chi2Cdf`, `chi2Ppf`, `erf`, `gamma`), whose arguments broadcast as numpy broadcasts them: `stats.chi2Ppf(0.95, [1, 2, 3])` is a `Float64Array` of three quantiles, `stats.erf(0.5)` a number.
 
 ```js
 import { createCompiler } from "./js/compile.mjs";

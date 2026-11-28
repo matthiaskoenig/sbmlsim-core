@@ -243,6 +243,11 @@ const FUNCTIONS = {
     ["information:array", "cost:number", "n:integer"],
     { likelihood: "boolean", rankTolerance: "number" },
   ],
+  fisher_decomposition: [["information:array"]],
+  fisher_statistics_of_decomposition: [
+    ["spectrum:array", "inverse:array", "cost:number", "n:integer"],
+    { likelihood: "boolean", rankTolerance: "number" },
+  ],
   fisher_intervals: [
     ["values:array", "standard_errors:array", "scales:names"],
     { level: "number", dof: "number" },
@@ -278,6 +283,14 @@ const FUNCTIONS = {
     { geometric: "boolean", seed: "seed!" },
   ],
   bands: [["distribution:array", "qs:array"]],
+  norm_cdf: [["x:array"]],
+  norm_ppf: [["q:array"]],
+  t_cdf: [["x:array", "df:array"]],
+  t_ppf: [["q:array", "df:array"]],
+  chi2_cdf: [["x:array", "df:array"]],
+  chi2_ppf: [["q:array", "df:array"]],
+  erf: [["x:array"]],
+  gamma: [["x:array"]],
 };
 
 /** Whether a value is an object of options: a plain object. */

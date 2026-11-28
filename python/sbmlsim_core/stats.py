@@ -21,7 +21,10 @@ GIL while they compute.
   information `J' J` of a jacobian, `fisher_statistics` (the variance of the residuals,
   the eigenvalues, the rank, the condition number, the covariance, the standard errors and
   the correlation, a direction the data do not constrain below `DEFAULT_RANK_TOLERANCE`),
-  `fisher_intervals` and `fisher_relative_errors`;
+  `fisher_intervals` and `fisher_relative_errors`; `fisher_decomposition` (the eigenvalues
+  and the pseudo-inverse the statistics come from) and `fisher_statistics_of_decomposition`
+  (the statistics of a stored decomposition, as `FisherInformation` derives them from a
+  record, to the bit: `fisher_statistics(m)` is the one of `fisher_decomposition(m)`);
 - the posterior, `sbmlsim.fit.posterior`: `posterior_laplace`, the covariance of the
   Laplace approximation of a precision, `rank_correlation`, `normal_correlation`, `log_sd`
   and `lognormal_cv`, the marginal of a parameter on a logarithmic scale;
@@ -48,6 +51,11 @@ GIL while they compute.
   (of the Jeffreys mixture `MIXTURE`, each end by `BISECTIONS` bisections), `decide` and
   `decision` (`_decide`), `needed` (the draws an undecided statement needs, up to
   `MAX_NEEDED`) and `family_level` (Bonferroni);
+- the distributions and special functions of scipy (since 0.43.0): `norm_cdf`, `norm_ppf`,
+  `t_cdf`, `t_ppf`, `chi2_cdf` and `chi2_ppf` (`scipy.stats.norm`, `.t`, `.chi2`, standard,
+  without `loc` and `scale`), `erf` and `gamma` (`scipy.special`), of arrays of any shape
+  broadcast as scipy broadcasts them, a float of numbers and an array of numpy of arrays,
+  `nan`, the infinities and the arguments outside of a domain as scipy gives them;
 - the visual predictive check, `sbmlsim.fit.variability`: `group_means` (the mean or the
   geometric mean of virtual groups of subjects resampled with replacement, on the stream
   xoshiro256++ of sbmlsim-core, not numpy's) and `bands` (numpy's linear quantiles of the
@@ -77,17 +85,25 @@ from sbmlsim_core._core import stats_afe as afe
 from sbmlsim_core._core import stats_aic_from_mse as aic_from_mse
 from sbmlsim_core._core import stats_bands as bands
 from sbmlsim_core._core import stats_bic_from_mse as bic_from_mse
+from sbmlsim_core._core import stats_chi2_cdf as chi2_cdf
+from sbmlsim_core._core import stats_chi2_ppf as chi2_ppf
 from sbmlsim_core._core import stats_confidence_sequence as confidence_sequence
 from sbmlsim_core._core import stats_copula as copula
 from sbmlsim_core._core import stats_decide as decide
 from sbmlsim_core._core import stats_decision as decision
+from sbmlsim_core._core import stats_erf as erf
 from sbmlsim_core._core import stats_family_level as family_level
 from sbmlsim_core._core import stats_first_order_given_data as first_order_given_data
+from sbmlsim_core._core import stats_fisher_decomposition as fisher_decomposition
 from sbmlsim_core._core import stats_fisher_intervals as fisher_intervals
 from sbmlsim_core._core import stats_fisher_relative_errors as fisher_relative_errors
 from sbmlsim_core._core import stats_fisher_statistics as fisher_statistics
+from sbmlsim_core._core import (
+    stats_fisher_statistics_of_decomposition as fisher_statistics_of_decomposition,
+)
 from sbmlsim_core._core import stats_fold_accepted as fold_accepted
 from sbmlsim_core._core import stats_fold_counts as fold_counts
+from sbmlsim_core._core import stats_gamma as gamma
 from sbmlsim_core._core import stats_gmfe as gmfe
 from sbmlsim_core._core import stats_gram as gram
 from sbmlsim_core._core import stats_group_means as group_means
@@ -100,6 +116,8 @@ from sbmlsim_core._core import stats_mean_se as mean_se
 from sbmlsim_core._core import stats_mse as mse
 from sbmlsim_core._core import stats_nearest_correlation as nearest_correlation
 from sbmlsim_core._core import stats_needed as needed
+from sbmlsim_core._core import stats_norm_cdf as norm_cdf
+from sbmlsim_core._core import stats_norm_ppf as norm_ppf
 from sbmlsim_core._core import stats_normal_correlation as normal_correlation
 from sbmlsim_core._core import stats_normal_score_rho as normal_score_rho
 from sbmlsim_core._core import stats_nrmse as nrmse
@@ -116,6 +134,8 @@ from sbmlsim_core._core import stats_sd_accepted as sd_accepted
 from sbmlsim_core._core import stats_sd_se as sd_se
 from sbmlsim_core._core import stats_sse as sse
 from sbmlsim_core._core import stats_subset_agreement as subset_agreement
+from sbmlsim_core._core import stats_t_cdf as t_cdf
+from sbmlsim_core._core import stats_t_ppf as t_ppf
 from sbmlsim_core._core import stats_unit_points as unit_points
 from sbmlsim_core._core import stats_validate_covariance as validate_covariance
 from sbmlsim_core._core import stats_within_guest as within_guest
@@ -133,17 +153,23 @@ __all__ = [
     "aic_from_mse",
     "bands",
     "bic_from_mse",
+    "chi2_cdf",
+    "chi2_ppf",
     "confidence_sequence",
     "copula",
     "decide",
     "decision",
+    "erf",
     "family_level",
     "first_order_given_data",
+    "fisher_decomposition",
     "fisher_intervals",
     "fisher_relative_errors",
     "fisher_statistics",
+    "fisher_statistics_of_decomposition",
     "fold_accepted",
     "fold_counts",
+    "gamma",
     "gmfe",
     "gram",
     "group_means",
@@ -156,6 +182,8 @@ __all__ = [
     "mse",
     "nearest_correlation",
     "needed",
+    "norm_cdf",
+    "norm_ppf",
     "normal_correlation",
     "normal_score_rho",
     "nrmse",
@@ -172,6 +200,8 @@ __all__ = [
     "sd_se",
     "sse",
     "subset_agreement",
+    "t_cdf",
+    "t_ppf",
     "unit_points",
     "validate_covariance",
     "within_guest",

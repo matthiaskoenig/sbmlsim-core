@@ -65,6 +65,8 @@ pub fn sigma2(cost: f64, n: u64, k: usize, likelihood: bool) -> f64 {
 /// `rank_tolerance` times the largest one is a direction the data do not constrain
 /// ([`DEFAULT_RANK_TOLERANCE`]).
 ///
+/// The statistics of its [`decomposition`], [`statistics_of_decomposition`], to the bit.
+///
 /// # Errors
 ///
 /// No parameter (the python fails on the eigenvalues of an empty matrix), and an information
@@ -77,14 +79,73 @@ pub fn statistics(
     likelihood: bool,
     rank_tolerance: f64,
 ) -> Result<FisherStatistics> {
+    let (spectrum, inverse) = decomposition(information, k)?;
+    statistics_of_decomposition(&spectrum, &inverse, k, cost, n, likelihood, rank_tolerance)
+}
+
+/// The decomposition of the Fisher information `information` (row-major `k x k`) the
+/// statistics come from: its eigenvalues, largest first, and its pseudo-inverse, both of one
+/// eigendecomposition (the cyclic Jacobi method of [`linalg::eigh`]), the pseudo-inverse the
+/// one of numpy, which cuts the eigenvalues at `1e-15` times the largest
+/// ([`linalg::pinv_of_eigh`]); `FisherInformation.spectrum` and `.inverse` of a record.
+///
+/// # Errors
+///
+/// No parameter, and an information which is not of `k * k` finite values or not symmetric,
+/// as [`linalg::eigh`].
+pub fn decomposition(information: &[f64], k: usize) -> Result<(Vec<f64>, Vec<f64>)> {
     if k == 0 {
-        return Err(StatsError::value(
-            "The Fisher information of no parameters has no statistics.".to_string(),
-        ));
+        return Err(no_parameters());
     }
     // one decomposition for the eigenvalues and the pseudo-inverse, numpy's of both
     let (spectrum, vectors) = linalg::eigh(information, k)?;
     let inverse = linalg::pinv_of_eigh(&spectrum, &vectors, k)?;
+    Ok((spectrum, inverse))
+}
+
+/// The statistics of a Fisher information of `k` parameters from its decomposition, the
+/// eigenvalues `spectrum` (largest first) and the pseudo-inverse `inverse` (row-major
+/// `k x k`), as `FisherInformation` derives them from a record which stores them, so a
+/// decomposition of another method (the SVD of LAPACK of a record of a release before
+/// sbmlsim-core computed them) gives the numbers it was written with, to the bit: the rank
+/// and the condition from the eigenvalues, the covariance `σ² inverse`, the standard errors
+/// and the correlation from the covariance. The pseudo-inverse is taken as it is, without a
+/// check of its symmetry (one of LAPACK is not symmetric to the bit).
+///
+/// # Errors
+///
+/// No parameter, eigenvalues and a pseudo-inverse of other lengths than `k` and `k * k`,
+/// values which are not finite, and eigenvalues which are not largest first.
+pub fn statistics_of_decomposition(
+    spectrum: &[f64],
+    inverse: &[f64],
+    k: usize,
+    cost: f64,
+    n: u64,
+    likelihood: bool,
+    rank_tolerance: f64,
+) -> Result<FisherStatistics> {
+    if k == 0 {
+        return Err(no_parameters());
+    }
+    if spectrum.len() != k || k.checked_mul(k) != Some(inverse.len()) {
+        return Err(StatsError::value(format!(
+            "The decomposition of a Fisher information of {k} parameters needs {k} \
+             eigenvalues and a pseudo-inverse of {k} x {k} values, not {} and {}.",
+            spectrum.len(),
+            inverse.len()
+        )));
+    }
+    if !spectrum.iter().chain(inverse).all(|v| v.is_finite()) {
+        return Err(StatsError::value(
+            "The eigenvalues and the pseudo-inverse of a Fisher information must be finite.",
+        ));
+    }
+    if spectrum.windows(2).any(|pair| pair[0] < pair[1]) {
+        return Err(StatsError::value(
+            "The eigenvalues of a Fisher information must be largest first.",
+        ));
+    }
     let (first, last) = (spectrum[0], spectrum[k - 1]);
     let condition = if last <= 0.0 {
         f64::INFINITY
@@ -125,13 +186,18 @@ pub fn statistics(
         .collect();
     Ok(FisherStatistics {
         sigma2,
-        spectrum,
+        spectrum: spectrum.to_vec(),
         rank,
         condition,
         covariance,
         standard_errors,
         correlation,
     })
+}
+
+/// The error of an information of no parameters, whose eigenvalues the python fails on.
+fn no_parameters() -> StatsError {
+    StatsError::value("The Fisher information of no parameters has no statistics.")
 }
 
 /// The confidence interval of every parameter, `FisherInformation.confidence_intervals`: the
