@@ -45,11 +45,11 @@
 //! the p-values and the confidence sequence) to 1e-12 relative, the normal distribution to
 //! 1e-13, the incomplete beta function and the t and binomial distributions to 1e-10, the
 //! binomial quantiles to the same integers and the linear algebra of up to 200 parameters to
-//! 1e-10 of the largest value of the matrix (LAPACK sums in another order). Where the crate and scipy differ beyond the
-//! rounding, the crate is the more accurate: [`special::ln_beta`] keeps its digits at a large
-//! and a small parameter, where `scipy.special.betaln` loses them (1.5e-10 relative at 0.5 and
-//! 1e6), so the largest difference of the p-values of [`testing`] to the python is the error
-//! of scipy's `betaln`.
+//! 1e-10 of the largest value of the matrix (LAPACK sums in another order). Where the crate
+//! and scipy differ beyond the rounding, the crate is the more accurate: [`special::ln_beta`]
+//! keeps its digits at a large and a small parameter, where `scipy.special.betaln` loses them
+//! (1.5e-10 relative at 0.5 and 1e6), so the largest difference of the p-values of [`testing`]
+//! to the python is the error of scipy's `betaln`.
 //!
 //! # Errors and sizes
 //!
@@ -83,6 +83,7 @@ pub mod metrics;
 mod numpy;
 pub mod posterior;
 mod python;
+#[doc(hidden)]
 pub use python::shape_text;
 mod size;
 pub mod special;

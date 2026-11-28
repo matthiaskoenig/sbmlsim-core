@@ -67,7 +67,7 @@ pub enum Marginal {
 /// Marginals of two families, which the python refuses before with the targets it names; and
 /// for log-normal marginals the errors of `math`, a ratio `m / (mean_a mean_b)` of at most -1
 /// (the ValueError of `math.log1p`) and a product of the standard deviations zero (the
-/// ZeroDivisionError of python, see [`uncertainty::exception`](crate::uncertainty::exception)).
+/// ZeroDivisionError of python, [`ErrorKind::ZeroDivision`](crate::ErrorKind::ZeroDivision)).
 pub fn normal_score_rho(m_ab: f64, a: Marginal, b: Marginal) -> Result<f64> {
     match (a, b) {
         (Marginal::Normal { sd: sd_a }, Marginal::Normal { sd: sd_b })
