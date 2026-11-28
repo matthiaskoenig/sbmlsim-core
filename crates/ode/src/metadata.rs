@@ -24,6 +24,16 @@ fn general(x: f64) -> String {
     let text = sbmlsim_document::formatting::python_float(x);
     text.strip_suffix(".0").unwrap_or(&text).to_owned()
 }
+/// The value to 15 significant digits, which drops the noise of the division by the
+/// prefix (6e-05 s is 60 μs, not 60.00000000000001 μs) and keeps every digit of a
+/// multiplier, which a double holds to 15 to 17 digits.
+fn significant(x: f64) -> f64 {
+    if x.is_finite() && x != 0.0 {
+        format!("{x:.14e}").parse().unwrap_or(x)
+    } else {
+        x
+    }
+}
 fn close(a: f64, b: f64) -> bool {
     (a - b).abs() <= 1e-8 + 1e-5 * b.abs()
 }
@@ -77,12 +87,12 @@ fn term(mut factor: f64, kind: &str) -> String {
     if kind == "kilogram" {
         factor *= 1000.0;
     }
-    let mut magnitude = factor;
+    let mut magnitude = significant(factor);
     let mut prefix = "";
     if !matches!(kind, "dimensionless" | "item" | "avogadro") && factor > 0.0 && factor.is_finite()
     {
         let power = (3.0 * (factor.log10() / 3.0).floor()).clamp(-24.0, 24.0) as i32;
-        magnitude = factor / 10.0f64.powi(power);
+        magnitude = significant(factor / 10.0f64.powi(power));
         prefix = match power {
             -24 => "y",
             -21 => "z",
@@ -253,4 +263,19 @@ pub(crate) fn symbols(model: &Model) -> HashMap<String, Symbol> {
         add(&e.element, None, "event");
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::term;
+
+    #[test]
+    fn a_unit_factor_prints_without_the_noise_of_its_prefix() {
+        assert_eq!(term(6e-05, "second"), "60 μs");
+        assert_eq!(term(0.6, "dimensionless"), "0.6");
+        assert_eq!(term(6.0 * 10.0f64.powi(-1), "dimensionless"), "0.6");
+        assert_eq!(term(133.32239, "newton"), "133.32239 N");
+        assert_eq!(term(1.0 / 3.0, "litre"), "333.333333333333 ml");
+        assert_eq!(term(1e-3, "litre"), "ml");
+    }
 }
