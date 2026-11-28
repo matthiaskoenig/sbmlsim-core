@@ -35,7 +35,7 @@ modules take two:
 Modules given as arguments write only their fixtures (`... make_oracles.py special`); a
 module of sbmlsim in an environment without it stops before any fixture is written. The cases
 of mpmath at 40 digits (the incomplete gamma function and the chi-squared distribution of up
-to 1e8 degrees of freedom, of `a` up to 1e15) take `special` about half an hour.
+to 1e8 degrees of freedom, of `a` up to 1e15) take `special` about half a minute.
 """
 
 import json
