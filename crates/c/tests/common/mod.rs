@@ -292,6 +292,22 @@ pub enum Accumulators {
     Balanced,
 }
 
+/// The largest difference of a test of a driven model relative to its bound, and the state of
+/// it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Worst {
+    /// The id of the state.
+    pub state: String,
+    /// Its difference over its bound, at most 1.
+    pub ratio: f64,
+}
+
+impl std::fmt::Display for Worst {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} at {:.3e} of its bound", self.state, self.ratio)
+    }
+}
+
 /// 200 points of a driven model advanced by `advance` (the QFunction or the kernel, every point
 /// from its control to `context.t1`) at the tolerances `rtol` and `atol`, against a stepper per
 /// point of the native model of the C target ([`sbmlsim_c::generate_with`]) at 1e-12 and
@@ -299,14 +315,14 @@ pub enum Accumulators {
 /// parameter behind a constant ([`Driven::interval_values`]), the accumulators starting every
 /// interval at 0. Every point is done after every interval and every state within its bound;
 /// for [`uptake`], the exchange is also within the bound of its closed form. Gives the largest
-/// difference relative to its bound.
+/// difference relative to its bound and its state.
 pub fn driven_against_steppers(
     model: &Driven,
     rtol: f64,
     atol: f64,
     accumulators: Accumulators,
     advance: &mut dyn FnMut(&mut sbmlsim_c::Points, &sbmlsim_c::RosenbrockContext),
-) -> f64 {
+) -> Worst {
     use sbmlsim_abi::{EntityKind, IntegratorSettings, Tolerance};
     use sbmlsim_c::{CModel, CONTROL, CONTROL_DONE, Library, Points, RosenbrockContext};
     use sbmlsim_engine::Stepper;
@@ -374,7 +390,10 @@ pub fn driven_against_steppers(
         counts: vec![0.0; steppers.len() * sbmlsim_c::COUNTS],
     };
     let hoisted = parameter_of(model.hoisted) as u32;
-    let mut worst: f64 = 0.0;
+    let mut worst = Worst {
+        state: String::new(),
+        ratio: 0.0,
+    };
     for k in 0..model.intervals {
         let (t0, t1) = model.bounds(k);
         let mut starts = Vec::with_capacity(steppers.len());
@@ -413,7 +432,13 @@ pub fn driven_against_steppers(
                     _ => b.abs(),
                 };
                 let bound = DRIVEN_RELATIVE * scale + DRIVEN_ABSOLUTE;
-                worst = worst.max((a - b).abs() / bound);
+                let ratio = (a - b).abs() / bound;
+                if ratio > worst.ratio {
+                    worst = Worst {
+                        state: desc.states[s].id.clone(),
+                        ratio,
+                    };
+                }
                 assert!(
                     (a - b).abs() <= bound,
                     "{}, point {i}, {} at {t1}: {a}, stepper {b}, bound {bound}",

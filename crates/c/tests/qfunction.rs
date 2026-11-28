@@ -117,7 +117,7 @@ fn rosenbrock_matches_stepper() {
     let steps: f64 = points.counts.chunks(COUNTS).map(|c| c[0]).sum();
     let rejected: f64 = points.counts.chunks(COUNTS).map(|c| c[1]).sum();
     eprintln!(
-        "the largest difference is {worst:.3} of the bound; {:.1} steps and {:.2} rejected \
+        "the worst state is {worst}; {:.1} steps and {:.2} rejected \
          per point and 60 min",
         steps / (50.0 * 24.0),
         rejected / (50.0 * 24.0)
@@ -641,10 +641,7 @@ fn driven_matches_stepper() {
                 run_points(&library, &q, context, points, 8).unwrap();
             },
         );
-        eprintln!(
-            "{}: the largest difference is {worst:.3} of the bound",
-            q.description.id
-        );
+        eprintln!("{}: the worst state is {worst}", q.description.id);
     }
 }
 
@@ -666,10 +663,7 @@ fn driven_accumulators_at_1e_6() {
                 run_points(&library, &q, context, points, 8).unwrap();
             },
         );
-        eprintln!(
-            "{}: the largest difference is {worst:.3} of the bound",
-            q.description.id
-        );
+        eprintln!("{}: the worst state is {worst}", q.description.id);
     }
 }
 

@@ -601,10 +601,7 @@ fn kernel_driven_accumulators_at_1e_6() {
                 assert_eq!(kernel.advance(points, context), 0);
             },
         );
-        eprintln!(
-            "{}: the largest difference is {worst:.3} of the bound",
-            source.description.id
-        );
+        eprintln!("{}: the worst state is {worst}", source.description.id);
     }
 }
 
