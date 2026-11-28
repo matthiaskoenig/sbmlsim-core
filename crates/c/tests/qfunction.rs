@@ -12,8 +12,9 @@ use std::process::Command;
 use std::sync::Arc;
 
 use common::{
-    ALGEBRAIC_CASES, Case, EVENT_CASES, MATH, Random, UPTAKE_VB, blow_up, cases, cell_model,
-    cell_parameter_sets, linear, path_integral, uptake, with_event,
+    ALGEBRAIC_CASES, Accumulators, Case, EVENT_CASES, MATH, Random, blow_up, cases, cell_model,
+    cell_parameter_sets, driven_against_steppers, driven_models, linear, path_integral, uptake,
+    with_event,
 };
 use sbmlsim_abi::{IntegratorSettings, Tolerance};
 use sbmlsim_c::{
@@ -617,79 +618,13 @@ fn a_short_last_step_keeps_the_step() {
     );
 }
 
-/// The bound of the states of a driven model, the accumulators included: twice the one of the
-/// undriven cell model.
-const DRIVEN_RELATIVE: f64 = 4e-6;
-const DRIVEN_ABSOLUTE: f64 = 4e-9;
-
-/// The tolerances of the QFunction on a driven model, two orders below those of [`context`]:
-/// an accumulator is the difference of the amounts of the cell it balances (the rates of the
-/// two are linear invariants, which RODAS4 keeps), so its error is the error of those amounts,
-/// which the tolerances bound relative to them, not relative to the accumulator, which can be a
-/// hundredth of them (a net exchange of opposite fluxes). At 1e-6 and 1e-9 the accumulators of
-/// the cell model miss the bound relative to themselves by up to 28 times, at 1e-7 and 1e-10 by
-/// 2.5 times, the other states keep it; the differences fall with the tolerances, at 1e-8 and
-/// 1e-11 to a quarter of the bound.
-fn driven_context(t1: f64) -> RosenbrockContext {
-    RosenbrockContext {
-        rtol: 1e-8,
-        atol: 1e-11,
-        ..context(t1)
-    }
-}
-
-/// A driven model of the tests: its SBML, the species it drives, the changes of a stepper per
-/// point, a parameter behind a constant of the optimizer (which every interval sets anew) and
-/// its range, and the intervals.
-struct Driven {
-    sbml: String,
-    ids: Vec<String>,
-    changes: fn(&mut Random) -> Vec<(String, f64)>,
-    hoisted: &'static str,
-    hoisted_range: (f64, f64),
-    path_range: f64,
-    interval: f64,
-    intervals: usize,
-}
-
-fn driven_models() -> [Driven; 2] {
-    let ids = |ids: &[&str]| ids.iter().map(|id| id.to_string()).collect();
-    [
-        Driven {
-            sbml: uptake(),
-            ids: ids(&["X"]),
-            changes: |_| vec![],
-            hoisted: "k",
-            hoisted_range: (0.1, 2.0),
-            path_range: 5.0,
-            interval: 1.0,
-            intervals: 6,
-        },
-        Driven {
-            sbml: cell_model(),
-            ids: ids(&["S_ext", "P_ext"]),
-            changes: |random| {
-                vec![
-                    ("pattern".to_string(), 7.0),
-                    ("protein_ext".to_string(), random.uniform()),
-                    ("position".to_string(), random.uniform()),
-                ]
-            },
-            hoisted: "S2PT_Vmax",
-            hoisted_range: (0.01, 0.1),
-            path_range: 5.0,
-            interval: 10.0,
-            intervals: 6,
-        },
-    ]
-}
-
-/// The QFunction of a driven model (at [`driven_context`]) against a stepper of its native model
-/// ([`generate_with`]) at tight tolerances, 200 points, each with a random path per species and
-/// interval (positive over it, referred to its start) and a random value of a parameter behind a
-/// constant, the accumulators starting every interval at 0: the QFunction computes the constants
-/// of every point in every call from the parameters of the call. For the closed form, the
-/// exchange of the QFunction is also the integral of its path.
+/// The QFunction of a driven model against a stepper of its native model ([`generate_with`]) at
+/// tight tolerances (`common::driven_against_steppers`), at the tolerances 1e-8 and 1e-11, two
+/// orders below those of [`context`], every state, the accumulators included, within
+/// `4e-6 |y| + 4e-9`: the QFunction computes the constants of every point in every call from
+/// the parameters of the call. At 1e-6 and 1e-9 an accumulator misses that bound relative to
+/// itself (by up to 28 times on the cell model, 2.5 times at 1e-7 and 1e-10), since its error is
+/// the error of the amounts of the cell it balances, which `driven_accumulators_at_1e_6` bounds.
 #[test]
 fn driven_matches_stepper() {
     for model in driven_models() {
@@ -697,93 +632,61 @@ fn driven_matches_stepper() {
         let library = Library::build(&q.host_code()).unwrap();
         let source = generate_with(&model.sbml, &model.ids).unwrap();
         assert_eq!(q.description, source.description);
-        let desc = Arc::new(source.description);
-        assert!(desc.n_constants > 0, "{}: no constant", desc.id);
-        assert_eq!(desc.driven.len(), model.ids.len());
-        let native = CModel::new(Library::build(&source.code).unwrap(), &desc).unwrap();
-        let settings = IntegratorSettings {
-            relative_tolerance: 1e-12,
-            absolute_tolerance: Tolerance::Scalar(1e-14),
-            ..IntegratorSettings::default()
-        };
-        let mut random = Random(23);
-        let mut steppers: Vec<Stepper> = (0..200)
-            .map(|_| {
-                let changes = (model.changes)(&mut random);
-                Stepper::new(
-                    Box::new(native.clone()),
-                    desc.clone(),
-                    settings.clone(),
-                    &changes,
-                )
-                .unwrap()
-            })
-            .collect();
-        let mut points = cell_points(&q, &steppers);
-        let (n, m) = (q.state_ids.len(), q.parameter_ids.len());
-        let hoisted = q
-            .parameter_ids
-            .iter()
-            .position(|p| p == model.hoisted)
-            .unwrap();
-        let t_ref = desc.t_ref.unwrap();
-        let mut worst: f64 = 0.0;
-        for k in 0..model.intervals {
-            let (t0, t1) = (model.interval * k as f64, model.interval * (k + 1) as f64);
-            for (i, stepper) in steppers.iter_mut().enumerate() {
-                let mut values = vec![(t_ref, t0)];
-                for d in &desc.driven {
-                    let value = random.between(0.0, model.path_range);
-                    let slope = random.between(-value, model.path_range) / model.interval;
-                    values.extend([(d.value, value), (d.slope, slope)]);
-                }
-                let (low, high) = model.hoisted_range;
-                values.push((hoisted as u32, random.between(low, high)));
-                stepper.set_parameters(&values).unwrap();
-                points.parameters[i * m..(i + 1) * m].copy_from_slice(stepper.parameters());
-                let mut y = stepper.state().to_vec();
-                for d in &desc.driven {
-                    y[d.exchange as usize] = 0.0;
-                }
-                points.state[i * n..(i + 1) * n].copy_from_slice(&y);
-                stepper.advance(&y, t0, t1).unwrap();
-            }
-            points.start(t0);
-            run_points(&library, &q, &driven_context(t1), &mut points, 8).unwrap();
-            for (i, stepper) in steppers.iter().enumerate() {
-                let control = &points.control[i * CONTROL..(i + 1) * CONTROL];
-                assert_eq!(control[CONTROL_DONE], 1.0, "{}, point {i}", desc.id);
-                let state = &points.state[i * n..(i + 1) * n];
-                for (s, (a, b)) in state.iter().zip(stepper.state()).enumerate() {
-                    let bound = DRIVEN_RELATIVE * b.abs() + DRIVEN_ABSOLUTE;
-                    worst = worst.max((a - b).abs() / bound);
-                    assert!(
-                        (a - b).abs() <= bound,
-                        "{}, point {i}, {} at {t1}: QFunction {a}, stepper {b}",
-                        desc.id,
-                        q.state_ids[s]
-                    );
-                }
-                if desc.id == "uptake" {
-                    let p = &points.parameters[i * m..(i + 1) * m];
-                    let d = &desc.driven[0];
-                    let at = |id: &str| p[q.parameter_ids.iter().position(|x| x == id).unwrap()];
-                    let exact = -at("k")
-                        * UPTAKE_VB
-                        * path_integral(p[d.value as usize], p[d.slope as usize], t0, t0, t1);
-                    let exchange = state[d.exchange as usize];
-                    assert!(
-                        (exchange - exact).abs() <= DRIVEN_RELATIVE * exact.abs() + DRIVEN_ABSOLUTE,
-                        "point {i} at {t1}: exchange {exchange}, closed form {exact}"
-                    );
-                }
-            }
-        }
+        let worst = driven_against_steppers(
+            &model,
+            1e-8,
+            1e-11,
+            Accumulators::Own,
+            &mut |points, context| {
+                run_points(&library, &q, context, points, 8).unwrap();
+            },
+        );
         eprintln!(
             "{}: the largest difference is {worst:.3} of the bound",
-            desc.id
+            q.description.id
         );
     }
+}
+
+/// The QFunction of a driven model at the tolerances of production, 1e-6 and 1e-9, against a
+/// stepper of its native model at tight tolerances: every state within `4e-6 |y| + 4e-9`, but
+/// an accumulator within `4e-6 s + 4e-9` of the sum `s` of the amounts of the cell it balances
+/// (`common::Accumulators::Balanced`).
+#[test]
+fn driven_accumulators_at_1e_6() {
+    for model in driven_models() {
+        let q = generate_qfunction_with(&model.sbml, &model.ids).unwrap();
+        let library = Library::build(&q.host_code()).unwrap();
+        let worst = driven_against_steppers(
+            &model,
+            1e-6,
+            1e-9,
+            Accumulators::Balanced,
+            &mut |points, context| {
+                run_points(&library, &q, context, points, 8).unwrap();
+            },
+        );
+        eprintln!(
+            "{}: the largest difference is {worst:.3} of the bound",
+            q.description.id
+        );
+    }
+}
+
+/// An unknown driven species is refused with the message of the compiler.
+#[test]
+fn driven_refuses_an_unknown_species() {
+    let ids = ["Q".to_string()];
+    let error = generate_qfunction_with(&uptake(), &ids).unwrap_err();
+    let options = sbmlsim_compiler::CompileOptions {
+        driven: ids.to_vec(),
+        ..sbmlsim_compiler::CompileOptions::default()
+    };
+    let compiler = sbmlsim_compiler::compile(&uptake(), &options).unwrap_err();
+    assert_eq!(error.to_string(), compiler.to_string());
+    assert!(error.to_string().contains('Q'), "{error}");
+    let error = generate_with(&uptake(), &ids).unwrap_err();
+    assert_eq!(error.to_string(), compiler.to_string());
 }
 
 /// `X -> C` of the rate `k1 X` and `C ->` of the rate `k2 C`, both compartments of size 1, with
