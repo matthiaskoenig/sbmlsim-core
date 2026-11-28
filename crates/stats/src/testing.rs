@@ -20,7 +20,7 @@
 //! is the crate's ([`special::ln_beta`]), which agrees with scipy's `betaln` to about 1e-15.
 
 use crate::python::{FLOAT_INFINITY, FLOAT_NAN, math_log, python_div};
-use crate::{Result, StatsError, special};
+use crate::{ErrorKind, Result, StatsError, special};
 
 /// The parameters `(a, b)` of the Jeffreys mixture of the confidence sequence, `MIXTURE`.
 pub const MIXTURE: (f64, f64) = (0.5, 0.5);
@@ -330,10 +330,10 @@ pub fn needed(estimate: f64, n: u64, p0: f64, margin: f64, alpha: f64) -> Result
 /// `round(x)` of python as a double: to the nearest integer, a half to the even one.
 fn python_round(x: f64) -> Result<f64> {
     if x.is_nan() {
-        return Err(StatsError(FLOAT_NAN.to_owned()));
+        return Err(StatsError::value(FLOAT_NAN));
     }
     if x.is_infinite() {
-        return Err(StatsError(FLOAT_INFINITY.to_owned()));
+        return Err(StatsError::new(ErrorKind::Overflow, FLOAT_INFINITY));
     }
     Ok(libm::rint(x))
 }
@@ -357,9 +357,9 @@ mod tests {
         for (x, rounded) in [(0.5, 0.0), (1.5, 2.0), (2.5, 2.0), (-0.5, -0.0), (2.6, 3.0)] {
             assert_eq!(python_round(x), Ok(rounded), "{x}");
         }
-        assert_eq!(python_round(f64::NAN).unwrap_err().0, FLOAT_NAN);
+        assert_eq!(python_round(f64::NAN).unwrap_err().message, FLOAT_NAN);
         assert_eq!(
-            python_round(f64::NEG_INFINITY).unwrap_err().0,
+            python_round(f64::NEG_INFINITY).unwrap_err().message,
             FLOAT_INFINITY
         );
     }

@@ -112,7 +112,7 @@ fn random_points_jump_to_any_start() {
 fn a_latin_hypercube_has_no_continuation() {
     let error = draws::unit_points(2, 4, Design::Lhs, 1, 2).unwrap_err();
     assert_eq!(
-        error.0,
+        error.message,
         "A Latin hypercube has no continuation, its points of more draws are another \
          hypercube: give the number of draws, or use 'sobol' or 'random' for more draws."
     );

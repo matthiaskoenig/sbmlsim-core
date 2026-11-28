@@ -14,60 +14,22 @@
 //! infinite draw is a value. The edges are the ones of the python: `nan` where it returns
 //! `nan`, and an error with the message of the exception where it raises one. The python
 //! raises more than a `ValueError` there (an `OverflowError` of a power or an exponential past
-//! the largest double, a `ZeroDivisionError`, an `IndexError` of numpy), whose class
-//! [`exception`] names. A sum is numpy's pairwise sum, so a mean or a variance is the one of
+//! the largest double, a `ZeroDivisionError`, an `IndexError` of numpy), whose class the
+//! [`ErrorKind`] of the error names. A sum is numpy's pairwise sum, so a mean or a variance is the one of
 //! numpy to the last bits.
 
 use crate::numpy::{numpy_mean, numpy_quantile_sorted, numpy_var};
 use crate::python::{
-    DIVISION_BY_ZERO, FLOAT_INFINITY, MATH_RANGE, POWER_OVERFLOW, math_exp, math_expm1, python_div,
-    python_max, python_max_of, python_min, python_pow, python_repr, python_sum,
+    FLOAT_NAN, math_exp, math_expm1, python_div, python_max, python_max_of, python_min, python_pow,
+    python_repr, python_sum,
 };
-use crate::{Result, StatsError, special};
+use crate::{ErrorKind, Result, StatsError, special};
 
 /// The message numpy refuses a probability of a quantile outside `[0, 1]` with.
 pub(crate) const QUANTILES_RANGE: &str = "Quantiles must be in the range [0, 1]";
 
 /// The start of the message of the IndexError of numpy of a boolean mask of another length.
 const BOOLEAN_INDEX: &str = "boolean index did not match indexed array";
-
-/// The class of the exception the python raised for an error of this module.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Exception {
-    /// `ValueError`, of an argument the python refuses.
-    Value,
-    /// `OverflowError`, of a power or an exponential past the largest double.
-    Overflow,
-    /// `ZeroDivisionError`, of a division by zero.
-    ZeroDivision,
-    /// `IndexError`, of numpy indexing draws by a mask of the other draws.
-    Index,
-}
-
-impl Exception {
-    /// The name of the class of python.
-    #[must_use]
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Value => "ValueError",
-            Self::Overflow => "OverflowError",
-            Self::ZeroDivision => "ZeroDivisionError",
-            Self::Index => "IndexError",
-        }
-    }
-}
-
-/// The class of the exception the python raised for an error of a function of this module or
-/// of [`crate::testing`].
-#[must_use]
-pub fn exception(error: &StatsError) -> Exception {
-    match error.0.as_str() {
-        POWER_OVERFLOW | MATH_RANGE | FLOAT_INFINITY => Exception::Overflow,
-        DIVISION_BY_ZERO => Exception::ZeroDivision,
-        message if message.starts_with(BOOLEAN_INDEX) => Exception::Index,
-        _ => Exception::Value,
-    }
-}
 
 /// The draws which are not a number, `_valid` of the python.
 fn valid(x: &[f64]) -> Vec<f64> {
@@ -133,7 +95,7 @@ fn check_quantile(q: f64) -> Result<()> {
     if (0.0..=1.0).contains(&q) {
         Ok(())
     } else {
-        Err(StatsError(QUANTILES_RANGE.to_owned()))
+        Err(StatsError::value(QUANTILES_RANGE.to_owned()))
     }
 }
 
@@ -170,7 +132,7 @@ pub fn quantiles(x: &[f64], qs: &[f64]) -> Result<Vec<f64>> {
 fn rank(probability: f64, n: usize, q: f64) -> Result<i64> {
     let rank = special::binom_ppf(probability, n as u64, q);
     if rank.is_nan() {
-        return Err(StatsError("cannot convert float NaN to integer".to_owned()));
+        return Err(StatsError::value(FLOAT_NAN));
     }
     Ok(rank as i64)
 }
@@ -220,13 +182,16 @@ fn finite_pairs(x: &[f64], y: &[f64]) -> Result<Option<(Vec<f64>, Vec<f64>)>> {
         (a, b) if a == b => {}
         (1, 0) | (0, 1) => return Ok(None),
         (1, other) | (other, 1) => {
-            return Err(StatsError(format!(
-                "{BOOLEAN_INDEX} along axis 0; size of axis is 1 but size of corresponding \
+            return Err(StatsError::new(
+                ErrorKind::Index,
+                format!(
+                    "{BOOLEAN_INDEX} along axis 0; size of axis is 1 but size of corresponding \
                  boolean axis is {other}"
-            )));
+                ),
+            ));
         }
         (a, b) => {
-            return Err(StatsError(format!(
+            return Err(StatsError::value(format!(
                 "operands could not be broadcast together with shapes ({a},) ({b},) "
             )));
         }
@@ -267,7 +232,7 @@ pub fn first_order_given_data(x: &[f64], y: &[f64], n_bins: Option<usize>) -> Re
     }
     let bins = n_bins.unwrap_or_else(|| 2.max(libm::sqrt(n as f64) as usize / 2));
     if bins == 0 {
-        return Err(StatsError(
+        return Err(StatsError::value(
             "number sections must be larger than 0.".to_owned(),
         ));
     }
@@ -351,19 +316,21 @@ fn greater(a: f64, b: f64) -> bool {
 /// double.
 pub fn interval_parameters(low: f64, high: f64, level: f64, lognormal: bool) -> Result<(f64, f64)> {
     if !(0.0 < level && level < 1.0) {
-        return Err(StatsError(format!(
+        return Err(StatsError::value(format!(
             "The level {} of an interval must be in (0, 1).",
             python_repr(level)
         )));
     }
     let bounds = format!("[{}, {}]", python_repr(low), python_repr(high));
     if !greater(high, low) {
-        return Err(StatsError(format!("The interval {bounds} is empty.")));
+        return Err(StatsError::value(format!(
+            "The interval {bounds} is empty."
+        )));
     }
     let z = special::normal_ppf(0.5 + level / 2.0);
     if lognormal {
         if !greater(low, 0.0) {
-            return Err(StatsError(format!(
+            return Err(StatsError::value(format!(
                 "The log-normal interval {bounds} must be positive."
             )));
         }
@@ -373,7 +340,7 @@ pub fn interval_parameters(low: f64, high: f64, level: f64, lognormal: bool) -> 
         let median = math_exp(mu)?;
         let cv = libm::sqrt(math_expm1(python_pow(sigma, 2)?)?);
         if !greater(cv, 0.0) {
-            return Err(StatsError(format!(
+            return Err(StatsError::value(format!(
                 "LogNormal(median={}, cv={}) needs a positive coefficient of variation.",
                 python_repr(median),
                 python_repr(cv)
@@ -384,7 +351,7 @@ pub fn interval_parameters(low: f64, high: f64, level: f64, lognormal: bool) -> 
         let mean = 0.5 * (low + high);
         let sd = python_div(high - low, 2.0 * z)?;
         if !greater(sd, 0.0) {
-            return Err(StatsError(format!(
+            return Err(StatsError::value(format!(
                 "Normal(mean={}, sd={}, cv=None) needs a positive standard deviation.",
                 python_repr(mean),
                 python_repr(sd)

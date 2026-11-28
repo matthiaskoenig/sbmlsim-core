@@ -85,14 +85,14 @@ pub fn normal_score_rho(m_ab: f64, a: Marginal, b: Marginal) -> Result<f64> {
             let ratio = m_ab / (mean_a * mean_b);
             // math.log1p refuses -1 and below (python 3.14), a not a number passes
             if ratio <= -1.0 {
-                return Err(StatsError(format!(
+                return Err(StatsError::value(format!(
                     "expected argument value > -1, got {}",
                     python_repr(ratio)
                 )));
             }
             python_div(libm::log1p(ratio), sigma_a * sigma_b)
         }
-        _ => Err(StatsError(format!(
+        _ => Err(StatsError::value(format!(
             "The normal scores of a covariance need marginals of one family, not {a:?} and \
              {b:?}."
         ))),
@@ -102,7 +102,7 @@ pub fn normal_score_rho(m_ab: f64, a: Marginal, b: Marginal) -> Result<f64> {
 /// The matrix of `k * k` values, or the error of a slice of another size.
 fn check_size(m: &[f64], k: usize) -> Result<()> {
     if m.len() != k * k {
-        return Err(StatsError(format!(
+        return Err(StatsError::value(format!(
             "A matrix of {k} x {k} needs {} values, not {}.",
             k * k,
             m.len()
@@ -283,29 +283,31 @@ pub fn validate(
     if !twice.is_empty() {
         twice.sort_unstable();
         twice.dedup();
-        return Err(StatsError(format!(
+        return Err(StatsError::value(format!(
             "The targets {} are given twice.",
             python_str_list(&twice)
         )));
     }
     if shape != [k, k] {
-        return Err(StatsError(format!(
+        return Err(StatsError::value(format!(
             "The matrix of {names} must be square of size {k}, not of the shape {}.",
             shape_text(shape)
         )));
     }
     check_size(m, k)?;
     if m.iter().any(|v| !v.is_finite()) {
-        return Err(StatsError(format!("The matrix of {names} is not finite.")));
+        return Err(StatsError::value(format!(
+            "The matrix of {names} is not finite."
+        )));
     }
     if k == 0 {
-        return Err(StatsError(EMPTY_MAXIMUM.to_owned()));
+        return Err(StatsError::value(EMPTY_MAXIMUM.to_owned()));
     }
     let scale = m.iter().fold(0.0_f64, |a, v| a.max(v.abs())).max(1e-300);
     for i in 0..k {
         for j in 0..k {
             if (m[i * k + j] - m[j * k + i]).abs() > 1e-12 * scale {
-                return Err(StatsError(format!(
+                return Err(StatsError::value(format!(
                     "The matrix of {names} is not symmetric."
                 )));
             }
@@ -313,24 +315,24 @@ pub fn validate(
     }
     let kind = if is_correlation {
         if (0..k).any(|i| (m[i * k + i] - 1.0).abs() > 1e-12) {
-            return Err(StatsError(format!(
+            return Err(StatsError::value(format!(
                 "The diagonal of the correlation of {names} must be 1."
             )));
         }
         if m.iter().any(|v| v.abs() > 1.0 + 1e-12) {
-            return Err(StatsError(format!(
+            return Err(StatsError::value(format!(
                 "The correlation of {names} has a coefficient with |rho| > 1."
             )));
         }
         "correlation"
     } else {
         if (0..k).any(|i| m[i * k + i] <= 0.0) {
-            return Err(StatsError(format!(
+            return Err(StatsError::value(format!(
                 "The covariance of {names} must have a positive variance of every target."
             )));
         }
         if units.is_some_and(|n| n != k) {
-            return Err(StatsError(format!(
+            return Err(StatsError::value(format!(
                 "The covariance of {names} needs one unit per target."
             )));
         }
@@ -359,7 +361,7 @@ pub fn validate(
             }
         }
     }
-    Err(StatsError(format!(
+    Err(StatsError::value(format!(
         "The {kind} of {names} is not positive semi-definite: its smallest eigenvalue is {}; \
          the largest correlation is {} of ('{}', '{}').",
         python_format_g(smallest, 3),

@@ -31,7 +31,7 @@ fn check_lengths(y: &[f64], f: &[f64]) -> Result<()> {
     if y.len() == f.len() {
         return Ok(());
     }
-    Err(StatsError(format!(
+    Err(StatsError::value(format!(
         "The fold criterion requires as many predictions as data points, but got '{}' for \
          '{}'.",
         f.len(),
@@ -44,7 +44,7 @@ fn check_fold(fold: f64) -> Result<()> {
     if fold > 1.0 {
         return Ok(());
     }
-    Err(StatsError(format!(
+    Err(StatsError::value(format!(
         "The fold factor must be larger than 1, but '{}' given.",
         python_repr(fold)
     )))
@@ -62,7 +62,9 @@ pub fn sse(residuals: &[f64]) -> f64 {
 /// No residual.
 pub fn mse(residuals: &[f64]) -> Result<f64> {
     if residuals.is_empty() {
-        return Err(StatsError("MSE requires at least one residual.".to_owned()));
+        return Err(StatsError::value(
+            "MSE requires at least one residual.".to_owned(),
+        ));
     }
     Ok(numpy_mean(residuals.len(), |i| residuals[i] * residuals[i]))
 }
@@ -74,7 +76,7 @@ pub fn mse(residuals: &[f64]) -> Result<f64> {
 /// A negative mean squared error.
 pub fn rmse_from_mse(mse: f64) -> Result<f64> {
     if mse < 0.0 {
-        return Err(StatsError(format!(
+        return Err(StatsError::value(format!(
             "RMSE requires a non-negative MSE, but '{}' given.",
             python_repr(mse)
         )));
@@ -85,13 +87,13 @@ pub fn rmse_from_mse(mse: f64) -> Result<f64> {
 /// The checks of the information criterion `name` of a mean squared error of `n` points.
 fn check_criterion(name: &str, mse: f64, n: i64) -> Result<()> {
     if mse < 0.0 {
-        return Err(StatsError(format!(
+        return Err(StatsError::value(format!(
             "{name} requires a non-negative MSE, but '{}' given.",
             python_repr(mse)
         )));
     }
     if n <= 0 {
-        return Err(StatsError(format!(
+        return Err(StatsError::value(format!(
             "{name} requires a positive number of points, but '{n}' given."
         )));
     }
@@ -136,7 +138,7 @@ pub fn bic_from_mse(mse: f64, n: i64, k: i64) -> Result<f64> {
 /// Another number of predictions than of data points.
 pub fn r_squared(y_observed: &[f64], y_predicted: &[f64]) -> Result<f64> {
     if y_observed.len() != y_predicted.len() {
-        return Err(StatsError(format!(
+        return Err(StatsError::value(format!(
             "R² requires as many predictions as data points, but got '{}' for '{}'.",
             y_predicted.len(),
             y_observed.len()
@@ -222,7 +224,7 @@ pub fn fold_accepted(y: &[f64], f: &[f64], fold: f64) -> Result<Vec<f64>> {
 /// Another number of predictions or of standard deviations than of values.
 pub fn sd_accepted(y: &[f64], f: &[f64], sd: &[f64], k: f64) -> Result<Vec<f64>> {
     if f.len() != y.len() || sd.len() != y.len() {
-        return Err(StatsError(format!(
+        return Err(StatsError::value(format!(
             "The uncertainty criterion requires as many predictions and standard deviations \
              as data points, but got '{}' and '{}' for '{}'.",
             f.len(),
@@ -319,7 +321,7 @@ pub fn guest_limits(ratio: f64) -> (f64, f64) {
 /// positive and finite.
 pub fn within_guest(observed: &[f64], predicted: &[f64]) -> Result<f64> {
     if observed.len() != predicted.len() {
-        return Err(StatsError(format!(
+        return Err(StatsError::value(format!(
             "The observed and the predicted ratios have different lengths, {} and {}.",
             observed.len(),
             predicted.len()
@@ -327,7 +329,7 @@ pub fn within_guest(observed: &[f64], predicted: &[f64]) -> Result<f64> {
     }
     if !observed.iter().all(|&r| r.is_finite() && r > 0.0) {
         let list: Vec<String> = observed.iter().map(|&r| python_repr(r)).collect();
-        return Err(StatsError(format!(
+        return Err(StatsError::value(format!(
             "The observed ratios must be positive and finite: [{}].",
             list.join(", ")
         )));

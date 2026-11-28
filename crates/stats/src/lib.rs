@@ -78,10 +78,58 @@ pub mod testing;
 pub mod uncertainty;
 pub mod variability;
 
-/// An error of the arguments of a function.
-#[derive(Debug, Clone, PartialEq, thiserror::Error)]
-#[error("{0}")]
-pub struct StatsError(pub String);
+/// An error of the arguments of a function: its kind and the message of the exception the
+/// python raised.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{message}")]
+pub struct StatsError {
+    /// The class of the exception the python raised, set where the error is made.
+    pub kind: ErrorKind,
+    /// The message of the exception of the python.
+    pub message: String,
+}
+
+impl StatsError {
+    /// An error of the kind with the message.
+    pub fn new(kind: ErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+        }
+    }
+
+    /// An error of an argument the python refuses with a `ValueError`, the kind of most errors.
+    pub fn value(message: impl Into<String>) -> Self {
+        Self::new(ErrorKind::Value, message)
+    }
+}
+
+/// The kind of a [`StatsError`], the class of the exception the python raised for it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ErrorKind {
+    /// `ValueError`, of an argument the python refuses (numpy's `array is too big` of a size
+    /// past what an array holds included).
+    Value,
+    /// `OverflowError`, of a power, an exponential or a rounding past the largest double.
+    Overflow,
+    /// `ZeroDivisionError`, of a division by zero.
+    ZeroDivision,
+    /// `IndexError`, of numpy indexing draws by a mask of the other draws.
+    Index,
+}
+
+impl ErrorKind {
+    /// The name of the class of the exception of python.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Value => "ValueError",
+            Self::Overflow => "OverflowError",
+            Self::ZeroDivision => "ZeroDivisionError",
+            Self::Index => "IndexError",
+        }
+    }
+}
 
 /// The result of a function of the crate.
 pub type Result<T> = std::result::Result<T, StatsError>;

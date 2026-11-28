@@ -76,7 +76,7 @@ pub fn statistics(
     rank_tolerance: f64,
 ) -> Result<FisherStatistics> {
     if k == 0 {
-        return Err(StatsError(
+        return Err(StatsError::value(
             "The Fisher information of no parameters has no statistics.".to_string(),
         ));
     }

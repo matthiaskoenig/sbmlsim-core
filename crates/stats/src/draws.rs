@@ -56,7 +56,7 @@ pub enum Design {
 /// Sobol' sequence: more than its 2048 dimensions or `start + n` past its `2^30` points.
 pub fn unit_points(d: usize, n: usize, design: Design, seed: u64, start: u64) -> Result<Vec<f64>> {
     if design == Design::Lhs && start > 0 {
-        return Err(StatsError(
+        return Err(StatsError::value(
             "A Latin hypercube has no continuation, its points of more draws are another \
              hypercube: give the number of draws, or use 'sobol' or 'random' for more draws."
                 .to_owned(),
@@ -68,7 +68,7 @@ pub fn unit_points(d: usize, n: usize, design: Design, seed: u64, start: u64) ->
     match design {
         Design::Sobol => sobol_sequence(d, n, Some(seed), start)
             .map(|points| points.data)
-            .map_err(|error| StatsError(error.0)),
+            .map_err(|error| StatsError::value(error.0)),
         Design::Lhs => Ok(latin_hypercube(d, n, seed)),
         Design::Random => {
             let mut stream = Stream::new(seed);
@@ -130,14 +130,14 @@ fn is_identity(r: &[f64], d: usize) -> bool {
 /// and the errors of [`linalg::factor`] of a correlation which is not finite or not symmetric.
 pub fn copula(u: &mut [f64], n: usize, d: usize, r: &[f64]) -> Result<()> {
     if u.len() != n * d {
-        return Err(StatsError(format!(
+        return Err(StatsError::value(format!(
             "{n} points of {d} dimensions need {} values, not {}.",
             n * d,
             u.len()
         )));
     }
     if r.len() != d * d {
-        return Err(StatsError(format!(
+        return Err(StatsError::value(format!(
             "The correlation of {d} dimensions needs {} values, not {}.",
             d * d,
             r.len()

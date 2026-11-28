@@ -209,14 +209,14 @@ pub fn gram(j: &[f64], n: usize, k: usize) -> Vec<f64> {
 /// `a[j, i]`.
 fn symmetric(a: &[f64], k: usize) -> Result<Vec<f64>> {
     if a.len() != k * k {
-        return Err(StatsError(format!(
+        return Err(StatsError::value(format!(
             "A matrix of {k} x {k} needs {} values, not {}.",
             k * k,
             a.len()
         )));
     }
     if let Some(index) = a.iter().position(|v| !v.is_finite()) {
-        return Err(StatsError(format!(
+        return Err(StatsError::value(format!(
             "The matrix is not finite: a[{}, {}] = {}.",
             index / k,
             index % k,
@@ -229,7 +229,7 @@ fn symmetric(a: &[f64], k: usize) -> Result<Vec<f64>> {
         for j in 0..i {
             let (lower, upper) = (a[i * k + j], a[j * k + i]);
             if (lower - upper).abs() > tolerance {
-                return Err(StatsError(format!(
+                return Err(StatsError::value(format!(
                     "The matrix is not symmetric: a[{i}, {j}] = {lower:e}, a[{j}, {i}] = {upper:e}."
                 )));
             }
@@ -356,7 +356,7 @@ fn jacobi(
         }
     }
     if !converged {
-        return Err(StatsError(format!(
+        return Err(StatsError::value(format!(
             "The eigendecomposition of the {k} x {k} matrix did not converge in {max_sweeps} sweeps."
         )));
     }
@@ -371,7 +371,10 @@ mod tests {
     fn a_jacobi_method_which_does_not_converge_in_its_sweeps_is_an_error() {
         let m = vec![4.0, 1.0, 0.5, 1.0, 3.0, 0.25, 0.5, 0.25, 2.0];
         let error = jacobi(m.clone(), 3, true, 1).unwrap_err();
-        assert!(error.0.contains("did not converge in 1 sweeps"), "{error}");
+        assert!(
+            error.message.contains("did not converge in 1 sweeps"),
+            "{error}"
+        );
         assert!(jacobi(m, 3, true, super::MAX_SWEEPS).is_ok());
     }
 }

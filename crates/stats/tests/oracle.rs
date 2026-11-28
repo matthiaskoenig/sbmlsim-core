@@ -11,6 +11,8 @@
 //! (`cargo test -p sbmlsim-stats --target wasm32-wasip1`, in the continuous integration), and
 //! a hash of the bits of every value found holds the wasm build to the native one.
 
+use std::collections::BTreeMap;
+
 use serde_json::Value;
 
 use sbmlsim_stats::correlation::{self, Marginal};
@@ -1070,7 +1072,7 @@ fn a_matrix_which_is_not_symmetric_is_an_error() {
         linalg::factor(&a, 2).map(|_| ()),
     ] {
         let error = result.unwrap_err();
-        assert!(error.0.contains("is not symmetric"), "{error}");
+        assert!(error.message.contains("is not symmetric"), "{error}");
     }
     // a difference of the last digits is symmetric, the mean of the two is taken
     let (values, _) = linalg::eigh(&[1.0, 2.0, 2.0 * (1.0 + 1e-15), 1.0], 2).unwrap();
@@ -1084,14 +1086,14 @@ fn a_matrix_of_the_wrong_size_or_not_finite_is_an_error() {
         vec![1.0, 0.0, 0.0, f64::INFINITY],
     ] {
         let error = linalg::eigh(&a, 2).unwrap_err();
-        assert!(error.0.contains("is not finite"), "{error}");
+        assert!(error.message.contains("is not finite"), "{error}");
         assert!(linalg::eigvalsh(&a, 2).is_err());
         assert!(linalg::pinv_symmetric(&a, 2).is_err());
         assert!(linalg::factor(&a, 2).is_err());
         assert!(linalg::cholesky(&a, 2).is_none());
     }
     let error = linalg::eigh(&[1.0, 0.0, 0.0], 2).unwrap_err();
-    assert!(error.0.contains("2 x 2"), "{error}");
+    assert!(error.message.contains("2 x 2"), "{error}");
     assert!(linalg::cholesky(&[1.0, 0.0, 0.0], 2).is_none());
 }
 
@@ -1166,6 +1168,17 @@ fn outcome(value: &Value) -> std::result::Result<&Value, &str> {
     }
 }
 
+/// Holds an error of the crate to the one of the python, `{"error": <message>, "exception":
+/// <class>}`: the same message and the kind of the class of its exception, a `ValueError`
+/// where the fixture names no class.
+fn check_error(error: &sbmlsim_stats::StatsError, expected: &Value, what: &str) {
+    assert_eq!(error.message, expected["error"].as_str().unwrap(), "{what}");
+    let class = expected
+        .get("exception")
+        .map_or("ValueError", |class| class.as_str().unwrap());
+    assert_eq!(error.kind.name(), class, "{what}: {error}");
+}
+
 /// Holds a result of the crate to the outcome of the python: an error to the same message, a
 /// value to the expected one, which it adds to `rows`.
 fn check(
@@ -1176,7 +1189,7 @@ fn check(
 ) {
     match (found, outcome(expected)) {
         (Ok(found), Ok(expected)) => rows.push((what, found, number(expected))),
-        (Err(error), Err(message)) => assert_eq!(error.0, message, "{what}"),
+        (Err(error), Err(_)) => check_error(&error, expected, &what),
         (found, expected) => panic!("{what}: {found:?}, the python {expected:?}"),
     }
 }
@@ -1329,9 +1342,9 @@ fn the_fold_criteria_are_the_ones_of_sbmlsim() {
                 check_all(&name, 0.0, &accepted.unwrap(), &case.required("accepted"));
             }
             Err(message) => {
-                assert_eq!(counts.unwrap_err().0, message, "{name}");
+                assert_eq!(counts.unwrap_err().message, message, "{name}");
                 // the criterion of a point refuses what the counts refuse
-                assert_eq!(accepted.unwrap_err().0, message, "{name}");
+                assert_eq!(accepted.unwrap_err().message, message, "{name}");
             }
         }
     }
@@ -1353,7 +1366,7 @@ fn the_uncertainty_criterion_is_the_one_of_sbmlsim() {
     }
     let error = metrics::sd_accepted(&[1.0, 2.0], &[1.0, 2.0], &[1.0], 2.0).unwrap_err();
     assert_eq!(
-        error.0,
+        error.message,
         "The uncertainty criterion requires as many predictions and standard deviations as \
          data points, but got '2' and '1' for '2'."
     );
@@ -1399,7 +1412,7 @@ fn the_fold_errors_and_the_agreement_of_a_subset_are_the_ones_of_sbmlsim() {
         metrics::afe(&[1.0, 2.0], &[1.0]),
         metrics::subset_agreement(&[1.0, 2.0], &[1.0]).map(|_| 0.0),
     ] {
-        assert_eq!(result.unwrap_err().0, message);
+        assert_eq!(result.unwrap_err().message, message);
     }
 }
 
@@ -1830,11 +1843,11 @@ fn a_singular_information_has_no_errors_of_its_null_space_and_does_not_panic() {
 #[test]
 fn an_information_which_is_not_a_finite_symmetric_matrix_is_an_error() {
     let error = fisher::statistics(&[1.0, f64::NAN, f64::NAN, 1.0], 2, 1.0, 5, false, 1e-8);
-    assert!(error.unwrap_err().0.contains("not finite"));
+    assert!(error.unwrap_err().message.contains("not finite"));
     let error = fisher::statistics(&[1.0, 2.0, 3.0], 2, 1.0, 5, false, 1e-8);
-    assert!(error.unwrap_err().0.contains("needs 4 values"));
+    assert!(error.unwrap_err().message.contains("needs 4 values"));
     let error = fisher::statistics(&[], 0, 1.0, 5, false, 1e-8);
-    assert!(error.unwrap_err().0.contains("no parameters"));
+    assert!(error.unwrap_err().message.contains("no parameters"));
 }
 
 #[test]
@@ -1879,9 +1892,11 @@ fn the_laplace_approximation_is_the_one_of_sbmlsim_and_names_its_weak_directions
             &pids,
         );
         if let Some(message) = case.error() {
-            assert_eq!(named.unwrap_err().0, message, "{name}");
+            assert_eq!(named.unwrap_err().message, message, "{name}");
             // the message of the indices
-            let indexed = posterior::laplace(&precision, k, tolerance).unwrap_err().0;
+            let indexed = posterior::laplace(&precision, k, tolerance)
+                .unwrap_err()
+                .message;
             assert!(
                 indexed.starts_with("the data and the priors do not constrain"),
                 "{indexed}"
@@ -1970,7 +1985,7 @@ fn the_weak_directions_are_named_by_their_indices_without_names() {
     // larger component first
     let information = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
     let precision = [1.0, 0.0, 0.0, 0.0, 4.0, 2.0, 0.0, 2.0, 1.0];
-    let error = posterior::laplace(&precision, 3, 1e-8).unwrap_err().0;
+    let error = posterior::laplace(&precision, 3, 1e-8).unwrap_err().message;
     assert_eq!(
         error,
         "the data and the priors do not constrain 1 direction(s) of the parameters, of \
@@ -1980,10 +1995,10 @@ fn the_weak_directions_are_named_by_their_indices_without_names() {
     );
     let names = ["'a'".to_string(), "'b'".to_string()];
     let error = posterior::laplace_of(&information, 3, 1e-8, Some("op"), &names).unwrap_err();
-    assert!(error.0.contains("2 names"), "{error}");
+    assert!(error.message.contains("2 names"), "{error}");
     // the error of no parameters is numpy's
     assert_eq!(
-        posterior::laplace(&[], 0, 1e-8).unwrap_err().0,
+        posterior::laplace(&[], 0, 1e-8).unwrap_err().message,
         "zero-size array to reduction operation maximum which has no identity"
     );
     assert!(posterior::laplace(&[1.0, 2.0], 2, 1e-8).is_err());
@@ -2088,7 +2103,7 @@ fn check_values(
                 rows.push((format!("{what}[{index}]"), found, expected));
             }
         }
-        (Err(error), Err(message)) => assert_eq!(error.0, message, "{what}"),
+        (Err(error), Err(_)) => check_error(&error, expected, what),
         (found, expected) => panic!("{what}: {found:?}, the python {expected:?}"),
     }
 }
@@ -2282,26 +2297,35 @@ fn the_parameters_of_an_interval_are_the_ones_of_uncertain_interval() {
 }
 
 #[test]
-fn the_exception_of_an_error_is_the_class_python_raised() {
-    let fixture = Fixture::load("uncertainty");
-    let mut errors = 0;
-    for name in fixture.cases("") {
-        let Some(expected) = fixture.value[&name].get("expected") else {
-            continue;
-        };
-        let Some(class) = expected.get("exception") else {
-            continue;
-        };
-        let message = expected["error"].as_str().unwrap();
-        let error = sbmlsim_stats::StatsError(message.to_string());
-        assert_eq!(
-            uncertainty::exception(&error).name(),
-            class.as_str().unwrap(),
-            "{name}"
-        );
-        errors += 1;
+fn the_fixtures_hold_every_class_of_exception_the_kinds_are_held_to() {
+    // `check_error` holds the kind of every error to the class of the exception of the python,
+    // and the fixtures of the uncertainty, the testing and the draws raise every class
+    fn count<'a>(value: &'a Value, classes: &mut BTreeMap<&'a str, usize>) {
+        match value {
+            Value::Object(object) => {
+                if let Some(class) = object.get("exception") {
+                    *classes.entry(class.as_str().unwrap()).or_default() += 1;
+                }
+                object.values().for_each(|value| count(value, classes));
+            }
+            Value::Array(items) => items.iter().for_each(|value| count(value, classes)),
+            _ => {}
+        }
     }
-    assert!(errors >= 20, "{errors} errors");
+    let fixtures = ["uncertainty", "testing", "draws"].map(Fixture::load);
+    let mut classes = BTreeMap::new();
+    for fixture in &fixtures {
+        count(&fixture.value, &mut classes);
+    }
+    for class in [
+        "ValueError",
+        "OverflowError",
+        "ZeroDivisionError",
+        "IndexError",
+    ] {
+        assert!(classes.contains_key(class), "{class}: {classes:?}");
+    }
+    assert!(classes.values().sum::<usize>() >= 40, "{classes:?}");
 }
 
 #[test]
@@ -2366,7 +2390,7 @@ fn more_bins_than_pairs_are_not_a_number_without_a_loop_over_the_bins() {
     // the square of a bin past the largest double is refused before an empty bin
     let huge: Vec<f64> = x.iter().map(|x| x * 1e300).collect();
     let error = uncertainty::first_order_given_data(&x, &huge, Some(1000)).unwrap_err();
-    assert_eq!(error.0, "(34, 'Numerical result out of range')");
+    assert_eq!(error.message, "(34, 'Numerical result out of range')");
 }
 
 // --- draws and correlation --------------------------------------------------------------------
@@ -2534,7 +2558,7 @@ fn the_validation_of_a_matrix_is_the_one_of_covariance_with_its_messages() {
         );
         match (&found, case.error()) {
             (Ok(()), None) => {}
-            (Err(error), Some(message)) => assert_eq!(error.0, message, "{name}"),
+            (Err(error), Some(_)) => check_error(error, &case.value["expected"], &name),
             _ => panic!("{name}: {found:?}, the python {:?}", case.error()),
         }
     }
@@ -2571,22 +2595,6 @@ fn the_coefficient_of_the_normal_scores_is_the_one_of_normal_score_correlation()
     let mixed =
         correlation::normal_score_rho(0.1, Marginal::Normal { sd: 1.0 }, Marginal::Log { sd: 1.0 });
     assert!(mixed.is_err());
-}
-
-#[test]
-fn the_exception_of_a_coefficient_is_the_class_python_raised() {
-    let fixture = Fixture::load("draws");
-    for name in fixture.cases("rho/") {
-        let expected = &fixture.value[&name]["expected"];
-        if let Some(class) = expected.get("exception") {
-            let error = sbmlsim_stats::StatsError(expected["error"].as_str().unwrap().into());
-            assert_eq!(
-                uncertainty::exception(&error).name(),
-                class.as_str().unwrap(),
-                "{name}"
-            );
-        }
-    }
 }
 
 /// The points of a case of `copula/` through the copula of its correlation.
@@ -2828,14 +2836,7 @@ fn the_confidence_sequence_refuses_an_alpha_as_python() {
                 assert!(relative_error(low, expected[0]) <= KERNEL, "{name}");
                 assert!(relative_error(high, expected[1]) <= KERNEL, "{name}");
             }
-            (Err(error), Some(message)) => {
-                assert_eq!(error.0, message.as_str().unwrap(), "{name}");
-                assert_eq!(
-                    uncertainty::exception(&error).name(),
-                    expected["exception"].as_str().unwrap(),
-                    "{name}"
-                );
-            }
+            (Err(error), Some(_)) => check_error(&error, expected, &name),
             (found, _) => panic!("{name}: {found:?}, the python {expected}"),
         }
     }
@@ -2900,14 +2901,7 @@ fn the_draws_needed_refuse_an_estimate_as_python() {
         let expected = &case.value["expected"];
         match (found, expected.get("error")) {
             (Ok(found), None) => assert_eq!(found, expected.as_u64(), "{name}"),
-            (Err(error), Some(message)) => {
-                assert_eq!(error.0, message.as_str().unwrap(), "{name}");
-                assert_eq!(
-                    uncertainty::exception(&error).name(),
-                    expected["exception"].as_str().unwrap(),
-                    "{name}"
-                );
-            }
+            (Err(error), Some(_)) => check_error(&error, expected, &name),
             (found, _) => panic!("{name}: {found:?}, the python {expected}"),
         }
     }

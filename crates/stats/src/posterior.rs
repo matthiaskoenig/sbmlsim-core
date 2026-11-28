@@ -60,7 +60,7 @@ pub fn laplace_of(
     names: &[String],
 ) -> Result<Vec<f64>> {
     if names.len() != k {
-        return Err(StatsError(format!(
+        return Err(StatsError::value(format!(
             "The weak directions of a precision of {k} parameters need a name per parameter, \
              not {} names.",
             names.len()
@@ -68,13 +68,13 @@ pub fn laplace_of(
     }
     if k == 0 {
         // the python takes the largest eigenvalue of none
-        return Err(StatsError(
+        return Err(StatsError::value(
             "zero-size array to reduction operation maximum which has no identity".to_string(),
         ));
     }
     if precision.len() != k * k {
         // as the check of the matrix, before the symmetric part is formed
-        return Err(StatsError(format!(
+        return Err(StatsError::value(format!(
             "A matrix of {k} x {k} needs {} values, not {}.",
             k * k,
             precision.len()
@@ -112,7 +112,7 @@ pub fn laplace_of(
             })
             .collect();
         let prefix = opid.map(|opid| format!("'{opid}': ")).unwrap_or_default();
-        return Err(StatsError(format!(
+        return Err(StatsError::value(format!(
             "{prefix}the data and the priors do not constrain {} direction(s) of the \
              parameters, of [{}]; the posterior is the uniform prior of the bounds there, \
              which the Laplace approximation cannot describe. Give these parameters priors \

@@ -2,7 +2,7 @@
 //! double (`repr`), the compensated sum of `sum`, `max` and `min` of not a number and the
 //! errors of a power and of an exponential past the largest double and of a division by zero.
 
-use crate::{Result, StatsError};
+use crate::{ErrorKind, Result, StatsError};
 
 /// The text python gives a double, `repr`: the shortest digits which read back as it, in
 /// decimals from 1e-4 to below 1e16 and with an exponent of a sign and two digits at least
@@ -166,7 +166,7 @@ pub(crate) fn python_max_of(values: &[f64]) -> f64 {
 pub(crate) fn python_pow(x: f64, n: i32) -> Result<f64> {
     let power = libm::pow(x, f64::from(n));
     if x.is_finite() && power.is_infinite() {
-        return Err(StatsError(POWER_OVERFLOW.to_owned()));
+        return Err(StatsError::new(ErrorKind::Overflow, POWER_OVERFLOW));
     }
     Ok(power)
 }
@@ -184,7 +184,7 @@ pub(crate) fn math_expm1(x: f64) -> Result<f64> {
 /// The value of a function of `math` of a finite argument, an error where it is infinite.
 fn checked_range(x: f64, value: f64) -> Result<f64> {
     if x.is_finite() && value.is_infinite() {
-        return Err(StatsError(MATH_RANGE.to_owned()));
+        return Err(StatsError::new(ErrorKind::Overflow, MATH_RANGE));
     }
     Ok(value)
 }
@@ -193,7 +193,7 @@ fn checked_range(x: f64, value: f64) -> Result<f64> {
 /// (python 3.14), `nan` of a not a number and infinity of infinity.
 pub(crate) fn math_log(x: f64) -> Result<f64> {
     if x <= 0.0 {
-        return Err(StatsError(format!(
+        return Err(StatsError::value(format!(
             "expected a positive input, got {}",
             python_repr(x)
         )));
@@ -204,7 +204,7 @@ pub(crate) fn math_log(x: f64) -> Result<f64> {
 /// The quotient of floats as python divides them: the error of the ZeroDivisionError by zero.
 pub(crate) fn python_div(a: f64, b: f64) -> Result<f64> {
     if b == 0.0 {
-        return Err(StatsError(DIVISION_BY_ZERO.to_owned()));
+        return Err(StatsError::new(ErrorKind::ZeroDivision, DIVISION_BY_ZERO));
     }
     Ok(a / b)
 }
@@ -292,10 +292,17 @@ mod tests {
     fn a_power_an_exponential_and_a_division_refuse_as_python() {
         assert_eq!(python_pow(3.0, 2), Ok(9.0));
         assert_eq!(python_pow(f64::INFINITY, 4), Ok(f64::INFINITY));
-        assert_eq!(python_pow(1e100, 4).unwrap_err().0, POWER_OVERFLOW);
+        assert_eq!(python_pow(1e100, 4).unwrap_err().message, POWER_OVERFLOW);
         assert_eq!(math_exp(f64::INFINITY), Ok(f64::INFINITY));
-        assert_eq!(math_exp(1000.0).unwrap_err().0, MATH_RANGE);
-        assert_eq!(math_expm1(1000.0).unwrap_err().0, MATH_RANGE);
-        assert_eq!(python_div(1.0, 0.0).unwrap_err().0, DIVISION_BY_ZERO);
+        assert_eq!(math_exp(1000.0).unwrap_err().message, MATH_RANGE);
+        assert_eq!(math_expm1(1000.0).unwrap_err().message, MATH_RANGE);
+        assert_eq!(python_div(1.0, 0.0).unwrap_err().message, DIVISION_BY_ZERO);
+        assert_eq!(python_pow(1e100, 4).unwrap_err().kind, ErrorKind::Overflow);
+        assert_eq!(math_exp(1000.0).unwrap_err().kind, ErrorKind::Overflow);
+        assert_eq!(
+            python_div(1.0, 0.0).unwrap_err().kind,
+            ErrorKind::ZeroDivision
+        );
+        assert_eq!(math_log(0.0).unwrap_err().kind, ErrorKind::Value);
     }
 }

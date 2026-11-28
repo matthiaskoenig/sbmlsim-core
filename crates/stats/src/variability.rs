@@ -46,7 +46,7 @@ pub fn group_means(
     seed: u64,
 ) -> Result<(Vec<f64>, usize)> {
     if subjects.checked_mul(points) != Some(values.len()) {
-        return Err(StatsError(format!(
+        return Err(StatsError::value(format!(
             "The predictions of {subjects} subjects at {points} data points are {subjects} x \
              {points} values, not {}.",
             values.len()
@@ -63,7 +63,7 @@ pub fn group_means(
         return Ok((Vec::new(), 0));
     }
     if groups.checked_mul(size).is_none() {
-        return Err(StatsError(format!(
+        return Err(StatsError::value(format!(
             "{groups} groups of {size} subjects are too many members to draw."
         )));
     }
@@ -102,7 +102,7 @@ pub fn group_means(
 /// The error of statistics of `groups` groups at `points` data points which no memory holds,
 /// where numpy raises its `ValueError` (`array is too big`) or its `MemoryError`.
 fn too_many(groups: usize, points: usize) -> StatsError {
-    StatsError(format!(
+    StatsError::value(format!(
         "The statistics of {groups} groups at {points} data points are too many values to hold."
     ))
 }
@@ -121,7 +121,7 @@ fn too_many(groups: usize, points: usize) -> StatsError {
 /// where a column has a finite value (numpy is called for those only).
 pub fn bands(distribution: &[f64], rows: usize, cols: usize, qs: &[f64]) -> Result<Vec<f64>> {
     if rows.checked_mul(cols) != Some(distribution.len()) {
-        return Err(StatsError(format!(
+        return Err(StatsError::value(format!(
             "The distribution of {rows} groups at {cols} data points is {rows} x {cols} values, \
              not {}.",
             distribution.len()
@@ -137,7 +137,7 @@ pub fn bands(distribution: &[f64], rows: usize, cols: usize, qs: &[f64]) -> Resu
             continue;
         }
         if !qs.iter().all(|q| (0.0..=1.0).contains(q)) {
-            return Err(StatsError(QUANTILES_RANGE.to_owned()));
+            return Err(StatsError::value(QUANTILES_RANGE.to_owned()));
         }
         column.sort_by(f64::total_cmp);
         for (band, &q) in bands[j * qs.len()..(j + 1) * qs.len()].iter_mut().zip(qs) {
