@@ -12,12 +12,16 @@ use std::path::Path;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
-use common::{ALGEBRAIC_CASES, Case, EVENT_CASES, Random, cases, cell_model, cell_parameter_sets};
+use common::{
+    ALGEBRAIC_CASES, Case, EVENT_CASES, Random, cases, cell_model, cell_parameter_sets, uptake,
+};
 use sbmlsim_abi::{
     IntegratorSettings, ModelDescription, Output, SIMULATION_CONTRACT, SimulationRequest,
     SimulationResult, Tolerance,
 };
-use sbmlsim_c::{BuildOptions, CError, CModel, CSource, Library, generate};
+use sbmlsim_c::{
+    BuildOptions, CError, CModel, CSource, Library, generate, generate_model, generate_with,
+};
 use sbmlsim_compiler::{CompileOptions, CompiledModel, compile};
 use sbmlsim_engine::{Engine, ModelFns};
 use sbmlsim_host::Runtime;
@@ -31,7 +35,12 @@ fn runtime() -> &'static Runtime {
 
 /// The C source, its library and the model of it.
 fn native(sbml: &str) -> (CSource, CModel) {
-    let source = generate(sbml).unwrap();
+    native_driven(sbml, &[])
+}
+
+/// [`native`] with the species `driven` driven.
+fn native_driven(sbml: &str, driven: &[String]) -> (CSource, CModel) {
+    let source = generate_with(sbml, driven).unwrap();
     let library = Library::build(&source.code).unwrap();
     let model = CModel::new(library, &source.description).unwrap();
     (source, model)
@@ -40,8 +49,14 @@ fn native(sbml: &str) -> (CSource, CModel) {
 /// The WebAssembly model of the options which give the description of the C target (no
 /// `model_jac_p`).
 fn wasm(sbml: &str) -> CompiledModel {
+    wasm_driven(sbml, &[])
+}
+
+/// [`wasm`] with the species `driven` driven.
+fn wasm_driven(sbml: &str, driven: &[String]) -> CompiledModel {
     let options = CompileOptions {
         parameter_jacobian: false,
+        driven: driven.to_vec(),
         ..CompileOptions::default()
     };
     compile(sbml, &options).unwrap()
@@ -241,19 +256,38 @@ fn agrees(a: f64, b: f64, relative: f64) -> bool {
 /// random states and times: the same expressions in the same order, the math functions of
 /// `<math.h>` against those of mathlib.
 fn compare_functions(sbml: &str, state: impl Fn(&mut Random, f64) -> f64) {
-    let (source, model) = native(sbml);
-    let compiled = wasm(sbml);
+    compare_driven_functions(sbml, &[], state);
+}
+
+/// [`compare_functions`] with the species `driven` driven, each sample with a random path of
+/// every species: the C model computes its constants from the parameters of every call.
+fn compare_driven_functions(
+    sbml: &str,
+    driven: &[String],
+    state: impl Fn(&mut Random, f64) -> f64,
+) {
+    let (source, model) = native_driven(sbml, driven);
+    let compiled = wasm_driven(sbml, driven);
     assert_eq!(source.description, compiled.description);
     let description: &ModelDescription = &source.description;
+    assert_eq!(description.driven.len(), driven.len());
     let mut functions = runtime()
         .model_functions(&compiled.wasm, &compiled.description)
         .unwrap();
-    let parameters: Vec<f64> = description.parameters.iter().map(|e| e.initial).collect();
+    let mut parameters: Vec<f64> = description.parameters.iter().map(|e| e.initial).collect();
     let n_constants = description.n_constants as usize;
     let nnz = description.jacobian.pattern().row_idx.len();
     let mut random = Random(13);
     for _ in 0..100 {
         let t = random.between(0.0, 100.0);
+        // positive paths: at most 10 time units from their reference
+        for d in &description.driven {
+            parameters[d.value as usize] = random.between(1.0, 5.0);
+            parameters[d.slope as usize] = random.between(-0.05, 0.05);
+        }
+        if let Some(t_ref) = description.t_ref {
+            parameters[t_ref as usize] = random.between(t - 10.0, t);
+        }
         let y: Vec<f64> = description
             .states
             .iter()
@@ -283,6 +317,38 @@ fn compare_functions(sbml: &str, state: impl Fn(&mut Random, f64) -> f64) {
                 "jac {k} at t {t}, y {y:?}: {a} != {b}"
             );
         }
+    }
+}
+
+/// The native model of a driven model ([`generate_with`]) against the module of the compiler
+/// with the same species driven: the description, the right hand side and the Jacobian along
+/// random paths, and the refusal of a species the transform refuses.
+#[test]
+fn driven_rhs_and_jacobian_match_wasm() {
+    let ids = |ids: &[&str]| -> Vec<String> { ids.iter().map(|id| id.to_string()).collect() };
+    compare_driven_functions(
+        &cell_model(),
+        &ids(&["S_ext", "P_ext"]),
+        |random, initial| initial.abs().max(1e-3) * random.between(0.0, 2.0),
+    );
+    compare_driven_functions(&uptake(), &ids(&["X"]), |random, _| {
+        random.between(0.0, 1.0)
+    });
+    // the native model of the driven model representation
+    let doc = sbmlsim_sbml::read(&uptake()).unwrap();
+    let model = sbmlsim_ir::driven::apply(sbmlsim_ir::build(&doc).unwrap(), &ids(&["X"])).unwrap();
+    assert_eq!(
+        generate_with(&uptake(), &ids(&["X"])).unwrap(),
+        generate_model(&model).unwrap()
+    );
+    assert_eq!(
+        generate_with(&uptake(), &[]).unwrap(),
+        generate(&uptake()).unwrap()
+    );
+    for id in ["k", "Q"] {
+        let error = generate_with(&uptake(), &ids(&[id])).unwrap_err();
+        assert!(matches!(error, CError::Model(_)), "{error:?}");
+        assert!(error.to_string().contains(id), "{error}");
     }
 }
 

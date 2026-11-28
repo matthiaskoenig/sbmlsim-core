@@ -3,54 +3,31 @@
 //! integrals, and the module of the compiler with the same species driven
 //! ([`CompileOptions::driven`]).
 //!
-//! The stepper advances the native model of the C target of the driven model representation
-//! ([`sbmlsim_ir::driven::apply`]); the module of the compiler simulates in the host. They run
+//! The stepper advances the native model of the C target with the species driven
+//! ([`sbmlsim_c::generate_with`]); the module of the compiler simulates in the host. They run
 //! natively only: the C target and the host are no crates of `wasm32`.
 #![cfg(not(target_arch = "wasm32"))]
 
 #[path = "../../c/tests/common/mod.rs"]
 mod common;
 
+use common::{MATH, UPTAKE_K as K, UPTAKE_VB as VB, path_integral, uptake};
 use sbmlsim_abi::{
     IntegratorSettings, ModelDescription, Output, SIMULATION_CONTRACT, SimulationRequest, Tolerance,
 };
-use sbmlsim_c::{CModel, Library, generate_model};
+use sbmlsim_c::{CModel, Library, generate_with};
 use sbmlsim_compiler::{CompileOptions, CompiledModel, compile};
 use sbmlsim_engine::{EngineError, Stepper};
 use sbmlsim_host::Runtime;
-
-const MATH: &str = r#"xmlns="http://www.w3.org/1998/Math/MathML""#;
-
-/// `X -> C` of the rate `(k * blood) * X`, the amount of `X` times `k`: `X` in `blood`, whose
-/// size is the parameter `Vb` (an initial assignment), given by the initial amount `0.3` (so
-/// the initial value of its path is an initial evaluation, `0.3 / blood`), `C` in `cell` of
-/// size 1. The product `k * blood` reads parameters only, a constant of the optimizer.
-fn uptake() -> String {
-    format!(
-        r#"<?xml version="1.0" encoding="UTF-8"?>
-<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2"><model id="uptake">
-<listOfCompartments><compartment id="blood" constant="true"/><compartment id="cell" size="1" constant="true"/></listOfCompartments>
-<listOfSpecies><species id="X" compartment="blood" initialAmount="0.3" hasOnlySubstanceUnits="false" boundaryCondition="false" constant="false"/><species id="C" compartment="cell" initialConcentration="0" hasOnlySubstanceUnits="false" boundaryCondition="false" constant="false"/></listOfSpecies>
-<listOfParameters><parameter id="k" value="0.7" constant="true"/><parameter id="Vb" value="0.15" constant="true"/></listOfParameters>
-<listOfInitialAssignments><initialAssignment symbol="blood"><math {MATH}><ci>Vb</ci></math></initialAssignment></listOfInitialAssignments>
-<listOfReactions><reaction id="R" reversible="false"><listOfReactants><speciesReference species="X" stoichiometry="1" constant="true"/></listOfReactants><listOfProducts><speciesReference species="C" stoichiometry="1" constant="true"/></listOfProducts><kineticLaw><math {MATH}><apply><times/><apply><times/><ci>k</ci><ci>blood</ci></apply><ci>X</ci></apply></math></kineticLaw></reaction></listOfReactions>
-</model></sbml>"#
-    )
-}
-
-const K: f64 = 0.7;
-const VB: f64 = 0.15;
 
 fn driven(ids: &[&str]) -> Vec<String> {
     ids.iter().map(|id| id.to_string()).collect()
 }
 
-/// The native model of the C target of the model with the species `ids` driven, and its
-/// description.
+/// The native model of the C target with the species `ids` driven
+/// ([`sbmlsim_c::generate_with`]), and its description.
 fn native(sbml: &str, ids: &[&str]) -> (CModel, ModelDescription) {
-    let doc = sbmlsim_sbml::read(sbml).unwrap();
-    let model = sbmlsim_ir::driven::apply(sbmlsim_ir::build(&doc).unwrap(), &driven(ids)).unwrap();
-    let source = generate_model(&model).unwrap();
+    let source = generate_with(sbml, &driven(ids)).unwrap();
     let library = Library::build(&source.code).unwrap();
     let model = CModel::new(library, &source.description).unwrap();
     (model, source.description)
@@ -92,12 +69,6 @@ fn path(desc: &ModelDescription, value: f64, slope: f64, t_ref: f64) -> Vec<(u32
     ]
 }
 
-/// The integral of the path `value + slope (t - t_ref)` from `t0` to `t1`.
-fn integral(value: f64, slope: f64, t_ref: f64, t0: f64, t1: f64) -> f64 {
-    let primitive = |t: f64| value * t + slope * (t - t_ref).powi(2) / 2.0;
-    primitive(t1) - primitive(t0)
-}
-
 fn relative(a: f64, b: f64) -> f64 {
     (a - b).abs() / b.abs()
 }
@@ -119,7 +90,7 @@ fn exchange_matches_closed_form() {
     stepper.advance(&y, 0.0, 1.5).unwrap();
 
     let expected = -K * VB * (2.0 * 1.5 - 0.5 * 1.5 * 1.5 / 2.0);
-    assert_eq!(expected, -K * VB * integral(2.0, -0.5, 0.0, 0.0, 1.5));
+    assert_eq!(expected, -K * VB * path_integral(2.0, -0.5, 0.0, 0.0, 1.5));
     let y = stepper.state();
     assert!(
         relative(y[ex], expected) <= 1e-8,
@@ -137,6 +108,8 @@ fn parameters_change_between_advances() {
     let ex = state(&desc, "X__exchange");
     let k = parameter(&desc, "k");
     let value = desc.driven[0].value as usize;
+    // `k * blood` is a constant of the optimizer, which `assign` computes
+    assert!(desc.n_constants > 0);
     let mut stepper = Stepper::new(Box::new(model), desc.clone(), settings(), &[]).unwrap();
 
     stepper
@@ -152,8 +125,9 @@ fn parameters_change_between_advances() {
     let y = stepper.state().to_vec();
     stepper.advance(&y, 1.0, 2.5).unwrap();
 
-    let expected =
-        -VB * (K * integral(2.0, -0.5, 0.0, 0.0, 1.0) + 0.4 * integral(1.2, 0.8, 1.0, 1.0, 2.5));
+    let expected = -VB
+        * (K * path_integral(2.0, -0.5, 0.0, 0.0, 1.0)
+            + 0.4 * path_integral(1.2, 0.8, 1.0, 1.0, 2.5));
     let y = stepper.state();
     assert!(
         relative(y[ex], expected) <= 1e-8,
@@ -227,7 +201,7 @@ fn set_parameters_fires_an_event_at_the_next_advance() {
     let y = stepper.state().to_vec();
     stepper.advance(&y, 0.0, 1.0).unwrap();
     // k = 0.7: the event did not fire
-    let before = -K * VB * integral(2.0, 0.0, 0.0, 0.0, 1.0);
+    let before = -K * VB * path_integral(2.0, 0.0, 0.0, 0.0, 1.0);
     assert!(relative(stepper.state()[c], -before) <= 1e-8);
 
     let mut second = path(&desc, 2.0, 0.0, 1.0);
@@ -238,7 +212,7 @@ fn set_parameters_fires_an_event_at_the_next_advance() {
     let y = stepper.state().to_vec();
     stepper.advance(&y, 1.0, 2.0).unwrap();
     // C = 42 at t = 1, then the uptake of the interval at k = 2
-    let expected = 42.0 + 2.0 * VB * integral(2.0, 0.0, 1.0, 1.0, 2.0);
+    let expected = 42.0 + 2.0 * VB * path_integral(2.0, 0.0, 1.0, 1.0, 2.0);
     let value = stepper.state()[c];
     assert!(
         relative(value, expected) <= 1e-8,
@@ -293,7 +267,7 @@ fn compiled_module_matches_closed_form() {
         let column = result.columns.iter().position(|c| c == id).unwrap();
         result.values[row * k + column]
     };
-    let expected = -K * VB * integral(2.0, -0.5, 0.0, 0.0, 1.5);
+    let expected = -K * VB * path_integral(2.0, -0.5, 0.0, 0.0, 1.5);
     let exchange = value(1, "X__exchange");
     assert!(
         relative(exchange, expected) <= 1e-8,

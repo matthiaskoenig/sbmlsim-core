@@ -1,9 +1,9 @@
 //! The test data which the tests of the C target (`c_target.rs`, `qfunction.rs`), of the stepper
-//! of the engine (`crates/engine/tests/stepper.rs`) and of the batched kernel
-//! (`crates/codegen/tests/kernel.rs`) share, the latter two including this file by its path: the
-//! cell model of `testdata/models` with its 50 seeded parameter sets, the small models of the
-//! integrator (`linear`, `blow_up`, `with_event`), and the cases of the SBML Test Suite with
-//! events and with an algebraic rule.
+//! of the engine (`crates/engine/tests/stepper.rs`, `driven.rs`) and of the batched kernel
+//! (`crates/codegen/tests/kernel.rs`) share, the latter three including this file by its path:
+//! the cell model of `testdata/models` with its 50 seeded parameter sets, the small models of the
+//! integrator (`linear`, `blow_up`, `with_event`), the model of a driven species of a closed form
+//! (`uptake`), and the cases of the SBML Test Suite with events and with an algebraic rule.
 //!
 //! The tests over `testdata/cases` need `uv run scripts/prepare_testsuite.py` and skip with a
 //! note when the directory is absent, unless `SBMLSIM_CORE_REQUIRE_CASES` is set (the jobs of
@@ -147,4 +147,34 @@ pub fn blow_up() -> String {
     format!(
         r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2"><model id="blow_up"><listOfParameters><parameter id="a" value="1" constant="true"/><parameter id="y" value="1" constant="false"/></listOfParameters><listOfRules><rateRule variable="y"><math {MATH}><apply><times/><ci>a</ci><ci>y</ci><ci>y</ci></apply></math></rateRule></listOfRules></model></sbml>"#
     )
+}
+
+/// The rate constant `k` of [`uptake`].
+pub const UPTAKE_K: f64 = 0.7;
+/// The size `Vb` of the blood of [`uptake`].
+pub const UPTAKE_VB: f64 = 0.15;
+
+/// `X -> C` of the rate `(k * blood) * X`, the amount of `X` times `k`: `X` in `blood`, whose
+/// size is the parameter `Vb` (an initial assignment), given by the initial amount `0.3` (so
+/// the initial value of its path, with `X` driven, is an initial evaluation, `0.3 / blood`), `C`
+/// in `cell` of size 1. The product `k * blood` reads parameters only, a constant of the
+/// optimizer. With `X` driven along `value + slope (t - t_ref)` the exchange over an interval is
+/// `-k Vb` times the integral of the path.
+pub fn uptake() -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2"><model id="uptake">
+<listOfCompartments><compartment id="blood" constant="true"/><compartment id="cell" size="1" constant="true"/></listOfCompartments>
+<listOfSpecies><species id="X" compartment="blood" initialAmount="0.3" hasOnlySubstanceUnits="false" boundaryCondition="false" constant="false"/><species id="C" compartment="cell" initialConcentration="0" hasOnlySubstanceUnits="false" boundaryCondition="false" constant="false"/></listOfSpecies>
+<listOfParameters><parameter id="k" value="{UPTAKE_K}" constant="true"/><parameter id="Vb" value="{UPTAKE_VB}" constant="true"/></listOfParameters>
+<listOfInitialAssignments><initialAssignment symbol="blood"><math {MATH}><ci>Vb</ci></math></initialAssignment></listOfInitialAssignments>
+<listOfReactions><reaction id="R" reversible="false"><listOfReactants><speciesReference species="X" stoichiometry="1" constant="true"/></listOfReactants><listOfProducts><speciesReference species="C" stoichiometry="1" constant="true"/></listOfProducts><kineticLaw><math {MATH}><apply><times/><apply><times/><ci>k</ci><ci>blood</ci></apply><ci>X</ci></apply></math></kineticLaw></reaction></listOfReactions>
+</model></sbml>"#
+    )
+}
+
+/// The integral of the path `value + slope (t - t_ref)` from `t0` to `t1`.
+pub fn path_integral(value: f64, slope: f64, t_ref: f64, t0: f64, t1: f64) -> f64 {
+    let primitive = |t: f64| value * t + slope * (t - t_ref).powi(2) / 2.0;
+    primitive(t1) - primitive(t0)
 }

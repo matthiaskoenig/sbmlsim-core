@@ -37,8 +37,4 @@ sbmlsim-engine = { path = ".", features = ["test-models"] }
 sbmlsim-c = { path = "../c" }
 sbmlsim-compiler = { path = "../compiler" }
 sbmlsim-host = { path = "../host" }
-# the driven tests (`tests/driven.rs`): the driven model representation, which they translate
-# to C
-sbmlsim-ir = { path = "../ir" }
-sbmlsim-sbml = { path = "../sbml" }
 serde_json.workspace = true

@@ -2702,8 +2702,6 @@ dependencies = [
  "sbmlsim-csolvers",
  "sbmlsim-engine",
  "sbmlsim-host",
- "sbmlsim-ir",
- "sbmlsim-sbml",
  "serde",
  "serde_json",
 ]

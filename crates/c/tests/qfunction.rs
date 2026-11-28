@@ -12,14 +12,14 @@ use std::process::Command;
 use std::sync::Arc;
 
 use common::{
-    ALGEBRAIC_CASES, Case, EVENT_CASES, MATH, Random, blow_up, cases, cell_model,
-    cell_parameter_sets, linear, with_event,
+    ALGEBRAIC_CASES, Case, EVENT_CASES, MATH, Random, UPTAKE_VB, blow_up, cases, cell_model,
+    cell_parameter_sets, linear, path_integral, uptake, with_event,
 };
 use sbmlsim_abi::{IntegratorSettings, Tolerance};
 use sbmlsim_c::{
     BuildOptions, CError, CModel, CONTROL, CONTROL_DONE, CONTROL_FAILED, CONTROL_H, CONTROL_T,
     COUNTS, Library, Points, QSource, ROSENBROCK_ORDER, RosenbrockContext, apply_points, generate,
-    generate_qfunction, run_points,
+    generate_qfunction, generate_qfunction_with, generate_with, run_points,
 };
 use sbmlsim_engine::Stepper;
 
@@ -614,5 +614,265 @@ fn a_short_last_step_keeps_the_step() {
         (points.state[0] - exact).abs() < 1e-2 * exact,
         "{}",
         points.state[0]
+    );
+}
+
+/// The bound of the states of a driven model, the accumulators included: twice the one of the
+/// undriven cell model.
+const DRIVEN_RELATIVE: f64 = 4e-6;
+const DRIVEN_ABSOLUTE: f64 = 4e-9;
+
+/// The tolerances of the QFunction on a driven model, two orders below those of [`context`]:
+/// an accumulator is the difference of the amounts of the cell it balances (the rates of the
+/// two are linear invariants, which RODAS4 keeps), so its error is the error of those amounts,
+/// which the tolerances bound relative to them, not relative to the accumulator, which can be a
+/// hundredth of them (a net exchange of opposite fluxes). At 1e-6 and 1e-9 the accumulators of
+/// the cell model miss the bound relative to themselves by up to 28 times, at 1e-7 and 1e-10 by
+/// 2.5 times, the other states keep it; the differences fall with the tolerances, at 1e-8 and
+/// 1e-11 to a quarter of the bound.
+fn driven_context(t1: f64) -> RosenbrockContext {
+    RosenbrockContext {
+        rtol: 1e-8,
+        atol: 1e-11,
+        ..context(t1)
+    }
+}
+
+/// A driven model of the tests: its SBML, the species it drives, the changes of a stepper per
+/// point, a parameter behind a constant of the optimizer (which every interval sets anew) and
+/// its range, and the intervals.
+struct Driven {
+    sbml: String,
+    ids: Vec<String>,
+    changes: fn(&mut Random) -> Vec<(String, f64)>,
+    hoisted: &'static str,
+    hoisted_range: (f64, f64),
+    path_range: f64,
+    interval: f64,
+    intervals: usize,
+}
+
+fn driven_models() -> [Driven; 2] {
+    let ids = |ids: &[&str]| ids.iter().map(|id| id.to_string()).collect();
+    [
+        Driven {
+            sbml: uptake(),
+            ids: ids(&["X"]),
+            changes: |_| vec![],
+            hoisted: "k",
+            hoisted_range: (0.1, 2.0),
+            path_range: 5.0,
+            interval: 1.0,
+            intervals: 6,
+        },
+        Driven {
+            sbml: cell_model(),
+            ids: ids(&["S_ext", "P_ext"]),
+            changes: |random| {
+                vec![
+                    ("pattern".to_string(), 7.0),
+                    ("protein_ext".to_string(), random.uniform()),
+                    ("position".to_string(), random.uniform()),
+                ]
+            },
+            hoisted: "S2PT_Vmax",
+            hoisted_range: (0.01, 0.1),
+            path_range: 5.0,
+            interval: 10.0,
+            intervals: 6,
+        },
+    ]
+}
+
+/// The QFunction of a driven model (at [`driven_context`]) against a stepper of its native model
+/// ([`generate_with`]) at tight tolerances, 200 points, each with a random path per species and
+/// interval (positive over it, referred to its start) and a random value of a parameter behind a
+/// constant, the accumulators starting every interval at 0: the QFunction computes the constants
+/// of every point in every call from the parameters of the call. For the closed form, the
+/// exchange of the QFunction is also the integral of its path.
+#[test]
+fn driven_matches_stepper() {
+    for model in driven_models() {
+        let q = generate_qfunction_with(&model.sbml, &model.ids).unwrap();
+        let library = Library::build(&q.host_code()).unwrap();
+        let source = generate_with(&model.sbml, &model.ids).unwrap();
+        assert_eq!(q.description, source.description);
+        let desc = Arc::new(source.description);
+        assert!(desc.n_constants > 0, "{}: no constant", desc.id);
+        assert_eq!(desc.driven.len(), model.ids.len());
+        let native = CModel::new(Library::build(&source.code).unwrap(), &desc).unwrap();
+        let settings = IntegratorSettings {
+            relative_tolerance: 1e-12,
+            absolute_tolerance: Tolerance::Scalar(1e-14),
+            ..IntegratorSettings::default()
+        };
+        let mut random = Random(23);
+        let mut steppers: Vec<Stepper> = (0..200)
+            .map(|_| {
+                let changes = (model.changes)(&mut random);
+                Stepper::new(
+                    Box::new(native.clone()),
+                    desc.clone(),
+                    settings.clone(),
+                    &changes,
+                )
+                .unwrap()
+            })
+            .collect();
+        let mut points = cell_points(&q, &steppers);
+        let (n, m) = (q.state_ids.len(), q.parameter_ids.len());
+        let hoisted = q
+            .parameter_ids
+            .iter()
+            .position(|p| p == model.hoisted)
+            .unwrap();
+        let t_ref = desc.t_ref.unwrap();
+        let mut worst: f64 = 0.0;
+        for k in 0..model.intervals {
+            let (t0, t1) = (model.interval * k as f64, model.interval * (k + 1) as f64);
+            for (i, stepper) in steppers.iter_mut().enumerate() {
+                let mut values = vec![(t_ref, t0)];
+                for d in &desc.driven {
+                    let value = random.between(0.0, model.path_range);
+                    let slope = random.between(-value, model.path_range) / model.interval;
+                    values.extend([(d.value, value), (d.slope, slope)]);
+                }
+                let (low, high) = model.hoisted_range;
+                values.push((hoisted as u32, random.between(low, high)));
+                stepper.set_parameters(&values).unwrap();
+                points.parameters[i * m..(i + 1) * m].copy_from_slice(stepper.parameters());
+                let mut y = stepper.state().to_vec();
+                for d in &desc.driven {
+                    y[d.exchange as usize] = 0.0;
+                }
+                points.state[i * n..(i + 1) * n].copy_from_slice(&y);
+                stepper.advance(&y, t0, t1).unwrap();
+            }
+            points.start(t0);
+            run_points(&library, &q, &driven_context(t1), &mut points, 8).unwrap();
+            for (i, stepper) in steppers.iter().enumerate() {
+                let control = &points.control[i * CONTROL..(i + 1) * CONTROL];
+                assert_eq!(control[CONTROL_DONE], 1.0, "{}, point {i}", desc.id);
+                let state = &points.state[i * n..(i + 1) * n];
+                for (s, (a, b)) in state.iter().zip(stepper.state()).enumerate() {
+                    let bound = DRIVEN_RELATIVE * b.abs() + DRIVEN_ABSOLUTE;
+                    worst = worst.max((a - b).abs() / bound);
+                    assert!(
+                        (a - b).abs() <= bound,
+                        "{}, point {i}, {} at {t1}: QFunction {a}, stepper {b}",
+                        desc.id,
+                        q.state_ids[s]
+                    );
+                }
+                if desc.id == "uptake" {
+                    let p = &points.parameters[i * m..(i + 1) * m];
+                    let d = &desc.driven[0];
+                    let at = |id: &str| p[q.parameter_ids.iter().position(|x| x == id).unwrap()];
+                    let exact = -at("k")
+                        * UPTAKE_VB
+                        * path_integral(p[d.value as usize], p[d.slope as usize], t0, t0, t1);
+                    let exchange = state[d.exchange as usize];
+                    assert!(
+                        (exchange - exact).abs() <= DRIVEN_RELATIVE * exact.abs() + DRIVEN_ABSOLUTE,
+                        "point {i} at {t1}: exchange {exchange}, closed form {exact}"
+                    );
+                }
+            }
+        }
+        eprintln!(
+            "{}: the largest difference is {worst:.3} of the bound",
+            desc.id
+        );
+    }
+}
+
+/// `X -> C` of the rate `k1 X` and `C ->` of the rate `k2 C`, both compartments of size 1, with
+/// `X` driven: `C' = k1 (value + slope (t - t_ref)) - k2 C`, of the solution
+/// `C = A + B t + (C0 - A) exp(-k2 t)` with `B = k1 slope / k2` and
+/// `A = (k1 (value - slope t_ref) - B) / k2`, and the exchange `-k1` times the integral of the
+/// path.
+fn forced_decay() -> String {
+    format!(
+        r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2"><model id="forced_decay"><listOfCompartments><compartment id="blood" size="1" constant="true"/><compartment id="cell" size="1" constant="true"/></listOfCompartments><listOfSpecies><species id="X" compartment="blood" initialConcentration="1" hasOnlySubstanceUnits="false" boundaryCondition="false" constant="false"/><species id="C" compartment="cell" initialConcentration="0" hasOnlySubstanceUnits="false" boundaryCondition="false" constant="false"/></listOfSpecies><listOfParameters><parameter id="k1" value="1" constant="true"/><parameter id="k2" value="1" constant="true"/></listOfParameters><listOfReactions><reaction id="R1" reversible="false"><listOfReactants><speciesReference species="X" stoichiometry="1" constant="true"/></listOfReactants><listOfProducts><speciesReference species="C" stoichiometry="1" constant="true"/></listOfProducts><kineticLaw><math {MATH}><apply><times/><ci>k1</ci><ci>X</ci></apply></math></kineticLaw></reaction><reaction id="R2" reversible="false"><listOfReactants><speciesReference species="C" stoichiometry="1" constant="true"/></listOfReactants><kineticLaw><math {MATH}><apply><times/><ci>k2</ci><ci>C</ci></apply></math></kineticLaw></reaction></listOfReactions></model></sbml>"#
+    )
+}
+
+/// The observed orders of the QFunction of the library on [`forced_decay`] along the path
+/// `30 + 50 (t - 0.5)` over `[0, 1]`, at fixed steps of `1/10` to `1/160`, and the errors.
+fn driven_orders(q: &QSource, library: &Library) -> (Vec<f64>, Vec<f64>) {
+    let (value, slope, t_ref, k1, k2) = (30.0, 50.0, 0.5, 1.0, 1.0);
+    let mut parameters: Vec<f64> = q.description.parameters.iter().map(|p| p.initial).collect();
+    let at = |id: &str| q.parameter_ids.iter().position(|x| x == id).unwrap();
+    let d = &q.description.driven[0];
+    parameters[d.value as usize] = value;
+    parameters[d.slope as usize] = slope;
+    parameters[q.description.t_ref.unwrap() as usize] = t_ref;
+    assert_eq!((parameters[at("k1")], parameters[at("k2")]), (k1, k2));
+    let b = k1 * slope / k2;
+    let a = (k1 * (value - slope * t_ref) - b) / k2;
+    let mut exact = vec![0.0; 2];
+    exact[q.state_ids.iter().position(|s| s == "C").unwrap()] = a + b + (0.0 - a) * (-k2).exp();
+    exact[d.exchange as usize] = -k1 * path_integral(value, slope, t_ref, 0.0, 1.0);
+    let fixed = RosenbrockContext {
+        t1: 1.0,
+        rtol: 1e30,
+        atol: 1e30,
+        h_min: 1e-12,
+        attempts: 1.0,
+    };
+    let mut errors = Vec::new();
+    for steps in [10u32, 20, 40, 80, 160] {
+        let h = 1.0 / steps as f64;
+        let mut points = Points::new(q, &[0.0, 0.0], &parameters).unwrap();
+        points.start(0.0);
+        while points.control[CONTROL_DONE] == 0.0 {
+            points.control[CONTROL_H] = h;
+            apply_points(library, q, &fixed, &mut points, 1).unwrap();
+        }
+        assert_eq!(points.control[CONTROL_FAILED], 0.0);
+        assert_eq!(points.counts, [steps as f64, 0.0]);
+        let error = points
+            .state
+            .iter()
+            .zip(&exact)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0, f64::max);
+        errors.push(error);
+    }
+    let orders = errors.windows(2).map(|e| (e[0] / e[1]).log2()).collect();
+    (orders, errors)
+}
+
+/// The path of a driven species reads the time, so the QFunction of a driven model has the
+/// derivative of its right hand side in the time, and RODAS4 keeps its order 4 on a path of a
+/// large slope (as `order_of_the_method`); without that derivative it does not.
+#[test]
+fn driven_time_derivative() {
+    let ids = ["X".to_string()];
+    let q = generate_qfunction_with(&forced_decay(), &ids).unwrap();
+    assert_eq!(q.state_ids, ["C", "X__exchange"]);
+    assert!(q.code.contains("#define SBMLSIM_ROSENBROCK_DFDT"));
+    let library = Library::build(&q.host_code()).unwrap();
+    let (orders, errors) = driven_orders(&q, &library);
+    eprintln!("errors {errors:?}, observed orders {orders:?}");
+    let observed = *orders.last().unwrap();
+    assert!(
+        (observed - ROSENBROCK_ORDER as f64).abs() <= 0.2,
+        "observed order {observed}, errors {errors:?}"
+    );
+    // the same integrator without the derivative in the time loses the order
+    let define = format!(
+        "#define SBMLSIM_ROSENBROCK_DFDT {}",
+        q.function.replace("qfunction", "dfdt")
+    );
+    assert!(q.code.contains(&define), "{define}");
+    let without = q.host_code().replacen(&define, "", 1);
+    let library = Library::build(&without).unwrap();
+    let (orders, errors) = driven_orders(&q, &library);
+    eprintln!("without the derivative in the time: errors {errors:?}, observed orders {orders:?}");
+    let observed = *orders.last().unwrap();
+    assert!(
+        observed < 3.0,
+        "observed order {observed}, errors {errors:?}"
     );
 }
