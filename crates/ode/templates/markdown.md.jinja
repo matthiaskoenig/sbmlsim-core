@@ -158,6 +158,6 @@ ${{ a.lhs }}$ is converted from the size of ${{ a.compartment }}$ before the eve
 The model uses constructs which the ODE system does not express:
 
 {% for u in unsupported %}
-- {{ u.construct }} {{ u.id }}
+- {{ u.construct }} {{ u.label }}
 {% endfor %}
 {% endif %}
