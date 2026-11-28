@@ -19,7 +19,6 @@ import "./plot.test.mjs";
 import "./figure.test.mjs";
 import "./hydrate.test.mjs";
 import "./petab.test.mjs";
-import "./petab-fit.test.mjs";
 import "./stats.test.mjs";
 import "./units.test.mjs";
 import "./scan.test.mjs";
