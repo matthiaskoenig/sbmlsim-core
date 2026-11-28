@@ -685,28 +685,39 @@ fn driven_species_with_the_conversion_factor_of_the_model() {
 
 #[test]
 fn units_of_the_driven_parameters() {
+    // the units sbmlsim gives the entities: a species and a compartment of units of their own
+    // (the default units of the model name none)
     let units = r#"timeUnits="second" substanceUnits="mole" volumeUnits="litre""#;
-    let xml = chain(units).replace(
-        r#"<compartment id="blood" size="2""#,
-        r#"<compartment id="blood" size="2" spatialDimensions="3""#,
-    );
+    let xml = chain(units)
+        .replace(
+            r#"<compartment id="blood" size="2""#,
+            r#"<compartment id="blood" size="2" spatialDimensions="3" units="litre""#,
+        )
+        .replace(
+            r#"<species id="A" compartment="blood""#,
+            r#"<species id="A" compartment="blood" substanceUnits="mole""#,
+        );
     let m = drive(read(&xml), &["A"]).unwrap();
-    let unit = |id: &str| {
+    let unit = |m: &Model, id: &str| {
         let selection = m.selection(id).unwrap().unit.clone();
-        assert_eq!(entity(&m, id).unit, selection, "{id}");
+        assert_eq!(entity(m, id).unit, selection, "{id}");
+        assert_eq!(m.units.get(id), selection.as_ref(), "{id}");
         selection
     };
-    assert_eq!(unit("A__value").as_deref(), Some("mole/litre"));
-    assert_eq!(unit("A__slope").as_deref(), Some("(mole/litre)/second"));
-    assert_eq!(unit("driven__t_ref").as_deref(), Some("second"));
-    assert_eq!(unit("A__exchange").as_deref(), Some("mole"));
+    assert_eq!(unit(&m, "A__value").as_deref(), Some("mole/litre"));
+    assert_eq!(unit(&m, "A__slope").as_deref(), Some("(mole/litre)/second"));
+    assert_eq!(unit(&m, "driven__t_ref").as_deref(), Some("second"));
+    assert_eq!(unit(&m, "A__exchange").as_deref(), Some("mole"));
 
-    // without the time unit of the model, the slope and t_ref have none
+    // without the time unit of the model, the time is in seconds, as sbmlsim names it
     let m = drive(read(&xml.replace(r#"timeUnits="second""#, "")), &["A"]).unwrap();
-    assert_eq!(
-        m.selection("A__value").unwrap().unit.as_deref(),
-        Some("mole/litre")
-    );
-    assert_eq!(m.selection("A__slope").unwrap().unit, None);
-    assert_eq!(m.selection("driven__t_ref").unwrap().unit, None);
+    assert_eq!(m.time_unit.as_deref(), Some("second"));
+    assert_eq!(unit(&m, "A__slope").as_deref(), Some("(mole/litre)/second"));
+    assert_eq!(unit(&m, "driven__t_ref").as_deref(), Some("second"));
+
+    // a species without units drives a path without units and a slope without a unit
+    let m = drive(read(&chain(units)), &["A"]).unwrap();
+    assert_eq!(unit(&m, "A__value").as_deref(), Some(""));
+    assert_eq!(unit(&m, "A__slope"), None);
+    assert_eq!(unit(&m, "driven__t_ref").as_deref(), Some("second"));
 }
