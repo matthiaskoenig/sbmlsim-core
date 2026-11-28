@@ -26,7 +26,8 @@ fn fixture(case: &str) -> (String, String) {
     let file: File = serde_json::from_str(&text).unwrap();
     let request = serde_json::to_string(&file.request).unwrap();
     let sbml = std::fs::read_to_string(testdata().join("models").join(&file.model)).unwrap();
-    let compiled = sbmlsim_wasm::compile_model(&sbml, &sbmlsim_wasm::ModelOptions::default()).unwrap();
+    let compiled =
+        sbmlsim_wasm::compile_model(&sbml, &sbmlsim_wasm::ModelOptions::default()).unwrap();
     (request, compiled.description)
 }
 

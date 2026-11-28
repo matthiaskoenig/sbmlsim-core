@@ -1,4 +1,4 @@
-// The scan of sbmlsim in a JavaScript host (since 0.43.0): a simulation and its dimensions with
+// The scan of sbmlsim in a JavaScript host (since 0.45.0): a simulation and its dimensions with
 // the observables of the run, the request `scan/1`, planned, simulated and assembled into the
 // result `scanresult/1` in a page, as sbmlsim's `Simulator.run` and `sbmlsim_core.scan.run` do.
 //

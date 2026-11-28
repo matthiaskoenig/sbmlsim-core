@@ -37,12 +37,12 @@ fn preinit_request(value: &str) -> sbmlsim_scan::ScanRequest {
 fn a_description_without_the_time_unit_is_refused() {
     let mut description = compile(&sbml("scan_fold.xml")).description;
     description.time_unit = None;
-    description.compiler = "sbmlsim-compiler 0.42.0".to_string();
+    description.compiler = "sbmlsim-compiler 0.44.0".to_string();
     let error = Scan::open(preinit_request("0.3"), description).unwrap_err();
     assert_eq!(error.kind, ScanErrorKind::Request);
     assert_eq!(
         error.message,
-        "The description of the model 'scan_fold' was written by sbmlsim-compiler 0.42.0, which \
+        "The description of the model 'scan_fold' was written by sbmlsim-compiler 0.44.0, which \
          writes no time unit, initial assignments or time dependence of the model, which a scan \
          plans with: compile the model again with the current sbmlsim-core."
     );

@@ -1,4 +1,4 @@
-"""The units of pint in Rust (since 0.42.0).
+"""The units of pint in Rust (since 0.45.0).
 
 The crate `sbmlsim-units` parses the unit expressions sbmlsim uses and gives their factors to
 the root units of pint and their dimensions, the numbers of `sbmlsim.units.ureg`: the factor

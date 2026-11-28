@@ -1,4 +1,4 @@
-"""The scan of sbmlsim planned in Rust (since 0.43.0).
+"""The scan of sbmlsim planned in Rust (since 0.45.0).
 
 A scan is a simulation and its dimensions with the observables of the run, the request
 `scan/1` (sbmlsim's `Scan.to_dict()` and `Observable.to_dict()` with the options of

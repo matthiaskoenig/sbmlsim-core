@@ -55,10 +55,10 @@ use std::alloc::{Layout, alloc, dealloc};
 
 #[cfg(feature = "petab")]
 pub mod petab;
-#[cfg(feature = "stats")]
-pub mod stats;
 #[cfg(feature = "scan")]
 pub mod scan;
+#[cfg(feature = "stats")]
+pub mod stats;
 #[cfg(feature = "units")]
 pub mod units;
 

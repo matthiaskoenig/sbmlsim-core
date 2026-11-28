@@ -1,4 +1,4 @@
-// The units of pint in a JavaScript host (since 0.42.0): unit expressions parsed, their factors
+// The units of pint in a JavaScript host (since 0.45.0): unit expressions parsed, their factors
 // to the root units and their dimensions, and the factors between two units.
 //
 // Plain ECMAScript without dependencies and without APIs of Node, so it runs in browsers as well:

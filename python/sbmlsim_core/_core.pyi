@@ -31,11 +31,11 @@ constant nor denies the field, so a host reads the constant before it sends a re
 """
 MODEL_CONTRACT: str
 PLAN_CONTRACT: str
-"""The contract of the plans of a scan, `plan/1` (since 0.43.0)."""
+"""The contract of the plans of a scan, `plan/1` (since 0.45.0)."""
 SCAN_CONTRACT: str
-"""The contract of the request of a scan, `scan/1` (since 0.43.0)."""
+"""The contract of the request of a scan, `scan/1` (since 0.45.0)."""
 SCAN_RESULT_CONTRACT: str
-"""The contract of the result of a scan, `scanresult/1` (since 0.43.0)."""
+"""The contract of the result of a scan, `scanresult/1` (since 0.45.0)."""
 SIMULATION_CONTRACT: str
 THIRD_PARTY: str
 __version__: str
@@ -80,14 +80,14 @@ class InternalError(SimulationError):
     """A failure of the engine itself."""
 
 class UnitError(SbmlsimCoreError):
-    """An expression which is no unit, or units which do not convert (since 0.42.0).
+    """An expression which is no unit, or units which do not convert (since 0.45.0).
 
     A unit with an offset, two units of other dimensions or a unit defined again with
     another value.
     """
 
 class ScanError(SbmlsimCoreError):
-    """A scan which cannot be planned or which failed (since 0.43.0)."""
+    """A scan which cannot be planned or which failed (since 0.45.0)."""
 
     kind: str
     """`request`, `units`, `unsupported` or `point`."""
@@ -1384,7 +1384,7 @@ class _EquationSystem:
     def typeset_json(self, links: str) -> str: ...
 
 class UnitRegistry:
-    """A registry of units, the units of pint in Rust (since 0.42.0).
+    """A registry of units, the units of pint in Rust (since 0.45.0).
 
     The class of `sbmlsim_core.units.Registry`: the builtin units of pint which sbmlsim uses,
     the units a caller defines and the unit ids of a model.

@@ -8,8 +8,8 @@ Simulate SBML models in browsers and in Node. [sbmlsim-core](https://matthiaskoe
 | `compile.mjs` | `sbmlsim-core/compile` | compiles SBML text into `model.wasm` and its description with `compiler.wasm` |
 | `petab.mjs` (since 0.39.0) | `sbmlsim-core/petab` | a problem of PEtab v2 read, simulated and evaluated (log-likelihood, `chi2`, priors, simulation table) |
 | `stats.mjs` (since 0.43.0) | `sbmlsim-core/stats` | the statistics of the analyses with `compiler.wasm`: every function of `sbmlsim_core.stats` of python (metrics of a fit, Fisher information, posterior, draws, probability statements), with its bits |
-| `units.mjs` (since 0.42.0) | `sbmlsim-core/units` | the units of pint: the factor of a unit expression to the root units and its dimensions, conversion factors, units defined |
-| `scan.mjs` (since 0.43.0) | `sbmlsim-core/scan` | a scan of sbmlsim (a simulation, its dimensions and observables) planned in `compiler.wasm`, simulated with the loader or a pool and assembled into its result |
+| `units.mjs` (since 0.45.0) | `sbmlsim-core/units` | the units of pint: the factor of a unit expression to the root units and its dimensions, conversion factors, units defined |
+| `scan.mjs` (since 0.45.0) | `sbmlsim-core/scan` | a scan of sbmlsim (a simulation, its dimensions and observables) planned in `compiler.wasm`, simulated with the loader or a pool and assembled into its result |
 | `kernel.mjs` (since 0.41.0) | `sbmlsim-core/kernel` | instantiates the batched kernel of a model (`compiler.compileKernel`), which advances many instances of it per call |
 | `pool.mjs` (with `worker.mjs`) | `sbmlsim-core/pool` | a pool of Web Workers (worker threads in Node) which run the loader off the main thread |
 | `panels.mjs` | `sbmlsim-core/panels` | the routes of the panel service of sbmlsim, answered inside a page from an exported bundle |

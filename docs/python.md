@@ -140,7 +140,7 @@ The multi-indices are those of `sbmlsim.sensitivity.chaos.expansion` in its orde
 
 ## Scans
 
-`sbmlsim_core.scan` (since 0.43.0) runs a scan of sbmlsim, the request `scan/1`, with the planner of the crate `sbmlsim-scan`: `scan.run(request, model, threads=, observe=, on_batch=)` on a batch executor of the model, or `scan.Scan(request, model)` asked for its rounds and told their answers. The result `scanresult/1` is a dict whose arrays are arrays of numpy of float64. See [Scans](scan.md).
+`sbmlsim_core.scan` (since 0.45.0) runs a scan of sbmlsim, the request `scan/1`, with the planner of the crate `sbmlsim-scan`: `scan.run(request, model, threads=, observe=, on_batch=)` on a batch executor of the model, or `scan.Scan(request, model)` asked for its rounds and told their answers. The result `scanresult/1` is a dict whose arrays are arrays of numpy of float64. See [Scans](scan.md).
 
 ## A page of one file
 

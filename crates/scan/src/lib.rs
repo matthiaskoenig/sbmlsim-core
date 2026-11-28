@@ -929,7 +929,8 @@ impl Scan {
 pub(crate) type Models = (Vec<ModelInfo>, Vec<Option<String>>, Vec<String>);
 
 /// The changes of every model of a scan by its key, the defaults of the pre-initialization of
-/// its simulations (empty for the model of the run, whose changes the host applies).
+/// its simulations: the `changes` of the request for the model of the run, the `model_changes`
+/// of its key for a model of a dimension of models (none for a key without).
 pub(crate) fn changes_of(
     keys: &[Option<String>],
     changes: &Ordered<Value>,

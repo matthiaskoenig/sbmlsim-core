@@ -1,6 +1,6 @@
 # Scans
 
-A scan of sbmlsim is a simulation and its dimensions with the observables of the run: `Simulator.run(model, scan, observables, time=, keep=, on_error=, points=)`. Since 0.43.0 its planning runs here, in the crate `sbmlsim-scan`: the request `scan/1` is planned into the requests `simulation/1` of the engine from the description of the compiled model alone, the formulas at the changes are folded, the observables are evaluated and the result `scanresult/1` is assembled, as sbmlsim's `Simulator.run` does with the engine core. Python (`sbmlsim_core.scan`) and a page (`js/scan.mjs` on `compiler.wasm`) run the same planner, so a scan has the numbers of sbmlsim in either.
+A scan of sbmlsim is a simulation and its dimensions with the observables of the run: `Simulator.run(model, scan, observables, time=, keep=, on_error=, points=)`. Since 0.45.0 its planning runs here, in the crate `sbmlsim-scan`: the request `scan/1` is planned into the requests `simulation/1` of the engine from the description of the compiled model alone, the formulas at the changes are folded, the observables are evaluated and the result `scanresult/1` is assembled, as sbmlsim's `Simulator.run` does with the engine core. Python (`sbmlsim_core.scan`) and a page (`js/scan.mjs` on `compiler.wasm`) run the same planner, so a scan has the numbers of sbmlsim in either.
 
 | | Rust | Python | JavaScript |
 |---|---|---|---|
@@ -149,7 +149,7 @@ An assignment is `{"target", "kind", "value"}` of a number in the unit of its ta
 
 ## The units of `model/2`
 
-The planner needs nothing of the model but its description, and reads from `model/2`: `units` and `time_unit`, the units sbmlsim gives the entities of the model (`time`, every compartment, species `S` and `[S]`, parameter and reaction), which convert the request and are the units of the result, read with `unit_definitions`, the unit definitions the units name by their id because pint has no unit of them; the kinds of the entities and which ones a change may set; their values as loaded; the states; `initial_assignments`, the parameters, compartments and species references whose value an initial assignment computes; whether the model has events; and `time_dependent`, whether a math reads the time or a delay or an event has a delay. A description of a release before 0.43.0 has no `time_unit`, `initial_assignments` and `time_dependent`, and the planner refuses it: compile the model again.
+The planner needs nothing of the model but its description, and reads from `model/2`: `units` and `time_unit`, the units sbmlsim gives the entities of the model (`time`, every compartment, species `S` and `[S]`, parameter and reaction), which convert the request and are the units of the result, read with `unit_definitions`, the unit definitions the units name by their id because pint has no unit of them; the kinds of the entities and which ones a change may set; their values as loaded; the states; `initial_assignments`, the parameters, compartments and species references whose value an initial assignment computes; whether the model has events; and `time_dependent`, whether a math reads the time or a delay or an event has a delay. A description of a release before 0.45.0 has no `time_unit`, `initial_assignments` and `time_dependent`, and the planner refuses it: compile the model again.
 
 ## The result `scanresult/1`
 

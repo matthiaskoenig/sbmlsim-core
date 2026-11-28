@@ -103,12 +103,11 @@
 //!
 //! Additions of `model/2` since its release, which a description of a release before reads as
 //! it did: the [`ModelDescription::time_unit`], the [`ModelDescription::initial_assignments`],
-//! [`ModelDescription::time_dependent`] and [`ModelDescription::unit_definitions`] (0.43.0),
-//! absent by default, which the planner of
-//! a scan (`sbmlsim-scan`) reads to plan the requests of a model from its description alone,
-//! and which a reader before 0.43.0 refuses as unknown fields. Since 0.43.0 the
-//! [`ModelDescription::units`] are the units sbmlsim names, not the factor expressions of the
-//! compiler.
+//! [`ModelDescription::time_dependent`] and [`ModelDescription::unit_definitions`] (0.45.0),
+//! absent by default, which the planner of a scan (`sbmlsim-scan`) reads to plan the requests
+//! of a model from its description alone, and which a reader before 0.45.0 refuses as unknown
+//! fields. Since 0.45.0 the [`ModelDescription::units`] are the units sbmlsim names, not the
+//! factor expressions of the compiler.
 //!
 //! A batched kernel (`kernel/2`, [`KERNEL_CONTRACT`]) is a model of ordinary differential
 //! equations together with the Rosenbrock integrator RODAS4 of the QFunction target of the C
@@ -335,7 +334,7 @@ pub struct ModelDescription {
     /// without units, the default units of the model name none), every reaction with a kinetic
     /// law (the unit libsbml derives for it, named by the first unit definition of the same
     /// unit) and every kinetic law with an id; a unit definition is written as pint reads it
-    /// (`mmol/min`), else named by its id. Before 0.43.0 the factor expressions of the
+    /// (`mmol/min`), else named by its id. Before 0.45.0 the factor expressions of the
     /// compiler (`0.001*mole*(60*second)**-1`) of the entities with units.
     pub units: BTreeMap<String, String>,
     /// The driven species, in the order they were given to the compiler; empty without.
@@ -353,7 +352,7 @@ pub struct ModelDescription {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub unit_definitions: BTreeMap<String, String>,
     /// The time unit of the model as sbmlsim names it, `units["time"]`; absent in a description
-    /// before 0.43.0.
+    /// before 0.45.0.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub time_unit: Option<String>,
     /// The ids of the parameters, compartments and species references whose value as loaded an
@@ -1082,7 +1081,7 @@ mod tests {
         );
         let back: ModelDescription = serde_json::from_str(&json).unwrap();
         assert_eq!(d, back);
-        // the additions of 0.43.0 are absent by default, so a description before them reads
+        // the additions of 0.45.0 are absent by default, so a description before them reads
         let mut value: serde_json::Value = serde_json::from_str(&json).unwrap();
         let object = value.as_object_mut().unwrap();
         for key in ["time_unit", "initial_assignments", "time_dependent"] {
