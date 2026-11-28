@@ -12,7 +12,8 @@ description = "The statistics of the analyses of sbmlsim-core: special functions
 # every transcendental function (the logarithm of the gamma function, erfc, exp, log, log1p), the
 # same bits on every target, so one input gives one answer natively and in wasm
 libm = "0.2"
-# the quantile of the standard normal distribution (AS 241)
+# the quantile of the standard normal distribution (AS 241), the Sobol' sequence of the designs
+# (`sobol_sequence`) and the stream xoshiro256++ of the random draws (`random::Stream`)
 sbmlsim-sensitivity = { path = "../sensitivity" }
 thiserror.workspace = true
 

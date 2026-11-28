@@ -900,7 +900,9 @@ def stats_quantiles(
 ) -> numpy.typing.NDArray[numpy.float64]:
     """The quantiles `qs` of the draws which are not `NaN`, `np.nanquantile` (since 0.42.0).
 
-    Raises `ValueError` as `stats_quantile`.
+    A one-dimensional array of a quantile per value of `qs` in the order numpy ravels it,
+    whatever the shape of `qs` (`np.nanquantile` keeps it). Raises `ValueError` as
+    `stats_quantile`.
     """
 
 def stats_quantile_ci(
@@ -960,7 +962,7 @@ def stats_unit_points(
     d: int,
     n: int,
     *,
-    design: str = "sobol",
+    design: Literal["sobol", "lhs", "random"] = "sobol",
     seed: int,
     start: int = 0,
 ) -> numpy.typing.NDArray[numpy.float64]:
@@ -989,7 +991,7 @@ def stats_normal_score_rho(
     m: float,
     a: tuple[str, float, float],
     b: tuple[str, float, float],
-    scale: str = "linear",
+    scale: Literal["linear", "log"] = "linear",
 ) -> float:
     """The coefficient of the normal scores of the covariance `m` of two marginals (since 0.42.0).
 
@@ -1013,7 +1015,7 @@ def stats_validate_covariance(
     targets: Sequence[object],
     matrix: numpy.typing.ArrayLike,
     *,
-    kind: str = "covariance",
+    kind: Literal["covariance", "correlation"] = "covariance",
     units: Iterable[str | None] | None = None,
 ) -> None:
     """Check the matrix of a `Covariance` of the targets, `Covariance._validate` (since 0.42.0).
@@ -1083,7 +1085,7 @@ def stats_needed(
 
     `_needed` of `sbmlsim.uncertainty.testing`, `None` beyond `STATS_MAX_NEEDED` and of no
     draws. Raises the `ValueError` and the `OverflowError` of `round` of python of an
-    estimate which is not finite.
+    estimate which is not finite, and `ValueError` for a negative `n`.
     """
 
 def stats_family_level(level: float, m: int) -> float:

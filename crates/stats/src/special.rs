@@ -130,7 +130,10 @@ pub fn ln_beta(a: f64, b: f64) -> f64 {
 /// instead, whose digits do not depend on those of `x` but of `1 - x`.
 ///
 /// Accurate to 1e-10 relative for both parameters below about 1e6, where the continued
-/// fraction loses about `a * eps`; not a number for both above [`CF_MAX`] and where it does
+/// fraction loses about `a * eps`; between 1e6 and [`CF_MAX`] (a large `a` with a `b` above
+/// 40, outside the expansion BGRAT) it loses that silently, which only `binom_ppf` of the
+/// intervals of more than 1e6 draws reaches, where it can move a rank at a near tie only; not
+/// a number for both above [`CF_MAX`] and where it does
 /// not converge in [`MAX_STEPS`] steps. As scipy, an infinite parameter is the limit: zero
 /// below `x = 1` for an infinite `a`, one above `x = 0` for an infinite `b`, not a number for
 /// both.

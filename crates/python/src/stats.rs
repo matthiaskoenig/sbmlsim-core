@@ -998,11 +998,17 @@ pub(crate) fn stats_decision(
 #[pyfunction]
 pub(crate) fn stats_needed(
     estimate: f64,
-    n: u64,
+    n: i64,
     p0: f64,
     margin: f64,
     alpha: f64,
 ) -> PyResult<Option<u64>> {
+    // the python loops without an end on a negative number of draws
+    let n = u64::try_from(n).map_err(|_| {
+        PyValueError::new_err(format!(
+            "The number of draws must not be negative, not {n}."
+        ))
+    })?;
     testing::needed(estimate, n, p0, margin, alpha).map_err(stats_error)
 }
 

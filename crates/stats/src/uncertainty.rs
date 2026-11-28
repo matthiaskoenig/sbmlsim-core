@@ -10,7 +10,7 @@
 //! ([`quantile`], [`quantiles`]) and the parameters of the distribution of a reported
 //! interval, `Uncertain.interval` ([`interval_parameters`]).
 //!
-//! Every function drops the draws which are not a number first, as the python does; an
+//! Every function drops the draws which are `NaN` first, as the python does; an
 //! infinite draw is a value. The edges are the ones of the python: `nan` where it returns
 //! `nan`, and an error with the message of the exception where it raises one. The python
 //! raises more than a `ValueError` there (an `OverflowError` of a power or an exponential past
@@ -31,12 +31,15 @@ pub(crate) const QUANTILES_RANGE: &str = "Quantiles must be in the range [0, 1]"
 /// The start of the message of the IndexError of numpy of a boolean mask of another length.
 const BOOLEAN_INDEX: &str = "boolean index did not match indexed array";
 
-/// The draws which are not a number, `_valid` of the python.
+/// The draws which are not `NaN`, `_valid` of the python.
 fn valid(x: &[f64]) -> Vec<f64> {
     x.iter().copied().filter(|value| !value.is_nan()).collect()
 }
 
-/// The draws which are not a number in ascending order, `np.sort(_valid(x))`.
+/// The draws which are not `NaN` in ascending order, `np.sort(_valid(x))`; the sort is
+/// stable, so of a zero and a negative zero the one first in the draws comes first, where the
+/// quicksort of numpy may order them the other way (a quantile between them is a zero of the
+/// other sign).
 fn sorted_valid(x: &[f64]) -> Vec<f64> {
     let mut values = valid(x);
     values.sort_by(|a, b| a.partial_cmp(b).expect("no draw is not a number"));
@@ -48,7 +51,7 @@ fn std_ddof1(values: &[f64]) -> f64 {
     libm::sqrt(numpy_var(values, 1))
 }
 
-/// The mean, its standard error `s / sqrt(n)` and the number of draws which are not a number,
+/// The mean, its standard error `s / sqrt(n)` and the number of draws which are not `NaN`,
 /// `mean_se`: `nan` without draws, the error `nan` without two of them and of infinite draws.
 #[must_use]
 pub fn mean_se(x: &[f64]) -> (f64, f64, usize) {
@@ -66,7 +69,7 @@ pub fn mean_se(x: &[f64]) -> (f64, f64, usize) {
 }
 
 /// The standard deviation, its standard error by the delta method with the fourth central
-/// moment, `sqrt((m4 - s^4) / n) / (2 s)`, and the number of draws which are not a number,
+/// moment, `sqrt((m4 - s^4) / n) / (2 s)`, and the number of draws which are not `NaN`,
 /// `sd_se`: `nan` without two draws and of infinite draws, 0 of draws without variance.
 ///
 /// # Errors
@@ -99,7 +102,7 @@ fn check_quantile(q: f64) -> Result<()> {
     }
 }
 
-/// The quantile `q` of the draws which are not a number, as `np.nanquantile` of the linear
+/// The quantile `q` of the draws which are not `NaN`, as `np.nanquantile` of the linear
 /// method (the default) interpolates it: `nan` without such draws, and an infinite draw gives
 /// an infinity or not a number as numpy does.
 ///
@@ -111,8 +114,9 @@ pub fn quantile(x: &[f64], q: f64) -> Result<f64> {
     Ok(numpy_quantile_sorted(&sorted_valid(x), q))
 }
 
-/// The quantiles `qs` of the draws which are not a number, `np.nanquantile(x, qs)`, see
-/// [`quantile`].
+/// The quantiles `qs` of the draws which are not `NaN`, `np.nanquantile(x, qs)`, see
+/// [`quantile`]: a quantile per value of `qs`, in their order (the binding returns them as a
+/// one-dimensional array whatever the shape of `qs`, where numpy keeps it).
 ///
 /// # Errors
 ///
@@ -138,7 +142,7 @@ fn rank(probability: f64, n: usize, q: f64) -> Result<i64> {
 }
 
 /// A quantile, the lower and the upper end of its distribution-free interval and the number
-/// of draws which are not a number, `quantile_ci`.
+/// of draws which are not `NaN`, `quantile_ci`.
 ///
 /// The ends are the order statistics `x_(r) <= x_(s)` whose ranks are the `(1 - level) / 2`
 /// and `(1 + level) / 2` quantiles of the binomial distribution `B(n, q)` (Hahn & Meeker

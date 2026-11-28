@@ -19,7 +19,7 @@ low, high = stats.fisher_intervals(
 )
 print(fisher["rank"], low, high)  # 2 [0.89 0.27] [1.11 0.34]
 
-# 1024 correlated draws of two standard normal variables and their sum
+# 1024 draws of two uniform variables whose normal scores correlate, and their sum
 u = stats.unit_points(2, 1024, design="sobol", seed=1)
 z = stats.copula(u, [[1.0, 0.8], [0.8, 1.0]])
 y = z[:, 0] + z[:, 1]
@@ -48,7 +48,7 @@ The statistics of `sbmlsim.uncertainty.statistics` drop the draws which are `NaN
 
 ## The draws and their correlations
 
-`unit_points(d, n, design=..., seed=..., start=0)` gives the points of the unit cube of the designs of `sbmlsim.uncertainty.draws.unit_points`: `"sobol"` (the scrambled Sobol' sequence, which continues from the point `start`), `"lhs"` (a Latin hypercube, every column a random permutation of the strata with a uniform point in its stratum, without a continuation) and `"random"` (which continues from `start`: the stream jumps ahead to it in a time logarithmic in `start * d`, so any start costs about the same). `copula` is the Gaussian copula of `draw`, `Φ(Φ⁻¹(u) Fᵀ)` with the factor `F` of the correlation and the points clipped to `EPS` from the ends, and `normal_score_rho` the coefficient of the normal scores of a covariance of two normal or log-normal marginals. The correlations of `sbmlsim.uncertainty.covariance`: `nearest_correlation` (the nearest correlation matrix in the Frobenius norm, Higham 2002), `is_psd` (at the tolerance `PSD_RTOL`) and `validate_covariance` (`Covariance._validate`, with its messages).
+`unit_points(d, n, *, design="sobol", seed, start=0)` gives the points of the unit cube of the designs of `sbmlsim.uncertainty.draws.unit_points`: `"sobol"` (the scrambled Sobol' sequence, which continues from the point `start`), `"lhs"` (a Latin hypercube, every column a random permutation of the strata with a uniform point in its stratum, without a continuation) and `"random"` (which continues from `start`: the stream jumps ahead to it in a time logarithmic in `start * d`, so any start costs about the same). `copula` is the Gaussian copula of `draw`, `Φ(Φ⁻¹(u) Fᵀ)` with the factor `F` of the correlation and the points clipped to `EPS` from the ends, and `normal_score_rho` the coefficient of the normal scores of a covariance of two normal or log-normal marginals. The correlations of `sbmlsim.uncertainty.covariance`: `nearest_correlation` (the nearest correlation matrix in the Frobenius norm, Higham 2002), `is_psd` (at the tolerance `PSD_RTOL`) and `validate_covariance` (`Covariance._validate`, with its messages).
 
 ## The probability statements
 
@@ -74,7 +74,7 @@ Where the crate and scipy differ beyond the rounding, the crate is the more accu
 
 ## Determinism
 
-Every transcendental function comes from the crate libm, and every random draw from xoshiro256++ seeded through SplitMix64, written out in sbmlsim-core, so one input and one seed give the same bits on every target, natively and in WebAssembly. The tests hold the hashes of the bits of every function over its fixtures and of the draws of fixed seeds, and the continuous integration runs them natively and under wasmtime (`cargo test -p sbmlsim-stats --target wasm32-wasip1`). The crate also builds for `wasm32-unknown-unknown`; no JavaScript binding of it exists yet.
+Every transcendental function comes from the crate libm, and every random draw from xoshiro256++ seeded through SplitMix64, written out in sbmlsim-core, so one input and one seed give the same bits on every target, natively and in WebAssembly. The tests hold the hashes of the bits of every function over its fixtures and of the draws of fixed seeds, and the continuous integration runs them natively and under wasmtime (`cargo test -p sbmlsim-stats --target wasm32-wasip1`). The test of the nearest correlation matrix of 200 targets, which holds its bits as well, takes minutes in wasm and runs on request only (`cargo test -p sbmlsim-stats --release -- --ignored`), natively and not in the continuous integration; the python tests run the same case on every wheel. The crate also builds for `wasm32-unknown-unknown`; no JavaScript binding of it exists yet.
 
 ## The random streams changed
 

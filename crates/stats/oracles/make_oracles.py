@@ -1609,7 +1609,11 @@ def draws() -> dict[str, Any]:
         }
 
     def copula(u: np.ndarray, r: np.ndarray) -> np.ndarray:
-        """The copula of `draw` of the points `u` and the correlation `r`."""
+        """The copula of `draw` of the points `u` and the correlation `r`.
+
+        The lines of `draw` of `sbmlsim.uncertainty.draws` of sbmlsim 0.53.0, copied, since
+        sbmlsim has no function of the copula of given points.
+        """
         if not np.allclose(r, np.eye(r.shape[0])):
             z = stats.norm.ppf(np.clip(u, EPS, 1.0 - EPS)) @ draws_factor(r).T
             u = stats.norm.cdf(z)

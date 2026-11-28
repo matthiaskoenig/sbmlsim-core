@@ -63,7 +63,8 @@ jobs:
       # the global sensitivity analysis gives the bits of its native tests in wasm
       - run: cargo clippy -p sbmlsim-sensitivity --all-targets --target wasm32-wasip1 -- -D warnings
       - run: cargo test -p sbmlsim-sensitivity --target wasm32-wasip1
-      # the special functions of the statistics give the bits of their native tests in wasm
+      # the statistics (every module, the random streams and the sizes of a usize of 32 bits)
+      # give the bits of their native tests in wasm
       - run: cargo clippy -p sbmlsim-stats --all-targets --target wasm32-wasip1 -- -D warnings
       - run: cargo test -p sbmlsim-stats --target wasm32-wasip1
   compiler_builds_for_wasm32_unknown_unknown:

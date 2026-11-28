@@ -1,8 +1,12 @@
 """The statistics of the analyses of sbmlsim: the kernels of numpy and scipy in Rust.
 
-The crate `sbmlsim-stats`, which `sbmlsim.fit.metrics` and `sbmlsim.fit.evaluation` run
-on, the functions of the same names and edges: a value of an argument the python refuses
-raises a `ValueError` with its message, and `nan` is returned where it returns `nan`.
+The crate `sbmlsim-stats`, the functions of `sbmlsim.fit` and `sbmlsim.uncertainty` which
+called numpy and scipy, with the same names and edges: a value of an argument the python
+refuses raises the exception of the python with its message (a `ValueError`, and an
+`OverflowError`, a `ZeroDivisionError` or an `IndexError` where the python raises one), and
+`nan` is returned where it returns `nan`. An array a function would make past what an array
+holds raises numpy's `ValueError` (`array is too big`); the functions on arrays release the
+GIL while they compute.
 
 - the metrics of residuals: `sse`, `mse`, `rmse_from_mse`, `aic_from_mse`,
   `bic_from_mse`, `r_squared` and `nrmse`, the root mean square of the normalized
@@ -20,7 +24,7 @@ raises a `ValueError` with its message, and `nan` is returned where it returns `
   `fisher_intervals` and `fisher_relative_errors`;
 - the posterior, `sbmlsim.fit.posterior`: `posterior_laplace`, the covariance of the
   Laplace approximation of a precision, `rank_correlation`, `normal_correlation`, `log_sd`
-  and `lognormal_cv`, the marginal of a parameter on a logarithmic scale.
+  and `lognormal_cv`, the marginal of a parameter on a logarithmic scale;
 - the uncertainty, `sbmlsim.uncertainty`: the statistics of draws with their errors,
   `mean_se`, `sd_se` and `quantile_ci` (a quantile and its distribution-free interval),
   `quantile` and `quantiles` (numpy's linear ones), `first_order_given_data` (the
@@ -28,7 +32,7 @@ raises a `ValueError` with its message, and `nan` is returned where it returns `
   propagation, the precision of the draws of an output) and `interval_parameters`, the
   parameters of the distribution of a reported interval of `Uncertain.interval`. They drop
   the draws which are `NaN`, and raise the exception of the python where it raises one
-  (an `OverflowError`, a `ZeroDivisionError` or an `IndexError` besides a `ValueError`).
+  (an `OverflowError`, a `ZeroDivisionError` or an `IndexError` besides a `ValueError`);
 - the draws and the correlations of an uncertainty analysis, `sbmlsim.uncertainty.draws`
   and `.covariance`: `unit_points` (the points of the unit cube of the designs `sobol`,
   `lhs` and `random`), `copula` (the Gaussian copula of a correlation of the normal scores,
@@ -37,13 +41,13 @@ raises a `ValueError` with its message, and `nan` is returned where it returns `
   `is_psd` (at the tolerance `PSD_RTOL`) and `validate_covariance` (`Covariance._validate`
   with its messages). The points are the streams of sbmlsim-core (its Sobol' sequence and
   xoshiro256++), not those of scipy and numpy: one seed gives the same points on every
-  platform, and the draws match the python in their distributions.
+  platform, and the draws match the python in their distributions;
 - the probability statements, `sbmlsim.uncertainty.testing`, from whether every draw
   satisfies a hypothesis: `p_values` (the anytime-valid p-values of the sides `greater`,
   `less` and `equivalent` within a margin, `MARGIN` by default), `confidence_sequence`
   (of the Jeffreys mixture `MIXTURE`, each end by `BISECTIONS` bisections), `decide` and
   `decision` (`_decide`), `needed` (the draws an undecided statement needs, up to
-  `MAX_NEEDED`) and `family_level` (Bonferroni).
+  `MAX_NEEDED`) and `family_level` (Bonferroni);
 - the visual predictive check, `sbmlsim.fit.variability`: `group_means` (the mean or the
   geometric mean of virtual groups of subjects resampled with replacement, on the stream
   xoshiro256++ of sbmlsim-core, not numpy's) and `bands` (numpy's linear quantiles of the

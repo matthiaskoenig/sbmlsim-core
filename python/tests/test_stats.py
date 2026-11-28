@@ -1275,6 +1275,10 @@ def test_the_draws_needed_are_the_ones_of_sbmlsim() -> None:
     ]
     assert found == case["expected"]
     assert stats.needed(0.5, 0, 0.5, 0.05, 0.05) is None
+    # the python loops without an end on a negative number of draws
+    with pytest.raises(ValueError) as raised:
+        stats.needed(0.5, -1, 0.5, 0.05, 0.05)
+    assert str(raised.value) == "The number of draws must not be negative, not -1."
 
 
 @pytest.mark.parametrize(("name", "case"), of_testing("needed_error/"))
@@ -1507,4 +1511,3 @@ def test_bands_too_many_to_hold_raise_a_value_error() -> None:
     with pytest.raises(ValueError) as raised:
         stats.bands(numpy.empty((0, 2**59)), [0.05, 0.95])
     assert str(raised.value) == ARRAY_TOO_BIG
-
