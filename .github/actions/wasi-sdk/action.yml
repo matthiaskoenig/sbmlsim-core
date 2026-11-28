@@ -1,0 +1,76 @@
+# The C toolchain of engine.wasm and mathlib.wasm (wasi-sdk, WASI_SDK_PATH) and, on request,
+# wasmtime, the runner of the tests for wasm32-wasip1 (on PATH and CARGO_TARGET_WASM32_WASIP1_RUNNER),
+# for linux x86_64. Both are pinned here by version and sha256, the one place of the pins, and are
+# kept in the cache under a key of their sha256: a run of develop saves them, every other run
+# restores them, so a pull request does not add copies of its own to the cache of the repository.
+name: wasi-sdk
+description: Install the pinned wasi-sdk and, optionally, wasmtime from the cache or the releases
+inputs:
+  wasmtime:
+    description: Install wasmtime as well
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - name: The pins
+      shell: bash
+      run: |
+        {
+          echo "WASI_SDK_VERSION=34.0"
+          echo "WASI_SDK_SHA256=b761e3a0721dbae9c09a0059e5fdb2bf917d1b4a8a7b430fb3b5aafb0984b2c4"
+          echo "WASMTIME_VERSION=50.0.1"
+          echo "WASMTIME_SHA256=685466455dd42a14774a86c36c8f2e45cbb9bd6d92a850139315df60a75498a5"
+        } >> "$GITHUB_ENV"
+    - name: Restore wasi-sdk
+      id: wasi-sdk
+      uses: actions/cache/restore@v6
+      with:
+        path: ~/tools/wasi-sdk
+        key: wasi-sdk-${{ runner.os }}-${{ runner.arch }}-${{ env.WASI_SDK_SHA256 }}
+    - name: Download wasi-sdk
+      if: steps.wasi-sdk.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        mkdir -p "$HOME/tools" && cd "$HOME/tools"
+        sdk="wasi-sdk-${WASI_SDK_VERSION}-x86_64-linux"
+        curl -sSLO --retry 3 "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-${WASI_SDK_VERSION%%.*}/${sdk}.tar.gz"
+        echo "${WASI_SDK_SHA256}  ${sdk}.tar.gz" | sha256sum -c -
+        tar xzf "${sdk}.tar.gz" && rm "${sdk}.tar.gz"
+        mv "${sdk}" wasi-sdk
+    - name: Save wasi-sdk
+      if: steps.wasi-sdk.outputs.cache-hit != 'true' && github.ref == 'refs/heads/develop'
+      uses: actions/cache/save@v6
+      with:
+        path: ~/tools/wasi-sdk
+        key: ${{ steps.wasi-sdk.outputs.cache-primary-key }}
+    - name: Restore wasmtime
+      id: wasmtime
+      if: inputs.wasmtime == 'true'
+      uses: actions/cache/restore@v6
+      with:
+        path: ~/tools/wasmtime
+        key: wasmtime-${{ runner.os }}-${{ runner.arch }}-${{ env.WASMTIME_SHA256 }}
+    - name: Download wasmtime
+      if: inputs.wasmtime == 'true' && steps.wasmtime.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        mkdir -p "$HOME/tools" && cd "$HOME/tools"
+        wasmtime="wasmtime-v${WASMTIME_VERSION}-x86_64-linux"
+        curl -sSLO --retry 3 "https://github.com/bytecodealliance/wasmtime/releases/download/v${WASMTIME_VERSION}/${wasmtime}.tar.xz"
+        echo "${WASMTIME_SHA256}  ${wasmtime}.tar.xz" | sha256sum -c -
+        tar xJf "${wasmtime}.tar.xz" && rm "${wasmtime}.tar.xz"
+        mv "${wasmtime}" wasmtime
+    - name: Save wasmtime
+      if: inputs.wasmtime == 'true' && steps.wasmtime.outputs.cache-hit != 'true' && github.ref == 'refs/heads/develop'
+      uses: actions/cache/save@v6
+      with:
+        path: ~/tools/wasmtime
+        key: ${{ steps.wasmtime.outputs.cache-primary-key }}
+    - name: The environment
+      shell: bash
+      run: |
+        echo "WASI_SDK_PATH=$HOME/tools/wasi-sdk" >> "$GITHUB_ENV"
+        if [ "${{ inputs.wasmtime }}" = true ]; then
+          echo "$HOME/tools/wasmtime" >> "$GITHUB_PATH"
+          echo "CARGO_TARGET_WASM32_WASIP1_RUNNER=wasmtime" >> "$GITHUB_ENV"
+        fi

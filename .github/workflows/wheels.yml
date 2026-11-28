@@ -3,10 +3,12 @@
 # `runtime`, which `publish` also gives the npm package), and every wheel embeds it through
 # SBMLSIM_CORE_WASM_DIR, so the extension of every platform runs the bits of the JavaScript host.
 # The linux wheels are linked with zig against glibc 2.28 (manylinux_2_28). Every wheel is
-# installed in a fresh environment on python 3.12 to 3.15, imported from outside the checkout,
+# installed in a fresh environment on python 3.14 and 3.15, imported from outside the checkout,
 # and the tests of python/tests and the type check of python/typecheck run against it. Called by
-# `ci` (pull requests and develop) and by `publish` (a tag), which publishes the artifacts
-# `wheel-*`.
+# `ci`: a push to develop builds and tests all five wheels, and `publish` publishes the artifacts
+# `wheel-*` and `runtime` of that run for a tag on its commit; a pull request builds the wheels
+# without the one of macos-x86_64, whose runners are the scarcest (macOS runners are shared by
+# every repository of the account), so that wheel is first built on develop.
 name: wheels
 
 on:
@@ -16,90 +18,97 @@ permissions:
   contents: read
 
 env:
-  WASI_SDK_VERSION: "34.0"
-  WASI_SDK_SHA256: b761e3a0721dbae9c09a0059e5fdb2bf917d1b4a8a7b430fb3b5aafb0984b2c4
   MATURIN: "maturin[zig]==1.16.0"
 
 jobs:
+  platforms:
+    # the matrix of the job `wheel`: every platform, but macos-x86_64 only outside pull requests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      include: ${{ steps.platforms.outputs.include }}
+    steps:
+      - id: platforms
+        env:
+          PULL_REQUEST: ${{ github.event_name == 'pull_request' }}
+        run: |
+          all='[
+            {"name": "linux-x86_64", "os": "ubuntu-latest", "args": "--zig --compatibility manylinux_2_28"},
+            {"name": "linux-aarch64", "os": "ubuntu-24.04-arm", "args": "--zig --compatibility manylinux_2_28"},
+            {"name": "macos-arm64", "os": "macos-latest", "args": ""},
+            {"name": "macos-x86_64", "os": "macos-15-intel", "args": ""},
+            {"name": "windows-x86_64", "os": "windows-latest", "args": ""}
+          ]'
+          if [ "$PULL_REQUEST" = true ]; then
+            all="$(jq -c 'map(select(.name != "macos-x86_64"))' <<< "$all")"
+          fi
+          echo "include=$(jq -c . <<< "$all")" >> "$GITHUB_OUTPUT"
+
   runtime:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: true
           persist-credentials: false
       - name: Install the toolchain of rust-toolchain.toml
         run: rustup show active-toolchain || rustup toolchain install
-      - name: Install wasi-sdk
-        run: |
-          mkdir -p "$HOME/tools" && cd "$HOME/tools"
-          sdk="wasi-sdk-${WASI_SDK_VERSION}-x86_64-linux"
-          curl -sSLO "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-${WASI_SDK_VERSION%%.*}/${sdk}.tar.gz"
-          echo "${WASI_SDK_SHA256}  ${sdk}.tar.gz" | sha256sum -c -
-          tar xzf "${sdk}.tar.gz"
-          echo "WASI_SDK_PATH=$HOME/tools/${sdk}" >> "$GITHUB_ENV"
+      - uses: ./.github/actions/wasi-sdk
+      # the cache of the release build of the command line, which the job same_bits_as_wasmtime
+      # of `ci` saves
       - uses: Swatinem/rust-cache@v2
         with:
-          key: runtime
+          shared-key: release-cli
+          save-if: false
       - name: Build the command line, the engine and its math library
         run: |
           cargo build --release --locked -p sbmlsim-cli
           target/release/sbmlsim-core runtime -o runtime
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: runtime
           path: runtime/
           if-no-files-found: error
+          retention-days: ${{ github.event_name == 'pull_request' && 7 || 90 }}
       # the command line compiles the fixtures of the tests of the JavaScript host
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: cli
           path: target/release/sbmlsim-core
           if-no-files-found: error
+          retention-days: ${{ github.event_name == 'pull_request' && 7 || 90 }}
 
   wheel:
-    needs: runtime
+    needs: [platforms, runtime]
     name: wheel (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - name: linux-x86_64
-            os: ubuntu-latest
-            args: --zig --compatibility manylinux_2_28
-          - name: linux-aarch64
-            os: ubuntu-24.04-arm
-            args: --zig --compatibility manylinux_2_28
-          - name: macos-arm64
-            os: macos-latest
-            args: ""
-          - name: macos-x86_64
-            os: macos-15-intel
-            args: ""
-          - name: windows-x86_64
-            os: windows-latest
-            args: ""
+        include: ${{ fromJSON(needs.platforms.outputs.include) }}
     defaults:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: true
           persist-credentials: false
       - name: Install the toolchain of rust-toolchain.toml
         run: rustup show active-toolchain || rustup toolchain install
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: runtime
           path: runtime
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v10.4.0
+        with:
+          save-cache: ${{ github.ref == 'refs/heads/develop' }}
       - uses: Swatinem/rust-cache@v2
         with:
           key: wheel-${{ matrix.name }}
+          save-if: ${{ github.ref == 'refs/heads/develop' }}
       - name: The clang of LLVM, which compiles the C solvers for the target of MSVC
         if: runner.os == 'Windows'
         run: |
@@ -114,12 +123,13 @@ jobs:
           ls dist
           test "$(ls dist/*.whl | wc -l)" -eq 1
           test -n "$(ls dist/sbmlsim_core-*-cp312-abi3-*.whl)"
-      - name: The tests and the type check against the installed wheel, on python 3.12 to 3.15
-        # the wheel is cp312-abi3, so one build has to load on every later python
+      - name: The tests and the type check against the installed wheel, on python 3.14 and 3.15
+        # the wheel is cp312-abi3, one build for every later python; the tests hold it on the
+        # current python and the next one
         run: |
           if [ "$RUNNER_OS" = Windows ]; then bin=Scripts; else bin=bin; fi
           mkdir "$RUNNER_TEMP/typecheck" && cp python/typecheck/usage.py "$RUNNER_TEMP/typecheck/"
-          for python in 3.12 3.13 3.14 3.15; do
+          for python in 3.14 3.15; do
             venv="$RUNNER_TEMP/venv-$python"
             uv venv --python "$python" "$venv"
             # the pins of the dev group, so the environments of ci cannot drift apart
@@ -130,8 +140,10 @@ jobs:
             # ty would resolve instead of the installed wheel
             (cd "$RUNNER_TEMP/typecheck" && "$venv/$bin/ty" check --error-on-warning --python "$venv" usage.py)
           done
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: wheel-${{ matrix.name }}
           path: dist/*.whl
           if-no-files-found: error
+          # `publish` takes the wheels of the run of develop, a tag may follow its merge by weeks
+          retention-days: ${{ github.event_name == 'pull_request' && 7 || 90 }}

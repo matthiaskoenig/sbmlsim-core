@@ -28,7 +28,9 @@ jobs:
           persist-credentials: false
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v6
-      - uses: astral-sh/setup-uv@v10.2.0
+      - uses: astral-sh/setup-uv@v10.4.0
+        with:
+          save-cache: ${{ github.ref == 'refs/heads/develop' }}
       - name: Build the documentation
         # the pages are markdown of docs/ and need nothing of the build of the crates
         run: uvx --from zensical==0.1.0 zensical build --clean

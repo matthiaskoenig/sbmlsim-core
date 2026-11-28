@@ -4,17 +4,26 @@
 # and then the release of this repository, whose body is `release-notes/X.Y.Z.md`. The three
 # belong together: a tag which publishes to a registry without a release of its notes, or a
 # release of notes for a version a registry does not carry, is a release which is only half made.
-# The engine and its math library are built once from the tagged sources (`wheels.yml`, job
-# `runtime`): the npm package carries them in `js/runtime`, and every wheel embeds the same bytes.
-# Nothing is published unless the tests of the JavaScript host and of every wheel passed, so
-# both registries get a release or neither. A version a registry has already (the first npm
-# release was published by hand to create the package) is not published there again.
+# Nothing is built or tested again: the push of the tagged commit to develop ran `ci` on exactly
+# this tree, which built the runtime (engine.wasm and its math library) once and every wheel with
+# it and tested them. The job `tested` waits for that run and fails unless it succeeded, and the
+# release takes its artifacts: the npm package carries the runtime in `js/runtime`, PyPI gets the
+# five wheels, which embed the same bytes. So both registries get a release or neither, and the
+# tag can be pushed right after the merge of the release. A version a registry has already (the
+# first npm release was published by hand to create the package) is not published there again.
+# `workflow_dispatch` with a commit of develop is the dry run of a release: every job up to the
+# publication runs against the run of develop of that commit, nothing is published.
 name: publish
 
 on:
   push:
     tags:
       - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: The commit of develop whose release is tried, nothing is published
+        required: true
 
 permissions:
   contents: read
@@ -22,44 +31,144 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      # the released commit: the tag, or the commit of the dry run
+      SHA: ${{ inputs.sha || github.sha }}
+    outputs:
+      sha: ${{ steps.version.outputs.sha }}
+      version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
+          ref: ${{ env.SHA }}
+          fetch-depth: 0
           persist-credentials: false
-      - name: The version of the tag is the version of every package
+      - name: The commit is on develop
         run: |
-          version="${GITHUB_REF_NAME#v}"
+          if ! git merge-base --is-ancestor "$(git rev-parse HEAD)" origin/develop; then
+            echo "::error::$SHA is not on develop, a release is tagged on develop"
+            exit 1
+          fi
+      - name: The version of the tag is the version of every package
+        id: version
+        run: |
           js="$(node -p "require('./js/package.json').version")"
           cargo="$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"/\1/p' Cargo.toml)"
+          if [ "$GITHUB_EVENT_NAME" = push ]; then version="${GITHUB_REF_NAME#v}"; else version="$cargo"; fi
           for found in "$js" "$cargo"; do
             if [ "$found" != "$version" ]; then
-              echo "the tag ${GITHUB_REF_NAME} is not the version $found of js/package.json or Cargo.toml"
+              echo "the tag v${version} is not the version $found of js/package.json or Cargo.toml"
               exit 1
             fi
           done
           test -f "release-notes/${version}.md" || { echo "release-notes/${version}.md is missing"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  tested:
+    # the run of `ci` of the push of the commit to develop, which built and tested the runtime
+    # and every wheel; its artifacts are what this release publishes
+    name: tested on develop
+    needs: check
+    runs-on: ubuntu-latest
+    # the run of develop may still be waiting for a macOS runner when the tag is pushed
+    timeout-minutes: 120
+    permissions:
+      actions: read # the runs of ci
+    outputs:
+      run-id: ${{ steps.run.outputs.run-id }}
+    steps:
+      - name: Wait for the run of the commit on develop
+        id: run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ needs.check.outputs.sha }}
+        run: |
+          api="repos/$GITHUB_REPOSITORY/actions"
+          # the run starts with the merge, a tag pushed right after it may be first
+          run_id=""
+          for attempt in $(seq 1 20); do
+            run_id=$(gh api "$api/workflows/ci.yml/runs?branch=develop&event=push&head_sha=$SHA" \
+              --jq '.workflow_runs[0].id // empty' || true)
+            [ -n "$run_id" ] && break
+            sleep 15
+          done
+          if [ -z "$run_id" ]; then
+            echo "::error::no run of ci of the push of $SHA to develop"
+            exit 1
+          fi
+          url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run_id"
+          echo "waiting for $url"
+          # a failed request answers nothing, which is not `completed` either
+          until [ "$(gh api "$api/runs/$run_id" --jq .status || true)" = "completed" ]; do
+            sleep 30
+          done
+          conclusion=$(gh api "$api/runs/$run_id" --jq .conclusion)
+          echo "$url: $conclusion"
+          if [ "$conclusion" != "success" ]; then
+            echo "::error::the run of ci of $SHA on develop did not pass ($url); once it does, re-run the failed jobs of this release"
+            exit 1
+          fi
+          echo "run-id=$run_id" >> "$GITHUB_OUTPUT"
 
   wheels:
-    needs: check
-    uses: ./.github/workflows/wheels.yml
+    # the five wheels of the run of develop, one per platform, of the version of the tag
+    needs: [check, tested]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read # the artifacts of the run of ci
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: wheel-*
+          path: dist
+          merge-multiple: true
+          run-id: ${{ needs.tested.outputs.run-id }}
+          github-token: ${{ github.token }}
+      - name: One wheel per platform, of the version of the tag
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          ls dist
+          test "$(ls dist/*.whl | wc -l)" -eq 5
+          for platform in manylinux_2_28_x86_64 manylinux_2_28_aarch64 'macosx_*_arm64' 'macosx_*_x86_64' win_amd64; do
+            # shellcheck disable=SC2086 # the glob of the platform
+            ls dist/sbmlsim_core-"${VERSION}"-cp312-abi3-$platform.whl
+          done
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/*.whl
+          if-no-files-found: error
 
   js:
-    needs: wheels
+    # the tests of the JavaScript host with the runtime the npm package carries
+    needs: [check, tested]
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read # the artifacts of the run of ci
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
+          ref: ${{ needs.check.outputs.sha }}
           persist-credentials: false
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: runtime
           path: js/runtime
-      - uses: actions/download-artifact@v4
+          run-id: ${{ needs.tested.outputs.run-id }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@v8
         with:
           name: cli
           path: cli
-      - uses: actions/setup-node@v4
+          run-id: ${{ needs.tested.outputs.run-id }}
+          github-token: ${{ github.token }}
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
       - name: The tests of the JavaScript host
@@ -74,21 +183,25 @@ jobs:
         run: npm pack --dry-run
 
   npm:
-    needs: [wheels, js]
+    needs: [tested, wheels, js]
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
+      actions: read # the artifacts of the run of ci
       id-token: write # trusted publishing and provenance of npm
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: runtime
           path: js/runtime
-      - uses: actions/setup-node@v4
+          run-id: ${{ needs.tested.outputs.run-id }}
+          github-token: ${{ github.token }}
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
           registry-url: https://registry.npmjs.org
@@ -111,6 +224,7 @@ jobs:
 
   pypi:
     needs: [wheels, js]
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # the environment of the trusted publisher of the project sbmlsim-core on PyPI
@@ -120,11 +234,11 @@ jobs:
     permissions:
       id-token: write # trusted publishing and the attestations of PyPI
     steps:
-      - uses: actions/download-artifact@v4
+      # the wheels of the run of develop, which the job wheels checked
+      - uses: actions/download-artifact@v8
         with:
-          pattern: wheel-*
+          name: dist
           path: dist
-          merge-multiple: true
       - name: One wheel per platform
         run: |
           ls dist
@@ -137,12 +251,13 @@ jobs:
     # only once both registries carry the version, so the release of this repository never
     # announces a version which a registry does not have
     needs: [npm, pypi]
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write # the release of the tag
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: The release of the tag, whose body is the release notes of its version
