@@ -20,6 +20,7 @@ members = [
     "crates/chaos",
     "crates/thin",
     "crates/sensitivity",
+    "crates/stats",
     "crates/cli",
     "crates/plot",
     "crates/plot-wasm",

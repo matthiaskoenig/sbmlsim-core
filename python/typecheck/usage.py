@@ -38,6 +38,7 @@ from sbmlsim_core import (
     SimulationOutput,
     UnsupportedError,
     sensitivity,
+    stats,
 )
 from sbmlsim_core.chart import (
     LEGEND_LOCS,
@@ -220,6 +221,114 @@ def a_global_sensitivity_analysis() -> None:
     sensitivity.saltelli(3, 64)  # ty: ignore[missing-argument]
     sensitivity.sobol_indices(u, 3, seed=1.5)  # ty: ignore[invalid-argument-type]
     print(base, found["S1"], effects["mu_star"])
+
+
+def the_statistics(y: list[float], f: numpy.typing.NDArray[numpy.float64]) -> None:
+    """The kernels of numpy and scipy of the analyses of sbmlsim, every function of `stats`."""
+    Float = numpy.typing.NDArray[numpy.float64]
+    # the metrics of the residuals and the criteria of the data points
+    sse: float = stats.sse(f)
+    mse: float = stats.mse(y)
+    rmse: float = stats.rmse_from_mse(mse)
+    aic: float = stats.aic_from_mse(mse, 10, 2)
+    bic: float = stats.bic_from_mse(numpy.float64(mse), n=10, k=2)
+    r2: float = stats.r_squared(y, f)
+    counts: tuple[int, int] = stats.fold_counts(y, f, fold=2.0)
+    fold: Float = stats.fold_accepted(y, f, 3)
+    within_sd: Float = stats.sd_accepted(y, f, f, k=2.0)
+    gmfe: float = stats.gmfe(y, f)
+    afe: float = stats.afe(y, f)
+    nrmse: float = stats.nrmse(f)
+    low, high = stats.guest_limits(f)
+    guest: float = stats.within_guest(f, f)
+    agreement: tuple[float, float, float, float] | None = stats.subset_agreement(y, f)
+    points: int = stats.MIN_POINTS_SUBSET_AGREEMENT
+    stats.sse()  # ty: ignore[missing-argument]
+    stats.aic_from_mse(mse, 10.5, 2)  # ty: ignore[invalid-argument-type]
+    # the Fisher information of a fit and its posterior
+    information: Float = stats.gram(numpy.ones((10, 2)))
+    fisher: dict[str, Any] = stats.fisher_statistics(
+        information,
+        1.5,
+        10,
+        likelihood=False,
+        rank_tolerance=stats.DEFAULT_RANK_TOLERANCE,
+    )
+    lower, upper = stats.fisher_intervals(f, f, ["LOG10", "lin"], level=0.9, dof=8.0)
+    stats.fisher_intervals(f, f, ["LINEAR"], dof=None)
+    relative: Float = stats.fisher_relative_errors(f, f, ["log"])
+    covariance: Float = stats.posterior_laplace(
+        information, pids=["k1", "k2"], opid="fit"
+    )
+    rank: Float = stats.rank_correlation(covariance)
+    normal: Float = stats.normal_correlation(covariance)
+    log_sd: float = stats.log_sd("LOG10", 0.2)
+    cv: float = stats.lognormal_cv(0.3)
+    stats.fisher_statistics(information, 1.5)  # ty: ignore[missing-argument]
+    stats.posterior_laplace(information, pids=[1, 2])  # ty: ignore[invalid-argument-type]
+    # the statistics of the draws of an uncertainty analysis
+    mean_se: tuple[float, float, int] = stats.mean_se(f)
+    sd_se: tuple[float, float, int] = stats.sd_se(y)
+    median: float = stats.quantile(f, 0.5)
+    quantiles: Float = stats.quantiles(f, [0.05, 0.95])
+    ci: tuple[float, float, float, int] = stats.quantile_ci(f, 0.5, level=0.95)
+    index: float = stats.first_order_given_data(f, f, n_bins=None)
+    precise: tuple[bool, float] = stats.precise(f, 0.05)
+    median_cv: tuple[float, float] = stats.interval_parameters(
+        1.0, 2.0, 0.9, lognormal=True
+    )
+    stats.interval_parameters(1.0, 2.0)  # ty: ignore[missing-argument]
+    stats.quantile(f, "0.5")  # ty: ignore[invalid-argument-type]
+    # the draws and the correlations of an uncertainty analysis
+    u: Float = stats.unit_points(3, 64, design="sobol", seed=1, start=0)
+    stats.unit_points(3, 64, design="lhs", seed=2)
+    correlated: Float = stats.copula(u, numpy.eye(3))
+    rho: float = stats.normal_score_rho(
+        0.1, ("normal", 1.0, 0.2), ("log-normal", 2.0, 0.5), scale="log"
+    )
+    nearest: Float = stats.nearest_correlation(
+        numpy.eye(3), max_iterations=50, tol=1e-12
+    )
+    psd: bool = stats.is_psd(nearest, rtol=stats.PSD_RTOL)
+    stats.validate_covariance(
+        ["k1", "k2"], numpy.eye(2), kind="correlation", units=None
+    )
+    stats.validate_covariance(["k1", "k2"], numpy.eye(2), units=["1/hr", None])
+    eps: float = stats.EPS
+    stats.unit_points(3, 64)  # ty: ignore[missing-argument]
+    stats.normal_score_rho(0.1, ("normal", 1.0), ("normal", 1.0, 0.2))  # ty: ignore[invalid-argument-type]
+    # the probability statements about predictions
+    satisfied = f > 1.0
+    greater: Float = stats.p_values(satisfied, 0.9, "greater", margin=stats.MARGIN)
+    less: Float = stats.p_values(satisfied, 0.9, "less")
+    equivalent: Float = stats.p_values([True, False], 0.5, "equivalent", 0.1)
+    sequence: tuple[float, float] = stats.confidence_sequence(satisfied, level=0.95)
+    first: int | None = stats.decide(greater, 0.05)
+    decision, draws = stats.decision(greater, less, equivalent, 0.05)
+    shown: str = decision
+    needed: int | None = stats.needed(0.95, 100, 0.9, 0.05, 0.05)
+    family: float = stats.family_level(0.95, 4)
+    most: int = stats.MAX_NEEDED
+    bisections: int = stats.BISECTIONS
+    mixture: tuple[float, float] = stats.MIXTURE
+    stats.p_values(satisfied, 0.9, "two-sided")  # ty: ignore[invalid-argument-type]
+    stats.needed(0.95, 100.0, 0.9, 0.05, 0.05)  # ty: ignore[invalid-argument-type]
+    # the visual predictive check of a variability
+    groups: Float = stats.group_means(
+        numpy.ones((20, 3)), 4, 100, geometric=True, seed=7
+    )
+    bands: Float = stats.bands(groups, [0.05, 0.5, 0.95])
+    stats.group_means(numpy.ones((20, 3)), 4, 100)  # ty: ignore[missing-argument]
+    stats.group_means(numpy.ones((20, 3)), 4, 100, seed=1.5)  # ty: ignore[invalid-argument-type]
+    print(sse, rmse, aic, bic, r2, counts, fold, within_sd, gmfe, afe, nrmse, low, high)
+    print(
+        guest, agreement, points, fisher["rank"], lower, upper, relative, rank, normal
+    )
+    print(log_sd, cv, mean_se, sd_se, median, quantiles, ci, index, precise, median_cv)
+    print(
+        correlated, rho, psd, eps, sequence, first, draws, shown, needed, family, most
+    )
+    print(bisections, mixture, bands)
 
 
 def the_figures(values: list[float]) -> None:

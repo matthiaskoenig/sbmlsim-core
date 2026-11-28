@@ -1,0 +1,22 @@
+[package]
+name = "sbmlsim-stats"
+version.workspace = true
+edition.workspace = true
+# not on crates.io yet, as the rest of the workspace
+publish = false
+license.workspace = true
+authors.workspace = true
+description = "The statistics of the analyses of sbmlsim-core: special functions, linear algebra and the kernels of the evaluation of a fit and of the uncertainty"
+
+[dependencies]
+# every transcendental function (the logarithm of the gamma function, erfc, exp, log, log1p), the
+# same bits on every target, so one input gives one answer natively and in wasm
+libm = "0.2"
+# the quantile of the standard normal distribution (AS 241), the Sobol' sequence of the designs
+# (`sobol_sequence`) and the stream xoshiro256++ of the random draws (`random::Stream`)
+sbmlsim-sensitivity = { path = "../sensitivity" }
+thiserror.workspace = true
+
+[dev-dependencies]
+# the fixtures of numpy and scipy in `oracles/`, every number read back as the double it was
+serde_json.workspace = true

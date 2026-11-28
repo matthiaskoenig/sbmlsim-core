@@ -2831,6 +2831,7 @@ dependencies = [
  "sbmlsim-petab",
  "sbmlsim-plot",
  "sbmlsim-sensitivity",
+ "sbmlsim-stats",
  "sbmlsim-thin",
  "serde",
  "serde_json",
@@ -2860,6 +2861,16 @@ name = "sbmlsim-sensitivity"
 version = "0.41.0"
 dependencies = [
  "libm",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "sbmlsim-stats"
+version = "0.41.0"
+dependencies = [
+ "libm",
+ "sbmlsim-sensitivity",
+ "serde_json",
  "thiserror 2.0.21",
 ]
 
