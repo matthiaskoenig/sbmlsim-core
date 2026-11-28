@@ -2896,11 +2896,14 @@ var sbmlsimCore = (() => {
       if (choice === void 0) {
         throw new TypeError(`the Jacobian ${jacobian} is none of ${Object.keys(JACOBIAN)}`);
       }
+      if (typeof optimize !== "boolean") {
+        throw new TypeError("optimize must be a boolean");
+      }
       if (typeof parameterJacobian !== "boolean") {
         throw new TypeError("parameterJacobian must be a boolean");
       }
       const options = {
-        optimize: Boolean(optimize),
+        optimize,
         jacobian: choice,
         parameter_jacobian: parameterJacobian,
         driven: drivenIds(driven)
