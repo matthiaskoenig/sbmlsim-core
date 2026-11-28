@@ -20,7 +20,7 @@
 //   optional or keyword-only argument of python is a key of an object of options after them, in
 //   camelCase (`fold`, `level`, `rankTolerance`, `seed`, ...). An option `undefined` or `null`
 //   takes the default of python.
-// - An array is any array of numbers (a typed array included), nested arrays are the dimensions
+// - An array is any array of numbers (a typed array of numbers included, not of BigInts), nested arrays are the dimensions
 //   of numpy (a matrix is an array of its rows) and a number alone is an array of no dimension;
 //   it is read in the order numpy ravels it. A matrix of no rows has no nested form: `[]` is a
 //   vector of no values.
@@ -30,9 +30,11 @@
 //   class of the exception of python (`ValueError`, `OverflowError`, `ZeroDivisionError` or
 //   `IndexError`); an argument of a type python refuses throws a `TypeError`.
 //
-// The doubles cross the boundary as their bits, so `NaN`, the infinities and `-0` arrive as they
+// The doubles cross the boundary as their bits, so the infinities, `-0` and `NaN` arrive as they
 // are given, and the results of a page are the ones of python and of the crate natively, bit for
-// bit.
+// bit (a `NaN` is a `NaN`: JavaScript keeps no payload of it). Where python writes a number into
+// a message as it was given (`'1'` of the int 1), JavaScript cannot tell 1 from 1.0 and the
+// message has the double (`'1.0'`); and `null` takes the default where python refuses `None`.
 
 /** The exports of `compiler.wasm` the statistics need, the feature `stats` of `sbmlsim-wasm`. */
 const STATS_EXPORTS = ["allocate", "deallocate", "memory", "stats_call"];
@@ -115,10 +117,12 @@ class Request {
     return new TypeError(`${this.name}(): the nested arrays of ${what} are not of one shape`);
   }
 
-  /** A double alone. */
+  /** A double alone; a boolean is 1 or 0, as `float` of python converts it. */
   number(value, what) {
-    if (typeof value !== "number") throw new TypeError(`${this.name}(): ${what} is a number`);
-    return this.push(Float64Array.of(value), []);
+    if (typeof value !== "number" && typeof value !== "boolean") {
+      throw new TypeError(`${this.name}(): ${what} is a number`);
+    }
+    return this.push(Float64Array.of(Number(value)), []);
   }
 
   /** Adds values of a shape: their `{at, shape}`. */
@@ -198,10 +202,15 @@ const KINDS = {
   count: (request, value, what) => String(Array.from(iterable(request, value, what)).length),
 };
 
-/** The value if it is iterable, else a `TypeError`. */
+/** The value if it is iterable and no string (python refuses a `str` for a list), else a `TypeError`. */
 function iterable(request, value, what) {
-  if (value === null || value === undefined || typeof value[Symbol.iterator] !== "function") {
-    throw new TypeError(`${request.name}(): ${what} is not iterable`);
+  if (
+    value === null ||
+    value === undefined ||
+    typeof value === "string" ||
+    typeof value[Symbol.iterator] !== "function"
+  ) {
+    throw new TypeError(`${request.name}(): ${what} is an array, not ${typeof value === "string" ? "a string" : String(value)}`);
   }
   return value;
 }
@@ -287,10 +296,17 @@ class Interface {
     this.exports = exports;
   }
 
+  /** A new buffer of the module of `length` bytes; an `Error` when the module has no memory left. */
+  allocate(length) {
+    const pointer = this.exports.allocate(length);
+    if (pointer === 0) throw new Error(`compiler.wasm could not allocate ${length} bytes`);
+    return pointer;
+  }
+
   /** Copies bytes into a new buffer of the module: `[pointer, length]`, `[0, 0]` for none. */
   put(bytes) {
     if (bytes.length === 0) return [0, 0];
-    const pointer = this.exports.allocate(bytes.length);
+    const pointer = this.allocate(bytes.length);
     new Uint8Array(this.exports.memory.buffer, pointer, bytes.length).set(bytes);
     return [pointer, bytes.length];
   }
@@ -305,25 +321,30 @@ class Interface {
 
   /** Runs `stats_call` of a request: the decoded answer, or the error thrown. */
   call(request, json) {
-    const { allocate, deallocate } = this.exports;
-    const text = this.put(new TextEncoder().encode(JSON.stringify(json)));
-    const values = this.put(request.bytes());
-    const out = allocate(16);
+    const text = new TextEncoder().encode(JSON.stringify(json));
+    const bytes = request.bytes();
+    // every buffer of the call, freed whatever happens
+    const buffers = [];
     let status;
     let answer;
     let doubles;
     try {
-      status = this.exports.stats_call(...text, ...values, out);
-      const [answerPointer, answerLength, valuesPointer, valuesLength] = new Uint32Array(
-        this.exports.memory.buffer,
-        out,
-        4,
+      const input = this.put(text);
+      buffers.push(input);
+      const values = this.put(bytes);
+      buffers.push(values);
+      const out = this.allocate(16);
+      buffers.push([out, 16]);
+      status = this.exports.stats_call(...input, ...values, out);
+      // the four words of the answer, little-endian as every word of WebAssembly
+      const view = new DataView(this.exports.memory.buffer, out, 16);
+      const [answerPointer, answerLength, valuesPointer, valuesLength] = [0, 4, 8, 12].map((at) =>
+        view.getUint32(at, true),
       );
       answer = this.take(answerPointer, answerLength);
       doubles = this.take(valuesPointer, valuesLength);
     } finally {
-      deallocate(out, 16);
-      for (const [pointer, length] of [text, values]) if (pointer !== 0) deallocate(pointer, length);
+      for (const [pointer, length] of buffers) if (pointer !== 0) this.exports.deallocate(pointer, length);
     }
     const parsed = JSON.parse(new TextDecoder().decode(answer));
     if (status !== 1) {
@@ -422,6 +443,8 @@ export function createStats({ compiler } = {}) {
   const api = new Interface(compiler);
   const stats = {};
   for (const [name, spec] of Object.entries(FUNCTIONS)) stats[camel(name)] = api.function(name, spec);
-  Object.assign(stats, api.call(new Request("constants"), { function: "constants" }));
+  const constants = api.call(new Request("constants"), { function: "constants" });
+  // `MIXTURE` is a tuple of python, which cannot change
+  Object.assign(stats, constants, { MIXTURE: Object.freeze(constants.MIXTURE) });
   return Object.freeze(stats);
 }

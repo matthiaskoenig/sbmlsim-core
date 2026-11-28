@@ -97,8 +97,10 @@ function run(stats, entry) {
 
 test("every function of python is a function of the statistics", async () => {
   const stats = await statsOf();
-  const functions = new Set(FIXTURE.calls.map((entry) => camel(entry.function)));
+  // the callables of `sbmlsim_core.stats.__all__`, each called by the fixture
+  const functions = new Set(FIXTURE.functions.map(camel));
   assert.equal(functions.size, 46);
+  assert.deepEqual(new Set(FIXTURE.calls.map((entry) => camel(entry.function))), functions);
   for (const name of functions) assert.equal(typeof stats[name], "function", name);
   const own = Object.keys(stats).filter((key) => typeof stats[key] === "function");
   assert.deepEqual(own.sort(), [...functions].sort());
@@ -131,6 +133,8 @@ test("the constants are those of python", async () => {
       PSD_RTOL: 1e-10,
     },
   );
+  // a tuple of python, which cannot change
+  assert.ok(Object.isFrozen(stats.MIXTURE));
 });
 
 test("every call of the fixture gives the bits and the errors of python", async () => {
@@ -264,6 +268,19 @@ test("arguments and options are checked as python checks them", async () => {
   assert.throws(() => stats.unitPoints(2, 4), { name: "TypeError", message: /needs the option seed/ });
   assert.throws(() => stats.intervalParameters(1, 2), { name: "TypeError", message: /needs the option lognormal/ });
   assert.throws(() => stats.rmseFromMse("1"), { name: "TypeError", message: /mse is a number/ });
+  // a boolean is a number, as `float` of python converts it
+  assert.equal(stats.rmseFromMse(true), 1);
+  // a string is no list of names, as python refuses a `str` for a list
+  assert.throws(() => stats.fisherIntervals([1], [0.1], "LOG"), { name: "TypeError", message: /not a string/ });
+  assert.throws(() => stats.validateCovariance("ab", [[1]]), TypeError);
+  // numpy holds at most 64 dimensions
+  let deep = 1;
+  for (let k = 0; k < 65; k += 1) deep = [deep];
+  assert.throws(() => stats.sse(deep), {
+    name: "StatsError",
+    kind: "ValueError",
+    message: "maximum supported dimension for an ndarray is currently 64, found 65",
+  });
   assert.throws(() => stats.fisherStatistics([[1]], 1, 3, { likelihood: 1 }), TypeError);
   // a name python refuses is a StatsError with the message of python
   assert.throws(() => stats.unitPoints(2, 4, { design: 3, seed: 1 }), {

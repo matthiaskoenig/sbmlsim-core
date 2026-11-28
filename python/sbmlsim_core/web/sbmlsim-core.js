@@ -3635,10 +3635,12 @@ var sbmlsimCore = (() => {
     ragged(what) {
       return new TypeError(`${this.name}(): the nested arrays of ${what} are not of one shape`);
     }
-    /** A double alone. */
+    /** A double alone; a boolean is 1 or 0, as `float` of python converts it. */
     number(value, what) {
-      if (typeof value !== "number") throw new TypeError(`${this.name}(): ${what} is a number`);
-      return this.push(Float64Array.of(value), []);
+      if (typeof value !== "number" && typeof value !== "boolean") {
+        throw new TypeError(`${this.name}(): ${what} is a number`);
+      }
+      return this.push(Float64Array.of(Number(value)), []);
     }
     /** Adds values of a shape: their `{at, shape}`. */
     push(values, shape) {
@@ -3713,8 +3715,8 @@ var sbmlsimCore = (() => {
     count: (request, value, what) => String(Array.from(iterable(request, value, what)).length)
   };
   function iterable(request, value, what) {
-    if (value === null || value === void 0 || typeof value[Symbol.iterator] !== "function") {
-      throw new TypeError(`${request.name}(): ${what} is not iterable`);
+    if (value === null || value === void 0 || typeof value === "string" || typeof value[Symbol.iterator] !== "function") {
+      throw new TypeError(`${request.name}(): ${what} is an array, not ${typeof value === "string" ? "a string" : String(value)}`);
     }
     return value;
   }
@@ -3789,10 +3791,16 @@ var sbmlsimCore = (() => {
       }
       this.exports = exports;
     }
+    /** A new buffer of the module of `length` bytes; an `Error` when the module has no memory left. */
+    allocate(length) {
+      const pointer = this.exports.allocate(length);
+      if (pointer === 0) throw new Error(`compiler.wasm could not allocate ${length} bytes`);
+      return pointer;
+    }
     /** Copies bytes into a new buffer of the module: `[pointer, length]`, `[0, 0]` for none. */
     put(bytes) {
       if (bytes.length === 0) return [0, 0];
-      const pointer = this.exports.allocate(bytes.length);
+      const pointer = this.allocate(bytes.length);
       new Uint8Array(this.exports.memory.buffer, pointer, bytes.length).set(bytes);
       return [pointer, bytes.length];
     }
@@ -3805,25 +3813,28 @@ var sbmlsimCore = (() => {
     }
     /** Runs `stats_call` of a request: the decoded answer, or the error thrown. */
     call(request, json2) {
-      const { allocate, deallocate } = this.exports;
-      const text = this.put(new TextEncoder().encode(JSON.stringify(json2)));
-      const values = this.put(request.bytes());
-      const out = allocate(16);
+      const text = new TextEncoder().encode(JSON.stringify(json2));
+      const bytes = request.bytes();
+      const buffers = [];
       let status;
       let answer;
       let doubles;
       try {
-        status = this.exports.stats_call(...text, ...values, out);
-        const [answerPointer, answerLength, valuesPointer, valuesLength] = new Uint32Array(
-          this.exports.memory.buffer,
-          out,
-          4
+        const input = this.put(text);
+        buffers.push(input);
+        const values = this.put(bytes);
+        buffers.push(values);
+        const out = this.allocate(16);
+        buffers.push([out, 16]);
+        status = this.exports.stats_call(...input, ...values, out);
+        const view = new DataView(this.exports.memory.buffer, out, 16);
+        const [answerPointer, answerLength, valuesPointer, valuesLength] = [0, 4, 8, 12].map(
+          (at) => view.getUint32(at, true)
         );
         answer = this.take(answerPointer, answerLength);
         doubles = this.take(valuesPointer, valuesLength);
       } finally {
-        deallocate(out, 16);
-        for (const [pointer, length] of [text, values]) if (pointer !== 0) deallocate(pointer, length);
+        for (const [pointer, length] of buffers) if (pointer !== 0) this.exports.deallocate(pointer, length);
       }
       const parsed = JSON.parse(new TextDecoder().decode(answer));
       if (status !== 1) {
@@ -3897,7 +3908,8 @@ var sbmlsimCore = (() => {
     const api = new Interface2(compiler);
     const stats = {};
     for (const [name, spec] of Object.entries(FUNCTIONS)) stats[camel(name)] = api.function(name, spec);
-    Object.assign(stats, api.call(new Request("constants"), { function: "constants" }));
+    const constants = api.call(new Request("constants"), { function: "constants" });
+    Object.assign(stats, constants, { MIXTURE: Object.freeze(constants.MIXTURE) });
     return Object.freeze(stats);
   }
 

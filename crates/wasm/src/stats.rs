@@ -8,7 +8,7 @@
 //!
 //! - a double, alone or of an array of any shape, is `{"at": <its index in the values>,
 //!   "shape": [...]}`, a double alone of the shape `[]`, so every double crosses as its bits,
-//!   `NaN`, the infinities and `-0.0` included,
+//!   `NaN`, the infinities and `-0.0` included (of at most 64 dimensions, as numpy),
 //! - an integer is a string of its decimal digits, so a seed of 64 bits crosses exactly,
 //! - a boolean, a name (a scale, a design, a side, a family, a kind) and a text are JSON,
 //! - an argument which is absent (or `null`) takes the default of python.
@@ -31,7 +31,7 @@ use serde_json::{Map, Value, json};
 use sbmlsim_stats::correlation::{self, NEAREST_MAX_ITERATIONS, NEAREST_TOL, PSD_RTOL};
 use sbmlsim_stats::draws::{self, Design};
 use sbmlsim_stats::fisher::{self, DEFAULT_RANK_TOLERANCE};
-use sbmlsim_stats::testing::{self, MARGIN};
+use sbmlsim_stats::testing::{self, MARGIN, Side};
 use sbmlsim_stats::{Scale, StatsError, binding, metrics, posterior, uncertainty};
 
 use crate::give;
@@ -114,6 +114,9 @@ impl Integer {
     }
 }
 
+/// The most dimensions of an array of numpy.
+const MAX_DIMENSIONS: usize = 64;
+
 /// The doubles of a request.
 struct Values(Vec<f64>);
 
@@ -138,6 +141,14 @@ impl Values {
 
     /// The doubles of an array of the request and its shape.
     fn array<'a>(&'a self, doubles: &'a Doubles) -> Result<(&'a [f64], &'a [usize]), Failure> {
+        // the dimensions numpy holds, which bounds the recursion of a message of nested lists
+        if doubles.shape.len() > MAX_DIMENSIONS {
+            return Err(StatsError::value(format!(
+                "maximum supported dimension for an ndarray is currently {MAX_DIMENSIONS}, found {}",
+                doubles.shape.len()
+            ))
+            .into());
+        }
         let len = doubles
             .shape
             .iter()
@@ -219,11 +230,22 @@ fn written(value: &Value) -> String {
     }
 }
 
+/// The member of a name, `parse` of its string, or the error of the python of another value.
+fn named<T>(
+    value: &Value,
+    parse: fn(&str) -> Option<T>,
+    unknown: fn(&str) -> StatsError,
+) -> Result<T, Failure> {
+    name(value)
+        .and_then(parse)
+        .ok_or_else(|| unknown(&written(value)).into())
+}
+
 /// The scales of the parameters of their names.
 fn scales(names: &[Value]) -> Result<Vec<Scale>, Failure> {
     names
         .iter()
-        .map(|value| binding::scale(name(value), || written(value)).map_err(Failure::from))
+        .map(|value| named(value, Scale::from_name, binding::unknown_scale))
         .collect()
 }
 
@@ -744,7 +766,7 @@ fn run(
         }
         "log_sd" => {
             let a: LogSd = arguments(function, request)?;
-            let scale = binding::scale(name(&a.scale), || written(&a.scale))?;
+            let scale = named(&a.scale, Scale::from_name, binding::unknown_scale)?;
             out.number(posterior::log_sd(scale, v.number(&a.sd)?))
         }
         "lognormal_cv" => {
@@ -804,18 +826,17 @@ fn run(
         }
         "unit_points" => {
             let a: UnitPoints = arguments(function, request)?;
-            // a design which is no name is refused as the python refuses it
+            // the arguments in the order of python, which reads them (the seed refused when it
+            // is negative) before it refuses a design which is no name; `null` is the default
+            let (d, n) = (a.d.i64()?, a.n.i64()?);
+            let seed = a.seed.seed()?;
+            let start = a.start.as_ref().map_or(Ok(0), Integer::i64)?;
             let design = match &a.design {
-                Some(value) => binding::design(name(value), || written(value))?,
+                Some(value) => named(value, Design::from_name, binding::unknown_design)?,
                 None => Design::Sobol,
             };
-            let (d, n) = (a.d.i64()?, a.n.i64()?);
-            let start = a.start.as_ref().map_or(Ok(0), Integer::i64)?;
-            let points = binding::unit_points(d, n, design, a.seed.seed()?, start)?;
-            out.array(
-                points,
-                &[n.unsigned_abs() as usize, d.unsigned_abs() as usize],
-            )
+            let (points, n, d) = binding::unit_points(d, n, design, seed, start)?;
+            out.array(points, &[n, d])
         }
         "copula" => {
             let a: Copula = arguments(function, request)?;
@@ -881,7 +902,7 @@ fn run(
         }
         "p_values" => {
             let a: PValues = arguments(function, request)?;
-            let side = binding::side(name(&a.side), || written(&a.side))?;
+            let side = named(&a.side, Side::from_name, binding::unknown_side)?;
             let satisfied = v.booleans(&a.satisfied)?;
             let margin = v.number_or(a.margin.as_ref(), MARGIN)?;
             out.vector(testing::p_values(

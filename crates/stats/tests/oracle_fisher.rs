@@ -85,7 +85,7 @@ fn statistics_of(case: &Case<'_>) -> fisher::FisherStatistics {
         &case.input("information"),
         k,
         case.input_f64("cost"),
-        case.input_usize("n"),
+        case.input_usize("n") as u64,
         case.input_bool("likelihood"),
         fisher::DEFAULT_RANK_TOLERANCE,
     )
@@ -196,7 +196,7 @@ fn large_statistics(case: &Case<'_>) -> fisher::FisherStatistics {
         &information,
         k,
         case.input_f64("cost"),
-        case.input_usize("n"),
+        case.input_usize("n") as u64,
         false,
         fisher::DEFAULT_RANK_TOLERANCE,
     )

@@ -89,7 +89,7 @@ const u = stats.unitPoints(2, 1024, { design: "sobol", seed: 1 }); // 1024 rows,
 const [q, low, high, n] = stats.quantileCi(u.map(([a, b]) => a + b), 0.95);
 ```
 
-The arguments are checked by the functions both bindings share (`sbmlsim_stats::binding`), and every double crosses into the module and back as its bits, so a page gives the bits of python: `js/test/stats.test.mjs` holds `compiler.wasm` to about a thousand calls of python, bit for bit, the errors by kind and message. See [The statistics](javascript.md#the-statistics) of the JavaScript host.
+The arguments are checked by the functions both bindings share (`sbmlsim_stats::binding`), and every double crosses into the module and back as its bits (a `NaN` as a `NaN`), so a page gives the bits of python: `js/test/stats.test.mjs` holds `compiler.wasm` to about a thousand calls of python, bit for bit, the errors by kind and message. See [The statistics](javascript.md#the-statistics) of the JavaScript host.
 
 ## The random streams changed
 

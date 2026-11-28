@@ -225,7 +225,10 @@ fn c_call(request: &[u8], values: &[u8]) -> (u32, Vec<u8>, Vec<u8>) {
             pointer
         };
         let (request_pointer, values_pointer) = (put(request), put(values));
-        let out = allocate(4 * size_of::<usize>()).cast::<usize>();
+        // the words of the result, aligned as words (a buffer of `allocate` is aligned as bytes,
+        // which wasm reads alike, native code not)
+        let mut words = [0_usize; 4];
+        let out = words.as_mut_ptr();
         let status = sbmlsim_wasm::stats::stats_call(
             request_pointer,
             request.len(),
@@ -244,7 +247,6 @@ fn c_call(request: &[u8], values: &[u8]) -> (u32, Vec<u8>, Vec<u8>) {
             bytes
         };
         let (answer, doubles) = (take(0), take(2));
-        deallocate(out.cast(), 4 * size_of::<usize>());
         deallocate(request_pointer, request.len());
         deallocate(values_pointer, values.len());
         (status, answer, doubles)

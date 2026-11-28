@@ -79,48 +79,32 @@ pub fn string_repr(text: &str) -> String {
     python_str_repr(text)
 }
 
-/// The scale of a name, the error of the python naming the object by `written` (its `repr`)
-/// for another one.
-///
-/// # Errors
-///
-/// A name which is none of the scales, or no name.
-pub fn scale(name: Option<&str>, written: impl FnOnce() -> String) -> Result<Scale> {
-    name.and_then(Scale::from_name).ok_or_else(|| {
-        StatsError::value(format!(
-            "The parameter scale {} is none of 'LINEAR', 'LOG' and 'LOG10' (of PEtab 'lin', \
-             'log' and 'log10').",
-            written()
-        ))
-    })
+/// The error of the python of a scale which is none of the names, the object named by
+/// `written` (its `repr` in python).
+#[must_use]
+pub fn unknown_scale(written: &str) -> StatsError {
+    StatsError::value(format!(
+        "The parameter scale {written} is none of 'LINEAR', 'LOG' and 'LOG10' (of PEtab 'lin', \
+         'log' and 'log10')."
+    ))
 }
 
-/// The design of a name, the error of the python naming the object by `written` for another.
-///
-/// # Errors
-///
-/// A name which is none of the designs, or no name.
-pub fn design(name: Option<&str>, written: impl FnOnce() -> String) -> Result<Design> {
-    name.and_then(Design::from_name).ok_or_else(|| {
-        StatsError::value(format!(
-            "The design {} is none of 'sobol', 'lhs' and 'random'.",
-            written()
-        ))
-    })
+/// The error of the python of a design which is none of the names, the object named by
+/// `written`.
+#[must_use]
+pub fn unknown_design(written: &str) -> StatsError {
+    StatsError::value(format!(
+        "The design {written} is none of 'sobol', 'lhs' and 'random'."
+    ))
 }
 
-/// The side of a name, the error of the python naming the object by `written` for another.
-///
-/// # Errors
-///
-/// A name which is none of the sides, or no name.
-pub fn side(name: Option<&str>, written: impl FnOnce() -> String) -> Result<Side> {
-    name.and_then(Side::from_name).ok_or_else(|| {
-        StatsError::value(format!(
-            "The side {} is none of 'greater', 'less' and 'equivalent'.",
-            written()
-        ))
-    })
+/// The error of the python of a side which is none of the names, the object named by
+/// `written`.
+#[must_use]
+pub fn unknown_side(written: &str) -> StatsError {
+    StatsError::value(format!(
+        "The side {written} is none of 'greater', 'less' and 'equivalent'."
+    ))
 }
 
 /// The marginal of a covariance on the scale `linear` or `log` from `(family, mean, sd)` of
@@ -156,8 +140,8 @@ pub fn square(shape: &[usize], what: &str) -> Result<usize> {
     }
 }
 
-/// The rows and the columns of a matrix of the shape, the error `The {what} must be a matrix
-/// of the {rows} by the {columns}, ...` for another shape.
+/// The rows and the columns of a matrix of the shape, the error `The {what}, not of the shape
+/// (...).` for another shape, `what` naming the matrix and what it must be.
 fn matrix(shape: &[usize], what: &str) -> Result<(usize, usize)> {
     match *shape {
         [rows, columns] => Ok((rows, columns)),
@@ -254,7 +238,7 @@ pub fn fisher_statistics(
     rank_tolerance: f64,
 ) -> Result<(FisherStatistics, usize)> {
     let k = square(shape, "Fisher information")?;
-    let n = usize::try_from(n.max(0)).unwrap_or(usize::MAX);
+    let n = n.max(0).unsigned_abs();
     let statistics = fisher::statistics(information, k, cost, n, likelihood, rank_tolerance)?;
     Ok((statistics, k))
 }
@@ -306,7 +290,9 @@ pub fn normal_correlation(r: &[f64], shape: &[usize]) -> Result<(Vec<f64>, usize
 ///
 /// The errors of [`uncertainty::first_order_given_data`].
 pub fn first_order_given_data(x: &[f64], y: &[f64], n_bins: Option<i64>) -> Result<f64> {
-    let n_bins = n_bins.map(|bins| usize::try_from(bins).unwrap_or(0));
+    // more bins than a `usize` counts (wasm) are more bins than draws, which give the same
+    let n_bins =
+        n_bins.map(|bins| usize::try_from(bins).unwrap_or(if bins < 0 { 0 } else { usize::MAX }));
     uncertainty::first_order_given_data(x, y, n_bins)
 }
 
@@ -317,7 +303,13 @@ pub fn first_order_given_data(x: &[f64], y: &[f64], n_bins: Option<i64>) -> Resu
 /// # Errors
 ///
 /// A negative argument, and the errors of [`draws::unit_points`].
-pub fn unit_points(d: i64, n: i64, design: Design, seed: u64, start: i64) -> Result<Vec<f64>> {
+pub fn unit_points(
+    d: i64,
+    n: i64,
+    design: Design,
+    seed: u64,
+    start: i64,
+) -> Result<(Vec<f64>, usize, usize)> {
     let dimension_error = || StatsError::value("d must be a non-negative integer value");
     let shape_error = || StatsError::value("negative dimensions are not allowed");
     match design {
@@ -343,8 +335,20 @@ pub fn unit_points(d: i64, n: i64, design: Design, seed: u64, start: i64) -> Res
     if n < 0 && (design != Design::Lhs || start == 0) {
         return Err(shape_error());
     }
-    let (d, n) = (d.unsigned_abs() as usize, n.unsigned_abs() as usize);
-    draws::unit_points(d, n, design, seed, start.unsigned_abs())
+    // a size past a `usize` (of 32 bits in wasm) is past what an array holds, as numpy of 32
+    // bits refuses it
+    let (d, n) = (count(d)?, count(n)?);
+    Ok((
+        draws::unit_points(d, n, design, seed, start.unsigned_abs())?,
+        n,
+        d,
+    ))
+}
+
+/// The size of a signed integer whose sign is checked, numpy's `array is too big` past a
+/// `usize`.
+fn count(x: i64) -> Result<usize> {
+    usize::try_from(x.unsigned_abs()).map_err(|_| crate::size::too_big())
 }
 
 /// The Gaussian copula of a correlation of the shape `(d, d)` on points of the shape `(n, d)`,
@@ -412,7 +416,9 @@ pub fn nearest_correlation(
              ({columns},{rows}) "
         )
     })?;
-    let iterations = usize::try_from(max_iterations).unwrap_or(0);
+    // more iterations than a `usize` counts (wasm) are no limit, as are fewer
+    let iterations =
+        usize::try_from(max_iterations).unwrap_or(if max_iterations < 0 { 0 } else { usize::MAX });
     Ok((correlation::nearest_correlation(m, k, iterations, tol)?, k))
 }
 
@@ -471,7 +477,7 @@ pub fn group_means(
     if size != 1 && (size < 0 || groups < 0) {
         return Err(StatsError::value("negative dimensions are not allowed"));
     }
-    let (size, groups) = (size.unsigned_abs() as usize, groups.unsigned_abs() as usize);
+    let (size, groups) = (count(size)?, count(groups)?);
     let (statistics, rows) =
         variability::group_means(values, subjects, points, size, groups, geometric, seed)?;
     Ok((statistics, rows, points))
@@ -510,7 +516,7 @@ mod tests {
         assert_eq!(Design::from_name("lhs"), Some(Design::Lhs));
         assert_eq!(Side::from_name("less"), Some(Side::Less));
         assert_eq!(Decision::Undecided.name(), "undecided");
-        let error = scale(Some("x"), || "'x'".to_owned()).unwrap_err();
+        let error = unknown_scale("'x'");
         assert!(error.message.starts_with("The parameter scale 'x' is none"));
     }
 

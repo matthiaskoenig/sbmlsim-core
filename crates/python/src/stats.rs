@@ -328,10 +328,13 @@ impl<'a, 'py> FromPyObject<'a, 'py> for ScaleArg {
                 .ok()
                 .and_then(|name| name.extract().ok())
         };
-        let written = object.repr()?.to_string();
-        binding::scale(name.as_deref(), || written)
-            .map(Self)
-            .map_err(stats_error)
+        // the repr of the object only for its error
+        match name.as_deref().and_then(Scale::from_name) {
+            Some(scale) => Ok(Self(scale)),
+            None => Err(stats_error(binding::unknown_scale(
+                &object.repr()?.to_string(),
+            ))),
+        }
     }
 }
 
@@ -642,11 +645,17 @@ impl<'a, 'py> FromPyObject<'a, 'py> for DesignArg {
     type Error = PyErr;
 
     fn extract(object: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
-        let written = object.repr()?.to_string();
-        Ok(Self(binding::design(
-            object.extract::<String>().ok().as_deref(),
-            || written,
-        )))
+        match object
+            .extract::<String>()
+            .ok()
+            .as_deref()
+            .and_then(Design::from_name)
+        {
+            Some(design) => Ok(Self(Ok(design))),
+            None => Ok(Self(Err(binding::unknown_design(
+                &object.repr()?.to_string(),
+            )))),
+        }
     }
 }
 
@@ -665,10 +674,9 @@ pub(crate) fn stats_unit_points(
     start: i64,
 ) -> PyResult<Bound<'_, PyArray2<f64>>> {
     let design = design.0.map_err(stats_error)?;
-    let points = py
+    let (points, n, d) = py
         .detach(|| binding::unit_points(d, n, design, seed.0, start))
         .map_err(stats_error)?;
-    let (d, n) = (d.unsigned_abs() as usize, n.unsigned_abs() as usize);
     Ok(rectangle(py, points, n, d))
 }
 
@@ -794,10 +802,17 @@ impl<'a, 'py> FromPyObject<'a, 'py> for SideArg {
     type Error = PyErr;
 
     fn extract(object: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
-        let written = object.repr()?.to_string();
-        binding::side(object.extract::<String>().ok().as_deref(), || written)
-            .map(Self)
-            .map_err(stats_error)
+        match object
+            .extract::<String>()
+            .ok()
+            .as_deref()
+            .and_then(Side::from_name)
+        {
+            Some(side) => Ok(Self(side)),
+            None => Err(stats_error(binding::unknown_side(
+                &object.repr()?.to_string(),
+            ))),
+        }
     }
 }
 

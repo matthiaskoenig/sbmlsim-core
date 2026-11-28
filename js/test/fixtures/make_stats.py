@@ -52,7 +52,7 @@ def encode(value: Any) -> Any:
         return {key: encode(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
         return [encode(item) for item in value]
-    if isinstance(value, int) and not isinstance(value, bool) and abs(value) > 2**53:
+    if isinstance(value, int) and not isinstance(value, bool) and abs(value) >= 2**53:
         return {"bigint": str(value)}
     if isinstance(value, float) and not math.isfinite(value):
         return {"$": "nan" if math.isnan(value) else ("inf" if value > 0 else "-inf")}
@@ -391,6 +391,42 @@ def testing() -> None:
     call("group_means/no_points", "group_means", np.zeros((4, 0)), 2, 3, seed=1)
 
 
+def defaults() -> None:
+    """Calls without their optional arguments, which take the defaults of python."""
+    y, f = [1.0, 2.0, 4.0, 8.0], [1.5, 1.9, 9.0, 8.5]
+    call("defaults", "fold_counts", y, f)
+    call("defaults", "fold_accepted", y, f)
+    call("defaults", "sd_accepted", y, f, [0.3, 0.1, 2.0, 0.2])
+    m = [[1.0, 0.9, 0.7], [0.9, 1.0, -0.4], [0.7, -0.4, 1.0]]
+    call("defaults", "is_psd", m)
+    call("defaults", "nearest_correlation", m)
+    satisfied = [True, False, True, True, True, False, True, True]
+    call("defaults", "confidence_sequence", satisfied)
+    call("defaults", "p_values", satisfied, 0.5, "equivalent")
+    call("defaults", "quantile_ci", [3.0, 1.0, 2.0, 5.0, 4.0], 0.5)
+    call("defaults", "interval_parameters", 1.0, 2.0, lognormal=True)
+    call("defaults", "fisher_intervals", [1.0, 0.3], [0.1, 0.2], ["LINEAR", "log"])
+    call("defaults", "posterior_laplace", [[4.0, 1.0], [1.0, 3.0]])
+    call(
+        "defaults",
+        "first_order_given_data",
+        list(range(20)),
+        [x % 7 for x in range(20)],
+    )
+    call(
+        "defaults",
+        "normal_score_rho",
+        0.2,
+        ("log-normal", 2.0, 0.3),
+        ("normal", 1.0, 1.0),
+    )
+    call("defaults", "validate_covariance", ["a", "b"], [[1.0, 0.5], [0.5, 2.0]])
+    rng = np.random.default_rng(2)
+    call("defaults", "group_means", rng.lognormal(size=(6, 2)), 3, 4, seed=5)
+    call("defaults", "unit_points", 3, 5, seed=2)
+    call("defaults/order", "unit_points", 2, 4, design="bad", seed=-1)
+
+
 def errors() -> None:
     """An error of every kind which is not in the cases of the oracles above."""
     call("sd_se/infinite_variance", "sd_se", [1e154, -1e154, 3e154])
@@ -418,6 +454,7 @@ GENERATORS: list[Callable[[], None]] = [
     uncertainty,
     draws,
     testing,
+    defaults,
     errors,
 ]
 
@@ -427,8 +464,13 @@ def main() -> None:
     for generator in GENERATORS:
         generator()
     names = [entry["name"] + "/" + entry["function"] for entry in CALLS]
+    functions = sorted(name for name in stats.__all__ if callable(getattr(stats, name)))
+    called = sorted({entry["function"] for entry in CALLS})
+    if called != functions:
+        raise SystemExit(f"the calls miss {sorted(set(functions) - set(called))}")
     fixture = {
         "_comment": "written by make_stats.py, see there",
+        "functions": functions,
         "calls": CALLS,
     }
     text = json.dumps(fixture, separators=(",", ":"), allow_nan=False)
