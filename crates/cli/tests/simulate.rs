@@ -228,8 +228,18 @@ fn compile_drives_species() {
         out.as_os_str(),
     ]);
     assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let refused = sbmlsim_compiler::compile(
+        &std::fs::read_to_string(&sbml).unwrap(),
+        &sbmlsim_compiler::CompileOptions {
+            driven: vec!["Q".into()],
+            ..sbmlsim_compiler::CompileOptions::default()
+        },
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(refused.contains('Q'), "{refused}");
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains('Q'),
+        String::from_utf8_lossy(&output.stderr).contains(&refused),
         "{output:?}"
     );
     // the kernel drives the same species: the kernel of the compiler, whose description names
@@ -269,8 +279,17 @@ fn compile_drives_species() {
         out.as_os_str(),
     ]);
     assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let refused = sbmlsim_compiler::compile_kernel(
+        &std::fs::read_to_string(&sbml).unwrap(),
+        &sbmlsim_compiler::KernelOptions {
+            driven: vec!["Q".into()],
+        },
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(refused.contains('Q'), "{refused}");
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains('Q'),
+        String::from_utf8_lossy(&output.stderr).contains(&refused),
         "{output:?}"
     );
 }
