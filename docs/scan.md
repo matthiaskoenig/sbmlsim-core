@@ -34,7 +34,9 @@ request = {
     "settings": integrator_settings,  # the settings of simulation/1
     "selections": selections,
 }
-result = scan.run(request, model, threads=4, on_batch=lambda done, total: print(done, total))
+result = scan.run(
+    request, model, threads=4, on_batch=lambda done, total: print(done, total)
+)
 for variable in result["variables"]:
     print(variable["name"], variable["unit"], variable["values"].shape)
 ```
