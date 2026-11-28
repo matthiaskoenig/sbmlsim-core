@@ -169,9 +169,6 @@ impl Context for Builder<'_> {
             }
             _ => {}
         }
-        if !self.rate_of.iter().any(|r| r == id) {
-            self.rate_of.push(id.to_string());
-        }
         if self.assignment_rule.contains_key(id) {
             // libroadrunner: "Unable to define the rateOf for symbol ... as it is changed by an
             // assignment rule"
@@ -194,6 +191,9 @@ impl Context for Builder<'_> {
                 "rateOf of a concentration in an algebraic compartment",
                 id,
             ));
+        }
+        if !self.rate_of.iter().any(|r| r == id) {
+            self.rate_of.push(id.to_string());
         }
         match self.symbols[id] {
             Symbol::State(k) => {
