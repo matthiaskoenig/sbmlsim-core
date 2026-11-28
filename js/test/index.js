@@ -20,3 +20,4 @@ import "./figure.test.mjs";
 import "./hydrate.test.mjs";
 import "./petab.test.mjs";
 import "./kernel.test.mjs";
+import "./buffers.test.mjs";
