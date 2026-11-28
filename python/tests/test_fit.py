@@ -524,7 +524,8 @@ def test_a_fit_of_no_model_is_refused(data):
 
 def test_the_models_of_a_fit_are_loaded_models(decay, data):
     with pytest.raises(ValueError, match="no loaded model"):
-        sbmlsim_core.fit_models({"decay": "a model"}, fit_request(data))
+        # a string where the stub asks a loaded model, which the binding refuses
+        sbmlsim_core.fit_models({"decay": "a model"}, fit_request(data))  # ty: ignore[invalid-argument-type]
 
 
 def test_a_curve_of_a_reduction_is_fitted_on_the_steps_of_the_integrator(decay):
@@ -606,7 +607,7 @@ def test_a_curve_over_a_dimension_is_the_interpolation_of_numpy(decay):
     points = [1.0, 2.0, 4.0]
     x = [1.5, 2.0, 3.0, 4.0]
     pin = 0.2
-    conditions = [
+    conditions: list[dict[str, Any]] = [
         {
             "id": f"y0 {at}",
             "request": request(end=10.0, steps=10, preinit=[("y", y)]),

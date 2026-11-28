@@ -333,9 +333,10 @@ jobs:
         run: |
           uv pip install --python .venv --group sensitivity-tests
           .venv/bin/pytest python/tests/test_sensitivity_salib.py -q
-      - name: The type check of the stub and of a caller (python/typecheck)
-        # the stub is hand written: the drift test compares names only, this holds the signatures
-        run: .venv/bin/ty check python/typecheck
+      - name: The type check of the stub, of a caller (python/typecheck) and of the tests
+        # the stub is hand written: the drift test compares names only, this holds the signatures;
+        # the tests import SALib, so the check runs after the group sensitivity-tests is installed
+        run: .venv/bin/ty check python/typecheck python/tests
   wheels:
     # the wheels which `publish` publishes, built and tested on every platform
     uses: ./.github/workflows/wheels.yml

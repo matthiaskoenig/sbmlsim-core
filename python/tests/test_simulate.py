@@ -351,8 +351,9 @@ def test_runtime_timeout_requires_nonnegative_integer():
     for value in (-1, 2**64):
         with pytest.raises(OverflowError):
             sbmlsim_core.Runtime(timeout_ms=value)
+    # a float where the stub asks an int, which the binding refuses
     with pytest.raises(TypeError):
-        sbmlsim_core.Runtime(timeout_ms=1.5)
+        sbmlsim_core.Runtime(timeout_ms=1.5)  # ty: ignore[invalid-argument-type]
 
 
 def test_a_request_without_sensitivities_has_none(decay):

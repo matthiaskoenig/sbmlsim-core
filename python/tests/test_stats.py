@@ -10,7 +10,7 @@ import json
 import math
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import numpy
 import pytest
@@ -18,6 +18,8 @@ from sbmlsim_core import stats
 
 ORACLES = Path(__file__).resolve().parents[2] / "crates" / "stats" / "oracles"
 
+#: the designs of the unit points
+Design = Literal["sobol", "lhs", "random"]
 #: the tolerance of a deterministic kernel, relative
 KERNEL = 1e-12
 #: the tolerance of a value of the t distribution, relative
@@ -1072,8 +1074,9 @@ def test_the_points_refuse_as_the_python() -> None:
         "A Latin hypercube has no continuation, its points of more draws are another "
         "hypercube: give the number of draws, or use 'sobol' or 'random' for more draws."
     )
+    # a design the stub does not name, which the binding refuses
     with pytest.raises(ValueError) as raised:
-        stats.unit_points(2, 4, design="x", seed=1)
+        stats.unit_points(2, 4, design="x", seed=1)  # ty: ignore[invalid-argument-type]
     assert str(raised.value) == "The design 'x' is none of 'sobol', 'lhs' and 'random'."
     with pytest.raises(ValueError) as raised:
         stats.unit_points(2, 4, design=None, seed=1)  # ty: ignore[invalid-argument-type]
@@ -1091,7 +1094,7 @@ def test_negative_arguments_of_the_points_are_refused_as_the_python() -> None:
     dimensions = "d must be a non-negative integer value"
     shape = "negative dimensions are not allowed"
     lhs = "A Latin hypercube has no continuation"
-    for design, d, n, start, error, message in [
+    cases: list[tuple[Design, int, int, int, type[Exception], str]] = [
         ("sobol", -1, 4, 0, ValueError, dimensions),
         ("sobol", 2, -4, 0, ValueError, shape),
         (
@@ -1117,7 +1120,8 @@ def test_negative_arguments_of_the_points_are_refused_as_the_python() -> None:
             ValueError,
             "The start of random points must not be negative",
         ),
-    ]:
+    ]
+    for design, d, n, start, error, message in cases:
         with pytest.raises(error) as raised:
             stats.unit_points(d, n, design=design, seed=1, start=start)
         assert type(raised.value) is error
@@ -1461,12 +1465,13 @@ def test_groups_too_many_to_hold_raise_a_value_error() -> None:
 
 
 def test_points_too_many_to_hold_raise_a_value_error() -> None:
-    for design, d, n in [
+    cases: list[tuple[Design, int, int]] = [
         ("random", 2**33, 2**31),
         ("lhs", 2**33, 2**33),
         ("sobol", 2**33, 2**31),
         ("random", 0, 2**62),
-    ]:
+    ]
+    for design, d, n in cases:
         with pytest.raises(ValueError) as raised:
             stats.unit_points(d, n, design=design, seed=0)
         assert str(raised.value) == ARRAY_TOO_BIG, design
