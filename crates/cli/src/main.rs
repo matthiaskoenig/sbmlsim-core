@@ -2,8 +2,11 @@
 //!
 //! `sbmlsim-core compile <model.xml> -o <dir>` compiles an SBML file into the directory `dir`
 //! (created when missing): `model.wasm` and `model.json`, the description of the model. With
-//! `--kernel` it compiles the batched kernel of the model instead (`kernel/1`, the model with its
-//! RODAS4 integrator in one module): `kernel.wasm` and `kernel.json`.
+//! `--kernel` it compiles the batched kernel of the model instead (`kernel/2`, the model with its
+//! RODAS4 integrator in one module): `kernel.wasm` and `kernel.json`. `--driven ID,...` drives
+//! the species of the ids, separated by commas or the flag repeated (`sbmlsim_ir::driven`), in
+//! the model and in the kernel: each follows the path of its parameters `ID__value`,
+//! `ID__slope` and `driven__t_ref`, with the accumulator state `ID__exchange`.
 //!
 //! `sbmlsim-core simulate <model-dir> <request.json> [-o out.csv]` simulates a compiled model
 //! (the directory holds `model.wasm` and `model.json`) with a request of the contract
@@ -41,7 +44,7 @@ use sbmlsim_abi::{ModelDescription, SimulationRequest};
 use sbmlsim_cli::bench::{self, BenchArgs};
 use sbmlsim_cli::csv::to_csv;
 use sbmlsim_cli::testsuite::{self, TestsuiteArgs};
-use sbmlsim_compiler::CompileOptions;
+use sbmlsim_compiler::{CompileOptions, KernelOptions};
 use sbmlsim_host::Runtime;
 
 /// The command line of sbmlsim-core.
@@ -68,8 +71,15 @@ enum Command {
         /// Omit analytic parameter derivatives and their cached constants.
         #[arg(long)]
         no_parameter_jacobian: bool,
+        /// Drive these species (separated by commas, or the flag repeated): each follows the
+        /// path `ID__value + ID__slope * (time - driven__t_ref)` of three parameters instead of
+        /// its rate, and the state `ID__exchange` accumulates the amount the model exchanged
+        /// with it.
+        #[arg(long, value_delimiter = ',', action = clap::ArgAction::Append, value_name = "ID")]
+        driven: Vec<String>,
         /// Write the batched kernel instead: the model with its RODAS4 integrator in one
-        /// module, `kernel.wasm` and `kernel.json` (`kernel/1`).
+        /// module, `kernel.wasm` and `kernel.json` (`kernel/2`), with the species of `--driven`
+        /// driven.
         #[arg(long, conflicts_with_all = ["no_optimize", "no_parameter_jacobian"])]
         kernel: bool,
     },
@@ -160,16 +170,26 @@ fn main() -> ExitCode {
         Command::Compile {
             model,
             output,
+            driven,
             kernel: true,
             ..
-        } => compile_kernel(&model, &output).map(|()| true),
+        } => compile_kernel(&model, &output, &KernelOptions { driven }).map(|()| true),
         Command::Compile {
             model,
             output,
             no_optimize,
             no_parameter_jacobian,
+            driven,
             kernel: false,
-        } => compile(&model, &output, !no_optimize, !no_parameter_jacobian).map(|()| true),
+        } => {
+            let options = CompileOptions {
+                optimize: !no_optimize,
+                parameter_jacobian: !no_parameter_jacobian,
+                driven,
+                ..CompileOptions::default()
+            };
+            compile(&model, &output, &options).map(|()| true)
+        }
         Command::Export {
             model,
             format,
@@ -235,13 +255,8 @@ fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> anyhow::Result<T> {
     serde_json::from_slice(&bytes).with_context(|| format!("cannot read {}", path.display()))
 }
 
-/// The command `compile`, with the optimizer when `optimize`.
-fn compile(
-    model: &Path,
-    output: &Path,
-    optimize: bool,
-    parameter_jacobian: bool,
-) -> anyhow::Result<()> {
+/// The command `compile`, with `options`.
+fn compile(model: &Path, output: &Path, options: &CompileOptions) -> anyhow::Result<()> {
     let sbml =
         fs::read_to_string(model).with_context(|| format!("cannot read {}", model.display()))?;
     // a composed model reads the documents of its external model definitions beside it
@@ -251,12 +266,7 @@ fn compile(
     };
     let sbml = sbmlsim_sbml::flatten_comp(&sbml, &sources)
         .with_context(|| format!("cannot compile {}", model.display()))?;
-    let options = CompileOptions {
-        optimize,
-        parameter_jacobian,
-        ..CompileOptions::default()
-    };
-    let compiled = sbmlsim_compiler::compile(&sbml, &options)
+    let compiled = sbmlsim_compiler::compile(&sbml, options)
         .with_context(|| format!("cannot compile {}", model.display()))?;
     fs::create_dir_all(output).with_context(|| format!("cannot create {}", output.display()))?;
     let write = |name: &str, bytes: &[u8]| {
@@ -271,10 +281,10 @@ fn compile(
 }
 
 /// The command `compile --kernel`: `kernel.wasm` and `kernel.json`.
-fn compile_kernel(model: &Path, output: &Path) -> anyhow::Result<()> {
+fn compile_kernel(model: &Path, output: &Path, options: &KernelOptions) -> anyhow::Result<()> {
     let sbml =
         fs::read_to_string(model).with_context(|| format!("cannot read {}", model.display()))?;
-    let compiled = sbmlsim_compiler::compile_kernel(&sbml)
+    let compiled = sbmlsim_compiler::compile_kernel(&sbml, options)
         .with_context(|| format!("cannot compile the kernel of {}", model.display()))?;
     fs::create_dir_all(output).with_context(|| format!("cannot create {}", output.display()))?;
     let write = |name: &str, bytes: &[u8]| {

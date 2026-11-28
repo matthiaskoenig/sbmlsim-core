@@ -176,6 +176,8 @@ mod test_models {
             max_delay: None,
             n_constants: 0,
             units: BTreeMap::new(),
+            driven: Vec::new(),
+            t_ref: None,
         }
     }
 
@@ -716,6 +718,8 @@ mod test_models {
                 n_discontinuity_roots: self.discontinuities.len() as u32,
                 n_constants: 0,
                 units: BTreeMap::new(),
+                driven: Vec::new(),
+                t_ref: None,
             }
         }
     }

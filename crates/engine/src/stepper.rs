@@ -16,6 +16,12 @@
 //! and an event whose trigger the changed state makes true at the start of an interval executes
 //! there. The parameters an event assigns stay assigned. The state after an advance is the state
 //! after the events at its end, as the last row of a simulation is.
+//!
+//! Between two advances the caller may set parameters as well ([`Stepper::set_parameters`]):
+//! the paths of the driven species of a model compiled with them (`ModelDescription::driven`),
+//! which follow the caller's values interval by interval, or any other settable parameter. The
+//! next advance integrates with them, its integrator started again as after a change of the
+//! state.
 
 use std::sync::Arc;
 
@@ -78,6 +84,8 @@ pub struct Stepper {
     p: Vec<f64>,
     /// The state after [`Stepper::new`], then after the last advance.
     y: Vec<f64>,
+    /// The time of `y`: the start of the initialization, then the end of the last advance.
+    t: f64,
     /// The state of the integrator during an advance ([`n_integrated`] values).
     work: Vec<f64>,
     jac_values: Vec<f64>,
@@ -156,6 +164,7 @@ impl Stepper {
             solver,
             p: scratch.p,
             y: scratch.y,
+            t: INIT_TIME,
             work,
             jac_values: Vec::new(),
             difference: None,
@@ -185,6 +194,68 @@ impl Stepper {
     /// the changes and the initial assignments), then as the events of the advances leave them.
     pub fn parameters(&self) -> &[f64] {
         &self.p[..self.desc.parameters.len()]
+    }
+
+    /// Sets the parameters `values`, `(index, value)` with the index in the order of the
+    /// parameters of the description, for the advances after it: the paths of driven species
+    /// (`X__value`, `X__slope` and `driven__t_ref`, see `ModelDescription::driven`) or any
+    /// other parameter a change may set.
+    ///
+    /// The model computes the values which depend on the parameters again (the constants of
+    /// its optimizer and the targets of its assignment rules, at the time and the state of
+    /// [`Stepper::state`], as after a change of a simulation); the initial assignments do not
+    /// run again, so a parameter they gave keeps the value set here. The next advance starts
+    /// its integrator again, as every advance does.
+    ///
+    /// An index past the parameters, a parameter which is not settable (the target of an
+    /// assignment rule or the unknown of an algebraic rule) and a value which is not finite are
+    /// refused ([`EngineError::Request`]) and change nothing. A failure of the model after
+    /// that leaves the stepper failed, as a failed advance does.
+    pub fn set_parameters(&mut self, values: &[(u32, f64)]) -> Result<(), EngineError> {
+        if self.failed {
+            return Err(EngineError::Internal(
+                "the stepper failed before and takes no parameters".into(),
+            ));
+        }
+        let parameters = &self.desc.parameters;
+        for &(index, value) in values {
+            let Some(parameter) = parameters.get(index as usize) else {
+                return Err(request(format!(
+                    "the parameter {index} of model {} of {} parameters",
+                    self.desc.id,
+                    parameters.len()
+                )));
+            };
+            if !parameter.settable {
+                return Err(request(format!(
+                    "the parameter {} of model {} is not settable: a rule determines it",
+                    parameter.id, self.desc.id
+                )));
+            }
+            if !value.is_finite() {
+                return Err(request(format!(
+                    "the parameter {} of model {} is set to {value}",
+                    parameter.id, self.desc.id
+                )));
+            }
+        }
+        for &(index, value) in values {
+            self.p[index as usize] = value;
+        }
+        let mut assign = || {
+            self.model.assign(self.t, &mut self.y, &mut self.p);
+            Ok(())
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(&mut assign))
+            .unwrap_or_else(|error| Err(EngineError::Internal(crate::panic_message(&*error))));
+        #[cfg(target_arch = "wasm32")]
+        let outcome = assign();
+        let outcome = self.model.check_error().and(outcome);
+        if outcome.is_err() {
+            self.failed = true;
+        }
+        outcome
     }
 
     /// Integrates the model from the state `y` at `t0` to `t1`, with the events and the
@@ -298,6 +369,7 @@ impl Stepper {
             Solver::Dae(ida, projections) => parts.advance(Some(ida), Some(projections), t0, t1)?,
         };
         self.y.copy_from_slice(&self.work[..n]);
+        self.t = t1;
         Ok(stats)
     }
 }

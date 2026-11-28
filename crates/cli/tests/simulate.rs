@@ -143,8 +143,11 @@ fn compile_writes_a_kernel() {
         out.as_os_str(),
     ]);
     assert!(output.status.success(), "{output:?}");
-    let compiled =
-        sbmlsim_compiler::compile_kernel(&std::fs::read_to_string(&sbml).unwrap()).unwrap();
+    let compiled = sbmlsim_compiler::compile_kernel(
+        &std::fs::read_to_string(&sbml).unwrap(),
+        &sbmlsim_compiler::KernelOptions::default(),
+    )
+    .unwrap();
     assert_eq!(
         std::fs::read(out.join("kernel.wasm")).unwrap(),
         compiled.wasm
@@ -163,6 +166,132 @@ fn compile_writes_a_kernel() {
         out.as_os_str(),
     ]);
     assert_eq!(output.status.code(), Some(2));
+}
+
+#[test]
+fn compile_drives_species() {
+    let sbml =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/models/spt_liver_cell.xml");
+    let out = Path::new(env!("CARGO_TARGET_TMPDIR")).join("compiled-spt-driven");
+    let _ = std::fs::remove_dir_all(&out);
+    let output = run(&[
+        "compile".as_ref(),
+        sbml.as_os_str(),
+        "--driven".as_ref(),
+        "S_ext,P_ext".as_ref(),
+        "-o".as_ref(),
+        out.as_os_str(),
+    ]);
+    assert!(output.status.success(), "{output:?}");
+    let description: ModelDescription =
+        serde_json::from_slice(&std::fs::read(out.join("model.json")).unwrap()).unwrap();
+    let options = sbmlsim_compiler::CompileOptions {
+        driven: vec!["S_ext".into(), "P_ext".into()],
+        ..sbmlsim_compiler::CompileOptions::default()
+    };
+    let compiled =
+        sbmlsim_compiler::compile(&std::fs::read_to_string(&sbml).unwrap(), &options).unwrap();
+    assert_eq!(description, compiled.description);
+    assert_eq!(
+        std::fs::read(out.join("model.wasm")).unwrap(),
+        compiled.wasm
+    );
+    let driven: Vec<&str> = description.driven.iter().map(|d| d.id.as_str()).collect();
+    assert_eq!(driven, ["S_ext", "P_ext"]);
+    // the same species separated by a comma, or each with its own flag, and the model after the
+    // flag
+    for args in [
+        vec!["--driven", "S_ext,P_ext"],
+        vec!["--driven", "S_ext", "--driven", "P_ext"],
+    ] {
+        let _ = std::fs::remove_dir_all(&out);
+        let mut command: Vec<&std::ffi::OsStr> = vec![std::ffi::OsStr::new("compile")];
+        command.extend(args.iter().map(std::ffi::OsStr::new));
+        command.extend([
+            sbml.as_os_str(),
+            std::ffi::OsStr::new("-o"),
+            out.as_os_str(),
+        ]);
+        let output = run(&command);
+        assert!(output.status.success(), "{args:?}: {output:?}");
+        let again: ModelDescription =
+            serde_json::from_slice(&std::fs::read(out.join("model.json")).unwrap()).unwrap();
+        assert_eq!(again, description, "{args:?}");
+    }
+    // an unknown species is the error of the compiler, not of the command line
+    let output = run(&[
+        "compile".as_ref(),
+        sbml.as_os_str(),
+        "--driven".as_ref(),
+        "Q".as_ref(),
+        "-o".as_ref(),
+        out.as_os_str(),
+    ]);
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let refused = sbmlsim_compiler::compile(
+        &std::fs::read_to_string(&sbml).unwrap(),
+        &sbmlsim_compiler::CompileOptions {
+            driven: vec!["Q".into()],
+            ..sbmlsim_compiler::CompileOptions::default()
+        },
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(refused.contains('Q'), "{refused}");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains(&refused),
+        "{output:?}"
+    );
+    // the kernel drives the same species: the kernel of the compiler, whose description names
+    // them
+    let _ = std::fs::remove_dir_all(&out);
+    let output = run(&[
+        "compile".as_ref(),
+        sbml.as_os_str(),
+        "--kernel".as_ref(),
+        "--driven".as_ref(),
+        "S_ext,P_ext".as_ref(),
+        "-o".as_ref(),
+        out.as_os_str(),
+    ]);
+    assert!(output.status.success(), "{output:?}");
+    let kernel = sbmlsim_compiler::compile_kernel(
+        &std::fs::read_to_string(&sbml).unwrap(),
+        &sbmlsim_compiler::KernelOptions {
+            driven: vec!["S_ext".into(), "P_ext".into()],
+        },
+    )
+    .unwrap();
+    assert_eq!(std::fs::read(out.join("kernel.wasm")).unwrap(), kernel.wasm);
+    let description: sbmlsim_abi::KernelDescription =
+        serde_json::from_slice(&std::fs::read(out.join("kernel.json")).unwrap()).unwrap();
+    assert_eq!(description, kernel.description);
+    assert_eq!(description.model.driven, compiled.description.driven);
+    assert!(!out.join("model.wasm").exists());
+    // an unknown species of a kernel is the error of the compiler
+    let output = run(&[
+        "compile".as_ref(),
+        sbml.as_os_str(),
+        "--kernel".as_ref(),
+        "--driven".as_ref(),
+        "Q".as_ref(),
+        "-o".as_ref(),
+        out.as_os_str(),
+    ]);
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let refused = sbmlsim_compiler::compile_kernel(
+        &std::fs::read_to_string(&sbml).unwrap(),
+        &sbmlsim_compiler::KernelOptions {
+            driven: vec!["Q".into()],
+        },
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(refused.contains('Q'), "{refused}");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains(&refused),
+        "{output:?}"
+    );
 }
 
 #[test]

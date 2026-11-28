@@ -34,6 +34,12 @@
 //! amount is `concentration * compartment`, and a rate rule keeps the concentration when the
 //! compartment changes). The selection `S` is the amount, `[S]` the concentration.
 //!
+//! # Driven species
+//!
+//! [`driven::apply`] turns a built model into one whose given species follow a prescribed
+//! path of parameters instead of their rates, each with an accumulator state of the amount the
+//! model exchanged with it ([`Model::driven`]); the other passes see an ordinary model.
+//!
 //! # Values
 //!
 //! An entity's [`Entity::default`] is the value its SBML attribute gives in the quantity it
@@ -66,6 +72,7 @@
 mod builder;
 pub mod derive;
 mod discontinuity;
+pub mod driven;
 pub mod eval;
 mod expr;
 pub mod optimize;
@@ -73,6 +80,7 @@ mod order;
 mod units;
 
 pub use expr::{AVOGADRO, Expr, Op, Symbol};
+pub use sbmlsim_abi::DrivenSpecies;
 
 use sbmlsim_sbml::Document;
 use thiserror::Error;
@@ -352,6 +360,17 @@ pub struct Model {
     /// The selections: every compartment, every species as `S` and `[S]`, every parameter,
     /// every species reference with an id and every reaction, in this order.
     pub selections: Vec<SelectionDef>,
+    /// The ids of the targets of the rate rules, in the order of the rules.
+    pub rate_rules: Vec<String>,
+    /// The ids whose rate a `rateOf` of the math reads (the math holds the rate in its place),
+    /// each once, in the order of their first read.
+    pub rate_of: Vec<String>,
+    /// The driven species ([`driven`](mod@driven)), empty without.
+    pub driven: Vec<DrivenSpecies>,
+    /// The parameter `driven__t_ref` of the driven species, `None` without.
+    pub t_ref: Option<u32>,
+    /// The unit expression of the time of the model, when SBML gives one.
+    pub time_unit: Option<String>,
 }
 
 impl Model {

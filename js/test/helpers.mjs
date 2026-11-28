@@ -112,6 +112,9 @@ export const DECAY = path.join(ROOT, "crates", "host", "tests", "decay-model");
 /** The SBML document the compiled decay model was compiled from. */
 export const DECAY_SBML = path.join(ROOT, "crates", "host", "tests", "decay.xml");
 
+/** The cell model of the tests of the C target and the kernel (`testdata/models`). */
+export const CELL_SBML = path.join(ROOT, "testdata", "models", "spt_liver_cell.xml");
+
 /** The bytes of `compiler.wasm` of the runtime, the compiler of `js/compile.mjs`. */
 export function compilerWasm() {
   return readFileSync(path.join(runtimeDir(), "compiler.wasm"));
@@ -200,7 +203,6 @@ export function runtimeUrls() {
 /** The pairs of words of the result of each call of `compiler.wasm` which writes one to `out`. */
 const RESULT_PAIRS = {
   compile: 2,
-  compile_with_options: 2,
   compile_kernel: 2,
   export_ode: 2,
   petab_model: 2,

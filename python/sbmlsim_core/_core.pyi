@@ -378,8 +378,14 @@ def compile_sbml(
     optimize: bool = True,
     jacobian: str = "auto",
     parameter_jacobian: bool = True,
+    driven: Sequence[str] = (),
 ) -> CompiledModel:
-    """Compiles the text of an SBML Level 3 document into `model.wasm` and its description."""
+    """Compiles the text of an SBML Level 3 document into `model.wasm` and its description.
+
+    `driven` are the ids of the species to drive: each follows the path
+    `X__value + X__slope * (time - driven__t_ref)` of three parameters, with the accumulator
+    state `X__exchange`.
+    """
 
 def runtime_wasm() -> dict[str, bytes]:
     """The bytes of `engine.wasm`, `mathlib.wasm` and `compiler.wasm` this extension embeds."""

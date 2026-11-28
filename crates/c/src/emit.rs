@@ -56,9 +56,24 @@ pub struct CSource {
 /// not support ([`CError::Unsupported`]) and a model the reader or the model representation
 /// refuses ([`CError::Model`]).
 pub fn generate(sbml: &str) -> Result<CSource, CError> {
+    generate_with(sbml, &[])
+}
+
+/// [`generate`] with the species `driven` (SBML ids, in this order) driven
+/// ([`sbmlsim_ir::driven::apply`]): each leaves the states and follows the path
+/// `X__value + X__slope * (time - driven__t_ref)` of three parameters, which a caller sets
+/// between two advances (`Stepper::set_parameters`, whose `assign` computes the constants
+/// behind them again), with the accumulator state `X__exchange`. A species the transform
+/// refuses is a [`CError::Model`].
+pub fn generate_with(sbml: &str, driven: &[String]) -> Result<CSource, CError> {
+    generate_model(&model_of(sbml, driven)?)
+}
+
+/// The model representation of the SBML document `sbml` with the species `driven` driven.
+pub(crate) fn model_of(sbml: &str, driven: &[String]) -> Result<Model, CError> {
     let doc = sbmlsim_sbml::read(sbml).map_err(|e| CError::Model(e.to_string()))?;
     let model = sbmlsim_ir::build(&doc).map_err(|e| CError::Model(e.to_string()))?;
-    generate_model(&model)
+    sbmlsim_ir::driven::apply(model, driven).map_err(|e| CError::Model(e.to_string()))
 }
 
 /// The C of a model representation and its description (see [`generate`]).

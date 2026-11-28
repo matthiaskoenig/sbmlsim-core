@@ -31,6 +31,11 @@
 //! `delay`), and a model without an analytic Jacobian (a rate which reads `factorial` of a
 //! state).
 //!
+//! [`generate_with`] and [`generate_qfunction_with`] drive species ([`sbmlsim_ir::driven`]): each
+//! follows a path of three parameters, which a caller sets per interval (and per point for the
+//! QFunction), and the constants behind the parameters are computed again from them, by
+//! `assign` of the native model and by every application of the QFunction.
+//!
 //! [`generate_qfunction`] is the second target: the model with a Rosenbrock integrator (RODAS4)
 //! as one libCEED QFunction which advances any number of points (the cells of a tissue) by up to
 //! a number of step attempts each per application, for libCEED's CPU backends and its JIT backends
@@ -42,12 +47,12 @@ mod model;
 mod qfunction;
 
 pub use build::{BuildOptions, FLAGS, Library};
-pub use emit::{CSource, MAX_NESTING, generate, generate_model, symbol_prefix};
+pub use emit::{CSource, MAX_NESTING, generate, generate_model, generate_with, symbol_prefix};
 pub use model::CModel;
 pub use qfunction::{
     CONTROL, CONTROL_DONE, CONTROL_FAILED, CONTROL_H, CONTROL_T, COUNTS, INPUTS, OUTPUTS, Points,
     QSource, ROSENBROCK_ORDER, RosenbrockContext, apply_points, generate_qfunction,
-    generate_qfunction_model, run_points,
+    generate_qfunction_model, generate_qfunction_with, run_points,
 };
 
 /// A failure of the C target.

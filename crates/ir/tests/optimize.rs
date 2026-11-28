@@ -400,6 +400,11 @@ fn entity(id: &str) -> Entity {
 fn input_cache_is_bounded_and_keeps_lazy_inputs_in_their_branches() {
     let model = Model {
         n_algebraic: 0,
+        rate_rules: vec![],
+        rate_of: vec![],
+        driven: vec![],
+        t_ref: None,
+        time_unit: None,
         id: Some("inputs".into()),
         states: (0..64).map(|i| entity(&format!("x{i}"))).collect(),
         parameters: vec![],
@@ -484,6 +489,11 @@ fn unread_rules_are_not_computed() {
 
     let model = Model {
         n_algebraic: 0,
+        rate_rules: vec![],
+        rate_of: vec![],
+        driven: vec![],
+        t_ref: None,
+        time_unit: None,
         id: Some("m".to_string()),
         states: vec![entity("x")],
         parameters: ["k", "a", "b", "c"].iter().map(|s| entity(s)).collect(),
@@ -551,6 +561,11 @@ fn subtrees_of_the_parameters_alone_are_constants() {
     );
     let model = Model {
         n_algebraic: 0,
+        rate_rules: vec![],
+        rate_of: vec![],
+        driven: vec![],
+        t_ref: None,
+        time_unit: None,
         id: Some("m".to_string()),
         states: vec![entity("x")],
         parameters: ["k", "V", "BW", "b", "r"]
@@ -617,6 +632,11 @@ fn a_parameter_of_a_rule_of_the_time_is_no_constant() {
     }];
     let model = Model {
         n_algebraic: 0,
+        rate_rules: vec![],
+        rate_of: vec![],
+        driven: vec![],
+        t_ref: None,
+        time_unit: None,
         id: Some("m".to_string()),
         states: vec![entity("x")],
         parameters: ["k", "a"].iter().map(|s| entity(s)).collect(),
@@ -668,6 +688,11 @@ fn the_derivative_of_a_rule_of_one_column_is_no_value_of_the_column_before_it() 
     // of its own; a column must read the let it keeps and not the constant of the one before it
     let model = Model {
         n_algebraic: 0,
+        rate_rules: vec![],
+        rate_of: vec![],
+        driven: vec![],
+        t_ref: None,
+        time_unit: None,
         id: Some("m".to_string()),
         states: vec![entity("x")],
         parameters: ["Km", "q", "g"].iter().map(|s| entity(s)).collect(),

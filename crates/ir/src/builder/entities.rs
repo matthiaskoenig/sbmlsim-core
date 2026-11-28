@@ -92,6 +92,7 @@ impl<'m> Builder<'m> {
             prehistory: false,
             delay_seen: false,
             rate_of_seen: false,
+            rate_of: Vec::new(),
         })
     }
 

@@ -37,4 +37,6 @@ sbmlsim-engine = { path = ".", features = ["test-models"] }
 sbmlsim-c = { path = "../c" }
 sbmlsim-compiler = { path = "../compiler" }
 sbmlsim-host = { path = "../host" }
+# the reader of SBML, with which the shared test data finds the species a reaction changes
+sbmlsim-sbml = { path = "../sbml" }
 serde_json.workspace = true

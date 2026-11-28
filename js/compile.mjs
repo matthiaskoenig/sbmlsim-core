@@ -17,13 +17,14 @@
 // page and the same model compiled by the command line give the same `model.wasm`. The module
 // reads no file and imports nothing of the host, so a page compiles without a server.
 //
-// The interface of the module is the C ABI of `allocate`, `compile` and `deallocate`
-// (`crates/wasm/src/lib.rs`): the document goes into the memory of the module as the bytes of
-// its UTF-8, the result comes back as the description (the JSON of `model.json`) and the bytes
-// of `model.wasm`, and every buffer is freed again. `compile` is synchronous and takes a few
-// milliseconds for a model of the size of the repressilator. `compileKernel` (since 0.41.0)
-// compiles the batched kernel of a model instead (`compile_kernel`, `kernel.wasm` and
-// `kernel.json`), which `kernel.mjs` instantiates.
+// The interface of the module is the C ABI of `allocate`, `compile`, `compile_kernel` and
+// `deallocate` (`crates/wasm/src/lib.rs`): the document and the options (their JSON) go into the
+// memory of the module as the bytes of their UTF-8, the result comes back as the description
+// (the JSON of `model.json`) and the bytes of `model.wasm`, and every buffer is freed again.
+// `compile` is synchronous and takes a few milliseconds for a model of the size of the
+// repressilator. `compileKernel` (since 0.41.0) compiles the batched kernel of a model instead
+// (`compile_kernel`, `kernel.wasm` and `kernel.json` of `kernel/2`), which `kernel.mjs`
+// instantiates. Both drive the species of `driven` (`sbmlsim_ir::driven`).
 
 // The buffers of a call into `compiler.wasm` (`Buffers`, `withBuffers`), which this module,
 // `petab.mjs`, `stats.mjs` and every other host of an export of the module use: the arguments
@@ -189,10 +190,27 @@ export function withBuffers(exports, name, body) {
 }
 
 /** The exports of `compiler.wasm` this host calls. */
-const COMPILER_EXPORTS = ["allocate", "compile", "deallocate", "memory"];
+const COMPILER_EXPORTS = ["allocate", "compile", "compile_kernel", "deallocate", "memory"];
 
-/** The source of the Jacobian of a model, the numbers of the interface. */
-const JACOBIAN = { auto: 0, "difference-quotient": 1, analytic: 2 };
+/** The source of the Jacobian of a model, the names of the options of the interface. */
+const JACOBIAN = {
+  auto: "auto",
+  "difference-quotient": "difference_quotient",
+  analytic: "analytic",
+};
+
+/**
+ * Checks the driven species of a compilation: SBML ids, an array of strings.
+ *
+ * @param {unknown} driven the option
+ * @returns {string[]} the ids
+ */
+function drivenIds(driven) {
+  if (!Array.isArray(driven) || driven.some((id) => typeof id !== "string")) {
+    throw new TypeError("driven must be an array of the SBML ids of species");
+  }
+  return driven;
+}
 
 /** A model which the compiler refuses, with the message of the compiler. */
 export class CompileError extends Error {
@@ -238,14 +256,21 @@ class Compiler {
    * Compiles an SBML Level 3 Version 2 document.
    *
    * @param {string} sbml the text of the document
-   * @param {{optimize?: boolean, jacobian?: "auto"|"difference-quotient"|"analytic", parameterJacobian?: boolean}} options
+   * @param {{optimize?: boolean, jacobian?: "auto"|"difference-quotient"|"analytic",
+   *   parameterJacobian?: boolean, driven?: string[]}} options
    *   `optimize` runs the optimizer of the compiler (the default, the results are the same
-   *   without it), `jacobian` is the source of the state Jacobian, and
-   *   `parameterJacobian: false` omits analytic parameter derivatives and their constants
+   *   without it), `jacobian` is the source of the state Jacobian,
+   *   `parameterJacobian: false` omits analytic parameter derivatives and their constants, and
+   *   `driven` are the ids of the species to drive (each follows the path
+   *   `X__value + X__slope * (time - driven__t_ref)` of three parameters, with the accumulator
+   *   state `X__exchange`; `description.driven` lists them)
    * @returns {{wasm: Uint8Array, description: object}} `model.wasm` and `model.json`
    * @throws {CompileError} for a document the compiler refuses
    */
-  compile(sbml, { optimize = true, jacobian = "auto", parameterJacobian = true } = {}) {
+  compile(
+    sbml,
+    { optimize = true, jacobian = "auto", parameterJacobian = true, driven = [] } = {},
+  ) {
     if (typeof sbml !== "string") {
       throw new TypeError("the document of a compilation is text");
     }
@@ -253,59 +278,63 @@ class Compiler {
     if (choice === undefined) {
       throw new TypeError(`the Jacobian ${jacobian} is none of ${Object.keys(JACOBIAN)}`);
     }
+    if (typeof optimize !== "boolean") {
+      throw new TypeError("optimize must be a boolean");
+    }
     if (typeof parameterJacobian !== "boolean") {
       throw new TypeError("parameterJacobian must be a boolean");
     }
-    if (!parameterJacobian && typeof this.exports.compile_with_options !== "function") {
-      throw new Error("compiler.wasm does not support parameterJacobian: false");
-    }
-    const { compile, compile_with_options } = this.exports;
-    const flag = optimize ? 1 : 0;
-    return this.run(sbml, (input, length, words) =>
-      parameterJacobian
-        ? compile(input, length, flag, choice, words)
-        : compile_with_options(input, length, flag, choice, 0, words),
-    );
+    const options = {
+      optimize,
+      jacobian: choice,
+      parameter_jacobian: parameterJacobian,
+      driven: drivenIds(driven),
+    };
+    return this.run(sbml, options, this.exports.compile);
   }
 
   /**
-   * Compiles an SBML Level 3 Version 2 document into a batched kernel (`kernel/1`, since
-   * 0.41.0): the model with its RODAS4 integrator in one module, which `kernel.mjs` instantiates
-   * and which advances many points (the cells of a tissue) per call. The bytes and the description are those of
-   * `sbmlsim-core compile --kernel`.
+   * Compiles an SBML Level 3 Version 2 document into a batched kernel (`kernel/2`): the model
+   * with its RODAS4 integrator in one module, which `kernel.mjs` instantiates and which advances
+   * many points (the cells of a tissue) per call. The bytes and the description are those of
+   * `sbmlsim-core compile --kernel` (with `--driven`).
    *
    * @param {string} sbml the text of the document
+   * @param {{driven?: string[]}} options `driven` are the ids of the species to drive, whose
+   *   paths the caller writes into the parameters of every point before an advance
+   *   (`description.model.driven` and `description.model.t_ref` give their indices)
    * @returns {{wasm: Uint8Array, description: object}} `kernel.wasm` and `kernel.json`
    * @throws {CompileError} for a document the compiler refuses, e.g. a model with events
    */
-  compileKernel(sbml) {
+  compileKernel(sbml, { driven = [] } = {}) {
     if (typeof sbml !== "string") {
       throw new TypeError("the document of a compilation is text");
     }
-    const { compile_kernel } = this.exports;
-    if (typeof compile_kernel !== "function") {
-      throw new Error("compiler.wasm does not compile kernels");
-    }
-    return this.run(sbml, (input, length, words) => compile_kernel(input, length, words));
+    return this.run(sbml, { driven: drivenIds(driven) }, this.exports.compile_kernel);
   }
 
   /**
-   * Runs a compilation of the module: the document into a buffer, `call(input, length, words)`
-   * of a function which writes its result to four words (the description or the message, and
-   * the module), the result out of the memory and every buffer freed.
+   * Runs a compilation of the module: the document and the JSON of the options into buffers,
+   * `call(input, length, options, optionsLength, words)` of a function which writes its result
+   * to four words (the description or the message, and the module), the result out of the
+   * memory and every buffer freed.
    *
    * @param {string} sbml the text of the document
-   * @param {(input: number, length: number, words: number) => number} call the compilation,
-   *   1 for a document it compiled
+   * @param {object} options the options of the compilation, as the interface reads their JSON
+   * @param {(input: number, length: number, options: number, optionsLength: number,
+   *   words: number) => number} call the compilation, 1 for a document it compiled
    * @returns {{wasm: Uint8Array, description: object}} the module and the description
    * @throws {CompileError} for a document the compiler refuses
    */
-  run(sbml, call) {
-    const document_ = new TextEncoder().encode(sbml);
+  run(sbml, options, call) {
+    const encoder = new TextEncoder();
+    const document_ = encoder.encode(sbml);
+    const config = encoder.encode(JSON.stringify(options));
     return withBuffers(this.exports, "compiler.wasm", (buffers) => {
-      const [input, length] = buffers.put(document_);
+      const input = buffers.put(document_);
+      const settings = buffers.put(config);
       const words = buffers.allocate(4 * 4);
-      const status = call(input, length, words);
+      const status = call(...input, ...settings, words);
       const [text, wasm] = buffers.results(words, 2);
       if (status !== 1) {
         throw new CompileError(

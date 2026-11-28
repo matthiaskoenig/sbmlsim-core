@@ -1,5 +1,5 @@
-// The batched kernel of sbmlsim-core in a JavaScript host (since 0.41.0): instantiates `kernel.wasm` (the
-// contract `kernel/1`, a model with its RODAS4 integrator in one module, which
+// The batched kernel of sbmlsim-core in a JavaScript host (since 0.41.0): instantiates
+// `kernel.wasm` (the contract `kernel/2`, a model with its RODAS4 integrator in one module, which
 // `compiler.compileKernel` of `compile.mjs` and `sbmlsim-core compile --kernel` write) with
 // mathlib and a memory of the caller, which holds every array of the points.
 //
@@ -27,9 +27,19 @@
 // values of outputs which are targets of rules after an advance. All three give -1 for invalid
 // arguments (`crates/abi/src/lib.rs` documents the contract). The kernel never grows the memory:
 // the caller sizes it for its points.
+//
+// A kernel of driven species (`compiler.compileKernel(sbml, { driven: ["S_ext"] })`) has the same
+// arrays and functions: the drive goes through the parameters. Before an `advance` the caller
+// writes the path `X__value + X__slope * (t - driven__t_ref)` of each species and point into its
+// parameters, at the indices `value` and `slope` of `description.model.driven` and
+// `description.model.t_ref` (the description of the model, absent without driven species), and
+// every call computes what the kernel derives from them, point by point, so a path may change
+// between the calls. The state `X__exchange` (index `exchange`) accumulates the amount the model
+// gave to the species (negative where it took it); written 0 before an advance, it is the amount
+// exchanged over that interval.
 
 /** The contract of a kernel and its description. */
-export const KERNEL_CONTRACT = "kernel/1";
+export const KERNEL_CONTRACT = "kernel/2";
 
 /** The functions a kernel exports. */
 const KERNEL_EXPORTS = ["sbmlsim_kernel_init", "sbmlsim_kernel_advance", "sbmlsim_kernel_assign"];

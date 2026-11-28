@@ -2,12 +2,14 @@
 //! its [`KernelDescription`].
 //!
 //! [`compile`] reads the SBML ([`sbmlsim_sbml::read`]), builds the model representation
-//! ([`sbmlsim_ir::build`]) and emits the module and its description
+//! ([`sbmlsim_ir::build`]), drives the species of [`CompileOptions::driven`]
+//! ([`sbmlsim_ir::driven::apply`]) and emits the module and its description
 //! ([`sbmlsim_codegen::emit_optimized`], [`sbmlsim_codegen::emit_with`] without the optimizer),
-//! so a refusal of the reader, of the builder or of the code generation surfaces with its own
-//! message. [`compile_kernel`] emits the batched kernel of the model instead (`kernel/1`,
-//! [`sbmlsim_codegen::emit_kernel`]): the model with its RODAS4 integrator in one module, which
-//! advances many points per call.
+//! so a refusal of the reader, of the builder, of the driven species or of the code generation
+//! surfaces with its own message. [`compile_kernel`] emits the batched kernel of the model
+//! instead (`kernel/2`, [`sbmlsim_codegen::emit_kernel`]): the model with its RODAS4 integrator
+//! in one module, which advances many points per call, with the species of
+//! [`KernelOptions::driven`] driven.
 //!
 //! The crate does no file system or OS access, so it builds for `wasm32-unknown-unknown`.
 
@@ -18,7 +20,7 @@ pub use sbmlsim_codegen::{COMPILER, Limits, is_above_the_limits};
 pub use sbmlsim_ir::CompileError;
 
 /// What the compiler does besides the translation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompileOptions {
     /// Optimize the generated module (`sbmlsim_codegen::emit_optimized`, the optimizer of
     /// `sbmlsim_ir::optimize`): constant folding and the rewrites which are exact in binary64,
@@ -35,6 +37,12 @@ pub struct CompileOptions {
     /// ordinary simulations to avoid its derivative compilation and cached constants.
     /// Forward sensitivities still work through their numerical derivative fallback.
     pub parameter_jacobian: bool,
+    /// The species to drive, SBML ids, in this order (see `sbmlsim_ir::driven`): each leaves
+    /// the states and follows the path `X__value + X__slope * (time - driven__t_ref)` of
+    /// three parameters, with the accumulator state `X__exchange` of the amount the model
+    /// exchanged with it; the description lists them (`ModelDescription::driven`). Empty, the
+    /// default, drives none.
+    pub driven: Vec<String>,
 }
 
 impl Default for CompileOptions {
@@ -43,6 +51,7 @@ impl Default for CompileOptions {
             optimize: true,
             jacobian: JacobianChoice::Auto,
             parameter_jacobian: true,
+            driven: Vec::new(),
         }
     }
 }
@@ -69,15 +78,7 @@ pub fn compile_document(
     doc: &sbmlsim_sbml::Document,
     options: &CompileOptions,
 ) -> Result<CompiledModel, CompileError> {
-    let model = sbmlsim_ir::build(doc)?;
-    let (wasm, description) = sbmlsim_codegen::emit_with_options(
-        &model,
-        options.jacobian,
-        options.optimize,
-        options.parameter_jacobian,
-        Limits::default(),
-    )?;
-    Ok(CompiledModel { wasm, description })
+    compile_limited(doc, options, Limits::default())
 }
 
 /// [`compile`] with other limits of the functions of `model.wasm` than the defaults
@@ -90,7 +91,17 @@ pub fn compile_with_limits(
     limits: Limits,
 ) -> Result<CompiledModel, CompileError> {
     let doc = sbmlsim_sbml::read(sbml).map_err(from_read_error)?;
-    let model = sbmlsim_ir::build(&doc)?;
+    compile_limited(&doc, options, limits)
+}
+
+/// The model representation of a document with the driven species of `options`, emitted
+/// within `limits`.
+fn compile_limited(
+    doc: &sbmlsim_sbml::Document,
+    options: &CompileOptions,
+    limits: Limits,
+) -> Result<CompiledModel, CompileError> {
+    let model = sbmlsim_ir::driven::apply(sbmlsim_ir::build(doc)?, &options.driven)?;
     let (wasm, description) = sbmlsim_codegen::emit_with_options(
         &model,
         options.jacobian,
@@ -101,7 +112,20 @@ pub fn compile_with_limits(
     Ok(CompiledModel { wasm, description })
 }
 
-/// A compiled batched kernel (`kernel/1`).
+/// What the compiler of a batched kernel does besides the translation. A kernel is always
+/// optimized and has the analytic Jacobian. Its JSON (the options of `compile_kernel` of
+/// `compiler.wasm`) is `{"driven": [...]}`, each field optional with its default.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct KernelOptions {
+    /// The species to drive, SBML ids, in this order, as [`CompileOptions::driven`]: the caller
+    /// writes the path of each species into the parameters of every point before an advance,
+    /// and the description of its model lists them (`ModelDescription::driven`). Empty, the default, drives
+    /// none.
+    pub driven: Vec<String>,
+}
+
+/// A compiled batched kernel (`kernel/2`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct CompiledKernel {
     /// The module `kernel.wasm`.
@@ -111,13 +135,14 @@ pub struct CompiledKernel {
 }
 
 /// Compiles the text of an SBML Level 3 Version 2 document into a batched kernel: the model with
-/// its RODAS4 integrator in one module (`kernel/1`, see `sbmlsim_abi`). Refuses what the code
-/// generation of the kernel refuses ([`sbmlsim_codegen::emit_kernel`]: events, delays,
-/// algebraic rules, a model without states or without an analytic Jacobian) besides what
-/// [`compile`] refuses.
-pub fn compile_kernel(sbml: &str) -> Result<CompiledKernel, CompileError> {
+/// its RODAS4 integrator in one module (`kernel/2`, see `sbmlsim_abi`), with the species of
+/// `options` driven. Refuses what the code generation of the kernel refuses
+/// ([`sbmlsim_codegen::emit_kernel`]: events, delays, algebraic rules, a model without states
+/// or without an analytic Jacobian) besides what [`compile`] refuses, a driven species the
+/// message of [`compile`] included.
+pub fn compile_kernel(sbml: &str, options: &KernelOptions) -> Result<CompiledKernel, CompileError> {
     let doc = sbmlsim_sbml::read(sbml).map_err(from_read_error)?;
-    let model = sbmlsim_ir::build(&doc)?;
+    let model = sbmlsim_ir::driven::apply(sbmlsim_ir::build(&doc)?, &options.driven)?;
     let (wasm, description) = sbmlsim_codegen::emit_kernel(&model)?;
     Ok(CompiledKernel { wasm, description })
 }
@@ -242,15 +267,17 @@ mod tests {
             "</listOfParameters>",
             r#"<parameter id="y" value="1" constant="false"/></listOfParameters>"#,
         );
-        let a = compile_kernel(&decay).unwrap();
-        let b = compile_kernel(&decay).unwrap();
+        let options = KernelOptions::default();
+        let a = compile_kernel(&decay, &options).unwrap();
+        let b = compile_kernel(&decay, &options).unwrap();
         assert_eq!(a, b);
         assert!(a.wasm.starts_with(b"\0asm"));
         assert_eq!(a.description.version, sbmlsim_abi::KERNEL_CONTRACT);
         assert_eq!(a.description.state_ids, ["y"]);
         assert_eq!(a.description.parameter_ids, ["k"]);
+        assert!(a.description.model.driven.is_empty());
         // a model without states is refused with its feature
-        let error = compile_kernel(DECAY).unwrap_err();
+        let error = compile_kernel(DECAY, &options).unwrap_err();
         assert!(error.to_string().contains("without states"), "{error}");
     }
 
@@ -259,5 +286,141 @@ mod tests {
         let options = CompileOptions::default();
         assert!(options.optimize);
         assert_eq!(options.jacobian, JacobianChoice::Auto);
+        assert!(options.driven.is_empty());
+    }
+
+    /// `X -> C` of the rate `k * X`, in units of the model.
+    fn uptake() -> String {
+        let math = r#"xmlns="http://www.w3.org/1998/Math/MathML""#;
+        format!(
+            r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2"><model id="m" timeUnits="second" substanceUnits="mole"><listOfCompartments><compartment id="blood" size="2" units="litre" constant="true"/><compartment id="cell" size="1" units="litre" constant="true"/></listOfCompartments><listOfSpecies><species id="X" compartment="blood" initialConcentration="3" hasOnlySubstanceUnits="false" boundaryCondition="false" constant="false"/><species id="C" compartment="cell" initialConcentration="0" hasOnlySubstanceUnits="false" boundaryCondition="false" constant="false"/></listOfSpecies><listOfParameters><parameter id="k" value="0.5" constant="true"/></listOfParameters><listOfReactions><reaction id="R" reversible="false"><listOfReactants><speciesReference species="X" stoichiometry="1" constant="true"/></listOfReactants><listOfProducts><speciesReference species="C" stoichiometry="1" constant="true"/></listOfProducts><kineticLaw><math {math}><apply><times/><ci>k</ci><ci>X</ci></apply></math></kineticLaw></reaction></listOfReactions></model></sbml>"#
+        )
+    }
+
+    #[test]
+    fn driven_species_compile() {
+        for optimize in [true, false] {
+            let options = CompileOptions {
+                optimize,
+                driven: vec!["X".to_string()],
+                ..CompileOptions::default()
+            };
+            let compiled = compile(&uptake(), &options).unwrap();
+            assert!(compiled.wasm.starts_with(b"\0asm"));
+            let desc = &compiled.description;
+            let states: Vec<&str> = desc.states.iter().map(|s| s.id.as_str()).collect();
+            assert_eq!(states, ["C", "X__exchange"]);
+            let index = |id: &str| desc.parameters.iter().position(|p| p.id == id).unwrap() as u32;
+            assert_eq!(
+                desc.driven,
+                [sbmlsim_abi::DrivenSpecies {
+                    id: "X".into(),
+                    value: index("X__value"),
+                    slope: index("X__slope"),
+                    exchange: 1,
+                    amount: false,
+                }]
+            );
+            assert_eq!(desc.t_ref, Some(index("driven__t_ref")));
+            assert_eq!(desc.parameters[index("X__value") as usize].initial, 3.0);
+            // the new entities are selections, with their units
+            for (id, unit) in [
+                ("X__value", "mole/litre"),
+                ("X__slope", "(mole/litre)/second"),
+                ("driven__t_ref", "second"),
+                ("X__exchange", "mole"),
+            ] {
+                assert!(desc.selections.iter().any(|s| s.id == id), "{id}");
+                assert_eq!(desc.units[id], unit, "{id}");
+            }
+        }
+        // the document entry point drives them too
+        let doc = sbmlsim_sbml::read(&uptake()).unwrap();
+        let options = CompileOptions {
+            driven: vec!["X".to_string()],
+            ..CompileOptions::default()
+        };
+        assert_eq!(
+            compile_document(&doc, &options).unwrap(),
+            compile(&uptake(), &options).unwrap()
+        );
+    }
+
+    #[test]
+    fn a_refusal_of_a_driven_species_has_its_message() {
+        let options = CompileOptions {
+            driven: vec!["k".to_string()],
+            ..CompileOptions::default()
+        };
+        let error = compile(&uptake(), &options).unwrap_err();
+        assert!(
+            matches!(error, CompileError::Unsupported { .. }),
+            "{error:?}"
+        );
+        assert!(error.to_string().contains('k'), "{error}");
+    }
+
+    #[test]
+    fn driven_species_compile_into_a_kernel() {
+        let options = KernelOptions {
+            driven: vec!["X".to_string()],
+        };
+        let a = compile_kernel(&uptake(), &options).unwrap();
+        assert_eq!(a, compile_kernel(&uptake(), &options).unwrap());
+        assert_eq!(a.description.version, "kernel/2");
+        assert_eq!(a.description.state_ids, ["C", "X__exchange"]);
+        // the driven species of the description of the model, which is the one of `compile`
+        let model = compile(
+            &uptake(),
+            &CompileOptions {
+                driven: options.driven.clone(),
+                ..CompileOptions::default()
+            },
+        )
+        .unwrap()
+        .description;
+        assert_eq!(a.description.model.driven, model.driven);
+        assert_eq!(a.description.model.t_ref, model.t_ref);
+        let ids = &a.description.parameter_ids;
+        assert_eq!(
+            ids[a.description.model.driven[0].value as usize],
+            "X__value"
+        );
+        assert_eq!(
+            ids[a.description.model.t_ref.unwrap() as usize],
+            "driven__t_ref"
+        );
+        assert_ne!(
+            a.wasm,
+            compile_kernel(&uptake(), &KernelOptions::default())
+                .unwrap()
+                .wasm
+        );
+    }
+
+    /// An unknown driven species, and an id which is no species, is refused by the kernel with
+    /// the message of `compile`.
+    #[test]
+    fn a_refusal_of_a_driven_species_of_a_kernel_has_the_message_of_compile() {
+        for id in ["Q", "k"] {
+            let driven = vec![id.to_string()];
+            let kernel = compile_kernel(
+                &uptake(),
+                &KernelOptions {
+                    driven: driven.clone(),
+                },
+            )
+            .unwrap_err();
+            let model = compile(
+                &uptake(),
+                &CompileOptions {
+                    driven,
+                    ..CompileOptions::default()
+                },
+            )
+            .unwrap_err();
+            assert_eq!(kernel.to_string(), model.to_string());
+            assert!(kernel.to_string().contains(id), "{kernel}");
+        }
     }
 }

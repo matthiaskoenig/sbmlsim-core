@@ -1,4 +1,4 @@
-//! The batched kernel `kernel/1` of `sbmlsim_codegen::emit_kernel`: a model with its RODAS4
+//! The batched kernel `kernel/2` of `sbmlsim_codegen::emit_kernel`: a model with its RODAS4
 //! integrator in one WebAssembly module, run in wasmtime with the functions of mathlib (natively,
 //! the same bits as `mathlib.wasm`) against the QFunction of the C target (`sbmlsim_c`, the same
 //! method and step control, compiled with the C compiler of the machine) and the initialization
@@ -14,13 +14,15 @@ mod common;
 use std::sync::Arc;
 
 use common::{
-    ALGEBRAIC_CASES, Case, EVENT_CASES, MATH, Random, blow_up, cases, cell_model, linear,
+    ALGEBRAIC_CASES, Accumulators, Case, EVENT_CASES, MATH, Random, UPTAKE_K, UPTAKE_VB, blow_up,
+    cases, cell_model, driven_against_steppers, driven_models, linear, path_integral, uptake,
     with_event,
 };
 use sbmlsim_abi::{IntegratorSettings, KERNEL_CONTRACT, KernelDescription, Tolerance};
 use sbmlsim_c::{
     CModel, CONTROL, CONTROL_DONE, CONTROL_FAILED, CONTROL_H, CONTROL_T, COUNTS, Library, Points,
-    RosenbrockContext, generate, generate_qfunction, run_points,
+    RosenbrockContext, generate, generate_qfunction, generate_qfunction_with, generate_with,
+    run_points,
 };
 use sbmlsim_codegen::emit_kernel;
 use sbmlsim_engine::Stepper;
@@ -107,7 +109,17 @@ struct Kernel {
 impl Kernel {
     /// The kernel of an SBML document.
     fn new(sbml: &str) -> Kernel {
-        let (wasm, description) = emit_kernel(&model(sbml)).unwrap();
+        Kernel::of(&model(sbml))
+    }
+
+    /// The kernel of an SBML document with the species `ids` driven.
+    fn driven(sbml: &str, ids: &[String]) -> Kernel {
+        Kernel::of(&sbmlsim_ir::driven::apply(model(sbml), ids).unwrap())
+    }
+
+    /// The kernel of a model representation.
+    fn of(model: &Model) -> Kernel {
+        let (wasm, description) = emit_kernel(model).unwrap();
         let engine = Engine::default();
         let module = Module::new(&engine, &wasm).unwrap();
         let mut store = Store::new(&engine, ());
@@ -398,9 +410,24 @@ const ABSOLUTE: f64 = 4e-9;
 /// is done (or failed) in both, takes the same accepted and rejected steps in both after every
 /// interval, and its states are within the bound.
 fn compare(name: &str, sbml: &str, initial: &Points, intervals: &[f64]) {
-    let q = generate_qfunction(sbml).unwrap();
+    compare_driven(name, sbml, &[], initial, intervals, &mut |_, _, _| {});
+}
+
+/// [`compare`] of the model with the species `ids` driven, where `before(t0, mine, reference)`
+/// sets the points of the kernel and of the QFunction before the interval from `t0` (their
+/// paths, the same in both).
+fn compare_driven(
+    name: &str,
+    sbml: &str,
+    ids: &[String],
+    initial: &Points,
+    intervals: &[f64],
+    before: &mut dyn FnMut(f64, &mut Points, &mut Points),
+) {
+    let q = generate_qfunction_with(sbml, ids).unwrap();
     let library = Library::build(&q.host_code()).unwrap();
-    let mut kernel = Kernel::new(sbml);
+    let mut kernel = Kernel::driven(sbml, ids);
+    assert_eq!(kernel.description.model, q.description, "{name}");
     assert_eq!(kernel.description.state_ids, q.state_ids, "{name}");
     assert_eq!(kernel.description.parameter_ids, q.parameter_ids, "{name}");
     let n = q.state_ids.len();
@@ -409,6 +436,7 @@ fn compare(name: &str, sbml: &str, initial: &Points, intervals: &[f64]) {
     let mut worst: f64 = 0.0;
     for window in intervals.windows(2) {
         let (t0, t1) = (window[0], window[1]);
+        before(t0, &mut mine, &mut reference);
         reference.start(t0);
         mine.start(t0);
         run_points(&library, &q, &context(t1), &mut reference, 8).unwrap();
@@ -496,6 +524,252 @@ fn kernel_matches_qfunction() {
         &points(states, parameters, 200),
         &quarter,
     );
+}
+
+/// The kernel of a driven model (the cases of the QFunction, `common::driven_models`) against
+/// the QFunction of the same driven model, both at the tolerances 1e-6 and 1e-9, as
+/// [`kernel_matches_qfunction`]: 200 points from `init` (NaN but for their changes), each with a
+/// random path per species and interval and a random value of a parameter behind a constant
+/// (the same in both), the accumulators starting every interval at 0. The kernel computes the
+/// constants of every point in every call from the parameters of the call, as the QFunction
+/// does.
+#[test]
+fn kernel_driven_matches_qfunction() {
+    for model in driven_models() {
+        let mut kernel = Kernel::driven(&model.sbml, &model.ids);
+        let desc = kernel.description.model.clone();
+        let (n, m) = kernel.sizes();
+        let index = |id: &str| desc.parameters.iter().position(|p| p.id == id).unwrap();
+        let mut random = Random(29);
+        let count = 200;
+        let mut parameters = Vec::with_capacity(count * m);
+        for _ in 0..count {
+            let mut p = vec![f64::NAN; m];
+            for (id, value) in (model.changes)(&mut random) {
+                p[index(&id)] = value;
+            }
+            parameters.extend(p);
+        }
+        let states = kernel.init(&mut parameters);
+        assert!(parameters.iter().chain(&states).all(|x| x.is_finite()));
+        let initial = points(states, parameters, count);
+        let hoisted = index(model.hoisted) as u32;
+        let intervals: Vec<f64> = (0..=model.intervals)
+            .map(|k| model.interval * k as f64)
+            .collect();
+        compare_driven(
+            &desc.id,
+            &model.sbml,
+            &model.ids,
+            &initial,
+            &intervals,
+            &mut |t0, mine, reference| {
+                for i in 0..count {
+                    let values = model.interval_values(&desc, hoisted, &mut random, t0);
+                    for p in [&mut *mine, &mut *reference] {
+                        for &(k, value) in &values {
+                            p.parameters[i * m + k as usize] = value;
+                        }
+                        for d in &desc.driven {
+                            p.state[i * n + d.exchange as usize] = 0.0;
+                        }
+                    }
+                }
+            },
+        );
+    }
+}
+
+/// The kernel of a driven model at the tolerances of production, 1e-6 and 1e-9, against a
+/// stepper of the native model of the C target at tight tolerances
+/// (`common::driven_against_steppers`): every state within `4e-6 |y| + 4e-9`, but an
+/// accumulator within `4e-6 s + 4e-9` of the sum `s` of the amounts of the cell it balances
+/// (`common::Accumulators::Balanced`, the error of an accumulator is the error of those
+/// amounts), and the exchange of the closed form within its bound.
+#[test]
+fn kernel_driven_accumulators_at_1e_6() {
+    for model in driven_models() {
+        let mut kernel = Kernel::driven(&model.sbml, &model.ids);
+        let source = generate_with(&model.sbml, &model.ids).unwrap();
+        assert_eq!(kernel.description.model, source.description);
+        let worst = driven_against_steppers(
+            &model,
+            1e-6,
+            1e-9,
+            Accumulators::Balanced,
+            &mut |points, context| {
+                assert_eq!(kernel.advance(points, context), 0);
+            },
+        );
+        eprintln!("{}: the worst state is {worst}", source.description.id);
+    }
+}
+
+/// The description of a driven kernel names its driven species and the reference time in the
+/// description of its model (`ModelDescription::driven`, `t_ref`), at the indices of
+/// `parameter_ids` and `state_ids`, and nowhere else; an undriven kernel has none.
+#[test]
+fn kernel_description_names_driven() {
+    for model in driven_models() {
+        let kernel = Kernel::driven(&model.sbml, &model.ids);
+        let d = &kernel.description;
+        let source = generate_with(&model.sbml, &model.ids).unwrap();
+        let (driven, t_ref) = (&d.model.driven, d.model.t_ref);
+        assert_eq!(driven, &source.description.driven);
+        assert_eq!(t_ref, source.description.t_ref);
+        let ids: Vec<&str> = driven.iter().map(|x| x.id.as_str()).collect();
+        assert_eq!(ids, model.ids);
+        for x in driven {
+            assert_eq!(
+                d.parameter_ids[x.value as usize],
+                format!("{}__value", x.id)
+            );
+            assert_eq!(
+                d.parameter_ids[x.slope as usize],
+                format!("{}__slope", x.id)
+            );
+            assert_eq!(
+                d.state_ids[x.exchange as usize],
+                format!("{}__exchange", x.id)
+            );
+            assert!(!x.amount, "{}", x.id);
+        }
+        assert_eq!(d.parameter_ids[t_ref.unwrap() as usize], "driven__t_ref");
+        // `kernel.json` names them in its model, once
+        let mut json = serde_json::to_value(d).unwrap();
+        assert_eq!(
+            json["model"]["driven"],
+            serde_json::to_value(driven).unwrap()
+        );
+        assert_eq!(json["model"]["t_ref"], t_ref.unwrap());
+        assert!(json.get("driven").is_none() && json.get("t_ref").is_none());
+        let back: KernelDescription = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(&back, d);
+        // a description with the fields of the model next to it is no `kernel/2`
+        json["driven"] = json["model"]["driven"].clone();
+        assert!(serde_json::from_value::<KernelDescription>(json).is_err());
+    }
+    let kernel = Kernel::new(&decay());
+    assert!(kernel.description.model.driven.is_empty());
+    assert_eq!(kernel.description.model.t_ref, None);
+    let json = serde_json::to_value(&kernel.description).unwrap();
+    assert!(json["model"].get("driven").is_none());
+    assert!(json["model"].get("t_ref").is_none());
+}
+
+#[test]
+fn kernel_contract_is_2() {
+    assert_eq!(KERNEL_CONTRACT, "kernel/2");
+    for kernel in [
+        Kernel::new(&decay()),
+        Kernel::driven(&uptake(), &["X".to_string()]),
+    ] {
+        assert_eq!(kernel.description.version, "kernel/2");
+    }
+    // a description of `kernel/1` is not one of this contract
+    assert!(sbmlsim_abi::check_contract("kernel/1", KERNEL_CONTRACT).is_err());
+}
+
+/// [`uptake`] with the rule `r = (k blood) X`, whose `k blood` is a constant of the optimizer
+/// in the right hand side.
+fn uptake_with_rule() -> String {
+    uptake()
+        .replace(
+            "</listOfParameters>",
+            r#"<parameter id="r" constant="false"/></listOfParameters>"#,
+        )
+        .replace(
+            "<listOfReactions>",
+            &format!(
+                r#"<listOfRules><assignmentRule variable="r"><math {MATH}><apply><times/><apply><times/><ci>k</ci><ci>blood</ci></apply><ci>X</ci></apply></math></assignmentRule></listOfRules><listOfReactions>"#
+            ),
+        )
+}
+
+/// The drive is written into the parameters per point and call, and every function of a driven
+/// kernel computes what it derives from the parameters per point and call: `init` the initial
+/// value of the path (`X__value = 0.3 / blood`, `blood = Vb`) from the `Vb` of each point,
+/// `advance` the constant `k blood` of each point from its `k` of the call (the exchange of the
+/// closed form, `-k Vb` times the integral of the path, with `k` changed between the calls), and
+/// `assign` the rule `r = k blood X` from the `k` and the path of the call.
+#[test]
+fn kernel_driven_constants_per_point_and_call() {
+    let ids = ["X".to_string()];
+    let mut kernel = Kernel::driven(&uptake_with_rule(), &ids);
+    let d = kernel.description.clone();
+    let (n, m) = kernel.sizes();
+    let at = |id: &str| d.parameter_ids.iter().position(|p| p == id).unwrap();
+    let (k, vb, r) = (at("k"), at("Vb"), at("r"));
+    let x = &d.model.driven[0];
+    let (value, slope, t_ref) = (
+        x.value as usize,
+        x.slope as usize,
+        d.model.t_ref.unwrap() as usize,
+    );
+    let exchange = x.exchange as usize;
+    assert!(d.model.n_constants > 0);
+    // init: three points of their own Vb
+    let sizes = [0.1, UPTAKE_VB, 0.3];
+    let mut parameters = vec![f64::NAN; 3 * m];
+    for (i, size) in sizes.iter().enumerate() {
+        parameters[i * m + vb] = *size;
+    }
+    let states = kernel.init(&mut parameters);
+    for (i, size) in sizes.iter().enumerate() {
+        let p = &parameters[i * m..(i + 1) * m];
+        assert_eq!(p[vb], *size);
+        assert!(
+            (p[value] - 0.3 / size).abs() <= 1e-15 * p[value],
+            "point {i}"
+        );
+        assert_eq!((p[slope], p[t_ref], p[k]), (0.0, 0.0, UPTAKE_K));
+        assert!(
+            (p[r] - UPTAKE_K * 0.3).abs() <= 1e-15,
+            "point {i}: r = {}",
+            p[r]
+        );
+        assert_eq!(states[i * n + exchange], 0.0);
+    }
+    // advance: per call a path and a k of each point, the exchange from 0
+    let mut mine = points(states, parameters, sizes.len());
+    let paths = [(1.0, 0.5, 0.7), (2.0, -1.0, 1.9), (0.5, 3.0, 0.2)];
+    for call in 0..3 {
+        let (t0, t1) = (call as f64, call as f64 + 1.0);
+        for (i, &(v, s, rate)) in paths.iter().enumerate() {
+            let p = &mut mine.parameters[i * m..(i + 1) * m];
+            (p[value], p[slope], p[t_ref]) = (v + call as f64, s, t0);
+            p[k] = rate * (1.0 + call as f64);
+            mine.state[i * n + exchange] = 0.0;
+        }
+        mine.start(t0);
+        assert_eq!(kernel.advance(&mut mine, &context(t1)), 0);
+        for i in 0..sizes.len() {
+            let p = &mine.parameters[i * m..(i + 1) * m];
+            let exact = -p[k] * p[vb] * path_integral(p[value], p[slope], t0, t0, t1);
+            let a = mine.state[i * n + exchange];
+            assert!(
+                (a - exact).abs() <= 1e-9 * exact.abs(),
+                "call {call}, point {i}: exchange {a}, closed form {exact}"
+            );
+        }
+        // assign: r of the k of the call, then of another k, at the time of the point
+        for scale in [1.0, 3.0] {
+            for i in 0..sizes.len() {
+                mine.parameters[i * m + k] = paths[i].2 * scale;
+            }
+            assert_eq!(kernel.assign(&mut mine), 0);
+            for i in 0..sizes.len() {
+                let p = &mine.parameters[i * m..(i + 1) * m];
+                let path = p[value] + p[slope] * (t1 - p[t_ref]);
+                let exact = p[k] * p[vb] * path;
+                assert!(
+                    (p[r] - exact).abs() <= 1e-14 * exact.abs(),
+                    "call {call}, point {i}: r = {}, expected {exact}",
+                    p[r]
+                );
+            }
+        }
+    }
 }
 
 /// The points of `y' = a y^2` from `y = 1` with `a = 1, -1, 0.5` to `t1 = 1.5`, one attempt per

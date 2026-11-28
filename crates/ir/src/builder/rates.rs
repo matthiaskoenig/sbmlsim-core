@@ -192,6 +192,9 @@ impl Context for Builder<'_> {
                 id,
             ));
         }
+        if !self.rate_of.iter().any(|r| r == id) {
+            self.rate_of.push(id.to_string());
+        }
         match self.symbols[id] {
             Symbol::State(k) => {
                 let k = k as usize;

@@ -1,6 +1,15 @@
-//! The batched kernel (`kernel/1`, see `sbmlsim_abi`): a model of ordinary differential
+//! The batched kernel (`kernel/2`, see `sbmlsim_abi`): a model of ordinary differential
 //! equations with the Rosenbrock integrator RODAS4 in one WebAssembly module, which advances any
 //! number of points per call.
+//!
+//! A model with driven species (`sbmlsim_ir::driven::apply` before the emission) is an ordinary
+//! model whose rates read the time and the parameters of the paths, so the kernel needs nothing
+//! of its own for them: `advance` copies the parameters of every point into its work and computes
+//! the constants behind them in every call, before its first attempt, so a path written into the
+//! parameters between the calls is the one the attempts read; `init` evaluates the initial values
+//! of each point from its parameters and `assign` the rules as written. The description lists
+//! the driven species and the reference time in the description of its model
+//! (`ModelDescription::driven`, `t_ref`).
 //!
 //! [`emit_kernel`] emits the functions of the model from the programs of the optimizer
 //! (`sbmlsim_ir::optimize`, as the C target and its QFunction take them): the constants behind
@@ -50,7 +59,8 @@ fn unsupported(model: &Model, feature: &str) -> CompileError {
     }
 }
 
-/// Emits the batched kernel of a model (`kernel/1`) and its description.
+/// Emits the batched kernel of a model (`kernel/2`) and its description; a model with driven
+/// species gives a driven kernel (see the module documentation).
 ///
 /// Refuses ([`CompileError::Unsupported`], naming the feature, as the QFunction of the C target
 /// does): events, delays, algebraic rules, a model without states, a model without an analytic

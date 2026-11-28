@@ -190,9 +190,17 @@ impl QSource {
 /// support ([`CError::Unsupported`]) and a model the reader or the model representation
 /// refuses ([`CError::Model`]).
 pub fn generate_qfunction(sbml: &str) -> Result<QSource, CError> {
-    let doc = sbmlsim_sbml::read(sbml).map_err(|e| CError::Model(e.to_string()))?;
-    let model = sbmlsim_ir::build(&doc).map_err(|e| CError::Model(e.to_string()))?;
-    generate_qfunction_model(&model)
+    generate_qfunction_with(sbml, &[])
+}
+
+/// [`generate_qfunction`] with the species `driven` (SBML ids, in this order) driven
+/// ([`sbmlsim_ir::driven::apply`], see [`crate::generate_with`]): the field `parameters` carries
+/// the paths of the species per point and call (`X__value`, `X__slope`, `driven__t_ref`, at the
+/// indices of `ModelDescription::driven` and `t_ref`), from which every application computes the
+/// constants of the point, and the field `state` the accumulators `X__exchange`. The paths read
+/// the time, so the QFunction has the derivative of the right hand side in the time.
+pub fn generate_qfunction_with(sbml: &str, driven: &[String]) -> Result<QSource, CError> {
+    generate_qfunction_model(&emit::model_of(sbml, driven)?)
 }
 
 /// The QFunction of a model representation (see [`generate_qfunction`]).

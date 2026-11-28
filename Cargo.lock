@@ -2674,6 +2674,7 @@ dependencies = [
  "sbmlsim-codegen",
  "sbmlsim-ir",
  "sbmlsim-sbml",
+ "serde",
 ]
 
 [[package]]
@@ -2702,6 +2703,7 @@ dependencies = [
  "sbmlsim-csolvers",
  "sbmlsim-engine",
  "sbmlsim-host",
+ "sbmlsim-sbml",
  "serde",
  "serde_json",
 ]
