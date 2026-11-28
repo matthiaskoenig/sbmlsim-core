@@ -98,13 +98,6 @@ impl Default for ModelOptions {
     }
 }
 
-/// The options of `compile_kernel`, its JSON: `{"driven": [...]}`.
-#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize)]
-#[serde(default, deny_unknown_fields)]
-struct KernelRequest {
-    driven: Vec<String>,
-}
-
 /// Compiles an SBML document, the entry point of the interface and of the tests.
 ///
 /// # Errors
@@ -367,16 +360,8 @@ pub unsafe extern "C" fn compile_kernel(
     out: *mut usize,
 ) -> u32 {
     // SAFETY: the caller gives the buffers documented above
-    let result = unsafe { request::<KernelRequest>(pointer, len, options, options_len) }.and_then(
-        |(text, options)| {
-            compile_kernel_model(
-                text,
-                &KernelOptions {
-                    driven: options.driven,
-                },
-            )
-        },
-    );
+    let result = unsafe { request::<KernelOptions>(pointer, len, options, options_len) }
+        .and_then(|(text, options)| compile_kernel_model(text, &options));
     // SAFETY: the caller gives four words of its own memory
     unsafe { deliver(result, out) }
 }

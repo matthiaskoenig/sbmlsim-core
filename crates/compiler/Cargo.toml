@@ -14,3 +14,4 @@ sbmlsim-abi = { path = "../abi" }
 sbmlsim-codegen = { path = "../codegen" }
 sbmlsim-ir = { path = "../ir" }
 sbmlsim-sbml = { path = "../sbml" }
+serde.workspace = true

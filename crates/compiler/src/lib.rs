@@ -113,8 +113,10 @@ fn compile_limited(
 }
 
 /// What the compiler of a batched kernel does besides the translation. A kernel is always
-/// optimized and has the analytic Jacobian.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+/// optimized and has the analytic Jacobian. Its JSON (the options of `compile_kernel` of
+/// `compiler.wasm`) is `{"driven": [...]}`, each field optional with its default.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct KernelOptions {
     /// The species to drive, SBML ids, in this order, as [`CompileOptions::driven`]: the caller
     /// writes the path of each species into the parameters of every point before an advance,
