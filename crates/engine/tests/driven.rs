@@ -209,6 +209,43 @@ fn set_parameters_refuses_the_target_of_a_rule() {
     assert!(matches!(error, EngineError::Request(_)), "{error:?}");
 }
 
+/// A parameter set between two advances which makes the trigger of an event true fires the
+/// event at the start of the next advance: `C = 42` once `k > 1`.
+#[test]
+fn set_parameters_fires_an_event_at_the_next_advance() {
+    let sbml = uptake().replace(
+        "</listOfReactions>",
+        &format!(
+            r#"</listOfReactions><listOfEvents><event id="E" useValuesFromTriggerTime="true"><trigger initialValue="false" persistent="true"><math {MATH}><apply><gt/><ci>k</ci><cn>1</cn></apply></math></trigger><listOfEventAssignments><eventAssignment variable="C"><math {MATH}><cn>42</cn></math></eventAssignment></listOfEventAssignments></event></listOfEvents>"#
+        ),
+    );
+    let (model, desc) = native(&sbml, &["X"]);
+    let c = state(&desc, "C");
+    let k = parameter(&desc, "k");
+    let mut stepper = Stepper::new(Box::new(model), desc.clone(), settings(), &[]).unwrap();
+    stepper.set_parameters(&path(&desc, 2.0, 0.0, 0.0)).unwrap();
+    let y = stepper.state().to_vec();
+    stepper.advance(&y, 0.0, 1.0).unwrap();
+    // k = 0.7: the event did not fire
+    let before = -K * VB * integral(2.0, 0.0, 0.0, 0.0, 1.0);
+    assert!(relative(stepper.state()[c], -before) <= 1e-8);
+
+    let mut second = path(&desc, 2.0, 0.0, 1.0);
+    second.push((k, 2.0));
+    stepper.set_parameters(&second).unwrap();
+    // nothing fires between the advances
+    assert!(relative(stepper.state()[c], -before) <= 1e-8);
+    let y = stepper.state().to_vec();
+    stepper.advance(&y, 1.0, 2.0).unwrap();
+    // C = 42 at t = 1, then the uptake of the interval at k = 2
+    let expected = 42.0 + 2.0 * VB * integral(2.0, 0.0, 1.0, 1.0, 2.0);
+    let value = stepper.state()[c];
+    assert!(
+        relative(value, expected) <= 1e-8,
+        "C {value} for {expected}"
+    );
+}
+
 /// The module of the compiler drives as the native model: the description has the driven
 /// species, their parameters and selections, and its simulation gives the closed form.
 #[test]
