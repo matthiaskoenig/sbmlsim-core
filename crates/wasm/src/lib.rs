@@ -6,34 +6,38 @@
 //! which hands the `model.wasm` and the description of a compilation to `js/loader.mjs`, the
 //! host which runs them.
 //!
-//! The interface is the C ABI of five functions, since the module needs no binding generator
+//! The interface is the C ABI of four functions, since the module needs no binding generator
 //! and no tool beyond cargo. Every string crosses the boundary as the bytes of its UTF-8 in
 //! the memory of the module:
 //!
-//! 1. `allocate(len)` gives a buffer of `len` bytes, which the caller writes the document
-//!    into,
-//! 2. `compile(pointer, len, optimize, jacobian, out)` compiles the document and writes four
-//!    words to `out` (a buffer of four `usize`, 16 bytes of `allocate` for the 32 bit words of
+//! 1. `allocate(len)` gives a buffer of `len` bytes, which the caller writes the document and
+//!    the options into,
+//! 2. `compile(pointer, len, options, options_len, out)` compiles the document with the options
+//!    (the JSON of [`ModelOptions`], an empty buffer for the defaults) and writes four words to
+//!    `out` (a buffer of four `usize`, 16 bytes of `allocate` for the 32 bit words of
 //!    `wasm32`): the pointer and the length of the description of the model, which is the JSON
 //!    of `model.json`, and the pointer and the length of `model.wasm`. It gives 1 for a model
-//!    it compiled and 0 for one it refuses, whose message is the first buffer, with the second
-//!    one empty,
-//! 3. `compile_with_options(pointer, len, optimize, jacobian, parameter_jacobian, out)` has
-//!    the same result, with 0 to omit analytic parameter derivatives and 1 to include them,
-//! 4. `compile_kernel(pointer, len, out)` compiles the document into a batched kernel (the
-//!    model with its RODAS4 integrator in one module, `kernel/1`) with the same result: the
-//!    description is the JSON of `kernel.json`, the module `kernel.wasm`,
-//! 5. `deallocate(pointer, len)` gives a buffer back, the results included: every buffer of
+//!    it compiled and 0 for one it refuses (or options which are not those of the JSON), whose
+//!    message is the first buffer, with the second one empty,
+//! 3. `compile_kernel(pointer, len, options, options_len, out)` compiles the document into a
+//!    batched kernel (the model with its RODAS4 integrator in one module, `kernel/2`) with the
+//!    options of [`KernelOptions`] (JSON, an empty buffer for the defaults) and the same result:
+//!    the description is the JSON of `kernel.json`, the module `kernel.wasm`,
+//! 4. `deallocate(pointer, len)` gives a buffer back, the results included: every buffer of
 //!    the interface is a slice of bytes of exactly its length, so one function frees them all.
 //!
 //! The features `petab` and `fit` add the calls of a PEtab problem and its fit ([`petab`]), and
 //! the feature `stats` the statistics of the analyses, `stats_call` ([`stats`]), all on by
 //! default.
 //!
-//! `optimize` is whether the optimizer of the compiler runs (1 or 0, the results are the same
-//! either way) and `jacobian` the source of the Jacobian of the model: 0 the analytic one
-//! where the model has one and the colored difference quotient otherwise, 1 the difference
-//! quotient always, 2 the analytic one, which refuses a model which has none.
+//! The options of `compile` are `{"optimize": true, "jacobian": "auto", "parameter_jacobian":
+//! true, "driven": []}`, each optional with that default: whether the optimizer of the compiler
+//! runs (the results are the same either way), the source of the Jacobian of the model
+//! (`"auto"` the analytic one where the model has one and the colored difference quotient
+//! otherwise, `"difference_quotient"` always the difference quotient, `"analytic"` the analytic
+//! one, which refuses a model which has none), whether the analytic derivatives of the right
+//! hand side in the parameters are included, and the species to drive
+//! (`sbmlsim_compiler::CompileOptions::driven`). Those of `compile_kernel` are `{"driven": []}`.
 //!
 //! ```
 //! let model = r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3"
@@ -41,7 +45,8 @@
 //!     constant="true"/></listOfCompartments><listOfSpecies><species id="s" compartment="c"
 //!     initialConcentration="1" hasOnlySubstanceUnits="false" boundaryCondition="false"
 //!     constant="false"/></listOfSpecies></model></sbml>"#;
-//! let compiled = sbmlsim_wasm::compile_model(model, true, 0).expect("the model compiles");
+//! let options = sbmlsim_wasm::ModelOptions::default();
+//! let compiled = sbmlsim_wasm::compile_model(model, &options).expect("the model compiles");
 //! assert!(compiled.wasm.starts_with(b"\0asm"));
 //! assert!(compiled.description.contains(r#""s""#), "{}", compiled.description);
 //! ```
@@ -55,6 +60,7 @@ pub mod stats;
 
 use sbmlsim_abi::JacobianChoice;
 use sbmlsim_compiler::CompileOptions;
+pub use sbmlsim_compiler::KernelOptions;
 
 /// A model the compiler translated: the description as JSON and `model.wasm`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,42 +71,52 @@ pub struct Compiled {
     pub wasm: Vec<u8>,
 }
 
-/// The source of the Jacobian a number of the interface stands for.
-///
-/// Anything but 1 and 2 is the default, the analytic Jacobian where the model has one.
-fn jacobian_of(choice: u32) -> JacobianChoice {
-    match choice {
-        1 => JacobianChoice::DifferenceQuotient,
-        2 => JacobianChoice::Analytic,
-        _ => JacobianChoice::Auto,
+/// The options of `compile`, its JSON: those of [`CompileOptions`], each optional with the
+/// default of [`CompileOptions::default`].
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ModelOptions {
+    /// [`CompileOptions::optimize`].
+    pub optimize: bool,
+    /// [`CompileOptions::jacobian`]: `"auto"`, `"difference_quotient"` or `"analytic"`.
+    pub jacobian: JacobianChoice,
+    /// [`CompileOptions::parameter_jacobian`].
+    pub parameter_jacobian: bool,
+    /// [`CompileOptions::driven`].
+    pub driven: Vec<String>,
+}
+
+impl Default for ModelOptions {
+    fn default() -> Self {
+        let defaults = CompileOptions::default();
+        Self {
+            optimize: defaults.optimize,
+            jacobian: defaults.jacobian,
+            parameter_jacobian: defaults.parameter_jacobian,
+            driven: defaults.driven,
+        }
     }
+}
+
+/// The options of `compile_kernel`, its JSON: `{"driven": [...]}`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct KernelRequest {
+    driven: Vec<String>,
 }
 
 /// Compiles an SBML document, the entry point of the interface and of the tests.
 ///
 /// # Errors
 ///
-/// Gives the message of the reader, of the builder or of the code generation for a document
-/// which is not compiled.
-pub fn compile_model(sbml: &str, optimize: bool, jacobian: u32) -> Result<Compiled, String> {
-    compile_model_with_options(sbml, optimize, jacobian, true)
-}
-
-/// [`compile_model`] with control over the optional analytic parameter Jacobian.
-///
-/// With `parameter_jacobian=false`, forward sensitivities use numerical parameter
-/// derivatives and ordinary simulations avoid the corresponding compilation and constants.
-pub fn compile_model_with_options(
-    sbml: &str,
-    optimize: bool,
-    jacobian: u32,
-    parameter_jacobian: bool,
-) -> Result<Compiled, String> {
+/// Gives the message of the reader, of the builder, of the driven species or of the code
+/// generation for a document which is not compiled.
+pub fn compile_model(sbml: &str, options: &ModelOptions) -> Result<Compiled, String> {
     let options = CompileOptions {
-        optimize,
-        jacobian: jacobian_of(jacobian),
-        parameter_jacobian,
-        ..CompileOptions::default()
+        optimize: options.optimize,
+        jacobian: options.jacobian,
+        parameter_jacobian: options.parameter_jacobian,
+        driven: options.driven.clone(),
     };
     let compiled = sbmlsim_compiler::compile(sbml, &options).map_err(|err| err.to_string())?;
     let description = serde_json::to_string(&compiled.description)
@@ -111,21 +127,60 @@ pub fn compile_model_with_options(
     })
 }
 
-/// Compiles an SBML document into a batched kernel (`kernel/1`): the description is the JSON of
+/// Compiles an SBML document into a batched kernel (`kernel/2`): the description is the JSON of
 /// `kernel.json`, the module `kernel.wasm`.
 ///
 /// # Errors
 ///
-/// Gives the message of the reader, of the builder or of the code generation for a document
-/// which is not compiled, e.g. a model with events.
-pub fn compile_kernel_model(sbml: &str) -> Result<Compiled, String> {
-    let compiled = sbmlsim_compiler::compile_kernel(sbml).map_err(|err| err.to_string())?;
+/// Gives the message of the reader, of the builder, of the driven species or of the code
+/// generation for a document which is not compiled, e.g. a model with events.
+pub fn compile_kernel_model(sbml: &str, options: &KernelOptions) -> Result<Compiled, String> {
+    let compiled =
+        sbmlsim_compiler::compile_kernel(sbml, options).map_err(|err| err.to_string())?;
     let description = serde_json::to_string(&compiled.description)
         .map_err(|err| format!("the description of the kernel is not JSON: {err}"))?;
     Ok(Compiled {
         description,
         wasm: compiled.wasm,
     })
+}
+
+/// The bytes of a buffer of the caller: empty for a null pointer or a length of zero.
+///
+/// # Safety
+///
+/// A pointer which is not null is a buffer of [`allocate`] of exactly `len` bytes.
+unsafe fn bytes_of<'a>(pointer: *const u8, len: usize) -> &'a [u8] {
+    if pointer.is_null() || len == 0 {
+        &[]
+    } else {
+        // SAFETY: the caller gives a buffer of `allocate` of exactly this length
+        unsafe { std::slice::from_raw_parts(pointer, len) }
+    }
+}
+
+/// The document and the options of a compilation, read from the buffers of the caller: the
+/// text of the document and the options of their JSON (the defaults for an empty buffer).
+///
+/// # Safety
+///
+/// The buffers satisfy the requirements of [`bytes_of`].
+unsafe fn request<'a, T: serde::de::DeserializeOwned + Default>(
+    pointer: *const u8,
+    len: usize,
+    options: *const u8,
+    options_len: usize,
+) -> Result<(&'a str, T), String> {
+    // SAFETY: the caller gives buffers of `allocate` of exactly these lengths
+    let (document, options) = unsafe { (bytes_of(pointer, len), bytes_of(options, options_len)) };
+    let text = std::str::from_utf8(document).map_err(|_| "the document is not UTF-8".to_owned())?;
+    let options = if options.is_empty() {
+        T::default()
+    } else {
+        serde_json::from_slice(options)
+            .map_err(|err| format!("the options of the compilation are not valid: {err}"))?
+    };
+    Ok((text, options))
 }
 
 /// The layout of a buffer of the interface: bytes, without an alignment.
@@ -268,79 +323,60 @@ pub unsafe extern "C" fn export_ode(
     success
 }
 
-/// Compiles the SBML document of the buffer into `model.wasm` and its description.
+/// Compiles the SBML document of the buffer into `model.wasm` and its description, with the
+/// options of the JSON of [`ModelOptions`] (an empty buffer for the defaults).
 ///
 /// Writes the pointer and the length of the description and of the module to the four words at
-/// `out` and gives 1; for a document it refuses it writes the pointer and the length of the
-/// message, an empty module, and gives 0. Every buffer belongs to the caller, which frees it
-/// with [`deallocate`].
+/// `out` and gives 1; for a document it refuses (or options which are not those of the JSON) it
+/// writes the pointer and the length of the message, an empty module, and gives 0. Every buffer
+/// belongs to the caller, which frees it with [`deallocate`].
 ///
 /// # Safety
 ///
-/// `pointer` is a buffer of `len` bytes of [`allocate`] with the UTF-8 of the document and
-/// `out` a buffer of four words (16 bytes of [`allocate`] for `wasm32`).
+/// `pointer` is a buffer of `len` bytes of [`allocate`] with the UTF-8 of the document,
+/// `options` one of `options_len` bytes with the UTF-8 of the options (or null and 0), and `out`
+/// a buffer of four words (16 bytes of [`allocate`] for `wasm32`).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn compile(
     pointer: *const u8,
     len: usize,
-    optimize: u32,
-    jacobian: u32,
+    options: *const u8,
+    options_len: usize,
     out: *mut usize,
 ) -> u32 {
-    // SAFETY: the caller provides the buffers documented above; the extra option enables
-    // the historical default, preserving the original interface.
-    unsafe { compile_with_options(pointer, len, optimize, jacobian, 1, out) }
-}
-
-/// [`compile`] with `parameter_jacobian=0` to omit analytic parameter derivatives.
-///
-/// # Safety
-///
-/// The input and output buffers satisfy the same requirements as [`compile`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn compile_with_options(
-    pointer: *const u8,
-    len: usize,
-    optimize: u32,
-    jacobian: u32,
-    parameter_jacobian: u32,
-    out: *mut usize,
-) -> u32 {
-    let bytes = if pointer.is_null() || len == 0 {
-        // a document of no bytes, which the compiler refuses as an empty one
-        &[][..]
-    } else {
-        // SAFETY: the caller gives a buffer of `allocate` of exactly this length
-        unsafe { std::slice::from_raw_parts(pointer, len) }
-    };
-    let result = match std::str::from_utf8(bytes) {
-        Ok(text) => {
-            compile_model_with_options(text, optimize != 0, jacobian, parameter_jacobian != 0)
-        }
-        Err(_) => Err("the document is not UTF-8".to_owned()),
-    };
+    // SAFETY: the caller gives the buffers documented above
+    let result = unsafe { request::<ModelOptions>(pointer, len, options, options_len) }
+        .and_then(|(text, options)| compile_model(text, &options));
     // SAFETY: the caller gives four words of its own memory
     unsafe { deliver(result, out) }
 }
 
 /// Compiles the SBML document of the buffer into a batched kernel, `kernel.wasm` and its
-/// description (the JSON of `kernel.json`), with the result of [`compile`].
+/// description (the JSON of `kernel.json`), with the options `{"driven": [...]}` (an empty
+/// buffer for the defaults) and the result of [`compile`].
 ///
 /// # Safety
 ///
-/// The input and output buffers satisfy the same requirements as [`compile`].
+/// The buffers satisfy the same requirements as those of [`compile`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn compile_kernel(pointer: *const u8, len: usize, out: *mut usize) -> u32 {
-    let bytes = if pointer.is_null() || len == 0 {
-        &[][..]
-    } else {
-        // SAFETY: the caller gives a buffer of `allocate` of exactly this length
-        unsafe { std::slice::from_raw_parts(pointer, len) }
-    };
-    let result = match std::str::from_utf8(bytes) {
-        Ok(text) => compile_kernel_model(text),
-        Err(_) => Err("the document is not UTF-8".to_owned()),
-    };
+pub unsafe extern "C" fn compile_kernel(
+    pointer: *const u8,
+    len: usize,
+    options: *const u8,
+    options_len: usize,
+    out: *mut usize,
+) -> u32 {
+    // SAFETY: the caller gives the buffers documented above
+    let result = unsafe { request::<KernelRequest>(pointer, len, options, options_len) }.and_then(
+        |(text, options)| {
+            compile_kernel_model(
+                text,
+                &KernelOptions {
+                    driven: options.driven,
+                },
+            )
+        },
+    );
     // SAFETY: the caller gives four words of its own memory
     unsafe { deliver(result, out) }
 }

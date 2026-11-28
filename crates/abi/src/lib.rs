@@ -1,4 +1,4 @@
-//! The contracts of sbmlsim-core: `model/2`, `simulation/1` and `kernel/1`.
+//! The contracts of sbmlsim-core: `model/2`, `simulation/1` and `kernel/2`.
 //!
 //! A compiled model is a WebAssembly module which imports its linear memory and exports the
 //! functions below. Every pointer is an `i32` offset into the imported memory and every value
@@ -101,7 +101,7 @@
 //! [`SimulationRequest`] (0.12.0) with the `sensitivities` of a [`SimulationResult`], both
 //! absent by default, which an engine before 0.12.0 refuses the same way.
 //!
-//! A batched kernel (`kernel/1`, [`KERNEL_CONTRACT`]) is a model of ordinary differential
+//! A batched kernel (`kernel/2`, [`KERNEL_CONTRACT`]) is a model of ordinary differential
 //! equations together with the Rosenbrock integrator RODAS4 of the QFunction target of the C
 //! target (`sbmlsim-c`) in one WebAssembly module, which advances any number of points (the
 //! cells of a tissue) per call. Its description is a [`KernelDescription`] (`kernel.json`). It
@@ -153,6 +153,23 @@
 //!   a negative `n`, a pointer which is not a multiple of 8 or an array past the end of the
 //!   memory.
 //!
+//! A kernel may drive species (`kernel/2`, [`KernelDescription::driven`], the compiler's
+//! `KernelOptions::driven`, see `sbmlsim_ir::driven`): a driven species `X` left the states and
+//! follows the path `X__value + X__slope * (t - driven__t_ref)` of three parameters wherever the
+//! math reads it, with the accumulator state `X__exchange`, the amount the model gave to `X`
+//! (negative where it took it). The drive goes through the parameters, so the arrays and the
+//! exports are those of an undriven kernel: the caller writes the path of each point into its
+//! parameters (at the indices `value`, `slope` of [`DrivenSpecies`] and
+//! [`KernelDescription::t_ref`]) before an `advance`, and every call computes what the kernel
+//! derives from the parameters (the constants behind them) from the parameters of the call,
+//! point by point, so a path or any other parameter may change between the calls. The change of
+//! an accumulator over an interval is the amount exchanged over it: a caller which wants the
+//! amount of an interval writes 0 into it before. `init` gives `X__value` the initial value of
+//! the species in the quantity of its path and `X__slope` and `driven__t_ref` 0 (each where it
+//! is NaN), and the accumulator 0; `assign` evaluates the rules which read `X` at the path at
+//! the time of the point. The revision of the contract: `kernel/1` (0.41.0) had no driven
+//! species.
+//!
 //! The math of a kernel is the one of `model.wasm` (the programs of the optimizer, with mathlib)
 //! and its integrator the one of `sbmlsim_rosenbrock.h`, so a point agrees with the QFunction
 //! within the tolerances of the integration, not bitwise (the math functions of the C library
@@ -179,7 +196,7 @@ pub const SIMULATION_CONTRACT: &str = "simulation/1";
 
 /// The version of the description and the module of a batched kernel (see the crate
 /// documentation).
-pub const KERNEL_CONTRACT: &str = "kernel/1";
+pub const KERNEL_CONTRACT: &str = "kernel/2";
 /// Export name of the initialization of the points of a batched kernel.
 pub const KERNEL_INIT: &str = "sbmlsim_kernel_init";
 /// Export name of the step attempts of the points of a batched kernel.
@@ -335,7 +352,7 @@ pub struct DrivenSpecies {
     pub amount: bool,
 }
 
-/// The description of a batched kernel (`kernel/1`, see the crate documentation), next to its
+/// The description of a batched kernel (`kernel/2`, see the crate documentation), next to its
 /// WebAssembly module (`kernel.json`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -358,6 +375,13 @@ pub struct KernelDescription {
     pub counts: u32,
     /// The `f64` of the scratch of a point.
     pub scratch_per_point: u32,
+    /// The driven species, in the order they were given to the compiler; empty without. Their
+    /// indices are those of [`KernelDescription::parameter_ids`] (`value`, `slope`) and
+    /// [`KernelDescription::state_ids`] (`exchange`), the ones of the description of the model.
+    pub driven: Vec<DrivenSpecies>,
+    /// The parameter of the reference time `driven__t_ref` of the paths of the driven species,
+    /// an index of [`KernelDescription::parameter_ids`]; `None` without driven species.
+    pub t_ref: Option<u32>,
     /// The description of the model, the one of the C target.
     pub model: ModelDescription,
 }

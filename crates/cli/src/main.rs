@@ -2,11 +2,11 @@
 //!
 //! `sbmlsim-core compile <model.xml> -o <dir>` compiles an SBML file into the directory `dir`
 //! (created when missing): `model.wasm` and `model.json`, the description of the model. With
-//! `--kernel` it compiles the batched kernel of the model instead (`kernel/1`, the model with its
+//! `--kernel` it compiles the batched kernel of the model instead (`kernel/2`, the model with its
 //! RODAS4 integrator in one module): `kernel.wasm` and `kernel.json`. `--driven ID,...` drives
-//! the species of the ids, separated by commas or the flag repeated (`sbmlsim_ir::driven`): each
-//! follows the path of its parameters `ID__value`, `ID__slope` and `driven__t_ref`, with the
-//! accumulator state `ID__exchange`.
+//! the species of the ids, separated by commas or the flag repeated (`sbmlsim_ir::driven`), in
+//! the model and in the kernel: each follows the path of its parameters `ID__value`,
+//! `ID__slope` and `driven__t_ref`, with the accumulator state `ID__exchange`.
 //!
 //! `sbmlsim-core simulate <model-dir> <request.json> [-o out.csv]` simulates a compiled model
 //! (the directory holds `model.wasm` and `model.json`) with a request of the contract
@@ -44,7 +44,7 @@ use sbmlsim_abi::{ModelDescription, SimulationRequest};
 use sbmlsim_cli::bench::{self, BenchArgs};
 use sbmlsim_cli::csv::to_csv;
 use sbmlsim_cli::testsuite::{self, TestsuiteArgs};
-use sbmlsim_compiler::CompileOptions;
+use sbmlsim_compiler::{CompileOptions, KernelOptions};
 use sbmlsim_host::Runtime;
 
 /// The command line of sbmlsim-core.
@@ -78,8 +78,9 @@ enum Command {
         #[arg(long, value_delimiter = ',', action = clap::ArgAction::Append, value_name = "ID")]
         driven: Vec<String>,
         /// Write the batched kernel instead: the model with its RODAS4 integrator in one
-        /// module, `kernel.wasm` and `kernel.json` (`kernel/1`).
-        #[arg(long, conflicts_with_all = ["no_optimize", "no_parameter_jacobian", "driven"])]
+        /// module, `kernel.wasm` and `kernel.json` (`kernel/2`), with the species of `--driven`
+        /// driven.
+        #[arg(long, conflicts_with_all = ["no_optimize", "no_parameter_jacobian"])]
         kernel: bool,
     },
     /// Export standalone Python, Diffrax, Julia, R, Markdown, LaTeX or Typst from SBML.
@@ -169,9 +170,10 @@ fn main() -> ExitCode {
         Command::Compile {
             model,
             output,
+            driven,
             kernel: true,
             ..
-        } => compile_kernel(&model, &output).map(|()| true),
+        } => compile_kernel(&model, &output, &KernelOptions { driven }).map(|()| true),
         Command::Compile {
             model,
             output,
@@ -279,10 +281,10 @@ fn compile(model: &Path, output: &Path, options: &CompileOptions) -> anyhow::Res
 }
 
 /// The command `compile --kernel`: `kernel.wasm` and `kernel.json`.
-fn compile_kernel(model: &Path, output: &Path) -> anyhow::Result<()> {
+fn compile_kernel(model: &Path, output: &Path, options: &KernelOptions) -> anyhow::Result<()> {
     let sbml =
         fs::read_to_string(model).with_context(|| format!("cannot read {}", model.display()))?;
-    let compiled = sbmlsim_compiler::compile_kernel(&sbml)
+    let compiled = sbmlsim_compiler::compile_kernel(&sbml, options)
         .with_context(|| format!("cannot compile the kernel of {}", model.display()))?;
     fs::create_dir_all(output).with_context(|| format!("cannot create {}", output.display()))?;
     let write = |name: &str, bytes: &[u8]| {

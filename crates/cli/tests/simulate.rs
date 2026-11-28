@@ -143,8 +143,11 @@ fn compile_writes_a_kernel() {
         out.as_os_str(),
     ]);
     assert!(output.status.success(), "{output:?}");
-    let compiled =
-        sbmlsim_compiler::compile_kernel(&std::fs::read_to_string(&sbml).unwrap()).unwrap();
+    let compiled = sbmlsim_compiler::compile_kernel(
+        &std::fs::read_to_string(&sbml).unwrap(),
+        &sbmlsim_compiler::KernelOptions::default(),
+    )
+    .unwrap();
     assert_eq!(
         std::fs::read(out.join("kernel.wasm")).unwrap(),
         compiled.wasm
@@ -229,17 +232,47 @@ fn compile_drives_species() {
         String::from_utf8_lossy(&output.stderr).contains('Q'),
         "{output:?}"
     );
-    // the kernel takes no driven species yet
+    // the kernel drives the same species: the kernel of the compiler, whose description names
+    // them
+    let _ = std::fs::remove_dir_all(&out);
     let output = run(&[
         "compile".as_ref(),
         sbml.as_os_str(),
         "--kernel".as_ref(),
         "--driven".as_ref(),
-        "S_ext".as_ref(),
+        "S_ext,P_ext".as_ref(),
         "-o".as_ref(),
         out.as_os_str(),
     ]);
-    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    assert!(output.status.success(), "{output:?}");
+    let kernel = sbmlsim_compiler::compile_kernel(
+        &std::fs::read_to_string(&sbml).unwrap(),
+        &sbmlsim_compiler::KernelOptions {
+            driven: vec!["S_ext".into(), "P_ext".into()],
+        },
+    )
+    .unwrap();
+    assert_eq!(std::fs::read(out.join("kernel.wasm")).unwrap(), kernel.wasm);
+    let description: sbmlsim_abi::KernelDescription =
+        serde_json::from_slice(&std::fs::read(out.join("kernel.json")).unwrap()).unwrap();
+    assert_eq!(description, kernel.description);
+    assert_eq!(description.driven, compiled.description.driven);
+    assert!(!out.join("model.wasm").exists());
+    // an unknown species of a kernel is the error of the compiler
+    let output = run(&[
+        "compile".as_ref(),
+        sbml.as_os_str(),
+        "--kernel".as_ref(),
+        "--driven".as_ref(),
+        "Q".as_ref(),
+        "-o".as_ref(),
+        out.as_os_str(),
+    ]);
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains('Q'),
+        "{output:?}"
+    );
 }
 
 #[test]

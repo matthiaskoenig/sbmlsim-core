@@ -136,7 +136,7 @@ The pool is the one the [Python](python.md) bindings run `simulate_many` and `ba
 
 | crate | what it is |
 |---|---|
-| `sbmlsim-abi` | the contracts `model/2`, `simulation/1` and (since 0.41.0) `kernel/1` as Rust types |
+| `sbmlsim-abi` | the contracts `model/2`, `simulation/1` and (since 0.41.0) `kernel/2` (`kernel/1` before 0.43.0) as Rust types |
 | `sbmlsim-compiler` | SBML to `model.wasm` and `model.json` (over `sbml`, `ir` and `codegen`), or (since 0.41.0) to the batched kernel `kernel.wasm` and `kernel.json` |
 | `sbmlsim-engine` | the integrator, compiled to `engine.wasm` (CVODE, KLU) |
 | `sbmlsim-c` | the C target: the model as native code for the engine, compiled with the C compiler of the machine; and the QFunction target: the model with a Rosenbrock integrator as a libCEED QFunction |
@@ -247,4 +247,4 @@ A point is a few dozen numbers (its states, parameters, control and counts) agai
 
 Refused (`CError::Unsupported`, naming the feature): events, delays, algebraic rules, a model without states and a model without an analytic Jacobian; the engine (a `Stepper` per point) integrates those. The discontinuities of the math (a `piecewise` of a state) need no root search: the step control steps across them, at the cost of rejected attempts there.
 
-The same model and integrator as one WebAssembly module, for a page, is the [batched kernel](compiling.md#a-batched-kernel) (since 0.41.0; `sbmlsim-core compile --kernel`, `sbmlsim_compiler::compile_kernel`): it advances the points of the arrays of its caller by the same steps as the QFunction, within the tolerances of the integration.
+The same model and integrator as one WebAssembly module, for a page, is the [batched kernel](compiling.md#a-batched-kernel) (since 0.41.0; `sbmlsim-core compile --kernel`, `sbmlsim_compiler::compile_kernel(&sbml, &KernelOptions { driven })`, the driven species since 0.43.0): it advances the points of the arrays of its caller by the same steps as the QFunction, within the tolerances of the integration, the driven ones included (`kernel_driven_matches_qfunction`), and at 1e-6 and 1e-9 its accumulators are within `4e-6 s + 4e-9` of a stepper at tight tolerances, `s` the amounts of the cell they balance (`kernel_driven_accumulators_at_1e_6`, the same bound as the QFunction's `driven_accumulators_at_1e_6`).

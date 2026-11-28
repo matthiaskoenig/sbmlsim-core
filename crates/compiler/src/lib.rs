@@ -7,8 +7,9 @@
 //! ([`sbmlsim_codegen::emit_optimized`], [`sbmlsim_codegen::emit_with`] without the optimizer),
 //! so a refusal of the reader, of the builder, of the driven species or of the code generation
 //! surfaces with its own message. [`compile_kernel`] emits the batched kernel of the model
-//! instead (`kernel/1`, [`sbmlsim_codegen::emit_kernel`]): the model with its RODAS4 integrator
-//! in one module, which advances many points per call.
+//! instead (`kernel/2`, [`sbmlsim_codegen::emit_kernel`]): the model with its RODAS4 integrator
+//! in one module, which advances many points per call, with the species of
+//! [`KernelOptions::driven`] driven.
 //!
 //! The crate does no file system or OS access, so it builds for `wasm32-unknown-unknown`.
 
@@ -111,7 +112,18 @@ fn compile_limited(
     Ok(CompiledModel { wasm, description })
 }
 
-/// A compiled batched kernel (`kernel/1`).
+/// What the compiler of a batched kernel does besides the translation. A kernel is always
+/// optimized and has the analytic Jacobian.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct KernelOptions {
+    /// The species to drive, SBML ids, in this order, as [`CompileOptions::driven`]: the caller
+    /// writes the path of each species into the parameters of every point before an advance,
+    /// and the description lists them (`KernelDescription::driven`). Empty, the default, drives
+    /// none.
+    pub driven: Vec<String>,
+}
+
+/// A compiled batched kernel (`kernel/2`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct CompiledKernel {
     /// The module `kernel.wasm`.
@@ -121,13 +133,14 @@ pub struct CompiledKernel {
 }
 
 /// Compiles the text of an SBML Level 3 Version 2 document into a batched kernel: the model with
-/// its RODAS4 integrator in one module (`kernel/1`, see `sbmlsim_abi`). Refuses what the code
-/// generation of the kernel refuses ([`sbmlsim_codegen::emit_kernel`]: events, delays,
-/// algebraic rules, a model without states or without an analytic Jacobian) besides what
-/// [`compile`] refuses.
-pub fn compile_kernel(sbml: &str) -> Result<CompiledKernel, CompileError> {
+/// its RODAS4 integrator in one module (`kernel/2`, see `sbmlsim_abi`), with the species of
+/// `options` driven. Refuses what the code generation of the kernel refuses
+/// ([`sbmlsim_codegen::emit_kernel`]: events, delays, algebraic rules, a model without states
+/// or without an analytic Jacobian) besides what [`compile`] refuses, a driven species the
+/// message of [`compile`] included.
+pub fn compile_kernel(sbml: &str, options: &KernelOptions) -> Result<CompiledKernel, CompileError> {
     let doc = sbmlsim_sbml::read(sbml).map_err(from_read_error)?;
-    let model = sbmlsim_ir::build(&doc)?;
+    let model = sbmlsim_ir::driven::apply(sbmlsim_ir::build(&doc)?, &options.driven)?;
     let (wasm, description) = sbmlsim_codegen::emit_kernel(&model)?;
     Ok(CompiledKernel { wasm, description })
 }
@@ -252,15 +265,17 @@ mod tests {
             "</listOfParameters>",
             r#"<parameter id="y" value="1" constant="false"/></listOfParameters>"#,
         );
-        let a = compile_kernel(&decay).unwrap();
-        let b = compile_kernel(&decay).unwrap();
+        let options = KernelOptions::default();
+        let a = compile_kernel(&decay, &options).unwrap();
+        let b = compile_kernel(&decay, &options).unwrap();
         assert_eq!(a, b);
         assert!(a.wasm.starts_with(b"\0asm"));
         assert_eq!(a.description.version, sbmlsim_abi::KERNEL_CONTRACT);
         assert_eq!(a.description.state_ids, ["y"]);
         assert_eq!(a.description.parameter_ids, ["k"]);
+        assert!(a.description.driven.is_empty());
         // a model without states is refused with its feature
-        let error = compile_kernel(DECAY).unwrap_err();
+        let error = compile_kernel(DECAY, &options).unwrap_err();
         assert!(error.to_string().contains("without states"), "{error}");
     }
 
@@ -341,5 +356,64 @@ mod tests {
             "{error:?}"
         );
         assert!(error.to_string().contains('k'), "{error}");
+    }
+
+    #[test]
+    fn driven_species_compile_into_a_kernel() {
+        let options = KernelOptions {
+            driven: vec!["X".to_string()],
+        };
+        let a = compile_kernel(&uptake(), &options).unwrap();
+        assert_eq!(a, compile_kernel(&uptake(), &options).unwrap());
+        assert_eq!(a.description.version, "kernel/2");
+        assert_eq!(a.description.state_ids, ["C", "X__exchange"]);
+        // the driven species of the description of the model, which is the one of `compile`
+        let model = compile(
+            &uptake(),
+            &CompileOptions {
+                driven: options.driven.clone(),
+                ..CompileOptions::default()
+            },
+        )
+        .unwrap()
+        .description;
+        assert_eq!(a.description.driven, model.driven);
+        assert_eq!(a.description.t_ref, model.t_ref);
+        assert_eq!(a.description.model.driven, model.driven);
+        let ids = &a.description.parameter_ids;
+        assert_eq!(ids[a.description.driven[0].value as usize], "X__value");
+        assert_eq!(ids[a.description.t_ref.unwrap() as usize], "driven__t_ref");
+        assert_ne!(
+            a.wasm,
+            compile_kernel(&uptake(), &KernelOptions::default())
+                .unwrap()
+                .wasm
+        );
+    }
+
+    /// An unknown driven species, and an id which is no species, is refused by the kernel with
+    /// the message of `compile`.
+    #[test]
+    fn a_refusal_of_a_driven_species_of_a_kernel_has_the_message_of_compile() {
+        for id in ["Q", "k"] {
+            let driven = vec![id.to_string()];
+            let kernel = compile_kernel(
+                &uptake(),
+                &KernelOptions {
+                    driven: driven.clone(),
+                },
+            )
+            .unwrap_err();
+            let model = compile(
+                &uptake(),
+                &CompileOptions {
+                    driven,
+                    ..CompileOptions::default()
+                },
+            )
+            .unwrap_err();
+            assert_eq!(kernel.to_string(), model.to_string());
+            assert!(kernel.to_string().contains(id), "{kernel}");
+        }
     }
 }

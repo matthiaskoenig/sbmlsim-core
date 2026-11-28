@@ -113,10 +113,11 @@ An `<apply>` whose only child is an `<apply>` is read as that child, as libSBML 
 
 ## A batched kernel
 
-`--kernel` (since 0.41.0) compiles the batched kernel of a model instead: the model of ordinary differential equations together with its integrator in one WebAssembly module (the contract `kernel/1`), for a caller which advances many instances of one model at once, the cells of a tissue in a page, say, where a call per cell and step into `engine.wasm` would cost more than the step itself:
+`--kernel` (since 0.41.0) compiles the batched kernel of a model instead: the model of ordinary differential equations together with its integrator in one WebAssembly module (the contract `kernel/2`), for a caller which advances many instances of one model at once, the cells of a tissue in a page, say, where a call per cell and step into `engine.wasm` would cost more than the step itself:
 
 ```bash
 sbmlsim-core compile model.xml --kernel -o kernel-dir   # kernel.wasm and kernel.json
+sbmlsim-core compile model.xml --kernel --driven S_ext,P_ext -o kernel-dir
 ```
 
 The integrator is the one of the [QFunction target](rust.md#the-qfunction-target): RODAS4, its step control and its first step, with the dense LU decomposition of the Jacobian. The kernel imports the memory of its caller (`env.memory`) and the functions of mathlib it calls (`math.*`), as `model.wasm` does, and exports three functions, whose arguments are byte offsets into that memory (each a multiple of 8) of arrays of `f64` with the values of the points one point after the other:
@@ -130,6 +131,8 @@ The integrator is the one of the [QFunction target](rust.md#the-qfunction-target
 Two consequences of `init` are left to the caller. A change of a state (such as `[S_ext]`) is not an argument of `init`: the caller writes the state after `init` (as an amount where the state is one, converted with its compartment), and the initial assignments which read that state are not evaluated again. A parameter which is the target of an assignment rule and is given finite keeps its value in `parameters`, but the right hand side computes the rule, so that value does not change the integration.
 
 `advance` leaves the targets of the assignment rules in `parameters` as they are, since the right hand side computes every rule it reads itself; a caller which reads such a target as an output (a rule of a state or of the time) calls `assign` after `advance`. `assign` reads the states, the other parameters and the controls and writes only the targets of the rules: a target of an assignment rule is a parameter of the model representation, never a state, which is integrated. A rule of the parameters alone gives the value `init` gave.
+
+With `--driven` (0.43.0, `KernelOptions::driven` of `sbmlsim_compiler::compile_kernel`) the kernel drives the species of the ids as the model does: `kernel.json` lists them in `driven` and the parameter of the reference time in `t_ref`, at the indices of `parameter_ids` and `state_ids`. The drive goes through the parameters, so the arrays and the exports are those of a kernel without driven species: before an `advance` the caller writes the path `X__value + X__slope * (t - driven__t_ref)` of every species of every point into the parameters of the point and 0 into its accumulator `X__exchange`, which holds the amount exchanged over the interval after the `advance`. Every call computes the constants behind the parameters of every point anew, so a path, or any other parameter, may change between two calls. `kernel/1` (0.41.0 and 0.42.0) is the contract before, without `driven` and `t_ref`.
 
 `control` holds `t`, `h`, `done` and `failed` per point, `counts` the accepted steps and the rejected step attempts (cumulative), `context` the five values `t1`, `rtol`, `atol`, `h_min` and `attempts` (the context of the QFunction) and `scratch` `scratch_per_point` values per point, the work of the integrator. The three functions give -1 and change nothing for invalid arguments: a negative `n`, a pointer which is not a multiple of 8, an array past the end of the memory, and, for `advance`, a context whose `t1` is not finite, whose `rtol`, `atol` or `h_min` is not finite and positive, or whose `attempts` is not a whole number of at least 1. The kernel has no data segment and no global and never grows the memory, so one kernel serves any number of points in a memory the caller sizes for them, and a point's steps depend on nothing but the point: one call for all points and one call per point give the same bits.
 
@@ -168,6 +171,6 @@ const compiler = await createCompiler({ compiler: compilerWasm });
 const { wasm, description } = compiler.compile(sbmlText);
 ```
 
-`compiler.compileKernel(sbmlText)` (since 0.41.0) gives the [batched kernel](#a-batched-kernel) of the model, the bytes of `sbmlsim-core compile --kernel`, which `sbmlsim-core/kernel` instantiates ([JavaScript](javascript.md#the-batched-kernel)).
+`compiler.compileKernel(sbmlText)` (since 0.41.0) gives the [batched kernel](#a-batched-kernel) of the model, the bytes of `sbmlsim-core compile --kernel`, which `sbmlsim-core/kernel` instantiates ([JavaScript](javascript.md#the-batched-kernel)). Both take the driven species, `compiler.compile(sbmlText, { driven: ["S_ext"] })` and `compiler.compileKernel(sbmlText, { driven: ["S_ext"] })` (0.43.0), as `--driven` does.
 
 A page compiles a model of any level and version this way and runs it with the engine, so a model which a reader brings needs no server. The module is `sbmlsim-core/runtime/compiler.wasm` of the npm package, `compiler.wasm` of `sbmlsim-core runtime -o DIR` and the key `compiler` of `sbmlsim_core.runtime_wasm()` of the python package. The [live simulation](javascript.md#a-live-simulation-in-this-page) of this documentation compiles its SBML with it.

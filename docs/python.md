@@ -72,6 +72,10 @@ For ordinary simulations, `compile_sbml(sbml_text, parameter_jacobian=False)` om
 parameter derivatives and the constants used only by them. This reduces compilation and
 initialization work without changing simulation results. The default is `True` (0.26.0).
 Forward sensitivities remain available with `False`, using numerical parameter derivatives.
+`compile_sbml(sbml_text, driven=["S_ext", "P_ext"])` (0.43.0) drives the species of the ids, as
+`sbmlsim-core compile --driven` does ([Compiling a model](compiling.md)): each follows the path
+`X__value + X__slope * (time - driven__t_ref)` of three parameters, and the state `X__exchange`
+accumulates the amount the model gave to it.
 
 The compiler reads SBML core of any level and version, flat and without a required package but `distrib` (the uncertainties of its fitted parameters, which are ignored), as the command line does ([Compiling a model](compiling.md)). The request is the one of [Simulating](simulating.md). Its nested enums are serde's externally tagged ones: an output is `{"uniform": {"steps": 100}}`, `{"times": [0.0, 1.0]}` or, a unit variant and so a bare string, `"integrator_steps"` (the steps of the integrator, whose number of rows differs by point, which is why `simulate_many` gives one table per point), and the absolute tolerance of the settings is `{"scalar": 1e-12}` or `{"per_state": [1e-12, 1e-10]}` with one value per state in the order of the state vector (a vector of another length is a `PointError` of that point in a batch):
 
