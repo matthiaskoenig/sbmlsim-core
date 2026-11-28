@@ -51,7 +51,7 @@ GIL while they compute.
   (of the Jeffreys mixture `MIXTURE`, each end by `BISECTIONS` bisections), `decide` and
   `decision` (`_decide`), `needed` (the draws an undecided statement needs, up to
   `MAX_NEEDED`) and `family_level` (Bonferroni);
-- the distributions and special functions of scipy (since 0.43.0): `norm_cdf`, `norm_ppf`,
+- the distributions and special functions of scipy (since 0.44.0): `norm_cdf`, `norm_ppf`,
   `t_cdf`, `t_ppf`, `chi2_cdf` and `chi2_ppf` (`scipy.stats.norm`, `.t`, `.chi2`, standard,
   without `loc` and `scale`), `erf` and `gamma` (`scipy.special`), of arrays of any shape
   broadcast as scipy broadcasts them, a float of numbers and an array of numpy of arrays,

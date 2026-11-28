@@ -557,22 +557,32 @@ fn the_chi_squared_quantile_inverts_the_distribution_function() {
     for df in [0.1, 0.5, 1.0, 2.0, 3.0, 7.5, 40.0, 1e3, 1e5, 1e7, 1e10] {
         for p in [1e-200, 1e-12, 0.01, 0.3, 0.5, 0.8, 0.99, 1.0 - 1e-9] {
             let x = special::chi2_ppf(p, df);
+            if x < 1e-290 {
+                // a quantile below the normal doubles (1e-200 of 0.1 degrees of freedom is
+                // 1e-4000), which no double inverts
+                continue;
+            }
             let back = special::chi2_cdf(x, df);
-            // the condition of the distribution function, the factor of a relative error of x
-            let condition = (x / 2.0 - df / 2.0).abs().max(1.0);
+            // the condition of the distribution function at the double x, the factor of its
+            // rounding: about the larger of |x - a| and the standard deviation √a
+            let a = df / 2.0;
+            let condition = (x / 2.0 - a).abs().max(a.sqrt()).max(1.0);
             let error = if p < 0.5 {
                 (back - p).abs() / p
             } else {
                 ((1.0 - back) - (1.0 - p)).abs() / (1.0 - p)
             };
-            assert!(error <= 1e-13 * condition, "{p}, {df}: {x} gives {back}");
+            assert!(
+                error <= 1e-13 * condition,
+                "{p:e}, {df}: {x:e} gives {back:e}: {error:e}"
+            );
         }
     }
 }
 
 #[test]
 fn the_new_special_functions_give_the_same_bits_on_every_target() {
-    // the values of the cases of the functions of 0.43.0, natively and in wasm
+    // the values of the cases of the functions of 0.44.0, natively and in wasm
     let fixture = Fixture::load("special");
     let mut values = Vec::new();
     for name in ["erf", "erf_edges"] {
@@ -606,5 +616,10 @@ fn the_new_special_functions_give_the_same_bits_on_every_target() {
             values.push(special::chi2_ppf(p, df));
         }
     }
-    assert_eq!(hash(&values), 0, "{} values", values.len());
+    assert_eq!(
+        hash(&values),
+        0x04dc_c12b_cefb_43ce,
+        "{} values",
+        values.len()
+    );
 }

@@ -1539,9 +1539,7 @@ def test_the_statistics_are_the_ones_of_their_decomposition_to_the_bit(
     arguments = (inputs["cost"], inputs["n"])
     spectrum, inverse = stats.fisher_decomposition(information)
     for likelihood in (False, True):
-        direct = stats.fisher_statistics(
-            information, *arguments, likelihood=likelihood
-        )
+        direct = stats.fisher_statistics(information, *arguments, likelihood=likelihood)
         derived = stats.fisher_statistics_of_decomposition(
             spectrum, inverse, *arguments, likelihood=likelihood
         )
@@ -1575,7 +1573,9 @@ def test_the_statistics_of_a_decomposition_of_lapack_are_the_ones_of_sbmlsim(
 
 def test_a_decomposition_which_does_not_fit_is_refused() -> None:
     inverse = numpy.eye(2)
-    with pytest.raises(ValueError, match="must be a vector of 2 values, not of the shape"):
+    with pytest.raises(
+        ValueError, match="must be a vector of 2 values, not of the shape"
+    ):
         stats.fisher_statistics_of_decomposition([2.0, 1.0, 0.5], inverse, 1.0, 10)
     with pytest.raises(ValueError, match="must be a square matrix"):
         stats.fisher_statistics_of_decomposition([2.0], [1.0, 2.0], 1.0, 10)
@@ -1603,7 +1603,7 @@ TOLERANCES = {
 }
 
 
-def relative_error(found: numpy.ndarray, expected: numpy.ndarray) -> numpy.ndarray:
+def relative_error(found: Any, expected: Any) -> numpy.ndarray:
     """The relative errors of `found` against `expected` as the oracle tests of the crate
     count them: zero of the same values (`nan` of `nan`) and of two values below the smallest
     normal double, which scipy flushes to zero."""
@@ -1710,6 +1710,7 @@ def test_a_number_gives_a_float_and_an_array_an_array_of_its_shape() -> None:
     assert stats.gamma(4) == 6.0
     assert stats.erf(-0.0) == 0.0 and math.copysign(1.0, stats.erf(-0.0)) == -1.0
     found = stats.t_cdf(numpy.arange(6, dtype=numpy.int64).reshape(2, 3), [1, 2, 3])
+    assert isinstance(found, numpy.ndarray)
     assert found.shape == (2, 3)
     assert found[1, 2] == stats.t_cdf(5.0, 3.0)
     strided = numpy.linspace(0.05, 0.95, 20)[::3]

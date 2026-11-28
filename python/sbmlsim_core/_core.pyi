@@ -835,7 +835,7 @@ def stats_fisher_relative_errors(
 def stats_fisher_decomposition(
     information: numpy.typing.ArrayLike,
 ) -> tuple[numpy.typing.NDArray[numpy.float64], numpy.typing.NDArray[numpy.float64]]:
-    """The decomposition the statistics of a Fisher information come from (since 0.43.0).
+    """The decomposition the statistics of a Fisher information come from (since 0.44.0).
 
     The eigenvalues, largest first, and the pseudo-inverse (numpy's, the eigenvalues cut at
     `1e-15` of the largest) of one eigendecomposition, `FisherInformation.spectrum` and
@@ -852,7 +852,7 @@ def stats_fisher_statistics_of_decomposition(
     likelihood: bool = False,
     rank_tolerance: float = 1e-8,
 ) -> dict[str, Any]:
-    """The statistics of a Fisher information from its decomposition (since 0.43.0).
+    """The statistics of a Fisher information from its decomposition (since 0.44.0).
 
     The dictionary of `stats_fisher_statistics` from the eigenvalues `spectrum` (largest
     first) and the pseudo-inverse `inverse` instead of the matrix, as `FisherInformation`
@@ -872,7 +872,7 @@ def stats_norm_cdf(
 def stats_norm_cdf(
     x: numpy.typing.ArrayLike,
 ) -> float | numpy.typing.NDArray[numpy.float64]:
-    """The distribution function of the standard normal distribution, `scipy.stats.norm.cdf` (since 0.43.0).
+    """The distribution function of the standard normal distribution, `scipy.stats.norm.cdf` (since 0.44.0).
 
     Value by value of an array of any shape: a float of a number (or an array of no
     dimension), an array of numpy of the shape of another array; `nan`, the infinities and
@@ -888,7 +888,7 @@ def stats_norm_ppf(
 def stats_norm_ppf(
     q: numpy.typing.ArrayLike,
 ) -> float | numpy.typing.NDArray[numpy.float64]:
-    """The quantile of the standard normal distribution, `scipy.stats.norm.ppf` (since 0.43.0).
+    """The quantile of the standard normal distribution, `scipy.stats.norm.ppf` (since 0.44.0).
 
     Value by value of an array of any shape: a float of a number (or an array of no
     dimension), an array of numpy of the shape of another array; `nan`, the infinities and
@@ -904,7 +904,7 @@ def stats_erf(
 def stats_erf(
     x: numpy.typing.ArrayLike,
 ) -> float | numpy.typing.NDArray[numpy.float64]:
-    """The error function, `scipy.special.erf` (since 0.43.0).
+    """The error function, `scipy.special.erf` (since 0.44.0).
 
     Value by value of an array of any shape: a float of a number (or an array of no
     dimension), an array of numpy of the shape of another array; `nan`, the infinities and
@@ -920,7 +920,7 @@ def stats_gamma(
 def stats_gamma(
     x: numpy.typing.ArrayLike,
 ) -> float | numpy.typing.NDArray[numpy.float64]:
-    """The gamma function, `scipy.special.gamma` (since 0.43.0).
+    """The gamma function, `scipy.special.gamma` (since 0.44.0).
 
     Value by value of an array of any shape: a float of a number (or an array of no
     dimension), an array of numpy of the shape of another array; `nan`, the infinities and
@@ -936,7 +936,7 @@ def stats_t_cdf(
 def stats_t_cdf(
     x: numpy.typing.ArrayLike, df: numpy.typing.ArrayLike
 ) -> float | numpy.typing.NDArray[numpy.float64]:
-    """The distribution function of the Student t distribution of `df` degrees of freedom, `scipy.stats.t.cdf` (since 0.43.0).
+    """The distribution function of the Student t distribution of `df` degrees of freedom, `scipy.stats.t.cdf` (since 0.44.0).
 
     `x` and `df` of any shapes broadcast against each other as scipy broadcasts them: a
     float of two numbers, an array of numpy of the broadcast shape else; `nan`, the
@@ -953,7 +953,7 @@ def stats_t_ppf(
 def stats_t_ppf(
     q: numpy.typing.ArrayLike, df: numpy.typing.ArrayLike
 ) -> float | numpy.typing.NDArray[numpy.float64]:
-    """The quantile of the Student t distribution of `df` degrees of freedom, `scipy.stats.t.ppf` (since 0.43.0).
+    """The quantile of the Student t distribution of `df` degrees of freedom, `scipy.stats.t.ppf` (since 0.44.0).
 
     `q` and `df` of any shapes broadcast against each other as scipy broadcasts them: a
     float of two numbers, an array of numpy of the broadcast shape else; `nan`, the
@@ -970,7 +970,7 @@ def stats_chi2_cdf(
 def stats_chi2_cdf(
     x: numpy.typing.ArrayLike, df: numpy.typing.ArrayLike
 ) -> float | numpy.typing.NDArray[numpy.float64]:
-    """The distribution function of the chi-squared distribution of `df` degrees of freedom, `scipy.stats.chi2.cdf` (since 0.43.0).
+    """The distribution function of the chi-squared distribution of `df` degrees of freedom, `scipy.stats.chi2.cdf` (since 0.44.0).
 
     `x` and `df` of any shapes broadcast against each other as scipy broadcasts them: a
     float of two numbers, an array of numpy of the broadcast shape else; `nan`, the
@@ -987,7 +987,7 @@ def stats_chi2_ppf(
 def stats_chi2_ppf(
     q: numpy.typing.ArrayLike, df: numpy.typing.ArrayLike
 ) -> float | numpy.typing.NDArray[numpy.float64]:
-    """The quantile of the chi-squared distribution of `df` degrees of freedom, `scipy.stats.chi2.ppf` (since 0.43.0).
+    """The quantile of the chi-squared distribution of `df` degrees of freedom, `scipy.stats.chi2.ppf` (since 0.44.0).
 
     `q` and `df` of any shapes broadcast against each other as scipy broadcasts them: a
     float of two numbers, an array of numpy of the broadcast shape else; `nan`, the

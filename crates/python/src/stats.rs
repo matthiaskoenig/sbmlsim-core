@@ -31,6 +31,9 @@ type Values<'py> = PyArrayLikeDyn<'py, f64, AllowTypeChange>;
 /// dtype=bool)` converts it: a value which is not zero, a not a number included, is true.
 type Booleans<'py> = PyArrayLikeDyn<'py, bool, AllowTypeChange>;
 
+/// The eigenvalues and the pseudo-inverse of a Fisher information.
+type Decomposition<'py> = (Bound<'py, PyArray1<f64>>, Bound<'py, PyArray2<f64>>);
+
 /// The lower and the upper bounds of intervals.
 type Bounds<'py> = (Bound<'py, PyArray1<f64>>, Bound<'py, PyArray1<f64>>);
 
@@ -414,7 +417,7 @@ fn fisher_dict(
 pub(crate) fn stats_fisher_decomposition<'py>(
     py: Python<'py>,
     information: Values<'py>,
-) -> PyResult<(Bound<'py, PyArray1<f64>>, Bound<'py, PyArray2<f64>>)> {
+) -> PyResult<Decomposition<'py>> {
     let (shape, information) = (information.shape(), values(&information));
     let (spectrum, inverse, k) = py
         .detach(|| binding::fisher_decomposition(&information, shape))

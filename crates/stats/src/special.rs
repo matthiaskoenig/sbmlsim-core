@@ -1,12 +1,17 @@
 //! The special functions of the distributions: the logarithm of the beta function, the
-//! regularized incomplete beta function and the distribution functions and quantiles of the
-//! normal, the Student t and the binomial distribution, as scipy gives them.
+//! regularized incomplete beta and gamma functions, the error function, the gamma function
+//! and the distribution functions and quantiles of the normal, the Student t, the
+//! chi-squared and the binomial distribution, as scipy gives them.
 //!
 //! A function of a probability or a parameter outside of its domain, or of not a number, is not
-//! a number, as in scipy. The tests hold every function to scipy (`oracles/special.json`): the
-//! normal distribution to 1e-13 relative, the logarithm of the beta function to 1e-12, the
-//! incomplete beta function and the t and binomial distributions to 1e-10, the binomial
-//! quantile exactly.
+//! a number, as in scipy. The tests hold every function to scipy and mpmath
+//! (`oracles/special.json`): the normal distribution to 1e-13 relative, the logarithm of the
+//! beta function to 1e-12, the incomplete beta function and the t and binomial distributions
+//! to 1e-10, the binomial quantile exactly; the error function to 1e-15, the gamma function
+//! and the chi-squared quantile to 1e-13, and the incomplete gamma function and the
+//! chi-squared distribution function to 1e-13 times their condition `max(1, |x - a| / 100)`
+//! (of mpmath at 40 digits, where scipy's `gammainc` is off by 1e-8 at 8 standard deviations
+//! below the mean of `a` 1e6). The edges are scipy's, to the bit.
 //!
 //! The range of these digits: the continued fraction of the incomplete beta function loses
 //! about `a * eps` relative when both of its parameters are large, so the incomplete beta
@@ -26,6 +31,11 @@
 //!   incomplete beta function ratios. ACM Transactions on Mathematical Software 18(3):360-373,
 //!   the expansion BGRAT for a large first parameter and a second one up to one, and the
 //!   recurrence `bup`, which takes it to a second parameter above one.
+//! - Temme, N. M. (1979). The asymptotic expansion of the incomplete gamma functions. SIAM
+//!   Journal on Mathematical Analysis 10(4):757-766, and DLMF 8.12, the uniform expansion of a
+//!   large parameter.
+//! - Chen, J., Rubin, H. (1986). Bounds for the difference between median and mean of gamma
+//!   and Poisson distributions. Statistics & Probability Letters 4(6):281-283.
 //! - Wichura, M. J. (1988). Algorithm AS 241: The percentage points of the normal distribution.
 //!   Journal of the Royal Statistical Society, Series C 37(3):477-484.
 
@@ -495,10 +505,18 @@ fn gamma_temme(a: f64, x: f64) -> (f64, f64) {
 }
 
 /// The regularized lower and upper incomplete gamma functions `P(a, x)` and `Q(a, x)` of
-/// positive `a` and `x` at least zero, both of one computation.
+/// `a` and `x` at least zero, both of one computation.
 fn gamma_tails(a: f64, x: f64) -> (f64, f64) {
-    if !(a > 0.0 && x >= 0.0) || (a.is_infinite() && x.is_infinite()) {
+    if !(a >= 0.0 && x >= 0.0) || (a.is_infinite() && x.is_infinite()) {
         return (f64::NAN, f64::NAN);
+    }
+    // the limit of a parameter to zero, as scipy: one above zero, not a number at zero
+    if a == 0.0 {
+        return if x > 0.0 {
+            (1.0, 0.0)
+        } else {
+            (f64::NAN, f64::NAN)
+        };
     }
     if x == 0.0 || a.is_infinite() {
         return (0.0, 1.0);
@@ -527,8 +545,8 @@ fn gamma_tails(a: f64, x: f64) -> (f64, f64) {
     }
 }
 
-/// The regularized lower incomplete gamma function `P(a, x) = γ(a, x) / Γ(a)` of a positive
-/// `a` and `x` at least zero, `scipy.special.gammainc`.
+/// The regularized lower incomplete gamma function `P(a, x) = γ(a, x) / Γ(a)` of `a` and `x`
+/// at least zero, `scipy.special.gammainc`.
 ///
 /// The series of `P` below `x = a + 1` and the continued fraction of `Q = 1 - P` above
 /// (Numerical Recipes, section 6.2), their factor `x^a e^-x / Γ(a)` through the formula of
@@ -536,8 +554,8 @@ fn gamma_tails(a: f64, x: f64) -> (f64, f64) {
 /// asymptotic expansion of Temme. The tests hold it to mpmath at 40 digits
 /// (`oracles/special.json`); its condition is about `|x - a|` (the relative change of `P` of
 /// a relative change of `x` of one rounding), which bounds the digits of every method far in
-/// the tails. Not a number for a parameter which is not positive or an `x` below zero; `P(∞,
-/// x)` of a finite `x` is zero, as in scipy.
+/// the tails. As scipy, not a number for a negative parameter, an `x` below zero and `P(0,
+/// 0)`, and the limits `P(0, x) = 1` of a positive `x` and `P(∞, x) = 0` of a finite one.
 #[must_use]
 pub fn gamma_p(a: f64, x: f64) -> f64 {
     gamma_tails(a, x).0
@@ -609,18 +627,18 @@ pub fn gamma_p_inv(a: f64, p: f64) -> f64 {
     } else {
         libm::exp(0.5 * (low.max(-700.0) + high))
     };
-    gamma_newton(a, libm::log(tail), upper, start, low, high)
+    gamma_newton(a, tail, upper, start, low, high)
 }
 
 /// The logarithm of the smallest quantile of the incomplete gamma function which the method
 /// of Newton looks for: below, `P(a, x)` is `x^a / Γ(a + 1)` to a rounding.
 const LN_TINY_QUANTILE: f64 = -690.775_527_898_213_7;
 
-/// The `x` of `ln T(a, x) = ln_tail`, `T` the lower tail `P` or the upper tail `Q`, by the
-/// method of Newton in `s = ln x` from `x`, guarded by bisection in `[low, high]` of `s`; the
+/// The `x` of `T(a, x) = target`, `T` the lower tail `P` or the upper tail `Q`, by the
+/// method of Newton on `ln T` in `s = ln x` from `start`, guarded by bisection in `[low, high]` of `s`; the
 /// steps in `x` itself (`x + x expm1(δs)`), so the quantile keeps the digits of `x` and not
 /// only those of `ln x`.
-fn gamma_newton(a: f64, ln_tail: f64, upper: bool, start: f64, low: f64, high: f64) -> f64 {
+fn gamma_newton(a: f64, target: f64, upper: bool, start: f64, low: f64, high: f64) -> f64 {
     let (mut low, mut high) = (low, high);
     let mut x = start;
     for _ in 0..400 {
@@ -630,7 +648,14 @@ fn gamma_newton(a: f64, ln_tail: f64, upper: bool, start: f64, low: f64, high: f
             return f64::NAN;
         }
         let ln_value = libm::log(tail);
-        let f = ln_value - ln_tail;
+        // ln(T / target) of the quotient, which keeps the digits the difference of two
+        // logarithms of a small tail (ln 1e-200 is -460) would lose
+        let ratio = tail / target;
+        let f = if ratio.is_finite() && ratio > 0.0 {
+            libm::log(ratio)
+        } else {
+            ln_value - libm::log(target)
+        };
         if f == 0.0 {
             break;
         }
@@ -644,7 +669,8 @@ fn gamma_newton(a: f64, ln_tail: f64, upper: bool, start: f64, low: f64, high: f
         // d ln P / d ln x = x^a e^-x / (Γ(a) P), and minus that of Q
         let slope = libm::exp(ln_gamma_factor(a, x) - ln_value);
         let step = if upper { f / slope } else { -f / slope };
-        if step.is_finite() && s + step > low && s + step < high {
+        // a step below the rounding of `ln x` lands on a bound, and is one in x itself
+        if step.is_finite() && s + step >= low && s + step <= high {
             // a small step in x itself, which keeps the digits of x, a large one in ln x
             if step.abs() > 0.5 {
                 x = libm::exp(s + step);
@@ -880,11 +906,7 @@ pub fn chi2_cdf(x: f64, df: f64) -> f64 {
     if x.is_infinite() {
         return 1.0;
     }
-    let a = df / 2.0;
-    if a == 0.0 {
-        return 1.0;
-    }
-    gamma_p(a, x / 2.0)
+    gamma_p(df / 2.0, x / 2.0)
 }
 
 /// The quantile of the chi-squared distribution of `df` degrees of freedom,

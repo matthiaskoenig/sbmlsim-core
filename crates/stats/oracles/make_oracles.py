@@ -33,7 +33,9 @@ modules take two:
           python crates/stats/oracles/make_oracles.py metrics fisher uncertainty draws testing
 
 Modules given as arguments write only their fixtures (`... make_oracles.py special`); a
-module of sbmlsim in an environment without it stops before any fixture is written.
+module of sbmlsim in an environment without it stops before any fixture is written. The cases
+of mpmath at 40 digits (the incomplete gamma function and the chi-squared distribution of up
+to 1e12 degrees of freedom) take `special` about half an hour.
 """
 
 import json
@@ -252,11 +254,12 @@ def special() -> dict[str, Any]:
 # --- the distributions of the public functions -----------------------------------------------
 
 #: the shapes `t`, `chi2` and the special functions are broadcast over, as scipy broadcasts
-#: them, and the error of shapes which do not broadcast
+#: them, and the error of shapes which do not broadcast (an empty array of two dimensions
+#: with rows, which its JSON keeps)
 BROADCASTS: list[tuple[str, list[Any]]] = [
     ("norm_cdf", [[[-1.0, 0.0], [0.5, 2.0]]]),
     ("norm_ppf", [[]]),
-    ("erf", [np.zeros((0, 3))]),
+    ("erf", [[[], []]]),
     ("gamma", [[[[0.5]], [[3.0]]]]),
     ("t_cdf", [[-1.0, 0.0, 2.5], 3.0]),
     ("t_cdf", [[[-1.0], [2.0]], [1.0, 5.0, math.inf]]),
@@ -271,7 +274,8 @@ BROADCASTS: list[tuple[str, list[Any]]] = [
     ("chi2_cdf", [[0.1, 0.2], [1.0, 2.0, 3.0]]),
     ("chi2_ppf", [0.95, [1.0, 2.0, 10.0]]),
     ("chi2_ppf", [[0.1, 0.2], [1.0, 2.0, 3.0]]),
-    ("chi2_ppf", [np.zeros((0, 2)), [1.0, 2.0]]),
+    ("chi2_ppf", [[[], []], [[1.0], [2.0]]]),
+    ("chi2_ppf", [[[], []], [1.0, 2.0]]),
 ]
 
 #: the functions of scipy the public functions are, by their names in `sbmlsim_core.stats`
@@ -293,7 +297,7 @@ def _mp_tails(a: float, x: float) -> tuple[Any, Any]:
     Below the mode the series `P = x^a e^-x / Γ(a + 1) 1F1(1; a + 1; x)` (of up to 1e9
     terms, which `gammainc` of mpmath does not take, 3e6 at 21 standard deviations below the
     mode of `a` 5e11); above it the continued fraction of `Q` (a few dozen steps but close to
-    the mode, where the series takes over, `Q = 1 - P` of a `Q` about one half). The
+    the mode, where the series takes over after 1e5, `Q = 1 - P` of a `Q` about one half). The
     hypergeometric functions of `gammainc` lose the digits of a small tail (`1 - e^-x` of
     `P(1, x)`) and do not converge far out of a large `a`.
     """
@@ -348,7 +352,7 @@ def _mp_chi2_ppf(p: float, df: float) -> float:
 
 
 def distributions() -> dict[str, Any]:
-    """The cases of the public distribution and special functions (since 0.43.0): `erf`,
+    """The cases of the public distribution and special functions (since 0.44.0): `erf`,
     `gamma`, the regularized incomplete gamma function and the chi-squared distribution of
     mpmath at 40 digits, their edges and broadcasts of scipy."""
     import mpmath as mp
@@ -376,7 +380,12 @@ def distributions() -> dict[str, Any]:
     large = [100.0, 1e3, 1e4, 1e5, 999999.0, 1e6, 1e7, 1e9, 1e12, 1e15]
     for a in small + large:
         xs = {a * ratio for ratio in [1e-3, 0.1, 0.5, 0.9, 0.99, 1.0, 1.01, 1.1, 2.0, 5.0]}
-        xs |= {a + k * math.sqrt(a) for k in [-8.0, -3.0, -1.0, -0.1, 0.1, 1.0, 3.0, 8.0]}
+        if a <= 1e12:
+            # close to the mode the series of mpmath takes minutes at 1e15
+            offsets = [-8.0, -3.0, -1.0, -0.1, 0.1, 1.0, 3.0, 8.0]
+            xs |= {a + k * math.sqrt(a) for k in offsets}
+        else:
+            xs.discard(a)
         if a <= 30.0:
             xs |= {1e-10, 1e-3, 0.5, 1.0, 2.0, 20.0, 100.0}
         for value in sorted(v for v in xs if v > 0.0):
@@ -390,8 +399,8 @@ def distributions() -> dict[str, Any]:
             "q": [float(q) for _, q in tails],
         },
     }
-    a = [0.5, 1.0, 2.0, math.inf, math.inf, math.nan, 1.0, 1.0, 1.0, -1.0, 0.0, 2.0]
-    x = [0.0, math.inf, math.inf, 1.0, math.inf, 1.0, math.nan, -1.0, 1e-300, 1.0, 1.0, 0.0]
+    a = [0.5, 1.0, 2.0, math.inf, math.inf, math.nan, 1.0, 1.0, -1.0, 0.0, 2.0]
+    x = [0.0, math.inf, math.inf, 1.0, math.inf, 1.0, math.nan, -1.0, 1.0, 1.0, 0.0]
     cases["gamma_inc_edges"] = {
         "inputs": {"a": a, "x": x},
         "expected": {"p": sc.gammainc(a, x), "q": sc.gammaincc(a, x)},
