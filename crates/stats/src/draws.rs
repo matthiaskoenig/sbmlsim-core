@@ -44,8 +44,9 @@ pub enum Design {
 ///   positions in the strata, row-major, then the permutation of every column, of the stream of
 ///   `seed`.
 /// - [`Design::Random`]: the uniform doubles of the stream of `seed` row-major from the double
-///   `start * d`, so the points from `start` are the tail of a longer draw. The stream is
-///   advanced one double after the other, `start * d` steps.
+///   `start * d`, so the points from `start` are the tail of a longer draw. The stream jumps
+///   ahead by the `start * d` doubles in a time logarithmic in them
+///   (`sbmlsim_sensitivity::random::Stream::advance`), so any start costs about the same.
 ///
 /// No points or no dimensions are no values, as the empty array of the python.
 ///
@@ -71,12 +72,7 @@ pub fn unit_points(d: usize, n: usize, design: Design, seed: u64, start: u64) ->
         Design::Lhs => Ok(latin_hypercube(d, n, seed)),
         Design::Random => {
             let mut stream = Stream::new(seed);
-            let skip = u128::from(start) * d as u128;
-            let mut step = 0u128;
-            while step < skip {
-                stream.next_u64();
-                step += 1;
-            }
+            stream.advance(u128::from(start) * d as u128);
             Ok((0..n * d).map(|_| stream.uniform()).collect())
         }
     }

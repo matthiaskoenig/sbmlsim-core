@@ -90,6 +90,25 @@ fn sobol_and_random_points_continue_their_sequence_from_start() {
 }
 
 #[test]
+fn random_points_jump_to_any_start() {
+    // the jump of the stream past the doubles of the points before, `start * d` of them up to
+    // a million, is the tail of the points drawn one after the other
+    for (d, start) in [(1, 1), (3, 7), (2, 1000), (5, 200_000), (1, 1_000_000)] {
+        let n = 3;
+        let long = draws::unit_points(d, start + n, Design::Random, 11, 0).unwrap();
+        let tail = draws::unit_points(d, n, Design::Random, 11, start as u64).unwrap();
+        assert_eq!(tail[..], long[start * d..], "{d} {start}");
+    }
+    // a start past any loop: the points of `start` are the tail of the points of `start - 2`
+    let start = 1 << 62;
+    let earlier = draws::unit_points(3, 4, Design::Random, 5, start - 2).unwrap();
+    let later = draws::unit_points(3, 2, Design::Random, 5, start).unwrap();
+    assert_eq!(later[..], earlier[2 * 3..]);
+    let last = draws::unit_points(2, 1, Design::Random, 5, u64::MAX).unwrap();
+    assert!(last.iter().all(|u| (0.0..1.0).contains(u)));
+}
+
+#[test]
 fn a_latin_hypercube_has_no_continuation() {
     let error = draws::unit_points(2, 4, Design::Lhs, 1, 2).unwrap_err();
     assert_eq!(
