@@ -3,9 +3,10 @@
 //! `sbmlsim-core compile <model.xml> -o <dir>` compiles an SBML file into the directory `dir`
 //! (created when missing): `model.wasm` and `model.json`, the description of the model. With
 //! `--kernel` it compiles the batched kernel of the model instead (`kernel/1`, the model with its
-//! RODAS4 integrator in one module): `kernel.wasm` and `kernel.json`. `--driven ID...` drives
-//! the species of the ids (`sbmlsim_ir::driven`): each follows the path of its parameters
-//! `ID__value`, `ID__slope` and `driven__t_ref`, with the accumulator state `ID__exchange`.
+//! RODAS4 integrator in one module): `kernel.wasm` and `kernel.json`. `--driven ID,...` drives
+//! the species of the ids, separated by commas or the flag repeated (`sbmlsim_ir::driven`): each
+//! follows the path of its parameters `ID__value`, `ID__slope` and `driven__t_ref`, with the
+//! accumulator state `ID__exchange`.
 //!
 //! `sbmlsim-core simulate <model-dir> <request.json> [-o out.csv]` simulates a compiled model
 //! (the directory holds `model.wasm` and `model.json`) with a request of the contract
@@ -70,10 +71,11 @@ enum Command {
         /// Omit analytic parameter derivatives and their cached constants.
         #[arg(long)]
         no_parameter_jacobian: bool,
-        /// Drive these species: each follows the path `ID__value + ID__slope * (time -
-        /// driven__t_ref)` of three parameters instead of its rate, and the state
-        /// `ID__exchange` accumulates the amount the model exchanged with it.
-        #[arg(long, num_args = 1.., value_name = "ID")]
+        /// Drive these species (separated by commas, or the flag repeated): each follows the
+        /// path `ID__value + ID__slope * (time - driven__t_ref)` of three parameters instead of
+        /// its rate, and the state `ID__exchange` accumulates the amount the model exchanged
+        /// with it.
+        #[arg(long, value_delimiter = ',', action = clap::ArgAction::Append, value_name = "ID")]
         driven: Vec<String>,
         /// Write the batched kernel instead: the model with its RODAS4 integrator in one
         /// module, `kernel.wasm` and `kernel.json` (`kernel/1`).

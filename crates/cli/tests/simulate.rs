@@ -175,8 +175,7 @@ fn compile_drives_species() {
         "compile".as_ref(),
         sbml.as_os_str(),
         "--driven".as_ref(),
-        "S_ext".as_ref(),
-        "P_ext".as_ref(),
+        "S_ext,P_ext".as_ref(),
         "-o".as_ref(),
         out.as_os_str(),
     ]);
@@ -196,6 +195,26 @@ fn compile_drives_species() {
     );
     let driven: Vec<&str> = description.driven.iter().map(|d| d.id.as_str()).collect();
     assert_eq!(driven, ["S_ext", "P_ext"]);
+    // the same species separated by a comma, or each with its own flag, and the model after the
+    // flag
+    for args in [
+        vec!["--driven", "S_ext,P_ext"],
+        vec!["--driven", "S_ext", "--driven", "P_ext"],
+    ] {
+        let _ = std::fs::remove_dir_all(&out);
+        let mut command: Vec<&std::ffi::OsStr> = vec![std::ffi::OsStr::new("compile")];
+        command.extend(args.iter().map(std::ffi::OsStr::new));
+        command.extend([
+            sbml.as_os_str(),
+            std::ffi::OsStr::new("-o"),
+            out.as_os_str(),
+        ]);
+        let output = run(&command);
+        assert!(output.status.success(), "{args:?}: {output:?}");
+        let again: ModelDescription =
+            serde_json::from_slice(&std::fs::read(out.join("model.json")).unwrap()).unwrap();
+        assert_eq!(again, description, "{args:?}");
+    }
     // an unknown species is the error of the compiler, not of the command line
     let output = run(&[
         "compile".as_ref(),
