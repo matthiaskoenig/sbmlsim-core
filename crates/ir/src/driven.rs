@@ -464,9 +464,11 @@ pub fn apply(model: Model, driven: &[String]) -> Result<Model, CompileError> {
             None => x.unit.clone(),
             Some(_) => m.selection(&format!("[{id}]")).and_then(|s| s.unit.clone()),
         };
-        // the slope in the unit of the value per time
+        // the slope in the unit of the value per time; none for a value without units (an
+        // empty unit, as sbmlsim names an entity without units)
         let slope_unit = unit
             .as_deref()
+            .filter(|value| !value.is_empty())
             .zip(m.time_unit.as_deref())
             .map(|(value, time)| quotient(value, time));
         let default = defaults[j].expect("a default of every driven species");
