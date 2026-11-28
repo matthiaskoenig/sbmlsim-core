@@ -1,0 +1,407 @@
+{
+ "case": "failing_point_raise",
+ "model": "scan_fold.xml",
+ "core_version": "0.40.0",
+ "description": {
+  "contract": "model/2",
+  "compiler": "sbmlsim-compiler 0.40.0",
+  "id": "scan_fold",
+  "states": [
+   {
+    "id": "B",
+    "kind": "parameter",
+    "initial": 1.0,
+    "settable": true
+   },
+   {
+    "id": "C",
+    "kind": {
+     "species": {
+      "compartment": "c",
+      "has_only_substance_units": false,
+      "stores_concentration": false
+     }
+    },
+    "initial": 8.0,
+    "settable": true
+   },
+   {
+    "id": "T",
+    "kind": {
+     "species": {
+      "compartment": "c",
+      "has_only_substance_units": false,
+      "stores_concentration": false
+     }
+    },
+    "initial": 0.0,
+    "settable": true
+   }
+  ],
+  "parameters": [
+   {
+    "id": "c",
+    "kind": "compartment",
+    "initial": 2.0,
+    "settable": true
+   },
+   {
+    "id": "k",
+    "kind": "parameter",
+    "initial": 0.2,
+    "settable": true
+   },
+   {
+    "id": "kb",
+    "kind": "parameter",
+    "initial": 0.0,
+    "settable": true
+   },
+   {
+    "id": "r",
+    "kind": "parameter",
+    "initial": 0.8,
+    "settable": false
+   }
+  ],
+  "selections": [
+   {
+    "id": "c",
+    "index": 0
+   },
+   {
+    "id": "C",
+    "index": 1
+   },
+   {
+    "id": "T",
+    "index": 2
+   },
+   {
+    "id": "[C]",
+    "index": 3
+   },
+   {
+    "id": "[T]",
+    "index": 4
+   },
+   {
+    "id": "k",
+    "index": 5
+   },
+   {
+    "id": "kb",
+    "index": 6
+   },
+   {
+    "id": "B",
+    "index": 7
+   },
+   {
+    "id": "r",
+    "index": 8
+   },
+   {
+    "id": "J",
+    "index": 9
+   }
+  ],
+  "jacobian": {
+   "analytic": {
+    "n": 3,
+    "col_ptr": [
+     0,
+     1,
+     3,
+     3
+    ],
+    "row_idx": [
+     0,
+     1,
+     2
+    ]
+   }
+  },
+  "jacobian_p": {
+   "rows": 3,
+   "col_ptr": [
+    0,
+    2,
+    4,
+    5,
+    5
+   ],
+   "row_idx": [
+    1,
+    2,
+    1,
+    2,
+    0
+   ]
+  },
+  "events": [],
+  "n_roots": 0,
+  "n_discontinuity_roots": 0,
+  "n_constants": 3,
+  "units": {}
+ },
+ "request": {
+  "contract": "scan/1",
+  "scan": {
+   "type": "Scan",
+   "simulation": {
+    "type": "Simulation",
+    "time_unit": null,
+    "start": 0.0,
+    "end": 2,
+    "preinit_changes": {},
+    "changes": [],
+    "presimulation": null,
+    "times": null,
+    "steps": 10,
+    "time_shift": 0.0
+   },
+   "dimensions": [
+    {
+     "id": "blowup",
+     "kind": "values",
+     "labels": [
+      0,
+      1,
+      2
+     ],
+     "values": {
+      "kb": [
+       0.0,
+       2.0,
+       0.1
+      ]
+     },
+     "simulations": {},
+     "models": {},
+     "at": null,
+     "design": null,
+     "coordinates": {}
+    }
+   ]
+  },
+  "observables": [],
+  "keep": null,
+  "time": null,
+  "on_error": "raise",
+  "points": null,
+  "settings": {
+   "relative_tolerance": 1e-10,
+   "maximum_num_steps": 20000,
+   "maximum_time_step": 0.0,
+   "initial_time_step": 0.0,
+   "stiff": true,
+   "linear_solver": "auto",
+   "jacobian": "auto",
+   "absolute_tolerance": {
+    "per_state": [
+     1e-10,
+     2e-10,
+     2e-10
+    ]
+   }
+  },
+  "selections": [
+   "time",
+   "C",
+   "T",
+   "k",
+   "kb",
+   "B",
+   "r",
+   "J",
+   "c",
+   "[C]",
+   "[T]"
+  ]
+ },
+ "engine_rounds": [
+  [
+   {
+    "contract": "simulation/1",
+    "start": 0.0,
+    "end": 2.0,
+    "output": {
+     "times": [
+      0.0,
+      0.2,
+      0.4,
+      0.6000000000000001,
+      0.8,
+      1.0,
+      1.2000000000000002,
+      1.4000000000000001,
+      1.6,
+      1.8,
+      2.0
+     ]
+    },
+    "preinit": [
+     [
+      "kb",
+      0.0
+     ]
+    ],
+    "changes": [],
+    "steady_state": null,
+    "steady_state_after": null,
+    "selections": [
+     "time",
+     "C",
+     "T",
+     "k",
+     "kb",
+     "B",
+     "r",
+     "J",
+     "c",
+     "[C]",
+     "[T]"
+    ],
+    "settings": {
+     "relative_tolerance": 1e-10,
+     "maximum_num_steps": 20000,
+     "maximum_time_step": 0.0,
+     "initial_time_step": 0.0,
+     "stiff": true,
+     "linear_solver": "auto",
+     "jacobian": "auto",
+     "absolute_tolerance": {
+      "per_state": [
+       1e-10,
+       2e-10,
+       2e-10
+      ]
+     }
+    }
+   },
+   {
+    "contract": "simulation/1",
+    "start": 0.0,
+    "end": 2.0,
+    "output": {
+     "times": [
+      0.0,
+      0.2,
+      0.4,
+      0.6000000000000001,
+      0.8,
+      1.0,
+      1.2000000000000002,
+      1.4000000000000001,
+      1.6,
+      1.8,
+      2.0
+     ]
+    },
+    "preinit": [
+     [
+      "kb",
+      2.0
+     ]
+    ],
+    "changes": [],
+    "steady_state": null,
+    "steady_state_after": null,
+    "selections": [
+     "time",
+     "C",
+     "T",
+     "k",
+     "kb",
+     "B",
+     "r",
+     "J",
+     "c",
+     "[C]",
+     "[T]"
+    ],
+    "settings": {
+     "relative_tolerance": 1e-10,
+     "maximum_num_steps": 20000,
+     "maximum_time_step": 0.0,
+     "initial_time_step": 0.0,
+     "stiff": true,
+     "linear_solver": "auto",
+     "jacobian": "auto",
+     "absolute_tolerance": {
+      "per_state": [
+       1e-10,
+       2e-10,
+       2e-10
+      ]
+     }
+    }
+   },
+   {
+    "contract": "simulation/1",
+    "start": 0.0,
+    "end": 2.0,
+    "output": {
+     "times": [
+      0.0,
+      0.2,
+      0.4,
+      0.6000000000000001,
+      0.8,
+      1.0,
+      1.2000000000000002,
+      1.4000000000000001,
+      1.6,
+      1.8,
+      2.0
+     ]
+    },
+    "preinit": [
+     [
+      "kb",
+      0.1
+     ]
+    ],
+    "changes": [],
+    "steady_state": null,
+    "steady_state_after": null,
+    "selections": [
+     "time",
+     "C",
+     "T",
+     "k",
+     "kb",
+     "B",
+     "r",
+     "J",
+     "c",
+     "[C]",
+     "[T]"
+    ],
+    "settings": {
+     "relative_tolerance": 1e-10,
+     "maximum_num_steps": 20000,
+     "maximum_time_step": 0.0,
+     "initial_time_step": 0.0,
+     "stiff": true,
+     "linear_solver": "auto",
+     "jacobian": "auto",
+     "absolute_tolerance": {
+      "per_state": [
+       1e-10,
+       2e-10,
+       2e-10
+      ]
+     }
+    }
+   }
+  ]
+ ],
+ "result": null,
+ "error": {
+  "type": "ScanError",
+  "message": "The point blowup=1, kb=2.0 of the scan failed: RuntimeError: The engine 'core' failed to simulate the model 'scan_fold': integration failed at t = 0.4999999890469133 (flag -1): CVode: At t = 0.499999989046913, mxstep steps taken before reaching tout."
+ },
+ "repr": null
+}

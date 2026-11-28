@@ -590,6 +590,8 @@ fn a_statement_above_the_limits_is_an_error() {
             expr: sum,
             unit: None,
         }],
+        unit_definitions: Default::default(),
+        units: Default::default(),
     };
     for result in [emit(&m), emit_optimized(&m, abi::JacobianChoice::Auto)] {
         match result.unwrap_err() {
@@ -643,6 +645,8 @@ fn locals_are_reused_after_their_last_use() {
             expr: Expr::Symbol(Symbol::Param(n as u32)),
             unit: None,
         }],
+        unit_definitions: Default::default(),
+        units: Default::default(),
     };
     let (wasm, _) = emit(&m).unwrap();
     wasmparser::Validator::new().validate_all(&wasm).unwrap();

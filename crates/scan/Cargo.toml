@@ -1,0 +1,40 @@
+[package]
+name = "sbmlsim-scan"
+version.workspace = true
+edition.workspace = true
+# not on crates.io yet, as the rest of the workspace
+publish = false
+license.workspace = true
+authors.workspace = true
+description = "The planner of a scan of sbmlsim-core: a simulation, its dimensions and observables (contract scan/1) planned into the requests of simulation/1 and assembled into the result scanresult/1, as sbmlsim runs them"
+
+[dependencies]
+sbmlsim-abi = { path = "../abi" }
+# the times and values of a scan converted into the units of the model, as pint converts them
+sbmlsim-units = { path = "../units" }
+# the rules of the timecourses of sbmlsim (the interpolation onto a grid, the samples of an
+# analysis, the reductions), one implementation with the fit
+sbmlsim-timecourse = { path = "../timecourse" }
+# the math of PEtab of the formulas of a scan, evaluated with the operations of the engine;
+# without its feature `native`, so the planner builds for `wasm32-unknown-unknown`
+sbmlsim-petab = { path = "../petab", default-features = false }
+# the tree of a formula, which the units of an observable are derived on
+sbmlsim-sbml = { path = "../sbml" }
+# the non-compartmental analysis of a PK observable, the kernel the python package of pkpdutils
+# runs as well; the crate is not on crates.io, so it is a dependency on the tag of a release
+# (the one of `sbmlsim-fit`)
+pkpdutils-core = { git = "https://github.com/matthiaskoenig/pkpdutils-core", tag = "v0.7.0" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+# the descriptions of the models of the fixtures, compiled again (the fixtures recorded them
+# before the description carried the time unit)
+sbmlsim-compiler = { path = "../compiler" }
+# the reactions, the units stated by the entities and the unit definitions of the SBML of a
+# fixture, the exceptions of its recorded units
+sbmlsim-sbml = { path = "../sbml" }
+# the engine which answers the rounds of a scan in the tests, as a host does
+sbmlsim-host = { path = "../host" }
+serde_json.workspace = true

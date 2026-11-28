@@ -33,6 +33,8 @@ sbmlsim-chaos = { path = "../chaos" }
 sbmlsim-fit = { path = "../fit" }
 # the PEtab v2 problems of `sbmlsim_core.petab`, read, simulated and fitted in Rust
 sbmlsim-petab = { path = "../petab" }
+# the planner of a scan of sbmlsim (`scan/1`, `scanresult/1`), `sbmlsim_core.scan`
+sbmlsim-scan = { path = "../scan" }
 sbmlsim-compiler = { path = "../compiler" }
 # the figures: their SVG, PNG, geometry and picks (`figure/1`)
 sbmlsim-plot = { path = "../plot", features = ["png"] }
@@ -47,6 +49,8 @@ sbmlsim-thin = { path = "../thin" }
 sbmlsim-sensitivity = { path = "../sensitivity" }
 # the statistics of the analyses of sbmlsim, the kernels of numpy and scipy, `sbmlsim_core.stats`
 sbmlsim-stats = { path = "../stats" }
+# the units of pint in Rust, `sbmlsim_core.units`
+sbmlsim-units = { path = "../units" }
 serde_path_to_error = "0.1.20"
 
 # The allocator of the extension module (`src/lib.rs`, where the measurement is), on every

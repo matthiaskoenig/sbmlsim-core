@@ -138,11 +138,16 @@
   "n_constants": 4,
   "units": {
     "C": "litre",
+    "J": "mol/s",
     "P": "mole",
     "S": "mole",
     "[P]": "mole/litre",
     "[S]": "mole/litre",
     "dose": "mole",
-    "k": "second**-1"
-  }
+    "k": "1/s",
+    "time": "second",
+    "x": ""
+  },
+  "time_unit": "second",
+  "time_dependent": true
 }

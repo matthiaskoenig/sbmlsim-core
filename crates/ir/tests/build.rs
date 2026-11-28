@@ -875,12 +875,16 @@ fn units_of_selections() {
     ))
     .unwrap();
     let unit = |id: &str| m.selection(id).unwrap().unit.clone();
-    assert_eq!(unit("c").as_deref(), Some("0.001*mole*litre**-1"));
-    assert_eq!(unit("S1").as_deref(), Some("mole"));
-    assert_eq!(unit("[S1]").as_deref(), Some("mole/litre"));
-    assert_eq!(unit("C").as_deref(), Some("litre"));
-    assert_eq!(unit("J").as_deref(), Some("mole/second"));
-    assert_eq!(unit("k"), None);
+    // the units sbmlsim gives: an entity has the units it states, the default units of the
+    // model name none, and a reaction has the unit libsbml derives for its kinetic law, `k * S1`
+    // with `k` undeclared and `S1` an amount in the default substance of the model
+    assert_eq!(unit("c").as_deref(), Some("mmol/l"));
+    assert_eq!(unit("S1").as_deref(), Some(""));
+    assert_eq!(unit("[S1]").as_deref(), Some(""));
+    assert_eq!(unit("C").as_deref(), Some(""));
+    assert_eq!(unit("J").as_deref(), Some("mol"));
+    assert_eq!(unit("k").as_deref(), Some(""));
+    assert_eq!(m.units["time"], "second");
 }
 
 #[test]

@@ -1,0 +1,11 @@
+[package]
+name = "sbmlsim-timecourse"
+version.workspace = true
+edition.workspace = true
+# not on crates.io yet, as the rest of the workspace
+publish = false
+license.workspace = true
+authors.workspace = true
+description = "The rules of the timecourses of sbmlsim: the interpolation onto a grid with its jumps at changes and events, the samples of an analysis and the reductions over the time of a simulation, shared by the fit and the scan planner"
+
+[dependencies]

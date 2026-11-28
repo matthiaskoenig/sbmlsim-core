@@ -30,6 +30,12 @@ Since 0.32.0: `max`, `min`, `mean`, `at` and `pk`. A release before it neither h
 constant nor denies the field, so a host reads the constant before it sends a reduction.
 """
 MODEL_CONTRACT: str
+PLAN_CONTRACT: str
+"""The contract of the plans of a scan, `plan/1` (since 0.43.0)."""
+SCAN_CONTRACT: str
+"""The contract of the request of a scan, `scan/1` (since 0.43.0)."""
+SCAN_RESULT_CONTRACT: str
+"""The contract of the result of a scan, `scanresult/1` (since 0.43.0)."""
 SIMULATION_CONTRACT: str
 THIRD_PARTY: str
 __version__: str
@@ -72,6 +78,67 @@ class UnsupportedError(SimulationError):
 
 class InternalError(SimulationError):
     """A failure of the engine itself."""
+
+class UnitError(SbmlsimCoreError):
+    """An expression which is no unit, or units which do not convert (since 0.42.0).
+
+    A unit with an offset, two units of other dimensions or a unit defined again with
+    another value.
+    """
+
+class ScanError(SbmlsimCoreError):
+    """A scan which cannot be planned or which failed (since 0.43.0)."""
+
+    kind: str
+    """`request`, `units`, `unsupported` or `point`."""
+    point: int | None
+    """The flat index of the failed point of an error of the kind `point`, else none."""
+
+class ScanPlanner:
+    """The planner of a scan against a loaded model, which `sbmlsim_core.scan` wraps."""
+
+    def __init__(
+        self,
+        request: str,
+        model: LoadedModel | None = None,
+        models: dict[str, LoadedModel] | None = None,
+    ) -> None:
+        """Plans the scan of the JSON text of a request `scan/1` against its models."""
+
+    def ask(self) -> tuple[str, Any]:
+        """The next round: `("simulate", list)`, `("observe", dict)` or `("done", None)`."""
+
+    @property
+    def round_model(self) -> str | None:
+        """The key of the model of the last round of simulations, `None` for the run's."""
+
+    def finished_models(self) -> list[str]:
+        """The keys of the models of a dimension of models whose points have all run."""
+
+    def tell(self, results: Iterable[SimulationOutput | PointError]) -> None:
+        """Takes the answers of a round of simulations, in the order of its requests."""
+
+    def tell_observed(self, values: Mapping[str, Any]) -> None:
+        """Takes the values of a round of the observables of the host."""
+
+    def advance(
+        self,
+        executor: BatchExecutor | None,
+        on_batch: Callable[[int, int], object] | None = None,
+        executors: Mapping[str, BatchExecutor] | None = None,
+        observe: bool = True,
+    ) -> tuple[str, Any]:
+        """Runs the rounds on the executors until another round, a model without one or the end.
+
+        With `observe` false a round of the observables of the host raises `ScanError`.
+        """
+
+    @property
+    def progress(self) -> tuple[int, int]:
+        """The points of the block which ran and the points of the block."""
+
+    def result(self) -> dict[str, Any]:
+        """The result `scanresult/1` of a scan which is done, once."""
 
 class PointError:
     """A point of a batch which failed: the error of its simulation as a value."""
@@ -386,6 +453,13 @@ def compile_sbml(
     `X__value + X__slope * (time - driven__t_ref)` of three parameters, with the accumulator
     state `X__exchange`.
     """
+
+def compile_plans(
+    request: str,
+    model: CompiledModel | LoadedModel | Mapping[str, Any] | None = None,
+    models: dict[str, CompiledModel | LoadedModel | Mapping[str, Any]] | None = None,
+) -> str:
+    """The JSON text of the plans `plan/1` of the JSON text of a request `scan/1`."""
 
 def runtime_wasm() -> dict[str, bytes]:
     """The bytes of `engine.wasm`, `mathlib.wasm` and `compiler.wasm` this extension embeds."""
@@ -1308,3 +1382,51 @@ class _EquationSystem:
     def render(self, fmt: str, options: str) -> tuple[str, str]: ...
     def render_template(self, fmt: str, options: str, template: str) -> str: ...
     def typeset_json(self, links: str) -> str: ...
+
+class UnitRegistry:
+    """A registry of units, the units of pint in Rust (since 0.42.0).
+
+    The class of `sbmlsim_core.units.Registry`: the builtin units of pint which sbmlsim uses,
+    the units a caller defines and the unit ids of a model.
+    """
+
+    def __init__(self) -> None: ...
+    def parse(self, expression: str) -> tuple[float, dict[str, float]]:
+        """The factor of a unit expression to the root units of pint and its dimensions.
+
+        The dimensions are keyed by the names of pint, `"[length]"`, with their exponents
+        as floats; a dimensionless unit has none. Raises `UnitError`.
+        """
+    def factor(self, from_: str, to: str) -> float:
+        """The factor which converts a value in the unit `from_` into the unit `to`.
+
+        Raises `UnitError`, for two units of other dimensions naming both.
+        """
+    def convert(
+        self,
+        values: Iterable[float] | numpy.typing.NDArray[numpy.float64],
+        from_: str,
+        to: str,
+    ) -> numpy.typing.NDArray[numpy.float64]:
+        """Values converted from the unit `from_` into the unit `to`, as float64.
+
+        Each value is multiplied by `factor(from_, to)`. Raises `UnitError`.
+        """
+    def define(self, name: str, expression: str) -> None:
+        """Defines a unit by an expression, `define("IU_insulin", "0.0347 * mg")`.
+
+        Raises `UnitError` for a name which is a unit of another value already.
+        """
+    def with_model_units(
+        self,
+        units: Mapping[str, str] | None = None,
+        unit_ids: Mapping[str, str] | None = None,
+    ) -> UnitRegistry:
+        """A copy with the units of a model.
+
+        `units` are the unit expressions of its entities by id (`unit_of`), `unit_ids` its
+        unit ids with their expressions, which name units in every expression the copy
+        parses.
+        """
+    def unit_of(self, entity: str) -> str | None:
+        """The unit expression of an entity of the model, none without one."""

@@ -57,6 +57,10 @@ use std::alloc::{Layout, alloc, dealloc};
 pub mod petab;
 #[cfg(feature = "stats")]
 pub mod stats;
+#[cfg(feature = "scan")]
+pub mod scan;
+#[cfg(feature = "units")]
+pub mod units;
 
 use sbmlsim_abi::JacobianChoice;
 use sbmlsim_compiler::CompileOptions;
@@ -138,26 +142,12 @@ pub fn compile_kernel_model(sbml: &str, options: &KernelOptions) -> Result<Compi
     })
 }
 
-/// The bytes of a buffer of the caller: empty for a null pointer or a length of zero.
-///
-/// # Safety
-///
-/// A pointer which is not null is a buffer of [`allocate`] of exactly `len` bytes.
-unsafe fn bytes_of<'a>(pointer: *const u8, len: usize) -> &'a [u8] {
-    if pointer.is_null() || len == 0 {
-        &[]
-    } else {
-        // SAFETY: the caller gives a buffer of `allocate` of exactly this length
-        unsafe { std::slice::from_raw_parts(pointer, len) }
-    }
-}
-
 /// The document and the options of a compilation, read from the buffers of the caller: the
 /// text of the document and the options of their JSON (the defaults for an empty buffer).
 ///
 /// # Safety
 ///
-/// The buffers satisfy the requirements of [`bytes_of`].
+/// The buffers satisfy the requirements of [`bytes`].
 unsafe fn request<'a, T: serde::de::DeserializeOwned + Default>(
     pointer: *const u8,
     len: usize,
@@ -165,7 +155,7 @@ unsafe fn request<'a, T: serde::de::DeserializeOwned + Default>(
     options_len: usize,
 ) -> Result<(&'a str, T), String> {
     // SAFETY: the caller gives buffers of `allocate` of exactly these lengths
-    let (document, options) = unsafe { (bytes_of(pointer, len), bytes_of(options, options_len)) };
+    let (document, options) = unsafe { (bytes(pointer, len), bytes(options, options_len)) };
     let text = std::str::from_utf8(document).map_err(|_| "the document is not UTF-8".to_owned())?;
     let options = if options.is_empty() {
         T::default()
@@ -251,6 +241,36 @@ unsafe fn give(bytes: Vec<u8>, out: *mut usize) {
         put_word(out, 0, pointer as usize);
         put_word(out, 1, len);
     }
+}
+
+/// The bytes of a buffer of the caller: empty for a null pointer or a length of zero.
+///
+/// # Safety
+///
+/// `pointer` is a buffer of [`allocate`] of exactly `len` bytes, or null.
+pub(crate) unsafe fn bytes<'a>(pointer: *const u8, len: usize) -> &'a [u8] {
+    if pointer.is_null() || len == 0 {
+        &[]
+    } else {
+        // SAFETY: the caller gives a buffer of `allocate` of exactly this length
+        unsafe { std::slice::from_raw_parts(pointer, len) }
+    }
+}
+
+/// Writes a text answer into the two words at `out`: 1 with the answer, 0 with the message.
+///
+/// # Safety
+///
+/// `out` points at two words of the caller.
+#[cfg(any(feature = "petab", feature = "units"))]
+pub(crate) unsafe fn answer(result: Result<String, String>, out: *mut usize) -> u32 {
+    let (success, text) = match result {
+        Ok(text) => (1, text),
+        Err(message) => (0, message),
+    };
+    // SAFETY: the caller gives two words of its own memory
+    unsafe { give(text.into_bytes(), out) };
+    success
 }
 
 /// Options and explicit companion documents of a standalone source export.

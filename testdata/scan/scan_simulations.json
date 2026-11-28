@@ -1,0 +1,2300 @@
+{
+ "case": "scan_simulations",
+ "model": "Koenig_demo_14.xml",
+ "core_version": "0.40.0",
+ "description": {
+  "contract": "model/2",
+  "compiler": "sbmlsim-compiler 0.40.0",
+  "id": "Koenig_demo_14",
+  "states": [
+   {
+    "id": "c__A",
+    "kind": {
+     "species": {
+      "compartment": "c",
+      "has_only_substance_units": false,
+      "stores_concentration": false
+     }
+    },
+    "initial": 0.0,
+    "settable": true
+   },
+   {
+    "id": "c__B",
+    "kind": {
+     "species": {
+      "compartment": "c",
+      "has_only_substance_units": false,
+      "stores_concentration": false
+     }
+    },
+    "initial": 0.0,
+    "settable": true
+   },
+   {
+    "id": "c__C",
+    "kind": {
+     "species": {
+      "compartment": "c",
+      "has_only_substance_units": false,
+      "stores_concentration": false
+     }
+    },
+    "initial": 0.0,
+    "settable": true
+   },
+   {
+    "id": "e__A",
+    "kind": {
+     "species": {
+      "compartment": "e",
+      "has_only_substance_units": false,
+      "stores_concentration": false
+     }
+    },
+    "initial": 0.0,
+    "settable": true
+   },
+   {
+    "id": "e__B",
+    "kind": {
+     "species": {
+      "compartment": "e",
+      "has_only_substance_units": false,
+      "stores_concentration": false
+     }
+    },
+    "initial": 0.0,
+    "settable": true
+   },
+   {
+    "id": "e__C",
+    "kind": {
+     "species": {
+      "compartment": "e",
+      "has_only_substance_units": false,
+      "stores_concentration": false
+     }
+    },
+    "initial": 0.0,
+    "settable": true
+   }
+  ],
+  "parameters": [
+   {
+    "id": "e",
+    "kind": "compartment",
+    "initial": 1e-06,
+    "settable": true
+   },
+   {
+    "id": "c",
+    "kind": "compartment",
+    "initial": 1e-06,
+    "settable": true
+   },
+   {
+    "id": "m",
+    "kind": "compartment",
+    "initial": 1.0,
+    "settable": true
+   },
+   {
+    "id": "scale_f",
+    "kind": "parameter",
+    "initial": 1e-06,
+    "settable": true
+   },
+   {
+    "id": "Vmax_bA",
+    "kind": "parameter",
+    "initial": 5.0,
+    "settable": true
+   },
+   {
+    "id": "Km_A",
+    "kind": "parameter",
+    "initial": 1.0,
+    "settable": true
+   },
+   {
+    "id": "Vmax_bB",
+    "kind": "parameter",
+    "initial": 2.0,
+    "settable": true
+   },
+   {
+    "id": "Km_B",
+    "kind": "parameter",
+    "initial": 0.5,
+    "settable": true
+   },
+   {
+    "id": "Vmax_bC",
+    "kind": "parameter",
+    "initial": 2.0,
+    "settable": true
+   },
+   {
+    "id": "Km_C",
+    "kind": "parameter",
+    "initial": 3.0,
+    "settable": true
+   },
+   {
+    "id": "Vmax_v1",
+    "kind": "parameter",
+    "initial": 1.0,
+    "settable": true
+   },
+   {
+    "id": "Keq_v1",
+    "kind": "parameter",
+    "initial": 10.0,
+    "settable": true
+   },
+   {
+    "id": "Vmax_v2",
+    "kind": "parameter",
+    "initial": 0.5,
+    "settable": true
+   },
+   {
+    "id": "Vmax_v3",
+    "kind": "parameter",
+    "initial": 0.5,
+    "settable": true
+   },
+   {
+    "id": "Vmax_v4",
+    "kind": "parameter",
+    "initial": 0.5,
+    "settable": true
+   },
+   {
+    "id": "Keq_v4",
+    "kind": "parameter",
+    "initial": 2.0,
+    "settable": true
+   }
+  ],
+  "selections": [
+   {
+    "id": "e",
+    "index": 0
+   },
+   {
+    "id": "c",
+    "index": 1
+   },
+   {
+    "id": "m",
+    "index": 2
+   },
+   {
+    "id": "c__A",
+    "index": 3
+   },
+   {
+    "id": "c__B",
+    "index": 4
+   },
+   {
+    "id": "c__C",
+    "index": 5
+   },
+   {
+    "id": "e__A",
+    "index": 6
+   },
+   {
+    "id": "e__B",
+    "index": 7
+   },
+   {
+    "id": "e__C",
+    "index": 8
+   },
+   {
+    "id": "[c__A]",
+    "index": 9
+   },
+   {
+    "id": "[c__B]",
+    "index": 10
+   },
+   {
+    "id": "[c__C]",
+    "index": 11
+   },
+   {
+    "id": "[e__A]",
+    "index": 12
+   },
+   {
+    "id": "[e__B]",
+    "index": 13
+   },
+   {
+    "id": "[e__C]",
+    "index": 14
+   },
+   {
+    "id": "scale_f",
+    "index": 15
+   },
+   {
+    "id": "Vmax_bA",
+    "index": 16
+   },
+   {
+    "id": "Km_A",
+    "index": 17
+   },
+   {
+    "id": "Vmax_bB",
+    "index": 18
+   },
+   {
+    "id": "Km_B",
+    "index": 19
+   },
+   {
+    "id": "Vmax_bC",
+    "index": 20
+   },
+   {
+    "id": "Km_C",
+    "index": 21
+   },
+   {
+    "id": "Vmax_v1",
+    "index": 22
+   },
+   {
+    "id": "Keq_v1",
+    "index": 23
+   },
+   {
+    "id": "Vmax_v2",
+    "index": 24
+   },
+   {
+    "id": "Vmax_v3",
+    "index": 25
+   },
+   {
+    "id": "Vmax_v4",
+    "index": 26
+   },
+   {
+    "id": "Keq_v4",
+    "index": 27
+   },
+   {
+    "id": "bA",
+    "index": 28
+   },
+   {
+    "id": "bB",
+    "index": 29
+   },
+   {
+    "id": "bC",
+    "index": 30
+   },
+   {
+    "id": "v1",
+    "index": 31
+   },
+   {
+    "id": "v2",
+    "index": 32
+   },
+   {
+    "id": "v3",
+    "index": 33
+   },
+   {
+    "id": "v4",
+    "index": 34
+   }
+  ],
+  "jacobian": {
+   "analytic": {
+    "n": 6,
+    "col_ptr": [
+     0,
+     4,
+     8,
+     12,
+     14,
+     16,
+     18
+    ],
+    "row_idx": [
+     0,
+     1,
+     2,
+     3,
+     0,
+     1,
+     2,
+     4,
+     0,
+     1,
+     2,
+     5,
+     0,
+     3,
+     1,
+     4,
+     2,
+     5
+    ]
+   }
+  },
+  "jacobian_p": {
+   "rows": 6,
+   "col_ptr": [
+    0,
+    6,
+    12,
+    12,
+    18,
+    20,
+    24,
+    26,
+    28,
+    30,
+    32,
+    34,
+    36,
+    38,
+    40,
+    42,
+    44
+   ],
+   "row_idx": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    0,
+    3,
+    0,
+    1,
+    2,
+    3,
+    1,
+    4,
+    1,
+    4,
+    2,
+    5,
+    2,
+    5,
+    0,
+    1,
+    0,
+    1,
+    0,
+    2,
+    0,
+    2,
+    1,
+    2,
+    1,
+    2
+   ]
+  },
+  "events": [],
+  "n_roots": 0,
+  "n_discontinuity_roots": 0,
+  "n_constants": 58,
+  "units": {
+   "Keq_v1": "dimensionless",
+   "Keq_v4": "dimensionless",
+   "Km_A": "mole*metre**-3",
+   "Km_B": "mole*metre**-3",
+   "Km_C": "mole*metre**-3",
+   "Vmax_bA": "mole*second**-1",
+   "Vmax_bB": "mole*second**-1",
+   "Vmax_bC": "mole*second**-1",
+   "Vmax_v1": "mole*second**-1",
+   "Vmax_v2": "mole*second**-1",
+   "Vmax_v3": "mole*second**-1",
+   "Vmax_v4": "mole*second**-1",
+   "[c__A]": "mole/(metre**3)",
+   "[c__B]": "mole/(metre**3)",
+   "[c__C]": "mole/(metre**3)",
+   "[e__A]": "mole/(metre**3)",
+   "[e__B]": "mole/(metre**3)",
+   "[e__C]": "mole/(metre**3)",
+   "bA": "mole/second",
+   "bB": "mole/second",
+   "bC": "mole/second",
+   "c": "metre**3",
+   "c__A": "mole",
+   "c__B": "mole",
+   "c__C": "mole",
+   "e": "metre**3",
+   "e__A": "mole",
+   "e__B": "mole",
+   "e__C": "mole",
+   "m": "metre**2",
+   "scale_f": "dimensionless",
+   "v1": "mole/second",
+   "v2": "mole/second",
+   "v3": "mole/second",
+   "v4": "mole/second"
+  }
+ },
+ "request": {
+  "contract": "scan/1",
+  "scan": {
+   "type": "Scan",
+   "simulation": {
+    "type": "Simulation",
+    "time_unit": null,
+    "start": 0.0,
+    "end": 10,
+    "preinit_changes": {},
+    "changes": [],
+    "presimulation": null,
+    "times": null,
+    "steps": 10,
+    "time_shift": 0.0
+   },
+   "dimensions": [
+    {
+     "id": "protocol",
+     "kind": "simulations",
+     "labels": [
+      "short",
+      "long"
+     ],
+     "values": {},
+     "simulations": {
+      "short": {
+       "type": "Simulation",
+       "time_unit": null,
+       "start": 0.0,
+       "end": 5,
+       "preinit_changes": {},
+       "changes": [],
+       "presimulation": null,
+       "times": null,
+       "steps": 5,
+       "time_shift": 0.0
+      },
+      "long": {
+       "type": "Simulation",
+       "time_unit": null,
+       "start": 0.0,
+       "end": 10,
+       "preinit_changes": {},
+       "changes": [
+        {
+         "times": [
+          5
+         ],
+         "values": {
+          "Vmax_bA": 3.0
+         }
+        }
+       ],
+       "presimulation": null,
+       "times": null,
+       "steps": 10,
+       "time_shift": 0.0
+      }
+     },
+     "models": {},
+     "at": null,
+     "design": null,
+     "coordinates": {}
+    }
+   ]
+  },
+  "observables": [],
+  "keep": null,
+  "time": null,
+  "on_error": "raise",
+  "points": null,
+  "settings": {
+   "relative_tolerance": 1e-10,
+   "maximum_num_steps": 20000,
+   "maximum_time_step": 0.0,
+   "initial_time_step": 0.0,
+   "stiff": true,
+   "linear_solver": "auto",
+   "jacobian": "auto",
+   "absolute_tolerance": {
+    "per_state": [
+     1e-16,
+     1e-16,
+     1e-16,
+     1e-16,
+     1e-16,
+     1e-16
+    ]
+   }
+  },
+  "selections": [
+   "time",
+   "c__A",
+   "c__B",
+   "c__C",
+   "e__A",
+   "e__B",
+   "e__C",
+   "scale_f",
+   "Vmax_bA",
+   "Km_A",
+   "Vmax_bB",
+   "Km_B",
+   "Vmax_bC",
+   "Km_C",
+   "Vmax_v1",
+   "Keq_v1",
+   "Vmax_v2",
+   "Vmax_v3",
+   "Vmax_v4",
+   "Keq_v4",
+   "bA",
+   "bB",
+   "bC",
+   "v1",
+   "v2",
+   "v3",
+   "v4",
+   "e",
+   "c",
+   "m",
+   "[c__A]",
+   "[c__B]",
+   "[c__C]",
+   "[e__A]",
+   "[e__B]",
+   "[e__C]"
+  ]
+ },
+ "engine_rounds": [
+  [
+   {
+    "contract": "simulation/1",
+    "start": 0.0,
+    "end": 5.0,
+    "output": {
+     "times": [
+      0.0,
+      1.0,
+      2.0,
+      3.0,
+      4.0,
+      5.0
+     ]
+    },
+    "preinit": [],
+    "changes": [],
+    "steady_state": null,
+    "steady_state_after": null,
+    "selections": [
+     "time",
+     "c__A",
+     "c__B",
+     "c__C",
+     "e__A",
+     "e__B",
+     "e__C",
+     "scale_f",
+     "Vmax_bA",
+     "Km_A",
+     "Vmax_bB",
+     "Km_B",
+     "Vmax_bC",
+     "Km_C",
+     "Vmax_v1",
+     "Keq_v1",
+     "Vmax_v2",
+     "Vmax_v3",
+     "Vmax_v4",
+     "Keq_v4",
+     "bA",
+     "bB",
+     "bC",
+     "v1",
+     "v2",
+     "v3",
+     "v4",
+     "e",
+     "c",
+     "m",
+     "[c__A]",
+     "[c__B]",
+     "[c__C]",
+     "[e__A]",
+     "[e__B]",
+     "[e__C]"
+    ],
+    "settings": {
+     "relative_tolerance": 1e-10,
+     "maximum_num_steps": 20000,
+     "maximum_time_step": 0.0,
+     "initial_time_step": 0.0,
+     "stiff": true,
+     "linear_solver": "auto",
+     "jacobian": "auto",
+     "absolute_tolerance": {
+      "per_state": [
+       1e-16,
+       1e-16,
+       1e-16,
+       1e-16,
+       1e-16,
+       1e-16
+      ]
+     }
+    }
+   }
+  ],
+  [
+   {
+    "contract": "simulation/1",
+    "start": 0.0,
+    "end": 10.0,
+    "output": {
+     "times": [
+      0.0,
+      1.0,
+      2.0,
+      3.0,
+      4.0,
+      5.0,
+      6.0,
+      7.0,
+      8.0,
+      9.0,
+      10.0
+     ]
+    },
+    "preinit": [],
+    "changes": [
+     {
+      "time": 5.0,
+      "values": [
+       [
+        "Vmax_bA",
+        3.0
+       ]
+      ]
+     }
+    ],
+    "steady_state": null,
+    "steady_state_after": null,
+    "selections": [
+     "time",
+     "c__A",
+     "c__B",
+     "c__C",
+     "e__A",
+     "e__B",
+     "e__C",
+     "scale_f",
+     "Vmax_bA",
+     "Km_A",
+     "Vmax_bB",
+     "Km_B",
+     "Vmax_bC",
+     "Km_C",
+     "Vmax_v1",
+     "Keq_v1",
+     "Vmax_v2",
+     "Vmax_v3",
+     "Vmax_v4",
+     "Keq_v4",
+     "bA",
+     "bB",
+     "bC",
+     "v1",
+     "v2",
+     "v3",
+     "v4",
+     "e",
+     "c",
+     "m",
+     "[c__A]",
+     "[c__B]",
+     "[c__C]",
+     "[e__A]",
+     "[e__B]",
+     "[e__C]"
+    ],
+    "settings": {
+     "relative_tolerance": 1e-10,
+     "maximum_num_steps": 20000,
+     "maximum_time_step": 0.0,
+     "initial_time_step": 0.0,
+     "stiff": true,
+     "linear_solver": "auto",
+     "jacobian": "auto",
+     "absolute_tolerance": {
+      "per_state": [
+       1e-16,
+       1e-16,
+       1e-16,
+       1e-16,
+       1e-16,
+       1e-16
+      ]
+     }
+    }
+   }
+  ]
+ ],
+ "result": {
+  "sizes": [
+   [
+    "protocol",
+    2
+   ],
+   [
+    "_point",
+    12
+   ]
+  ],
+  "dims": [
+   "protocol"
+  ],
+  "coords": {
+   "protocol": {
+    "dims": [
+     "protocol"
+    ],
+    "values": [
+     "short",
+     "long"
+    ],
+    "unit": ""
+   }
+  },
+  "variables": {
+   "time": {
+    "dims": [
+     "protocol",
+     "_point"
+    ],
+    "shape": [
+     2,
+     12
+    ],
+    "unit": "second",
+    "values": [
+     0.0,
+     1.0,
+     2.0,
+     3.0,
+     4.0,
+     5.0,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     0.0,
+     1.0,
+     2.0,
+     3.0,
+     4.0,
+     5.0,
+     5.0,
+     6.0,
+     7.0,
+     8.0,
+     9.0,
+     10.0
+    ]
+   },
+   "c__A": {
+    "dims": [
+     "protocol",
+     "_point"
+    ],
+    "shape": [
+     2,
+     12
+    ],
+    "unit": "mole",
+    "values": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "c__B": {
+    "dims": [
+     "protocol",
+     "_point"
+    ],
+    "shape": [
+     2,
+     12
+    ],
+    "unit": "mole",
+    "values": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "c__C": {
+    "dims": [
+     "protocol",
+     "_point"
+    ],
+    "shape": [
+     2,
+     12
+    ],
+    "unit": "mole",
+    "values": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "e__A": {
+    "dims": [
+     "protocol",
+     "_point"
+    ],
+    "shape": [
+     2,
+     12
+    ],
+    "unit": "mole",
+    "values": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "e__B": {
+    "dims": [
+     "protocol",
+     "_point"
+    ],
+    "shape": [
+     2,
+     12
+    ],
+    "unit": "mole",
+    "values": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "e__C": {
+    "dims": [
+     "protocol",
+     "_point"
+    ],
+    "shape": [
+     2,
+     12
+    ],
+    "unit": "mole",
+    "values": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "scale_f": {
+    "dims": [
+     "protocol",
+     "_point"
+    ],
+    "shape": [
+     2,
+     12
+    ],
+    "unit": "dimensionless",
+    "values": [
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06
+    ]
+   },
+   "Vmax_bA": {
+    "dims": [
+     "protocol",
+     "_point"
+    ],
+    "shape": [
+     2,
+     12
+    ],
+    "unit": "mol/s",
+    "values": [
+     5.0,
+     5.0,
+     5.0,
+     5.0,
+     5.0,
+     5.0,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     5.0,
+     5.0,
+     5.0,
+     5.0,
+     5.0,
+     5.0,
+     3.0,
+     3.0,
+     3.0,
+     3.0,
+     3.0,
+     3.0
+    ]
+   },
+   "Km_A": {
+    "dims": [
+     "protocol",
+     "_point"
+    ],
+    "shape": [
+     2,
+     12
+    ],
+    "unit": "mol/m^3",
+    "values": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "Vmax_bB": {
+    "dims": [
+     "protocol",
+     "_point"
+    ],
+    "shape": [
+     2,
+     12
+    ],
+    "unit": "mol/s",
+    "values": [
+     2.0,
+     2.0,
+     2.0,
+     2.0,
+     2.0,
+     2.0,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     2.0,
+     2.0,
+     2.0,
+     2.0,
+     2.0,
+     2.0,
+     2.0,
+     2.0,
+     2.0,
+     2.0,
+     2.0,
+     2.0
+    ]
+   },
+   "Km_B": {
+    "dims": [
+     "protocol",
+     "_point"
+    ],
+    "shape": [
+     2,
+     12
+    ],
+    "unit": "mol/m^3",
+    "values": [
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5
+    ]
+   },
+   "Vmax_bC": {
+    "dims": [
+     "protocol",
+     "_point"
+    ],
+    "shape": [
+     2,
+     12
+    ],
+    "unit": "mol/s",
+    "values": [
+     2.0,
+     2.0,
+     2.0,
+     2.0,
+     2.0,
+     2.0,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     2.0,
+     2.0,
+     2.0,
+     2.0,
+     2.0,
+     2.0,
+     2.0,
+     2.0,
+     2.0,
+     2.0,
+     2.0,
+     2.0
+    ]
+   },
+   "Km_C": {
+    "dims": [
+     "protocol",
+     "_point"
+    ],
+    "shape": [
+     2,
+     12
+    ],
+    "unit": "mol/m^3",
+    "values": [
+     3.0,
+     3.0,
+     3.0,
+     3.0,
+     3.0,
+     3.0,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     3.0,
+     3.0,
+     3.0,
+     3.0,
+     3.0,
+     3.0,
+     3.0,
+     3.0,
+     3.0,
+     3.0,
+     3.0,
+     3.0
+    ]
+   },
+   "Vmax_v1": {
+    "dims": [
+     "protocol",
+     "_point"
+    ],
+    "shape": [
+     2,
+     12
+    ],
+    "unit": "mol/s",
+    "values": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "Keq_v1": {
+    "dims": [
+     "protocol",
+     "_point"
+    ],
+    "shape": [
+     2,
+     12
+    ],
+    "unit": "dimensionless",
+    "values": [
+     10.0,
+     10.0,
+     10.0,
+     10.0,
+     10.0,
+     10.0,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     10.0,
+     10.0,
+     10.0,
+     10.0,
+     10.0,
+     10.0,
+     10.0,
+     10.0,
+     10.0,
+     10.0,
+     10.0,
+     10.0
+    ]
+   },
+   "Vmax_v2": {
+    "dims": [
+     "protocol",
+     "_point"
+    ],
+    "shape": [
+     2,
+     12
+    ],
+    "unit": "mol/s",
+    "values": [
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5
+    ]
+   },
+   "Vmax_v3": {
+    "dims": [
+     "protocol",
+     "_point"
+    ],
+    "shape": [
+     2,
+     12
+    ],
+    "unit": "mol/s",
+    "values": [
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5
+    ]
+   },
+   "Vmax_v4": {
+    "dims": [
+     "protocol",
+     "_point"
+    ],
+    "shape": [
+     2,
+     12
+    ],
+    "unit": "mol/s",
+    "values": [
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5
+    ]
+   },
+   "Keq_v4": {
+    "dims": [
+     "protocol",
+     "_point"
+    ],
+    "shape": [
+     2,
+     12
+    ],
+    "unit": "dimensionless",
+    "values": [
+     2.0,
+     2.0,
+     2.0,
+     2.0,
+     2.0,
+     2.0,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     2.0,
+     2.0,
+     2.0,
+     2.0,
+     2.0,
+     2.0,
+     2.0,
+     2.0,
+     2.0,
+     2.0,
+     2.0,
+     2.0
+    ]
+   },
+   "bA": {
+    "dims": [
+     "protocol",
+     "_point"
+    ],
+    "shape": [
+     2,
+     12
+    ],
+    "unit": "mol/s",
+    "values": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "bB": {
+    "dims": [
+     "protocol",
+     "_point"
+    ],
+    "shape": [
+     2,
+     12
+    ],
+    "unit": "mol/s",
+    "values": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "bC": {
+    "dims": [
+     "protocol",
+     "_point"
+    ],
+    "shape": [
+     2,
+     12
+    ],
+    "unit": "mol/s",
+    "values": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "v1": {
+    "dims": [
+     "protocol",
+     "_point"
+    ],
+    "shape": [
+     2,
+     12
+    ],
+    "unit": "mol/s",
+    "values": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "v2": {
+    "dims": [
+     "protocol",
+     "_point"
+    ],
+    "shape": [
+     2,
+     12
+    ],
+    "unit": "mol/s",
+    "values": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "v3": {
+    "dims": [
+     "protocol",
+     "_point"
+    ],
+    "shape": [
+     2,
+     12
+    ],
+    "unit": "mol/s",
+    "values": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "v4": {
+    "dims": [
+     "protocol",
+     "_point"
+    ],
+    "shape": [
+     2,
+     12
+    ],
+    "unit": "mol/s",
+    "values": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "e": {
+    "dims": [
+     "protocol",
+     "_point"
+    ],
+    "shape": [
+     2,
+     12
+    ],
+    "unit": "m^3",
+    "values": [
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06
+    ]
+   },
+   "c": {
+    "dims": [
+     "protocol",
+     "_point"
+    ],
+    "shape": [
+     2,
+     12
+    ],
+    "unit": "m^3",
+    "values": [
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06
+    ]
+   },
+   "m": {
+    "dims": [
+     "protocol",
+     "_point"
+    ],
+    "shape": [
+     2,
+     12
+    ],
+    "unit": "m^2",
+    "values": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "[c__A]": {
+    "dims": [
+     "protocol",
+     "_point"
+    ],
+    "shape": [
+     2,
+     12
+    ],
+    "unit": "mole/m^3",
+    "values": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "[c__B]": {
+    "dims": [
+     "protocol",
+     "_point"
+    ],
+    "shape": [
+     2,
+     12
+    ],
+    "unit": "mole/m^3",
+    "values": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "[c__C]": {
+    "dims": [
+     "protocol",
+     "_point"
+    ],
+    "shape": [
+     2,
+     12
+    ],
+    "unit": "mole/m^3",
+    "values": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "[e__A]": {
+    "dims": [
+     "protocol",
+     "_point"
+    ],
+    "shape": [
+     2,
+     12
+    ],
+    "unit": "mole/m^3",
+    "values": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "[e__B]": {
+    "dims": [
+     "protocol",
+     "_point"
+    ],
+    "shape": [
+     2,
+     12
+    ],
+    "unit": "mole/m^3",
+    "values": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "[e__C]": {
+    "dims": [
+     "protocol",
+     "_point"
+    ],
+    "shape": [
+     2,
+     12
+    ],
+    "unit": "mole/m^3",
+    "values": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   }
+  },
+  "order": {
+   "coords": [
+    "protocol"
+   ],
+   "variables": [
+    "time",
+    "c__A",
+    "c__B",
+    "c__C",
+    "e__A",
+    "e__B",
+    "e__C",
+    "scale_f",
+    "Vmax_bA",
+    "Km_A",
+    "Vmax_bB",
+    "Km_B",
+    "Vmax_bC",
+    "Km_C",
+    "Vmax_v1",
+    "Keq_v1",
+    "Vmax_v2",
+    "Vmax_v3",
+    "Vmax_v4",
+    "Keq_v4",
+    "bA",
+    "bB",
+    "bC",
+    "v1",
+    "v2",
+    "v3",
+    "v4",
+    "e",
+    "c",
+    "m",
+    "[c__A]",
+    "[c__B]",
+    "[c__C]",
+    "[e__A]",
+    "[e__B]",
+    "[e__C]"
+   ]
+  },
+  "attrs": {
+   "dims": [
+    "protocol"
+   ],
+   "units": {
+    "time": "second",
+    "c__A": "mole",
+    "c__B": "mole",
+    "c__C": "mole",
+    "e__A": "mole",
+    "e__B": "mole",
+    "e__C": "mole",
+    "scale_f": "dimensionless",
+    "Vmax_bA": "mol/s",
+    "Km_A": "mol/m^3",
+    "Vmax_bB": "mol/s",
+    "Km_B": "mol/m^3",
+    "Vmax_bC": "mol/s",
+    "Km_C": "mol/m^3",
+    "Vmax_v1": "mol/s",
+    "Keq_v1": "dimensionless",
+    "Vmax_v2": "mol/s",
+    "Vmax_v3": "mol/s",
+    "Vmax_v4": "mol/s",
+    "Keq_v4": "dimensionless",
+    "bA": "mol/s",
+    "bB": "mol/s",
+    "bC": "mol/s",
+    "v1": "mol/s",
+    "v2": "mol/s",
+    "v3": "mol/s",
+    "v4": "mol/s",
+    "e": "m^3",
+    "c": "m^3",
+    "m": "m^2",
+    "[c__A]": "mole/m^3",
+    "[c__B]": "mole/m^3",
+    "[c__C]": "mole/m^3",
+    "[e__A]": "mole/m^3",
+    "[e__B]": "mole/m^3",
+    "[e__C]": "mole/m^3",
+    "protocol": ""
+   },
+   "scan": {
+    "type": "Scan",
+    "simulation": {
+     "type": "Simulation",
+     "time_unit": null,
+     "start": 0.0,
+     "end": 10,
+     "preinit_changes": {},
+     "changes": [],
+     "presimulation": null,
+     "times": null,
+     "steps": 10,
+     "time_shift": 0.0
+    },
+    "dimensions": [
+     {
+      "id": "protocol",
+      "kind": "simulations",
+      "labels": [
+       "short",
+       "long"
+      ],
+      "values": {},
+      "simulations": {
+       "short": {
+        "type": "Simulation",
+        "time_unit": null,
+        "start": 0.0,
+        "end": 5,
+        "preinit_changes": {},
+        "changes": [],
+        "presimulation": null,
+        "times": null,
+        "steps": 5,
+        "time_shift": 0.0
+       },
+       "long": {
+        "type": "Simulation",
+        "time_unit": null,
+        "start": 0.0,
+        "end": 10,
+        "preinit_changes": {},
+        "changes": [
+         {
+          "times": [
+           5
+          ],
+          "values": {
+           "Vmax_bA": 3.0
+          }
+         }
+        ],
+        "presimulation": null,
+        "times": null,
+        "steps": 10,
+        "time_shift": 0.0
+       }
+      },
+      "models": {},
+      "at": null,
+      "design": null,
+      "coordinates": {}
+     }
+    ]
+   },
+   "engine": "core",
+   "integrator_settings": {
+    "absolute_tolerance": {
+     "amount": 1e-10,
+     "concentration": 1e-10,
+     "other": 1e-10,
+     "ids": {},
+     "relative": null,
+     "scales": {}
+    },
+    "relative_tolerance": 1e-10
+   },
+   "changes": [
+    5.0
+   ]
+  }
+ },
+ "error": null,
+ "repr": "ScanResult(protocol: 2, _point: 12; c__A, c__B, c__C, e__A, e__B, e__C, scale_f, Vmax_bA, ... (35 variables))"
+}

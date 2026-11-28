@@ -15,3 +15,9 @@ sbmlsim-codegen = { path = "../codegen" }
 sbmlsim-ir = { path = "../ir" }
 sbmlsim-sbml = { path = "../sbml" }
 serde.workspace = true
+
+[dev-dependencies]
+# the model units of sbmlsim, `testdata/model_units`
+serde_json.workspace = true
+# the units of a description read in a registry
+sbmlsim-units = { path = "../units" }

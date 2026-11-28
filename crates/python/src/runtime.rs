@@ -87,7 +87,7 @@ impl Runtime {
 /// A model compiled for an engine, which makes the instances that simulate it.
 #[pyclass(frozen, module = "sbmlsim_core")]
 pub(crate) struct LoadedModel {
-    model: Arc<sbmlsim_host::LoadedModel>,
+    pub(crate) model: Arc<sbmlsim_host::LoadedModel>,
 }
 
 #[pymethods]

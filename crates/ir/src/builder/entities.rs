@@ -279,16 +279,16 @@ impl<'m> Builder<'m> {
     /// The states and the parameters.
     pub(super) fn entities(&self) -> (Vec<Entity>, Vec<Entity>) {
         let m = self.m;
-        let units = Units::new(m);
         let mut states = Vec::new();
         let mut params = Vec::new();
-        let mut push = |id: &str, kind, default: Option<f64>, unit| {
+        // the units are set once the model is built, see `build`
+        let mut push = |id: &str, kind, default: Option<f64>| {
             let entity = Entity {
                 id: id.to_string(),
                 kind,
                 default: default.unwrap_or(f64::NAN),
                 settable: !self.assignment_rule.contains_key(id) && !self.algebraic.contains(id),
-                unit,
+                unit: None,
             };
             match self.symbols[id] {
                 Symbol::State(k) => states.push((k, entity)),
@@ -304,15 +304,12 @@ impl<'m> Builder<'m> {
         // an algebraic parameter starts from a guess, an explicitly assigned one from NaN
         for c in &m.compartments {
             let size = Some(c.size.unwrap_or(1.0));
-            push(&c.id, EntityKind::Compartment, size, units.compartment(c));
+            push(&c.id, EntityKind::Compartment, size);
         }
         for (s, info) in m.species.iter().zip(&self.species) {
-            let (default, unit) = match info.value {
-                SpeciesValue::Amount => (s.initial_amount, units.substance(s)),
-                SpeciesValue::Concentration => (
-                    s.initial_concentration,
-                    units.concentration(s, Some(&m.compartments[info.compartment_index])),
-                ),
+            let default = match info.value {
+                SpeciesValue::Amount => s.initial_amount,
+                SpeciesValue::Concentration => s.initial_concentration,
             };
             // given in the other quantity: NaN, which `initial` completes
             let given = s.initial_amount.is_some() || s.initial_concentration.is_some();
@@ -324,21 +321,20 @@ impl<'m> Builder<'m> {
                 constant: s.constant,
                 value: info.value,
             };
-            push(&s.id, kind, default, unit);
+            push(&s.id, kind, default);
         }
         for p in &m.parameters {
-            let unit = units.parameter(p.units.as_ref());
             let default = if self.algebraic.contains(p.id.as_str()) {
                 Some(p.value.unwrap_or(1.0))
             } else {
                 p.value
             };
-            push(&p.id, EntityKind::Parameter, default, unit);
+            push(&p.id, EntityKind::Parameter, default);
         }
         for r in &self.refs {
             if let Some(id) = &r.reference.id {
                 let default = Some(r.reference.stoichiometry.unwrap_or(1.0));
-                push(id, EntityKind::SpeciesReference, default, None);
+                push(id, EntityKind::SpeciesReference, default);
             }
         }
         states.sort_by_key(|(k, _)| *k);

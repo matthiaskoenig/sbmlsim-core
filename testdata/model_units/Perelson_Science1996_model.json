@@ -1,0 +1,22 @@
+{
+ "time": "second",
+ "default": "l",
+ "Tstar": "mol",
+ "[Tstar]": "mol/l",
+ "V": "mol",
+ "[V]": "mol/l",
+ "Vin": "mol",
+ "[Vin]": "mol/l",
+ "Vni": "mol",
+ "[Vni]": "mol/l",
+ "NN": "",
+ "T0": "",
+ "c": "",
+ "delta": "",
+ "K0": "",
+ "v1": "mol/l",
+ "v2": "mol/l",
+ "v3": "mol/l",
+ "v4": "mol/l",
+ "v5": "mol/l"
+}

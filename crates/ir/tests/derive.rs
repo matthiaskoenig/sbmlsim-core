@@ -52,6 +52,8 @@ fn model(states: &[&str], params: &[&str], rules: Vec<Assignment>, rates: Vec<Ex
         driven: vec![],
         t_ref: None,
         time_unit: None,
+        units: Default::default(),
+        unit_definitions: Default::default(),
     }
 }
 

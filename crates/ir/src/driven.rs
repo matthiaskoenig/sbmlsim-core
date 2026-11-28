@@ -497,6 +497,12 @@ pub fn apply(model: Model, driven: &[String]) -> Result<Model, CompileError> {
             )
         })
         .unwrap_or(m.selections.len());
+    // the units of the new entities, as the units of the other entities of the model
+    for (id, _, unit) in &selected {
+        if let Some(unit) = unit {
+            m.units.insert(id.clone(), unit.clone());
+        }
+    }
     m.selections.splice(
         at..at,
         selected.into_iter().map(|(id, symbol, unit)| SelectionDef {

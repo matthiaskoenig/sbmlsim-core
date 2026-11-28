@@ -431,3 +431,67 @@ def petab_problem(directory: Path, files: Mapping[str, bytes]) -> None:
     answer: dict[str, Any] = problem.fit({"max_iterations": 50}, threads=2)
     problem.evaluate(1.0)  # ty: ignore[invalid-argument-type]
     del names, evaluation, llh, objective, answer
+
+
+def the_units() -> None:
+    """The units of pint in Rust."""
+    from sbmlsim_core import units
+
+    registry: units.Registry = units.Registry()
+    factor: float = registry.factor("mg/min", "g/hr")
+    parsed: tuple[float, dict[str, float]] = registry.parse("mg/l")
+    converted: numpy.typing.NDArray[numpy.float64] = registry.convert(
+        [1.0], "hr", "min"
+    )
+    registry.define("IU_insulin", "0.0347 * mg")
+    model: units.Registry = registry.with_model_units(unit_ids={"mg_per_min": "mg/min"})
+    unit: str | None = model.unit_of("CL")
+    try:
+        registry.factor(from_="mg", to="ml")
+    except units.UnitError as err:
+        print(err)
+    registry.factor("mg", 1.0)  # ty: ignore[invalid-argument-type]
+    del factor, parsed, unit, converted
+
+
+def the_scan(model: LoadedModel, request: dict[str, Any]) -> None:
+    """The scan of sbmlsim planned in Rust."""
+    from sbmlsim_core import scan
+
+    def observe(question: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "values": {
+                oid: [0.0 for _ in question["points"]]
+                for oid in question["observables"]
+            }
+        }
+
+    result: dict[str, Any] = scan.run(
+        request,
+        model,
+        threads=2,
+        observe=observe,
+        on_batch=lambda done, total: print(done, total),
+    )
+    models = {"fast": model, "slow": model}
+    scan.run(request, None, models=models, threads=2)
+    planner = scan.Scan(request, model)
+    kind, question = planner.ask()
+    if kind == "simulate":
+        assert planner.round_model is None
+        planner.tell(model.simulate_many(question))
+    across: str | None = scan.Scan(request, None, models=models).round_model
+    del across
+    done, total = planner.progress
+    try:
+        planner.result()
+    except sbmlsim_core.ScanError as err:
+        print(err.kind, err.point)
+    scan.run(request, 1.0)  # ty: ignore[invalid-argument-type]
+    compiled = sbmlsim_core.compile_sbml("<sbml/>")
+    plans: list[dict[str, Any]] = scan.compile_plans(request, compiled)
+    scan.compile_plans(request, model)
+    scan.compile_plans(request, compiled.description)
+    scan.compile_plans(request, None, models={"fast": compiled, "slow": model})
+    contract: str = scan.PLAN_CONTRACT
+    del result, done, total, plans, contract

@@ -1,0 +1,17 @@
+[package]
+name = "sbmlsim-units"
+version.workspace = true
+edition.workspace = true
+# not on crates.io yet, as the rest of the workspace
+publish = false
+license.workspace = true
+authors.workspace = true
+description = "The units of sbmlsim-core: unit expressions parsed, their factors to the root units and their dimensions, and conversions, as pint computes them"
+
+[dependencies]
+# the powers of the factors, the same bits natively and in wasm
+libm = "0.2"
+thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

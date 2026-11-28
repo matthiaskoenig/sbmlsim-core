@@ -86,6 +86,11 @@ jobs:
       - run: cargo build -p sbmlsim-stats --target wasm32-unknown-unknown
       # PEtab v2 read, planned and evaluated without an engine, as a page runs it
       - run: cargo build -p sbmlsim-petab --no-default-features --target wasm32-unknown-unknown
+      # the planner of a scan, whose requests a page drives ask/tell, its units and the rules of
+      # its timecourses
+      - run: cargo clippy -p sbmlsim-units --target wasm32-unknown-unknown -- -D warnings
+      - run: cargo clippy -p sbmlsim-timecourse --target wasm32-unknown-unknown -- -D warnings
+      - run: cargo clippy -p sbmlsim-scan --target wasm32-unknown-unknown -- -D warnings
       # the fit without the batch, whose optimizers a page drives ask/tell
       - run: cargo clippy -p sbmlsim-fit --no-default-features --target wasm32-unknown-unknown -- -D warnings
       # `compiler.wasm`, the compiler of `js/compile.mjs` with PEtab of `js/petab.mjs` and its

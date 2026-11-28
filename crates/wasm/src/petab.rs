@@ -44,7 +44,7 @@ use sbmlsim_petab::{DataAtChange, ExtensionPolicy, Options, PetabProblem, Plan};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::{Compiled, give, put_word};
+use crate::{Compiled, answer, bytes, give, put_word};
 
 thread_local! {
     /// The open problems, by their handle, their index.
@@ -181,7 +181,7 @@ fn point(plan: &Plan, x: Option<Vec<f64>>) -> Result<Vec<f64>, String> {
 /// Reads and plans a problem from the JSON `{"yaml": name, "files": {name: text}, "options":
 /// {...}}` and gives the JSON of its summary, whose `handle` the other calls take: its
 /// `models`, its estimated `parameters` with their `nominal` values and their `lower` and
-/// `upper` bounds (an infinite bound as the string of [`number`]) and the numbers of its
+/// `upper` bounds (an infinite bound as the string of `number`) and the numbers of its
 /// `simulations` and `measurements`.
 ///
 /// # Errors
@@ -546,35 +546,6 @@ pub fn close(handle: usize) {
             *slot = None;
         }
     });
-}
-
-/// The bytes of a buffer of the caller.
-///
-/// # Safety
-///
-/// `pointer` is a buffer of [`crate::allocate`] of `len` bytes, or null.
-unsafe fn bytes<'a>(pointer: *const u8, len: usize) -> &'a [u8] {
-    if pointer.is_null() || len == 0 {
-        &[]
-    } else {
-        // SAFETY: the caller gives a buffer of `allocate` of exactly this length
-        unsafe { std::slice::from_raw_parts(pointer, len) }
-    }
-}
-
-/// Writes a text answer into the two words at `out`: 1 with the answer, 0 with the message.
-///
-/// # Safety
-///
-/// `out` points at two words of the caller.
-unsafe fn answer(result: Result<String, String>, out: *mut usize) -> u32 {
-    let (success, text) = match result {
-        Ok(text) => (1, text),
-        Err(message) => (0, message),
-    };
-    // SAFETY: the caller gives two words of its own memory
-    unsafe { give(text.into_bytes(), out) };
-    success
 }
 
 /// [`open`] of the C ABI: writes the summary, or the message of a refusal, to the two words at

@@ -76,6 +76,9 @@ fn main() {
         "fit",
         "stats",
         "sensitivity",
+        "units",
+        "scan",
+        "timecourse",
         "web-time",
     ] {
         let dir = workspace.join("crates").join(crate_dir);

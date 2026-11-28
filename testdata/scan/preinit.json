@@ -1,0 +1,1582 @@
+{
+ "case": "preinit",
+ "model": "Koenig_demo_14.xml",
+ "core_version": "0.40.0",
+ "description": {
+  "contract": "model/2",
+  "compiler": "sbmlsim-compiler 0.40.0",
+  "id": "Koenig_demo_14",
+  "states": [
+   {
+    "id": "c__A",
+    "kind": {
+     "species": {
+      "compartment": "c",
+      "has_only_substance_units": false,
+      "stores_concentration": false
+     }
+    },
+    "initial": 0.0,
+    "settable": true
+   },
+   {
+    "id": "c__B",
+    "kind": {
+     "species": {
+      "compartment": "c",
+      "has_only_substance_units": false,
+      "stores_concentration": false
+     }
+    },
+    "initial": 0.0,
+    "settable": true
+   },
+   {
+    "id": "c__C",
+    "kind": {
+     "species": {
+      "compartment": "c",
+      "has_only_substance_units": false,
+      "stores_concentration": false
+     }
+    },
+    "initial": 0.0,
+    "settable": true
+   },
+   {
+    "id": "e__A",
+    "kind": {
+     "species": {
+      "compartment": "e",
+      "has_only_substance_units": false,
+      "stores_concentration": false
+     }
+    },
+    "initial": 0.0,
+    "settable": true
+   },
+   {
+    "id": "e__B",
+    "kind": {
+     "species": {
+      "compartment": "e",
+      "has_only_substance_units": false,
+      "stores_concentration": false
+     }
+    },
+    "initial": 0.0,
+    "settable": true
+   },
+   {
+    "id": "e__C",
+    "kind": {
+     "species": {
+      "compartment": "e",
+      "has_only_substance_units": false,
+      "stores_concentration": false
+     }
+    },
+    "initial": 0.0,
+    "settable": true
+   }
+  ],
+  "parameters": [
+   {
+    "id": "e",
+    "kind": "compartment",
+    "initial": 1e-06,
+    "settable": true
+   },
+   {
+    "id": "c",
+    "kind": "compartment",
+    "initial": 1e-06,
+    "settable": true
+   },
+   {
+    "id": "m",
+    "kind": "compartment",
+    "initial": 1.0,
+    "settable": true
+   },
+   {
+    "id": "scale_f",
+    "kind": "parameter",
+    "initial": 1e-06,
+    "settable": true
+   },
+   {
+    "id": "Vmax_bA",
+    "kind": "parameter",
+    "initial": 5.0,
+    "settable": true
+   },
+   {
+    "id": "Km_A",
+    "kind": "parameter",
+    "initial": 1.0,
+    "settable": true
+   },
+   {
+    "id": "Vmax_bB",
+    "kind": "parameter",
+    "initial": 2.0,
+    "settable": true
+   },
+   {
+    "id": "Km_B",
+    "kind": "parameter",
+    "initial": 0.5,
+    "settable": true
+   },
+   {
+    "id": "Vmax_bC",
+    "kind": "parameter",
+    "initial": 2.0,
+    "settable": true
+   },
+   {
+    "id": "Km_C",
+    "kind": "parameter",
+    "initial": 3.0,
+    "settable": true
+   },
+   {
+    "id": "Vmax_v1",
+    "kind": "parameter",
+    "initial": 1.0,
+    "settable": true
+   },
+   {
+    "id": "Keq_v1",
+    "kind": "parameter",
+    "initial": 10.0,
+    "settable": true
+   },
+   {
+    "id": "Vmax_v2",
+    "kind": "parameter",
+    "initial": 0.5,
+    "settable": true
+   },
+   {
+    "id": "Vmax_v3",
+    "kind": "parameter",
+    "initial": 0.5,
+    "settable": true
+   },
+   {
+    "id": "Vmax_v4",
+    "kind": "parameter",
+    "initial": 0.5,
+    "settable": true
+   },
+   {
+    "id": "Keq_v4",
+    "kind": "parameter",
+    "initial": 2.0,
+    "settable": true
+   }
+  ],
+  "selections": [
+   {
+    "id": "e",
+    "index": 0
+   },
+   {
+    "id": "c",
+    "index": 1
+   },
+   {
+    "id": "m",
+    "index": 2
+   },
+   {
+    "id": "c__A",
+    "index": 3
+   },
+   {
+    "id": "c__B",
+    "index": 4
+   },
+   {
+    "id": "c__C",
+    "index": 5
+   },
+   {
+    "id": "e__A",
+    "index": 6
+   },
+   {
+    "id": "e__B",
+    "index": 7
+   },
+   {
+    "id": "e__C",
+    "index": 8
+   },
+   {
+    "id": "[c__A]",
+    "index": 9
+   },
+   {
+    "id": "[c__B]",
+    "index": 10
+   },
+   {
+    "id": "[c__C]",
+    "index": 11
+   },
+   {
+    "id": "[e__A]",
+    "index": 12
+   },
+   {
+    "id": "[e__B]",
+    "index": 13
+   },
+   {
+    "id": "[e__C]",
+    "index": 14
+   },
+   {
+    "id": "scale_f",
+    "index": 15
+   },
+   {
+    "id": "Vmax_bA",
+    "index": 16
+   },
+   {
+    "id": "Km_A",
+    "index": 17
+   },
+   {
+    "id": "Vmax_bB",
+    "index": 18
+   },
+   {
+    "id": "Km_B",
+    "index": 19
+   },
+   {
+    "id": "Vmax_bC",
+    "index": 20
+   },
+   {
+    "id": "Km_C",
+    "index": 21
+   },
+   {
+    "id": "Vmax_v1",
+    "index": 22
+   },
+   {
+    "id": "Keq_v1",
+    "index": 23
+   },
+   {
+    "id": "Vmax_v2",
+    "index": 24
+   },
+   {
+    "id": "Vmax_v3",
+    "index": 25
+   },
+   {
+    "id": "Vmax_v4",
+    "index": 26
+   },
+   {
+    "id": "Keq_v4",
+    "index": 27
+   },
+   {
+    "id": "bA",
+    "index": 28
+   },
+   {
+    "id": "bB",
+    "index": 29
+   },
+   {
+    "id": "bC",
+    "index": 30
+   },
+   {
+    "id": "v1",
+    "index": 31
+   },
+   {
+    "id": "v2",
+    "index": 32
+   },
+   {
+    "id": "v3",
+    "index": 33
+   },
+   {
+    "id": "v4",
+    "index": 34
+   }
+  ],
+  "jacobian": {
+   "analytic": {
+    "n": 6,
+    "col_ptr": [
+     0,
+     4,
+     8,
+     12,
+     14,
+     16,
+     18
+    ],
+    "row_idx": [
+     0,
+     1,
+     2,
+     3,
+     0,
+     1,
+     2,
+     4,
+     0,
+     1,
+     2,
+     5,
+     0,
+     3,
+     1,
+     4,
+     2,
+     5
+    ]
+   }
+  },
+  "jacobian_p": {
+   "rows": 6,
+   "col_ptr": [
+    0,
+    6,
+    12,
+    12,
+    18,
+    20,
+    24,
+    26,
+    28,
+    30,
+    32,
+    34,
+    36,
+    38,
+    40,
+    42,
+    44
+   ],
+   "row_idx": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    0,
+    3,
+    0,
+    1,
+    2,
+    3,
+    1,
+    4,
+    1,
+    4,
+    2,
+    5,
+    2,
+    5,
+    0,
+    1,
+    0,
+    1,
+    0,
+    2,
+    0,
+    2,
+    1,
+    2,
+    1,
+    2
+   ]
+  },
+  "events": [],
+  "n_roots": 0,
+  "n_discontinuity_roots": 0,
+  "n_constants": 58,
+  "units": {
+   "Keq_v1": "dimensionless",
+   "Keq_v4": "dimensionless",
+   "Km_A": "mole*metre**-3",
+   "Km_B": "mole*metre**-3",
+   "Km_C": "mole*metre**-3",
+   "Vmax_bA": "mole*second**-1",
+   "Vmax_bB": "mole*second**-1",
+   "Vmax_bC": "mole*second**-1",
+   "Vmax_v1": "mole*second**-1",
+   "Vmax_v2": "mole*second**-1",
+   "Vmax_v3": "mole*second**-1",
+   "Vmax_v4": "mole*second**-1",
+   "[c__A]": "mole/(metre**3)",
+   "[c__B]": "mole/(metre**3)",
+   "[c__C]": "mole/(metre**3)",
+   "[e__A]": "mole/(metre**3)",
+   "[e__B]": "mole/(metre**3)",
+   "[e__C]": "mole/(metre**3)",
+   "bA": "mole/second",
+   "bB": "mole/second",
+   "bC": "mole/second",
+   "c": "metre**3",
+   "c__A": "mole",
+   "c__B": "mole",
+   "c__C": "mole",
+   "e": "metre**3",
+   "e__A": "mole",
+   "e__B": "mole",
+   "e__C": "mole",
+   "m": "metre**2",
+   "scale_f": "dimensionless",
+   "v1": "mole/second",
+   "v2": "mole/second",
+   "v3": "mole/second",
+   "v4": "mole/second"
+  }
+ },
+ "request": {
+  "contract": "scan/1",
+  "scan": {
+   "type": "Scan",
+   "simulation": {
+    "type": "Simulation",
+    "time_unit": null,
+    "start": 0.0,
+    "end": 10,
+    "preinit_changes": {
+     "Vmax_bA": 3.0,
+     "Vmax_bB": "2 * Vmax_bA",
+     "Km_A": {
+      "value": 2,
+      "unit": "millimole / liter"
+     },
+     "[e__A]": 2.0
+    },
+    "changes": [],
+    "presimulation": null,
+    "times": null,
+    "steps": 10,
+    "time_shift": 0.0
+   },
+   "dimensions": []
+  },
+  "observables": [],
+  "keep": null,
+  "time": null,
+  "on_error": "raise",
+  "points": null,
+  "settings": {
+   "relative_tolerance": 1e-10,
+   "maximum_num_steps": 20000,
+   "maximum_time_step": 0.0,
+   "initial_time_step": 0.0,
+   "stiff": true,
+   "linear_solver": "auto",
+   "jacobian": "auto",
+   "absolute_tolerance": {
+    "per_state": [
+     1e-16,
+     1e-16,
+     1e-16,
+     1e-16,
+     1e-16,
+     1e-16
+    ]
+   }
+  },
+  "selections": [
+   "time",
+   "c__A",
+   "c__B",
+   "c__C",
+   "e__A",
+   "e__B",
+   "e__C",
+   "scale_f",
+   "Vmax_bA",
+   "Km_A",
+   "Vmax_bB",
+   "Km_B",
+   "Vmax_bC",
+   "Km_C",
+   "Vmax_v1",
+   "Keq_v1",
+   "Vmax_v2",
+   "Vmax_v3",
+   "Vmax_v4",
+   "Keq_v4",
+   "bA",
+   "bB",
+   "bC",
+   "v1",
+   "v2",
+   "v3",
+   "v4",
+   "e",
+   "c",
+   "m",
+   "[c__A]",
+   "[c__B]",
+   "[c__C]",
+   "[e__A]",
+   "[e__B]",
+   "[e__C]"
+  ]
+ },
+ "engine_rounds": [
+  [
+   {
+    "contract": "simulation/1",
+    "start": 0.0,
+    "end": 10.0,
+    "output": {
+     "times": [
+      0.0,
+      1.0,
+      2.0,
+      3.0,
+      4.0,
+      5.0,
+      6.0,
+      7.0,
+      8.0,
+      9.0,
+      10.0
+     ]
+    },
+    "preinit": [
+     [
+      "Vmax_bA",
+      3.0
+     ],
+     [
+      "Vmax_bB",
+      6.0
+     ],
+     [
+      "Km_A",
+      1.9999999999999998
+     ],
+     [
+      "[e__A]",
+      2.0
+     ]
+    ],
+    "changes": [],
+    "steady_state": null,
+    "steady_state_after": null,
+    "selections": [
+     "time",
+     "c__A",
+     "c__B",
+     "c__C",
+     "e__A",
+     "e__B",
+     "e__C",
+     "scale_f",
+     "Vmax_bA",
+     "Km_A",
+     "Vmax_bB",
+     "Km_B",
+     "Vmax_bC",
+     "Km_C",
+     "Vmax_v1",
+     "Keq_v1",
+     "Vmax_v2",
+     "Vmax_v3",
+     "Vmax_v4",
+     "Keq_v4",
+     "bA",
+     "bB",
+     "bC",
+     "v1",
+     "v2",
+     "v3",
+     "v4",
+     "e",
+     "c",
+     "m",
+     "[c__A]",
+     "[c__B]",
+     "[c__C]",
+     "[e__A]",
+     "[e__B]",
+     "[e__C]"
+    ],
+    "settings": {
+     "relative_tolerance": 1e-10,
+     "maximum_num_steps": 20000,
+     "maximum_time_step": 0.0,
+     "initial_time_step": 0.0,
+     "stiff": true,
+     "linear_solver": "auto",
+     "jacobian": "auto",
+     "absolute_tolerance": {
+      "per_state": [
+       1e-16,
+       1e-16,
+       1e-16,
+       1e-16,
+       1e-16,
+       1e-16
+      ]
+     }
+    }
+   }
+  ]
+ ],
+ "result": {
+  "sizes": [
+   [
+    "time",
+    11
+   ]
+  ],
+  "dims": [],
+  "coords": {
+   "time": {
+    "dims": [
+     "time"
+    ],
+    "values": [
+     0.0,
+     1.0,
+     2.0,
+     3.0,
+     4.0,
+     5.0,
+     6.0,
+     7.0,
+     8.0,
+     9.0,
+     10.0
+    ],
+    "unit": "second"
+   }
+  },
+  "variables": {
+   "c__A": {
+    "dims": [
+     "time"
+    ],
+    "shape": [
+     11
+    ],
+    "unit": "mole",
+    "values": [
+     0.0,
+     5.621556183638081e-07,
+     5.248166737544197e-07,
+     4.292608875649586e-07,
+     3.473277411259592e-07,
+     2.8461958657820507e-07,
+     2.38134107324231e-07,
+     2.0421891365982804e-07,
+     1.7972148492134162e-07,
+     1.621426259004101e-07,
+     1.4958191216551944e-07
+    ]
+   },
+   "c__B": {
+    "dims": [
+     "time"
+    ],
+    "shape": [
+     11
+    ],
+    "unit": "mole",
+    "values": [
+     0.0,
+     1.0587530746842526e-07,
+     2.452108392754817e-07,
+     3.568555398374366e-07,
+     4.3980511635323464e-07,
+     5.002539075946963e-07,
+     5.439785210418141e-07,
+     5.754987316289629e-07,
+     5.981922107748913e-07,
+     6.145323087757869e-07,
+     6.263101031735118e-07
+    ]
+   },
+   "c__C": {
+    "dims": [
+     "time"
+    ],
+    "shape": [
+     11
+    ],
+    "unit": "mole",
+    "values": [
+     0.0,
+     7.15397024755052e-08,
+     1.3567117081720035e-07,
+     1.7095531583142516e-07,
+     1.912380618175483e-07,
+     2.0366989228705576e-07,
+     2.1152658574493534e-07,
+     2.1653159388764818e-07,
+     2.197071890097674e-07,
+     2.2169727822175514e-07,
+     2.2291803183031468e-07
+    ]
+   },
+   "e__A": {
+    "dims": [
+     "time"
+    ],
+    "shape": [
+     11
+    ],
+    "unit": "mole",
+    "values": [
+     2e-06,
+     1.1537112468466403e-06,
+     8.090169339500928e-07,
+     6.008555801744384e-07,
+     4.5831175404608954e-07,
+     3.5823596172545717e-07,
+     2.877235653370602e-07,
+     2.3802022366715115e-07,
+     2.0297658964798512e-07,
+     1.782587963913628e-07,
+     1.608141683960959e-07
+    ]
+   },
+   "e__B": {
+    "dims": [
+     "time"
+    ],
+    "shape": [
+     11
+    ],
+    "unit": "mole",
+    "values": [
+     0.0,
+     9.013049782746613e-08,
+     2.2482219295867873e-07,
+     3.3724165665237434e-07,
+     4.230267846262601e-07,
+     4.867579748492576e-07,
+     5.33519565167493e-07,
+     5.675837832215454e-07,
+     5.922936163608359e-07,
+     6.101788708024084e-07,
+     6.231157555139283e-07
+    ]
+   },
+   "e__C": {
+    "dims": [
+     "time"
+    ],
+    "shape": [
+     11
+    ],
+    "unit": "mole",
+    "values": [
+     0.0,
+     1.658762701815622e-08,
+     6.046218924412704e-08,
+     1.0483101993936646e-07,
+     1.4029054203090778e-07,
+     1.664626769653279e-07,
+     1.8511765538446603e-07,
+     1.981467539348636e-07,
+     2.07108909285178e-07,
+     2.1319011990827613e-07,
+     2.1726002892062925e-07
+    ]
+   },
+   "scale_f": {
+    "dims": [
+     "time"
+    ],
+    "shape": [
+     11
+    ],
+    "unit": "dimensionless",
+    "values": [
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06
+    ]
+   },
+   "Vmax_bA": {
+    "dims": [
+     "time"
+    ],
+    "shape": [
+     11
+    ],
+    "unit": "mol/s",
+    "values": [
+     3.0,
+     3.0,
+     3.0,
+     3.0,
+     3.0,
+     3.0,
+     3.0,
+     3.0,
+     3.0,
+     3.0,
+     3.0
+    ]
+   },
+   "Km_A": {
+    "dims": [
+     "time"
+    ],
+    "shape": [
+     11
+    ],
+    "unit": "mol/m^3",
+    "values": [
+     1.9999999999999998,
+     1.9999999999999998,
+     1.9999999999999998,
+     1.9999999999999998,
+     1.9999999999999998,
+     1.9999999999999998,
+     1.9999999999999998,
+     1.9999999999999998,
+     1.9999999999999998,
+     1.9999999999999998,
+     1.9999999999999998
+    ]
+   },
+   "Vmax_bB": {
+    "dims": [
+     "time"
+    ],
+    "shape": [
+     11
+    ],
+    "unit": "mol/s",
+    "values": [
+     6.0,
+     6.0,
+     6.0,
+     6.0,
+     6.0,
+     6.0,
+     6.0,
+     6.0,
+     6.0,
+     6.0,
+     6.0
+    ]
+   },
+   "Km_B": {
+    "dims": [
+     "time"
+    ],
+    "shape": [
+     11
+    ],
+    "unit": "mol/m^3",
+    "values": [
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5
+    ]
+   },
+   "Vmax_bC": {
+    "dims": [
+     "time"
+    ],
+    "shape": [
+     11
+    ],
+    "unit": "mol/s",
+    "values": [
+     2.0,
+     2.0,
+     2.0,
+     2.0,
+     2.0,
+     2.0,
+     2.0,
+     2.0,
+     2.0,
+     2.0,
+     2.0
+    ]
+   },
+   "Km_C": {
+    "dims": [
+     "time"
+    ],
+    "shape": [
+     11
+    ],
+    "unit": "mol/m^3",
+    "values": [
+     3.0,
+     3.0,
+     3.0,
+     3.0,
+     3.0,
+     3.0,
+     3.0,
+     3.0,
+     3.0,
+     3.0,
+     3.0
+    ]
+   },
+   "Vmax_v1": {
+    "dims": [
+     "time"
+    ],
+    "shape": [
+     11
+    ],
+    "unit": "mol/s",
+    "values": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "Keq_v1": {
+    "dims": [
+     "time"
+    ],
+    "shape": [
+     11
+    ],
+    "unit": "dimensionless",
+    "values": [
+     10.0,
+     10.0,
+     10.0,
+     10.0,
+     10.0,
+     10.0,
+     10.0,
+     10.0,
+     10.0,
+     10.0,
+     10.0
+    ]
+   },
+   "Vmax_v2": {
+    "dims": [
+     "time"
+    ],
+    "shape": [
+     11
+    ],
+    "unit": "mol/s",
+    "values": [
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5
+    ]
+   },
+   "Vmax_v3": {
+    "dims": [
+     "time"
+    ],
+    "shape": [
+     11
+    ],
+    "unit": "mol/s",
+    "values": [
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5
+    ]
+   },
+   "Vmax_v4": {
+    "dims": [
+     "time"
+    ],
+    "shape": [
+     11
+    ],
+    "unit": "mol/s",
+    "values": [
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.5
+    ]
+   },
+   "Keq_v4": {
+    "dims": [
+     "time"
+    ],
+    "shape": [
+     11
+    ],
+    "unit": "dimensionless",
+    "values": [
+     2.0,
+     2.0,
+     2.0,
+     2.0,
+     2.0,
+     2.0,
+     2.0,
+     2.0,
+     2.0,
+     2.0,
+     2.0
+    ]
+   },
+   "bA": {
+    "dims": [
+     "time"
+    ],
+    "shape": [
+     11
+    ],
+    "unit": "mol/s",
+    "values": [
+     1.5000000000000002e-06,
+     4.775916225803716e-07,
+     2.5574185184787064e-07,
+     1.6988920502204056e-07,
+     1.1867242364292906e-07,
+     8.356458436917225e-08,
+     5.889816185950909e-08,
+     4.1520884860176114e-08,
+     2.9279964140039266e-08,
+     2.0658213164780172e-08,
+     1.458484498620615e-08
+    ]
+   },
+   "bB": {
+    "dims": [
+     "time"
+    ],
+    "shape": [
+     11
+    ],
+    "unit": "mol/s",
+    "values": [
+     0.0,
+     1.3572998547848813e-07,
+     1.261110434755668e-07,
+     9.85542043447697e-08,
+     7.386823737358503e-08,
+     5.4455245064717356e-08,
+     3.978054603966112e-08,
+     2.8902803124787393e-08,
+     2.0935736884762063e-08,
+     1.514492869853098e-08,
+     1.095564345429316e-08
+    ]
+   },
+   "bC": {
+    "dims": [
+     "time"
+    ],
+    "shape": [
+     11
+    ],
+    "unit": "mol/s",
+    "values": [
+     0.0,
+     3.558925497178841e-08,
+     4.706248025372144e-08,
+     4.0371556087158344e-08,
+     3.058507120592503e-08,
+     2.2080564818838418e-08,
+     1.5550012592244994e-08,
+     1.0768124010572366e-08,
+     7.352760908796831e-09,
+     4.953384101097661e-09,
+     3.2893663117253694e-09
+    ]
+   },
+   "v1": {
+    "dims": [
+     "time"
+    ],
+    "shape": [
+     11
+    ],
+    "unit": "mol/s",
+    "values": [
+     0.0,
+     2.7578404380848284e-07,
+     2.501477949134358e-07,
+     1.967876667906075e-07,
+     1.516736147453179e-07,
+     1.1729709790936775e-07,
+     9.186812761002481e-08,
+     7.333452024846589e-08,
+     5.995113192192625e-08,
+     5.03446975114157e-08,
+     4.347545092408414e-08
+    ]
+   },
+   "v2": {
+    "dims": [
+     "time"
+    ],
+    "shape": [
+     11
+    ],
+    "unit": "mol/s",
+    "values": [
+     0.0,
+     1.4053890459095205e-07,
+     1.3120416843860495e-07,
+     1.0731522189123968e-07,
+     8.683193528148982e-08,
+     7.115489664455128e-08,
+     5.9533526831057764e-08,
+     5.105472841495702e-08,
+     4.493037123033541e-08,
+     4.053565647510253e-08,
+     3.739547804137987e-08
+    ]
+   },
+   "v3": {
+    "dims": [
+     "time"
+    ],
+    "shape": [
+     11
+    ],
+    "unit": "mol/s",
+    "values": [
+     0.0,
+     1.7884925618876302e-08,
+     3.391779270430009e-08,
+     4.2738828957856304e-08,
+     4.780951545438709e-08,
+     5.091747307176395e-08,
+     5.288164643623385e-08,
+     5.413289847191206e-08,
+     5.492679725244186e-08,
+     5.542431955543879e-08,
+     5.572950795757868e-08
+    ]
+   },
+   "v4": {
+    "dims": [
+     "time"
+    ],
+    "shape": [
+     11
+    ],
+    "unit": "mol/s",
+    "values": [
+     0.0,
+     4.650512185323142e-09,
+     3.2664377948648692e-09,
+     -1.868113521823284e-09,
+     -7.166124089767253e-09,
+     -1.1614265377573105e-08,
+     -1.5115668693992928e-08,
+     -1.7804442981708318e-08,
+     -1.9847229094419572e-08,
+     -2.1392219041534582e-08,
+     -2.25592549391103e-08
+    ]
+   },
+   "e": {
+    "dims": [
+     "time"
+    ],
+    "shape": [
+     11
+    ],
+    "unit": "m^3",
+    "values": [
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06
+    ]
+   },
+   "c": {
+    "dims": [
+     "time"
+    ],
+    "shape": [
+     11
+    ],
+    "unit": "m^3",
+    "values": [
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06,
+     1e-06
+    ]
+   },
+   "m": {
+    "dims": [
+     "time"
+    ],
+    "shape": [
+     11
+    ],
+    "unit": "m^2",
+    "values": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "[c__A]": {
+    "dims": [
+     "time"
+    ],
+    "shape": [
+     11
+    ],
+    "unit": "mole/m^3",
+    "values": [
+     0.0,
+     0.5621556183638081,
+     0.5248166737544198,
+     0.4292608875649586,
+     0.3473277411259592,
+     0.2846195865782051,
+     0.23813410732423101,
+     0.20421891365982806,
+     0.17972148492134163,
+     0.1621426259004101,
+     0.14958191216551944
+    ]
+   },
+   "[c__B]": {
+    "dims": [
+     "time"
+    ],
+    "shape": [
+     11
+    ],
+    "unit": "mole/m^3",
+    "values": [
+     0.0,
+     0.10587530746842527,
+     0.24521083927548173,
+     0.3568555398374366,
+     0.43980511635323466,
+     0.5002539075946963,
+     0.5439785210418141,
+     0.5754987316289629,
+     0.5981922107748914,
+     0.6145323087757869,
+     0.6263101031735118
+    ]
+   },
+   "[c__C]": {
+    "dims": [
+     "time"
+    ],
+    "shape": [
+     11
+    ],
+    "unit": "mole/m^3",
+    "values": [
+     0.0,
+     0.0715397024755052,
+     0.13567117081720034,
+     0.17095531583142518,
+     0.19123806181754832,
+     0.20366989228705576,
+     0.21152658574493535,
+     0.2165315938876482,
+     0.2197071890097674,
+     0.22169727822175514,
+     0.2229180318303147
+    ]
+   },
+   "[e__A]": {
+    "dims": [
+     "time"
+    ],
+    "shape": [
+     11
+    ],
+    "unit": "mole/m^3",
+    "values": [
+     2.0,
+     1.1537112468466404,
+     0.8090169339500929,
+     0.6008555801744385,
+     0.45831175404608954,
+     0.3582359617254572,
+     0.2877235653370602,
+     0.23802022366715117,
+     0.20297658964798512,
+     0.1782587963913628,
+     0.1608141683960959
+    ]
+   },
+   "[e__B]": {
+    "dims": [
+     "time"
+    ],
+    "shape": [
+     11
+    ],
+    "unit": "mole/m^3",
+    "values": [
+     0.0,
+     0.09013049782746614,
+     0.22482219295867872,
+     0.3372416566523744,
+     0.4230267846262601,
+     0.48675797484925765,
+     0.533519565167493,
+     0.5675837832215455,
+     0.5922936163608359,
+     0.6101788708024084,
+     0.6231157555139284
+    ]
+   },
+   "[e__C]": {
+    "dims": [
+     "time"
+    ],
+    "shape": [
+     11
+    ],
+    "unit": "mole/m^3",
+    "values": [
+     0.0,
+     0.01658762701815622,
+     0.060462189244127044,
+     0.10483101993936646,
+     0.1402905420309078,
+     0.1664626769653279,
+     0.18511765538446603,
+     0.1981467539348636,
+     0.20710890928517803,
+     0.21319011990827613,
+     0.21726002892062926
+    ]
+   }
+  },
+  "order": {
+   "coords": [
+    "time"
+   ],
+   "variables": [
+    "c__A",
+    "c__B",
+    "c__C",
+    "e__A",
+    "e__B",
+    "e__C",
+    "scale_f",
+    "Vmax_bA",
+    "Km_A",
+    "Vmax_bB",
+    "Km_B",
+    "Vmax_bC",
+    "Km_C",
+    "Vmax_v1",
+    "Keq_v1",
+    "Vmax_v2",
+    "Vmax_v3",
+    "Vmax_v4",
+    "Keq_v4",
+    "bA",
+    "bB",
+    "bC",
+    "v1",
+    "v2",
+    "v3",
+    "v4",
+    "e",
+    "c",
+    "m",
+    "[c__A]",
+    "[c__B]",
+    "[c__C]",
+    "[e__A]",
+    "[e__B]",
+    "[e__C]"
+   ]
+  },
+  "attrs": {
+   "dims": [],
+   "units": {
+    "time": "second",
+    "c__A": "mole",
+    "c__B": "mole",
+    "c__C": "mole",
+    "e__A": "mole",
+    "e__B": "mole",
+    "e__C": "mole",
+    "scale_f": "dimensionless",
+    "Vmax_bA": "mol/s",
+    "Km_A": "mol/m^3",
+    "Vmax_bB": "mol/s",
+    "Km_B": "mol/m^3",
+    "Vmax_bC": "mol/s",
+    "Km_C": "mol/m^3",
+    "Vmax_v1": "mol/s",
+    "Keq_v1": "dimensionless",
+    "Vmax_v2": "mol/s",
+    "Vmax_v3": "mol/s",
+    "Vmax_v4": "mol/s",
+    "Keq_v4": "dimensionless",
+    "bA": "mol/s",
+    "bB": "mol/s",
+    "bC": "mol/s",
+    "v1": "mol/s",
+    "v2": "mol/s",
+    "v3": "mol/s",
+    "v4": "mol/s",
+    "e": "m^3",
+    "c": "m^3",
+    "m": "m^2",
+    "[c__A]": "mole/m^3",
+    "[c__B]": "mole/m^3",
+    "[c__C]": "mole/m^3",
+    "[e__A]": "mole/m^3",
+    "[e__B]": "mole/m^3",
+    "[e__C]": "mole/m^3"
+   },
+   "scan": {
+    "type": "Scan",
+    "simulation": {
+     "type": "Simulation",
+     "time_unit": null,
+     "start": 0.0,
+     "end": 10,
+     "preinit_changes": {
+      "Vmax_bA": 3.0,
+      "Vmax_bB": "2 * Vmax_bA",
+      "Km_A": {
+       "value": 2,
+       "unit": "millimole / liter"
+      },
+      "[e__A]": 2.0
+     },
+     "changes": [],
+     "presimulation": null,
+     "times": null,
+     "steps": 10,
+     "time_shift": 0.0
+    },
+    "dimensions": []
+   },
+   "engine": "core",
+   "integrator_settings": {
+    "absolute_tolerance": {
+     "amount": 1e-10,
+     "concentration": 1e-10,
+     "other": 1e-10,
+     "ids": {},
+     "relative": null,
+     "scales": {}
+    },
+    "relative_tolerance": 1e-10
+   },
+   "changes": []
+  }
+ },
+ "error": null,
+ "repr": "ScanResult(time: 11; c__A, c__B, c__C, e__A, e__B, e__C, scale_f, Vmax_bA, ... (35 variables))"
+}

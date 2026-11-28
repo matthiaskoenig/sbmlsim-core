@@ -14,6 +14,13 @@ pub(crate) struct CompiledModel {
     compiled: Compiled,
 }
 
+impl CompiledModel {
+    /// The description of the model.
+    pub(crate) fn model_description(&self) -> &sbmlsim_abi::ModelDescription {
+        &self.compiled.description
+    }
+}
+
 #[pymethods]
 impl CompiledModel {
     /// The module `model.wasm`.

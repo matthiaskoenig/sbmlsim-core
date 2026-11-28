@@ -78,10 +78,12 @@ mod ode;
 mod petab;
 mod plot;
 mod runtime;
+mod scan;
 mod sensitivity;
 mod simulate;
 mod stats;
 mod thin;
+mod units;
 
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
@@ -90,7 +92,7 @@ use sbmlsim_abi::{MODEL_CONTRACT, SIMULATION_CONTRACT};
 use compile::{CompiledModel, compile_sbml};
 use errors::{
     CompileError, IntegrationError, InternalError, LoadError, PointError, RequestError,
-    SbmlsimCoreError, SimulationError, UnsupportedError,
+    SbmlsimCoreError, ScanError, SimulationError, UnitError, UnsupportedError,
 };
 use runtime::{LoadedModel, Runtime};
 use simulate::{Instance, OutputLocalErrors, OutputSensitivities, SimulationOutput};
@@ -122,6 +124,13 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("IntegrationError", m.py().get_type::<IntegrationError>())?;
     m.add("UnsupportedError", m.py().get_type::<UnsupportedError>())?;
     m.add("InternalError", m.py().get_type::<InternalError>())?;
+    m.add("UnitError", m.py().get_type::<UnitError>())?;
+    m.add("ScanError", m.py().get_type::<ScanError>())?;
+    m.add("SCAN_CONTRACT", sbmlsim_scan::SCAN_CONTRACT)?;
+    m.add("SCAN_RESULT_CONTRACT", sbmlsim_scan::RESULT_CONTRACT)?;
+    m.add("PLAN_CONTRACT", sbmlsim_scan::PLAN_CONTRACT)?;
+    m.add_class::<scan::ScanPlanner>()?;
+    m.add_function(wrap_pyfunction!(scan::compile_plans, m)?)?;
     m.add_class::<CompiledModel>()?;
     m.add_class::<Runtime>()?;
     m.add_class::<LoadedModel>()?;
@@ -136,6 +145,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(runtime::fit_models, m)?)?;
     m.add_function(wrap_pyfunction!(runtime::fit_problem_of_models, m)?)?;
     m.add_class::<petab::PetabProblemPy>()?;
+    m.add_class::<units::UnitRegistry>()?;
     m.add("ODE_CONTRACT", sbmlsim_ode::ODE_CONTRACT)?;
     m.add_class::<ode::EquationSystem>()?;
     m.add_function(wrap_pyfunction!(compile_sbml, m)?)?;
