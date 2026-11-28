@@ -14,6 +14,31 @@ CVODE stops where the branch of a `piecewise` of a rule, a kinetic law or a trig
 
 One behavior follows sbmlsim rather than SBML, so it is no difference to sbmlsim: an event with a delay whose trigger a change of the request makes true (also through the events the change executes) does not fire. Its trigger stays armed, so the event fires only after the trigger falls and rises again during the integration. A trigger which the pre-initialization makes true is scheduled as usual.
 
+## Driven species
+
+A driven species (since 0.43.0) is a species whose value a caller prescribes instead of its rate, while the model still counts what its reactions give to it and take from it: the blood a cell exchanges with, say, which a transport solver outside the model computes. The species are named when the model is compiled (`sbmlsim-core compile --driven S_ext,P_ext`, `CompileOptions::driven` of `sbmlsim_compiler`, `compile_sbml(sbml, driven=[...])` of python, `compiler.compile(sbml, { driven })` and `compiler.compileKernel(sbml, { driven })` of JavaScript, see [Compiling a model](compiling.md)), and every target compiles them the same way: `model.wasm` with the engine and its `Stepper`, the native model of the C target, the QFunction and the [batched kernel](compiling.md#a-batched-kernel).
+
+- **The path.** A driven species `X` leaves the states. Wherever the math read `X` it reads the path `X__value + X__slope * (time - driven__t_ref)` of three new parameters, `X__value` and `X__slope` for each species and `driven__t_ref` once for all of them: a straight line in the time, which a caller sets for each interval it advances (`Stepper::set_parameters`, or the parameters of a point of the QFunction and the kernel). The path is the concentration of `X` in its compartment, or its amount for a species with `hasOnlySubstanceUnits`. Initially `X__value` is the initial value of `X` in that quantity (its initial assignment included) and `X__slope` and `driven__t_ref` are 0, so a model which nobody drives keeps `X` at its initial value.
+- **The accumulator.** The state `X__exchange` (an amount, initially 0) integrates the amount rate `X` had, its stoichiometries times the rates of its reactions, times the conversion factor, with the path in place of `X`. Over an interval its change is the amount the model gave to `X` (positive) or took from it (negative), so a caller which writes 0 into it before an advance reads the amount exchanged over that interval after it. Its error is the error of the amounts of the model it balances: at the tolerances 1e-6 and 1e-9 of a tissue an accumulator of the QFunction and of the kernel on the cell model of `testdata/models` stays within `4e-6 s + 4e-9` of a tight reference, `s` the amounts of the species its reactions change, which can be far larger than a net exchange of opposite fluxes.
+- **Refused**, naming the species: an unknown id or an id which is no species, a species which is a boundary condition or constant, the target of a rule or of an event assignment, a species in a compartment whose size a rule or an event changes, a species whose rate `rateOf` reads or which a `delay` reads (the path is known for the current interval only), a species given twice and a species whose new ids (`X__value`, `X__slope`, `X__exchange`, `driven__t_ref`) the model already has.
+
+The description of the model lists the driven species in the order they were given (`driven` of `model.json`, per species the indices of `value`, `slope` and `exchange` and whether the path is an amount) and the index of `driven__t_ref` (`t_ref`); a kernel carries them in the description of its model (`model.driven` and `model.t_ref` of `kernel.json`). One interval of a stepper of the cell model with `S_ext` driven:
+
+```rust
+use sbmlsim_compiler::{CompileOptions, compile};
+
+let options = CompileOptions { driven: vec!["S_ext".into()], ..CompileOptions::default() };
+let description = compile(&sbml, &options)?.description;
+let d = &description.driven[0];
+let t_ref = description.t_ref.unwrap();
+// [S_ext] falls from 1 mM by 0.01 mM/min over the interval [t0, t1]
+stepper.set_parameters(&[(d.value, 1.0), (d.slope, -0.01), (t_ref, t0)])?;
+let mut y = stepper.state().to_vec();
+y[d.exchange as usize] = 0.0;
+stepper.advance(&y, t0, t1)?;
+let exchanged = stepper.state()[d.exchange as usize]; // mmol, negative for what the cell took
+```
+
 ## The differences a user meets first
 
 - Events which accumulate end with an error of the integration (`CV_TOO_MUCH_WORK`, flag -1): the executions of events within the relative tolerance (as a distance in time) of the last root share the budget of `maximum_num_steps` steps towards one output time, and in the output of the steps of the integrator `maximum_num_steps` consecutive stops within the resolution of the time (1e-9 of the magnitude of the times) end the run. The bouncing ball (`x' = v`, `v' = -10`, the event `x < 0`: `v = -0.5 v`, `x = 0`) fails at its accumulation point t = 1.3416 within milliseconds; roadrunner lets the ball fall through and continues.
