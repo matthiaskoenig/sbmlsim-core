@@ -196,3 +196,77 @@ export function runtimeUrls() {
     mathlib: pathToFileURL(path.join(dir, "mathlib.wasm")),
   };
 }
+
+/** The pairs of words of the result of each call of `compiler.wasm` which writes one to `out`. */
+const RESULT_PAIRS = {
+  compile: 2,
+  compile_with_options: 2,
+  compile_kernel: 2,
+  export_ode: 2,
+  petab_model: 2,
+  petab_open: 1,
+  petab_requests: 1,
+  petab_evaluate: 1,
+  petab_fit_open: 1,
+  petab_fit_ask: 1,
+  petab_fit_tell: 1,
+};
+
+/**
+ * The exports of an instance of `compiler.wasm` with an `allocate` and a `deallocate` which
+ * count the buffers a host holds, for the checks that a call frees every buffer.
+ *
+ * - `live` is the buffers the host holds by their address: those of `allocate` and those of the
+ *   results of the calls (the buffers at the words `out` of a call which returned);
+ * - `misfreed` is the frees of a buffer the host does not hold, or of another length (a free
+ *   of the null pointer or of no bytes is none);
+ * - `failAt(k)` makes the `k`-th allocation from now on (1 the next) give 0, a failed one;
+ * - `oddWords` makes every buffer of 8 or 16 bytes (the words of a result) start at an odd
+ *   address, as a buffer of `allocate`, which has the alignment of bytes, may;
+ * - `overrides` replaces exports, e.g. a `compile` which throws.
+ */
+export function countedExports(exports, { oddWords = false, ...overrides } = {}) {
+  const live = new Map();
+  const misfreed = [];
+  let failing = 0;
+  const counted = { ...exports };
+  counted.allocate = (length) => {
+    if (failing > 0 && --failing === 0) return 0;
+    const shift = oddWords && (length === 8 || length === 16) ? 1 : 0;
+    const raw = exports.allocate(length + shift) >>> 0;
+    live.set(raw + shift, { length, raw, shift });
+    return raw + shift;
+  };
+  counted.deallocate = (pointer, length) => {
+    // the null pointer and a length of 0 are no buffer, which `deallocate` ignores
+    if (pointer === 0 || length === 0) return exports.deallocate(pointer, length);
+    const buffer = live.get(pointer >>> 0);
+    if (buffer === undefined || buffer.length !== length) {
+      misfreed.push([pointer, length]);
+      return undefined;
+    }
+    live.delete(pointer >>> 0);
+    return exports.deallocate(buffer.raw, length + buffer.shift);
+  };
+  for (const [name, pairs] of Object.entries(RESULT_PAIRS)) {
+    if (typeof exports[name] !== "function") continue;
+    counted[name] = (...args) => {
+      const status = exports[name](...args);
+      const view = new DataView(exports.memory.buffer, args.at(-1) >>> 0, 8 * pairs);
+      for (let k = 0; k < pairs; k += 1) {
+        const [pointer, length] = [view.getUint32(8 * k, true), view.getUint32(8 * k + 4, true)];
+        if (pointer !== 0 && length !== 0) live.set(pointer, { length, raw: pointer, shift: 0 });
+      }
+      return status;
+    };
+  }
+  Object.assign(counted, overrides);
+  return {
+    exports: counted,
+    live,
+    misfreed,
+    failAt(k) {
+      failing = k;
+    },
+  };
+}

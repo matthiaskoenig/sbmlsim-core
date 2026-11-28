@@ -44,7 +44,7 @@ use sbmlsim_petab::{DataAtChange, ExtensionPolicy, Options, PetabProblem, Plan};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::{Compiled, give};
+use crate::{Compiled, give, put_word};
 
 thread_local! {
     /// The open problems, by their handle, their index.
@@ -609,8 +609,8 @@ pub unsafe extern "C" fn petab_model(handle: usize, k: usize, out: *mut usize) -
             // SAFETY: the caller gives four words of its own memory
             unsafe {
                 give(message.into_bytes(), out);
-                *out.add(2) = 0;
-                *out.add(3) = 0;
+                put_word(out, 2, 0);
+                put_word(out, 3, 0);
             }
             0
         }

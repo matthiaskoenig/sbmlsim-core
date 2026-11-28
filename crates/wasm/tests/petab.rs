@@ -157,3 +157,32 @@ fn a_page_is_told_what_is_wrong_with_a_problem() {
     let error = sbmlsim_wasm::petab::open(request.to_string().as_bytes()).unwrap_err();
     assert!(error.contains("noiseFormula"), "{error}");
 }
+
+#[test]
+fn the_words_of_an_answer_are_written_at_any_alignment() {
+    // the words of the result at an odd address, as a buffer of `allocate` (whose layout has the
+    // alignment of bytes) may be
+    let mut storage = vec![0_u8; 4 * size_of::<usize>() + 1];
+    let out = storage.as_mut_ptr().wrapping_add(1).cast::<usize>();
+    assert_ne!(out as usize % align_of::<usize>(), 0);
+    let read = |k: usize| {
+        // SAFETY: the word is in `storage`
+        unsafe { out.add(k).read_unaligned() }
+    };
+    let free = |pointer: usize, len: usize| {
+        // SAFETY: a buffer of a result of the interface, freed once
+        unsafe { sbmlsim_wasm::deallocate(pointer as *mut u8, len) }
+    };
+    let request = b"not json";
+    // SAFETY: the request is a buffer of exactly its length, the words two
+    let status = unsafe { sbmlsim_wasm::petab::petab_open(request.as_ptr(), request.len(), out) };
+    assert_eq!(status, 0);
+    assert!(read(0) != 0 && read(1) > 0, "the message of the refusal");
+    free(read(0), read(1));
+    // SAFETY: the words are four; no problem has the handle
+    let status = unsafe { sbmlsim_wasm::petab::petab_model(usize::MAX, 0, out) };
+    assert_eq!(status, 0);
+    assert!(read(1) > 0, "the message of the refusal");
+    assert_eq!((read(2), read(3)), (0, 0), "no module");
+    free(read(0), read(1));
+}

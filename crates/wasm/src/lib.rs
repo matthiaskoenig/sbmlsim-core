@@ -139,7 +139,10 @@ fn layout(len: usize) -> Layout {
 /// A buffer of `len` bytes for the caller to write into.
 ///
 /// The buffer is uninitialized and belongs to the caller until it gives it back with
-/// [`deallocate`]. A length of zero gives the null pointer.
+/// [`deallocate`]. A length of zero gives the null pointer, and so does a buffer which cannot
+/// be allocated (the memory cannot grow), which the host checks before it writes into it. The
+/// buffer has the alignment of bytes: a word the caller reads from it or the module writes to
+/// it is unaligned.
 ///
 /// # Safety
 ///
@@ -168,7 +171,23 @@ pub unsafe extern "C" fn deallocate(pointer: *mut u8, len: usize) {
     unsafe { dealloc(pointer, layout(len)) }
 }
 
+/// Writes `value` to the word `k` of `out`.
+///
+/// The word is written unaligned: `out` is a buffer of [`allocate`], whose layout has the
+/// alignment of bytes, so it is at any address the allocator gives.
+///
+/// # Safety
+///
+/// `out` points at more than `k` words (`(k + 1) * size_of::<usize>()` bytes) which the caller
+/// allocated.
+unsafe fn put_word(out: *mut usize, k: usize, value: usize) {
+    // SAFETY: the word is in the buffer of the caller; `write_unaligned` needs no alignment
+    unsafe { out.add(k).write_unaligned(value) }
+}
+
 /// Writes a byte vector into the two words at `out` and forgets it, so the caller owns it.
+///
+/// The words are written unaligned, see [`put_word`].
 ///
 /// # Safety
 ///
@@ -180,8 +199,8 @@ unsafe fn give(bytes: Vec<u8>, out: *mut usize) {
     std::mem::forget(bytes);
     // SAFETY: the caller gives two words of its own memory
     unsafe {
-        *out = pointer as usize;
-        *out.add(1) = len;
+        put_word(out, 0, pointer as usize);
+        put_word(out, 1, len);
     }
 }
 
@@ -261,8 +280,8 @@ pub unsafe extern "C" fn export_ode(
     // SAFETY: the caller supplied four writable words; `give` transfers the owned result.
     unsafe {
         give(bytes, out);
-        *out.add(2) = 0;
-        *out.add(3) = 0;
+        put_word(out, 2, 0);
+        put_word(out, 3, 0);
     }
     success
 }
@@ -364,8 +383,8 @@ unsafe fn deliver(result: Result<Compiled, String>, out: *mut usize) -> u32 {
             // SAFETY: the caller gives four words of its own memory
             unsafe {
                 give(message.into_bytes(), out);
-                *out.add(2) = 0;
-                *out.add(3) = 0;
+                put_word(out, 2, 0);
+                put_word(out, 3, 0);
             }
             0
         }

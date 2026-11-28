@@ -2830,6 +2830,115 @@ var sbmlsimCore = (() => {
   }
 
   // compile.mjs
+  var WORD = 4;
+  var Buffers = class {
+    /** The exports of the module: `memory`, `allocate` and `deallocate`. */
+    #exports;
+    /** The name of the module in a message. */
+    #name;
+    /** The buffers to free, `[pointer, length]`. */
+    #owned = [];
+    /**
+     * @param {{memory: WebAssembly.Memory, allocate: (length: number) => number,
+     *   deallocate: (pointer: number, length: number) => void}} exports the exports of the module
+     * @param {string} name the name of the module, e.g. `compiler.wasm`
+     */
+    constructor(exports, name) {
+      this.#exports = exports;
+      this.#name = name;
+    }
+    /** The bytes of the memory of the module, read again for every view: the memory grows. */
+    #memory() {
+      return this.#exports.memory.buffer;
+    }
+    /**
+     * A new buffer of `length` bytes, freed with the others; 0 for a length of 0.
+     *
+     * @param {number} length the length in bytes
+     * @returns {number} the address of the buffer
+     * @throws {Error} when the module cannot allocate the buffer
+     */
+    allocate(length) {
+      if (length === 0) return 0;
+      const pointer = this.#exports.allocate(length) >>> 0;
+      if (pointer === 0) {
+        throw new Error(`${this.#name} could not allocate ${length} bytes`);
+      }
+      this.#owned.push([pointer, length]);
+      return pointer;
+    }
+    /**
+     * Copies bytes into a new buffer, freed with the others.
+     *
+     * @param {Uint8Array} bytes the bytes
+     * @returns {[number, number]} the address and the length of the buffer, `[0, 0]` for no bytes
+     */
+    put(bytes) {
+      const pointer = this.allocate(bytes.length);
+      if (bytes.length > 0) new Uint8Array(this.#memory(), pointer, bytes.length).set(bytes);
+      return [pointer, bytes.length];
+    }
+    /**
+     * The buffers of a result, which a call wrote as pairs of words (the address and the length of
+     * each) to `out`: the buffers are freed with the others, their bytes are copied.
+     *
+     * @param {number} out the address of the words, a buffer of `allocate` of `2 * pairs` words
+     * @param {number} pairs the number of the buffers
+     * @returns {Uint8Array[]} the bytes of each buffer, empty for a buffer the call left empty
+     */
+    results(out, pairs) {
+      const words = this.words(out, 2 * pairs);
+      const buffers = [];
+      for (let k = 0; k < words.length; k += 2) {
+        const [pointer, length] = [words[k], words[k + 1]];
+        if (pointer !== 0 && length !== 0) this.#owned.push([pointer, length]);
+        buffers.push([pointer, length]);
+      }
+      return buffers.map(
+        ([pointer, length]) => pointer === 0 || length === 0 ? new Uint8Array(0) : new Uint8Array(this.#memory(), pointer, length).slice()
+      );
+    }
+    /**
+     * The words of `wasm32` at an address, little-endian at any alignment.
+     *
+     * @param {number} pointer the address of the first word
+     * @param {number} count the number of the words
+     * @returns {number[]} the words, unsigned
+     */
+    words(pointer, count) {
+      const view = new DataView(this.#memory(), pointer, WORD * count);
+      return Array.from({ length: count }, (_, k) => view.getUint32(WORD * k, true));
+    }
+    /**
+     * Frees every buffer, the last first; a buffer is freed once, whatever a free throws.
+     *
+     * @returns {unknown} the first error a free threw, `undefined` when none did
+     */
+    free() {
+      let failure;
+      for (const [pointer, length] of this.#owned.splice(0).reverse()) {
+        try {
+          this.#exports.deallocate(pointer, length);
+        } catch (error) {
+          failure ??= error;
+        }
+      }
+      return failure;
+    }
+  };
+  function withBuffers(exports, name, body) {
+    const buffers = new Buffers(exports, name);
+    let result;
+    try {
+      result = body(buffers);
+    } catch (error) {
+      buffers.free();
+      throw error;
+    }
+    const failure = buffers.free();
+    if (failure !== void 0) throw failure;
+    return result;
+  }
   var COMPILER_EXPORTS = ["allocate", "compile", "deallocate", "memory"];
   var JACOBIAN = { auto: 0, "difference-quotient": 1, analytic: 2 };
   var CompileError = class extends Error {
@@ -2858,10 +2967,6 @@ var sbmlsimCore = (() => {
     constructor(module, instance) {
       this.module = module;
       this.exports = instance.exports;
-    }
-    /** The memory of the module, read again after every call: it grows while a model compiles. */
-    bytes() {
-      return new Uint8Array(this.exports.memory.buffer);
     }
     /**
      * Compiles an SBML Level 3 Version 2 document.
@@ -2927,49 +3032,19 @@ var sbmlsimCore = (() => {
      * @throws {CompileError} for a document the compiler refuses
      */
     run(sbml, call) {
-      const { allocate, deallocate } = this.exports;
       const document_ = new TextEncoder().encode(sbml);
-      const input = allocate(document_.length);
-      const words = allocate(4 * 4);
-      try {
-        if (document_.length > 0) {
-          this.bytes().set(document_, input);
+      return withBuffers(this.exports, "compiler.wasm", (buffers) => {
+        const [input, length] = buffers.put(document_);
+        const words = buffers.allocate(4 * 4);
+        const status = call(input, length, words);
+        const [text, wasm] = buffers.results(words, 2);
+        if (status !== 1) {
+          throw new CompileError(
+            new TextDecoder().decode(text) || "the compiler refused the document"
+          );
         }
-        const status = call(input, document_.length, words);
-        const header = new Uint32Array(this.exports.memory.buffer, words, 4);
-        const [textPointer, textLength, wasmPointer, wasmLength] = header;
-        try {
-          const text = this.read(textPointer, textLength);
-          if (status !== 1) {
-            throw new CompileError(
-              new TextDecoder().decode(text) || "the compiler refused the document"
-            );
-          }
-          return {
-            wasm: this.read(wasmPointer, wasmLength).slice(),
-            description: JSON.parse(new TextDecoder().decode(text))
-          };
-        } finally {
-          deallocate(textPointer, textLength);
-          deallocate(wasmPointer, wasmLength);
-        }
-      } finally {
-        deallocate(words, 4 * 4);
-        deallocate(input, document_.length);
-      }
-    }
-    /**
-     * The bytes of a buffer of the module, as a view on its memory.
-     *
-     * @param {number} pointer the address of the buffer
-     * @param {number} length its length in bytes
-     * @returns {Uint8Array} the view, empty when the buffer is
-     */
-    read(pointer, length) {
-      if (pointer === 0 || length === 0) {
-        return new Uint8Array(0);
-      }
-      return new Uint8Array(this.exports.memory.buffer, pointer, length);
+        return { wasm, description: JSON.parse(new TextDecoder().decode(text)) };
+      });
     }
     /**
      * Generate standalone ODE code or a document, without a server or simulation runtime.
@@ -3018,27 +3093,17 @@ var sbmlsimCore = (() => {
       if (bytes.byteLength > 100 * 1024 * 1024 || config.byteLength > 100 * 1024 * 1024) {
         throw new RangeError("The source or options exceed 100 MB");
       }
-      const { allocate, deallocate, export_ode } = this.exports;
-      const input = allocate(bytes.length);
-      const options = allocate(config.length);
-      const words = allocate(16);
-      try {
-        this.bytes().set(bytes, input);
-        this.bytes().set(config, options);
-        const status = export_ode(input, bytes.length, options, config.length, words);
-        const [pointer, length] = new Uint32Array(this.exports.memory.buffer, words, 4);
-        try {
-          const text = new TextDecoder().decode(this.read(pointer, length));
-          if (status !== 1) throw new CompileError(text || "The source export failed");
-          return JSON.parse(text);
-        } finally {
-          deallocate(pointer, length);
-        }
-      } finally {
-        deallocate(words, 16);
-        deallocate(options, config.length);
-        deallocate(input, bytes.length);
-      }
+      const { export_ode } = this.exports;
+      return withBuffers(this.exports, "compiler.wasm", (buffers) => {
+        const input = buffers.put(bytes);
+        const options = buffers.put(config);
+        const words = buffers.allocate(4 * 4);
+        const status = export_ode(...input, ...options, words);
+        const [answer] = buffers.results(words, 2);
+        const text = new TextDecoder().decode(answer);
+        if (status !== 1) throw new CompileError(text || "The source export failed");
+        return JSON.parse(text);
+      });
     }
   };
   async function createCompiler({ compiler }) {
@@ -3122,38 +3187,18 @@ var sbmlsimCore = (() => {
       }
       this.exports = exports;
     }
-    /** Copies bytes into a new buffer of the module: `[pointer, length]`, `[0, 0]` for none. */
-    put(bytes) {
-      if (bytes.length === 0) return [0, 0];
-      const pointer = this.exports.allocate(bytes.length);
-      new Uint8Array(this.exports.memory.buffer, pointer, bytes.length).set(bytes);
-      return [pointer, bytes.length];
-    }
-    /** The bytes of a buffer the module gave, copied, and the buffer freed. */
-    take(pointer, length) {
-      if (pointer === 0 || length === 0) return new Uint8Array(0);
-      const bytes = new Uint8Array(this.exports.memory.buffer, pointer, length).slice();
-      this.exports.deallocate(pointer, length);
-      return bytes;
-    }
     /**
      * Calls a function of the module which writes `words` words of buffers to `out`, with the
-     * arguments `head` and the buffers of `inputs`; gives the status and the buffers it wrote.
+     * arguments `head` and the buffers of `inputs`; gives the status and the bytes of the buffers
+     * it wrote. Every buffer of the call is freed, whatever the call throws.
      */
     call(name, head, inputs, words) {
-      const { allocate, deallocate } = this.exports;
-      const buffers = inputs.map((bytes) => this.put(bytes));
-      const out = allocate(4 * words);
-      try {
-        const status = this.exports[name](...head, ...buffers.flat(), out);
-        const header = Array.from(new Uint32Array(this.exports.memory.buffer, out, words));
-        const answers = [];
-        for (let k = 0; k < words; k += 2) answers.push(this.take(header[k], header[k + 1]));
-        return { status, answers };
-      } finally {
-        deallocate(out, 4 * words);
-        for (const [pointer, length] of buffers) if (pointer !== 0) deallocate(pointer, length);
-      }
+      return withBuffers(this.exports, "compiler.wasm", (buffers) => {
+        const pointers = inputs.map((bytes) => buffers.put(bytes));
+        const out = buffers.allocate(4 * words);
+        const status = this.exports[name](...head, ...pointers.flat(), out);
+        return { status, answers: buffers.results(out, words / 2) };
+      });
     }
     /** A call of a JSON answer: the parsed answer, or the message as a `PetabError`. */
     json(name, head, inputs) {
