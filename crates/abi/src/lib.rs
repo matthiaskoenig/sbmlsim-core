@@ -305,6 +305,34 @@ pub struct ModelDescription {
     pub n_constants: u32,
     /// The unit expression of every entity id.
     pub units: BTreeMap<String, String>,
+    /// The driven species, in the order they were given to the compiler; empty without.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub driven: Vec<DrivenSpecies>,
+    /// The parameter of the reference time `driven__t_ref` of the paths of the driven species,
+    /// with driven species.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub t_ref: Option<u32>,
+}
+
+/// A driven species: a species which left the state vector and follows the prescribed path
+/// `value + slope * (t - t_ref)` of three parameters, wherever the math reads it, with an
+/// accumulator state which integrates the amount rate the reactions give it (stoichiometry
+/// times rate times conversion factor). Over an interval the change of the accumulator is the
+/// amount the model gave to the species (positive) or took from it (negative).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DrivenSpecies {
+    /// The SBML id of the species.
+    pub id: String,
+    /// The parameter `X__value` of the species `X`, the value of the path at `t_ref`.
+    pub value: u32,
+    /// The parameter `X__slope`, the slope of the path.
+    pub slope: u32,
+    /// The state `X__exchange`, the accumulator (an amount).
+    pub exchange: u32,
+    /// Whether the path is an amount (a species with `hasOnlySubstanceUnits`), else it is a
+    /// concentration in the compartment of the species.
+    pub amount: bool,
 }
 
 /// The description of a batched kernel (`kernel/1`, see the crate documentation), next to its
@@ -971,6 +999,8 @@ mod tests {
             n_delays: 0,
             max_delay: None,
             units: BTreeMap::new(),
+            driven: Vec::new(),
+            t_ref: None,
         };
         let sizes = ModelSizes::of(&d);
         assert_eq!(sizes.words(), [1, 0, 1, 1, 3, 2, 1]);
@@ -981,8 +1011,34 @@ mod tests {
         );
         let json = serde_json::to_string(&d).unwrap();
         assert!(!json.contains("n_algebraic"));
+        // without driven species, the description of before
+        assert!(
+            !json.contains("driven") && !json.contains("t_ref"),
+            "{json}"
+        );
         let back: ModelDescription = serde_json::from_str(&json).unwrap();
         assert_eq!(d, back);
+
+        let driven = ModelDescription {
+            driven: vec![DrivenSpecies {
+                id: "S".to_string(),
+                value: 0,
+                slope: 1,
+                exchange: 0,
+                amount: false,
+            }],
+            t_ref: Some(2),
+            ..d
+        };
+        let json = serde_json::to_string(&driven).unwrap();
+        assert!(
+            json.contains(
+                r#""driven":[{"id":"S","value":0,"slope":1,"exchange":0,"amount":false}],"t_ref":2"#
+            ),
+            "{json}"
+        );
+        let back: ModelDescription = serde_json::from_str(&json).unwrap();
+        assert_eq!(driven, back);
     }
 }
 

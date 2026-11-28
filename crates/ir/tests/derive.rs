@@ -47,6 +47,10 @@ fn model(states: &[&str], params: &[&str], rules: Vec<Assignment>, rates: Vec<Ex
         rates,
         events: vec![],
         selections: vec![],
+        rate_rules: vec![],
+        rate_of: vec![],
+        driven: vec![],
+        t_ref: None,
     }
 }
 

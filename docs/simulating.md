@@ -297,6 +297,8 @@ cached per engine and reused across compatible simulations.
 | `n_constants` | the number of cached parameter-only subexpressions behind the parameters; a DDE model instead reserves one slot for its history address |
 | `n_delays` | optional historical query slot count, omitted for ordinary ODEs; see [Delay equations](delays.md) |
 | `units` | the unit expression of every entity id |
+| `driven` | the driven species, omitted without: per species `id`, `value` and `slope` (the indices of the parameters `X__value` and `X__slope` of its path `value + slope * (t - t_ref)`), `exchange` (the index of the state `X__exchange`, the amount the model gave to it) and `amount` (whether the path is an amount, else a concentration in its compartment) |
+| `t_ref` | the index of the parameter `driven__t_ref` of the paths, omitted without driven species |
 
 An entity of `states` and `parameters` is `{"id", "kind", "initial", "settable"}`: its SBML id; its kind, `"compartment"`, `"parameter"`, `"species_reference"` or `{"species": {"compartment", "has_only_substance_units", "stores_concentration"}}`; its initial value as loaded (a value which is not finite is the string `"NaN"`, `"inf"` or `"-inf"`, since JSON has no such numbers); and whether a change or the pre-initialization may set it (the target of an assignment rule and the unknown of an algebraic rule may not, and the refusal names the rule which determines the entity).
 

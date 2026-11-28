@@ -171,6 +171,8 @@ impl Cache {
             n_roots: 0,
             n_discontinuity_roots: 0,
             n_constants: 0,
+            driven: Vec::new(),
+            t_ref: None,
             ..desc.clone()
         };
         Ok(Self {

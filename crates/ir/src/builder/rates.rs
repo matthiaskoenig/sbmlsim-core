@@ -160,6 +160,9 @@ impl Context for Builder<'_> {
 
     fn rate_of(&mut self, id: &str, element: &str) -> Result<Expr, CompileError> {
         self.rate_of_seen = true;
+        if !self.rate_of.iter().any(|r| r == id) {
+            self.rate_of.push(id.to_string());
+        }
         match self.items.get(id).copied() {
             Some(Item::Reaction(_)) => return Err(unsupported("rateOf of a reaction", id)),
             Some(Item::Function(_) | Item::Event) | None => {

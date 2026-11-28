@@ -1253,6 +1253,8 @@ pub fn description(
             .iter()
             .filter_map(|s| Some((s.id.clone(), s.unit.clone()?)))
             .collect::<BTreeMap<_, _>>(),
+        driven: model.driven.clone(),
+        t_ref: model.t_ref,
     }
 }
 

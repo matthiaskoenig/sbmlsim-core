@@ -247,6 +247,38 @@ fn omitting_parameter_jacobian_omits_its_export_and_constants() {
     }
 }
 
+/// The description of a model with the driven species `S` names its path and accumulator, in
+/// both emitters; the module validates.
+#[test]
+fn description_of_driven_species() {
+    let m = sbmlsim_ir::driven::apply(small(), &["S".to_string()]).unwrap();
+    let index = |id: &str| match m.symbol(id).unwrap() {
+        Symbol::State(i) | Symbol::Param(i) => i,
+        other => panic!("{other:?}"),
+    };
+    let expected = vec![abi::DrivenSpecies {
+        id: "S".to_string(),
+        value: index("S__value"),
+        slope: index("S__slope"),
+        exchange: index("S__exchange"),
+        amount: false,
+    }];
+    for (wasm, d) in [
+        emit(&m).unwrap(),
+        emit_optimized(&m, JacobianChoice::Auto).unwrap(),
+    ] {
+        assert_eq!(d.driven, expected);
+        assert_eq!(d.t_ref, Some(index("driven__t_ref")));
+        assert!(d.states.iter().all(|s| s.id != "S"));
+        assert_eq!(d.states[expected[0].exchange as usize].id, "S__exchange");
+        wasmparser::Validator::new().validate_all(&wasm).unwrap();
+    }
+    // without driven species, none
+    let (_, d) = emit(&small()).unwrap();
+    assert!(d.driven.is_empty());
+    assert_eq!(d.t_ref, None);
+}
+
 #[test]
 fn emitted_module_validates() {
     let wasm = wasm_of(&small());
@@ -547,6 +579,10 @@ fn a_statement_above_the_limits_is_an_error() {
         initial: vec![],
         rates: vec![],
         events: vec![],
+        rate_rules: vec![],
+        rate_of: vec![],
+        driven: vec![],
+        t_ref: None,
         selections: vec![sbmlsim_ir::SelectionDef {
             id: "sum".to_string(),
             kind: sbmlsim_ir::SelectionKind::Parameter,
@@ -595,6 +631,10 @@ fn locals_are_reused_after_their_last_use() {
         initial: vec![],
         rates: vec![],
         events: vec![],
+        rate_rules: vec![],
+        rate_of: vec![],
+        driven: vec![],
+        t_ref: None,
         selections: vec![sbmlsim_ir::SelectionDef {
             id: "last".to_string(),
             kind: sbmlsim_ir::SelectionKind::Parameter,

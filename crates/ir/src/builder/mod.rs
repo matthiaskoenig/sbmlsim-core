@@ -85,6 +85,8 @@ struct Builder<'m> {
     /// The historical rateOf guard is needed only in models using both csymbols.
     delay_seen: bool,
     rate_of_seen: bool,
+    /// The ids `rateOf` reads, each once, in the order of their first read.
+    rate_of: Vec<String>,
     prehistory: bool,
 }
 
@@ -231,5 +233,14 @@ fn build_with_history(m: &Sbml, prehistory: bool) -> Result<Model, CompileError>
         rates,
         events,
         selections,
+        rate_rules: rules_with_math(m)
+            .filter_map(|(_, rule)| match rule {
+                Rule::Rate { variable, .. } => Some(variable.clone()),
+                _ => None,
+            })
+            .collect(),
+        rate_of: b.rate_of,
+        driven: Vec::new(),
+        t_ref: None,
     })
 }
