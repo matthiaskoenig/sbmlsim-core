@@ -495,6 +495,7 @@ def test_prepared_concentration_values_follow_preinit_semantics():
         expected = model.instance().simulate(
             base | {"preinit": [("C", volume), ("[S]", concentration)]}
         )
+        assert isinstance(actual, sbmlsim_core.SimulationOutput)
         assert actual.values.tobytes() == expected.values.tobytes()
 
 
