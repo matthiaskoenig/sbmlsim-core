@@ -60,7 +60,10 @@ jobs:
           persist-credentials: false
       - name: Install the toolchain of rust-toolchain.toml
         run: rustup show active-toolchain || rustup toolchain install
+      # wasmtime: the tests of sbmlsim-csolvers compare the native bits with a run in wasm32-wasip1
       - uses: ./.github/actions/wasi-sdk
+        with:
+          wasmtime: true
       # the cache of the dev profile, which testsuite-cases and python-bindings restore
       - uses: Swatinem/rust-cache@v2
         with:
