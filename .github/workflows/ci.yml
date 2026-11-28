@@ -2,8 +2,10 @@
 # cancels its running checks; a run of develop is never cancelled, since `publish` releases a tag
 # from the wheels and the result of the run of develop on its commit. The rust caches are saved
 # by the runs of develop only (`save-if`), which every pull request restores: the cache of the
-# repository has a limit of 10 GB, and caches of pull requests evicted those of develop. Jobs
-# which build the same profile share one cache (`shared-key`) which one of them saves.
+# repository has a limit of 10 GB, and caches of pull requests evicted those of develop. The
+# three jobs of the release build of the command line share one cache (`shared-key`), which
+# one of them saves; every other job keeps a cache of its own, since a shared cache of the dev
+# profile made python-bindings and testsuite-cases rebuild most of their crates.
 name: ci
 on:
   push:
@@ -64,10 +66,8 @@ jobs:
       - uses: ./.github/actions/wasi-sdk
         with:
           wasmtime: true
-      # the cache of the dev profile, which testsuite-cases and python-bindings restore
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: dev
           save-if: ${{ github.ref == 'refs/heads/develop' }}
       # the cases of PEtab v2 and of its math of the PEtab test suite, which the test of
       # crates/petab runs against its baseline (it skips without them)
@@ -175,8 +175,8 @@ jobs:
       - uses: ./.github/actions/wasi-sdk
       - uses: Swatinem/rust-cache@v2
         with:
-          # the cache of the release build of the command line, which testsuite-parity,
-          # testsuite-c-target and the job runtime of the wheels restore
+          # the cache of the release build of the command line, which testsuite-parity and
+          # testsuite-c-target restore
           shared-key: release-cli
           save-if: ${{ github.ref == 'refs/heads/develop' }}
       - uses: astral-sh/setup-uv@v10.4.0
@@ -307,8 +307,7 @@ jobs:
       - uses: ./.github/actions/wasi-sdk
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: dev
-          save-if: false
+          save-if: ${{ github.ref == 'refs/heads/develop' }}
       - uses: astral-sh/setup-uv@v10.4.0
         with:
           save-cache: ${{ github.ref == 'refs/heads/develop' }}
@@ -340,8 +339,7 @@ jobs:
       - uses: ./.github/actions/wasi-sdk
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: dev
-          save-if: false
+          save-if: ${{ github.ref == 'refs/heads/develop' }}
       - uses: astral-sh/setup-uv@v10.4.0
         with:
           save-cache: ${{ github.ref == 'refs/heads/develop' }}

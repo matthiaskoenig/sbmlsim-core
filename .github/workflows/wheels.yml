@@ -55,12 +55,12 @@ jobs:
       - name: Install the toolchain of rust-toolchain.toml
         run: rustup show active-toolchain || rustup toolchain install
       - uses: ./.github/actions/wasi-sdk
-      # the cache of the release build of the command line, which the job same_bits_as_wasmtime
-      # of `ci` saves
+      # a cache of its own: the job is on the critical path of every run, and the shared cache
+      # of the release build (with the feature native) took it from 1.0 to 2.2 minutes
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: release-cli
-          save-if: false
+          key: runtime
+          save-if: ${{ github.ref == 'refs/heads/develop' }}
       - name: Build the command line, the engine and its math library
         run: |
           cargo build --release --locked -p sbmlsim-cli
