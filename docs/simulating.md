@@ -296,9 +296,13 @@ cached per engine and reused across compatible simulations.
 | `n_discontinuity_roots` | the number of root functions of math discontinuities and delayed history crossings, the last of the `n_roots` |
 | `n_constants` | the number of cached parameter-only subexpressions behind the parameters; a DDE model instead reserves one slot for its history address |
 | `n_delays` | optional historical query slot count, omitted for ordinary ODEs; see [Delay equations](delays.md) |
-| `units` | the unit expression of every entity id |
+| `units` | the units sbmlsim gives the entities (`UnitsInformation.from_sbml_doc`): `time` (`second` without a time unit), every compartment, species (`S` and `[S]`) and parameter, empty without units (the default units of the model name none), and every reaction with a kinetic law, the unit libsbml derives for its kinetic law; a unit definition as pint reads it (`mmol/min`, `1/min`, `mmol/l`), else by its id |
 | `driven` | the driven species, omitted without: per species `id`, `value` and `slope` (the indices of the parameters `X__value` and `X__slope` of its path `value + slope * (t - t_ref)`), `exchange` (the index of the state `X__exchange`, the amount the model gave to it) and `amount` (whether the path is an amount, else a concentration in its compartment) |
 | `t_ref` | the index of the parameter `driven__t_ref` of the paths, omitted without driven species |
+| `unit_definitions` | the unit definitions `units` names by their id (or `<id>_<n>`) because pint has no unit of them (a factor which is no prefix, `(133.322*newton)/m^2`), the name to its expression of pint, which a registry reads the units with; omitted when there is none |
+| `time_unit` | the time unit of the model as sbmlsim names it, `units["time"]` |
+| `initial_assignments` | the ids of the parameters, compartments and species references whose value as loaded an initial assignment computes, omitted when there is none |
+| `time_dependent` | `true` when a math of the model reads the time or a delay, or an event has a delay, omitted otherwise |
 
 An entity of `states` and `parameters` is `{"id", "kind", "initial", "settable"}`: its SBML id; its kind, `"compartment"`, `"parameter"`, `"species_reference"` or `{"species": {"compartment", "has_only_substance_units", "stores_concentration"}}`; its initial value as loaded (a value which is not finite is the string `"NaN"`, `"inf"` or `"-inf"`, since JSON has no such numbers); and whether a change or the pre-initialization may set it (the target of an assignment rule and the unknown of an algebraic rule may not, and the refusal names the rule which determines the entity).
 
@@ -317,7 +321,8 @@ An entity of `states` and `parameters` is `{"id", "kind", "initial", "settable"}
   "n_roots": 0,
   "n_discontinuity_roots": 0,
   "n_constants": 0,
-  "units": {}
+  "units": { "time": "second", "c": "", "A": "", "[A]": "" },
+  "time_unit": "second"
 }
 ```
 

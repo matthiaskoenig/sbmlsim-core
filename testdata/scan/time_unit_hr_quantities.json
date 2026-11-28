@@ -1,0 +1,2911 @@
+{
+ "case": "time_unit_hr_quantities",
+ "model": "hctz_body_flat.xml",
+ "core_version": "0.40.0",
+ "description": {
+  "contract": "model/2",
+  "compiler": "sbmlsim-compiler 0.40.0",
+  "id": "hctz_body",
+  "states": [
+   {
+    "id": "ECF",
+    "kind": "compartment",
+    "initial": 13.612500000000002,
+    "settable": true
+   },
+   {
+    "id": "Vloop",
+    "kind": "compartment",
+    "initial": 0.6806250000000001,
+    "settable": true
+   },
+   {
+    "id": "Vurine",
+    "kind": "compartment",
+    "initial": 1e-12,
+    "settable": true
+   },
+   {
+    "id": "IVDOSE_hctz",
+    "kind": "parameter",
+    "initial": 0.0,
+    "settable": true
+   },
+   {
+    "id": "cum_dose_hctz",
+    "kind": "parameter",
+    "initial": 0.0,
+    "settable": true
+   },
+   {
+    "id": "PODOSE_hctz",
+    "kind": "parameter",
+    "initial": 0.0,
+    "settable": true
+   },
+   {
+    "id": "GU__POSTOMACH_hctz",
+    "kind": "parameter",
+    "initial": 0.0,
+    "settable": true
+   },
+   {
+    "id": "na",
+    "kind": {
+     "species": {
+      "compartment": "ECF",
+      "has_only_substance_units": false,
+      "stores_concentration": false
+     }
+    },
+    "initial": 1905.7500000000005,
+    "settable": true
+   },
+   {
+    "id": "na_loop",
+    "kind": {
+     "species": {
+      "compartment": "Vloop",
+      "has_only_substance_units": false,
+      "stores_concentration": false
+     }
+    },
+    "initial": 95.28750000000002,
+    "settable": true
+   },
+   {
+    "id": "na_urine",
+    "kind": {
+     "species": {
+      "compartment": "Vurine",
+      "has_only_substance_units": true,
+      "stores_concentration": false
+     }
+    },
+    "initial": 0.0,
+    "settable": true
+   },
+   {
+    "id": "cl",
+    "kind": {
+     "species": {
+      "compartment": "ECF",
+      "has_only_substance_units": false,
+      "stores_concentration": false
+     }
+    },
+    "initial": 1388.4750000000004,
+    "settable": true
+   },
+   {
+    "id": "cl_loop",
+    "kind": {
+     "species": {
+      "compartment": "Vloop",
+      "has_only_substance_units": false,
+      "stores_concentration": false
+     }
+    },
+    "initial": 69.42375000000001,
+    "settable": true
+   },
+   {
+    "id": "cl_urine",
+    "kind": {
+     "species": {
+      "compartment": "Vurine",
+      "has_only_substance_units": true,
+      "stores_concentration": false
+     }
+    },
+    "initial": 0.0,
+    "settable": true
+   },
+   {
+    "id": "Cki_plasma_hctz",
+    "kind": {
+     "species": {
+      "compartment": "Vki_plasma",
+      "has_only_substance_units": false,
+      "stores_concentration": false
+     }
+    },
+    "initial": 0.0,
+    "settable": true
+   },
+   {
+    "id": "Cli_plasma_hctz",
+    "kind": {
+     "species": {
+      "compartment": "Vli_plasma",
+      "has_only_substance_units": false,
+      "stores_concentration": false
+     }
+    },
+    "initial": 0.0,
+    "settable": true
+   },
+   {
+    "id": "Clu_plasma_hctz",
+    "kind": {
+     "species": {
+      "compartment": "Vlu_plasma",
+      "has_only_substance_units": false,
+      "stores_concentration": false
+     }
+    },
+    "initial": 0.0,
+    "settable": true
+   },
+   {
+    "id": "Cgu_plasma_hctz",
+    "kind": {
+     "species": {
+      "compartment": "Vgu_plasma",
+      "has_only_substance_units": false,
+      "stores_concentration": false
+     }
+    },
+    "initial": 0.0,
+    "settable": true
+   },
+   {
+    "id": "Cre_plasma_hctz",
+    "kind": {
+     "species": {
+      "compartment": "Vre_plasma",
+      "has_only_substance_units": false,
+      "stores_concentration": false
+     }
+    },
+    "initial": 0.0,
+    "settable": true
+   },
+   {
+    "id": "Car_hctz",
+    "kind": {
+     "species": {
+      "compartment": "Var",
+      "has_only_substance_units": false,
+      "stores_concentration": false
+     }
+    },
+    "initial": 0.0,
+    "settable": true
+   },
+   {
+    "id": "Cve_hctz",
+    "kind": {
+     "species": {
+      "compartment": "Vve",
+      "has_only_substance_units": false,
+      "stores_concentration": false
+     }
+    },
+    "initial": 0.0,
+    "settable": true
+   },
+   {
+    "id": "Cpo_hctz",
+    "kind": {
+     "species": {
+      "compartment": "Vpo",
+      "has_only_substance_units": false,
+      "stores_concentration": false
+     }
+    },
+    "initial": 0.0,
+    "settable": true
+   },
+   {
+    "id": "Chv_hctz",
+    "kind": {
+     "species": {
+      "compartment": "Vhv",
+      "has_only_substance_units": false,
+      "stores_concentration": false
+     }
+    },
+    "initial": 0.0,
+    "settable": true
+   },
+   {
+    "id": "Cli_hctz",
+    "kind": {
+     "species": {
+      "compartment": "Vli_tissue",
+      "has_only_substance_units": false,
+      "stores_concentration": false
+     }
+    },
+    "initial": 0.0,
+    "settable": true
+   },
+   {
+    "id": "Clu_hctz",
+    "kind": {
+     "species": {
+      "compartment": "Vlu_tissue",
+      "has_only_substance_units": false,
+      "stores_concentration": false
+     }
+    },
+    "initial": 0.0,
+    "settable": true
+   },
+   {
+    "id": "Cre_hctz",
+    "kind": {
+     "species": {
+      "compartment": "Vre_tissue",
+      "has_only_substance_units": false,
+      "stores_concentration": false
+     }
+    },
+    "initial": 0.0,
+    "settable": true
+   },
+   {
+    "id": "Aurine_hctz",
+    "kind": {
+     "species": {
+      "compartment": "Vurine",
+      "has_only_substance_units": true,
+      "stores_concentration": false
+     }
+    },
+    "initial": 0.0,
+    "settable": true
+   },
+   {
+    "id": "Afeces_hctz",
+    "kind": {
+     "species": {
+      "compartment": "Vfeces",
+      "has_only_substance_units": true,
+      "stores_concentration": false
+     }
+    },
+    "initial": 0.0,
+    "settable": true
+   },
+   {
+    "id": "Cgu_hctz",
+    "kind": {
+     "species": {
+      "compartment": "Vgu",
+      "has_only_substance_units": false,
+      "stores_concentration": false
+     }
+    },
+    "initial": 0.0,
+    "settable": true
+   }
+  ],
+  "parameters": [
+   {
+    "id": "Vre",
+    "kind": "compartment",
+    "initial": 65.46000000000001,
+    "settable": false
+   },
+   {
+    "id": "Vgu",
+    "kind": "compartment",
+    "initial": 1.2825,
+    "settable": false
+   },
+   {
+    "id": "Vki",
+    "kind": "compartment",
+    "initial": 0.33,
+    "settable": false
+   },
+   {
+    "id": "Vli",
+    "kind": "compartment",
+    "initial": 1.5750000000000002,
+    "settable": false
+   },
+   {
+    "id": "Vlu",
+    "kind": "compartment",
+    "initial": 0.57,
+    "settable": false
+   },
+   {
+    "id": "Vve",
+    "kind": "compartment",
+    "initial": 2.9321,
+    "settable": false
+   },
+   {
+    "id": "Var",
+    "kind": "compartment",
+    "initial": 1.46605,
+    "settable": false
+   },
+   {
+    "id": "Vfeces",
+    "kind": "compartment",
+    "initial": 1.0,
+    "settable": true
+   },
+   {
+    "id": "Vstomach",
+    "kind": "compartment",
+    "initial": 1.0,
+    "settable": true
+   },
+   {
+    "id": "Vpo",
+    "kind": "compartment",
+    "initial": 0.028192964601769906,
+    "settable": false
+   },
+   {
+    "id": "Vhv",
+    "kind": "compartment",
+    "initial": 0.028192964601769906,
+    "settable": false
+   },
+   {
+    "id": "Vki_tissue",
+    "kind": "compartment",
+    "initial": 0.3234,
+    "settable": false
+   },
+   {
+    "id": "Vki_plasma",
+    "kind": "compartment",
+    "initial": 0.0032340000000000003,
+    "settable": false
+   },
+   {
+    "id": "Vli_tissue",
+    "kind": "compartment",
+    "initial": 1.5435,
+    "settable": false
+   },
+   {
+    "id": "Vli_plasma",
+    "kind": "compartment",
+    "initial": 0.015435000000000003,
+    "settable": false
+   },
+   {
+    "id": "Vlu_tissue",
+    "kind": "compartment",
+    "initial": 0.5586,
+    "settable": false
+   },
+   {
+    "id": "Vlu_plasma",
+    "kind": "compartment",
+    "initial": 0.005585999999999999,
+    "settable": false
+   },
+   {
+    "id": "Vgu_tissue",
+    "kind": "compartment",
+    "initial": 1.25685,
+    "settable": false
+   },
+   {
+    "id": "Vgu_plasma",
+    "kind": "compartment",
+    "initial": 0.0125685,
+    "settable": false
+   },
+   {
+    "id": "Vre_tissue",
+    "kind": "compartment",
+    "initial": 64.1508,
+    "settable": false
+   },
+   {
+    "id": "Vre_plasma",
+    "kind": "compartment",
+    "initial": 0.6415080000000001,
+    "settable": false
+   },
+   {
+    "id": "GU__Vlumen",
+    "kind": "compartment",
+    "initial": 1.15425,
+    "settable": true
+   },
+   {
+    "id": "GU__Ventero",
+    "kind": "compartment",
+    "initial": "NaN",
+    "settable": true
+   },
+   {
+    "id": "GU__Vapical",
+    "kind": "compartment",
+    "initial": "NaN",
+    "settable": true
+   },
+   {
+    "id": "GU__Vbaso",
+    "kind": "compartment",
+    "initial": "NaN",
+    "settable": true
+   },
+   {
+    "id": "hctz",
+    "kind": {
+     "species": {
+      "compartment": "ECF",
+      "has_only_substance_units": false,
+      "stores_concentration": true
+     }
+    },
+    "initial": 0.0,
+    "settable": false
+   },
+   {
+    "id": "GU__hctz_stomach",
+    "kind": {
+     "species": {
+      "compartment": "Vstomach",
+      "has_only_substance_units": true,
+      "stores_concentration": false
+     }
+    },
+    "initial": 0.0,
+    "settable": true
+   },
+   {
+    "id": "f_TBW",
+    "kind": "parameter",
+    "initial": 0.55,
+    "settable": true
+   },
+   {
+    "id": "f_ECF",
+    "kind": "parameter",
+    "initial": 0.33,
+    "settable": true
+   },
+   {
+    "id": "ECF_ref",
+    "kind": "parameter",
+    "initial": 13.612500000000002,
+    "settable": false
+   },
+   {
+    "id": "Psys_ref",
+    "kind": "parameter",
+    "initial": 120.0,
+    "settable": true
+   },
+   {
+    "id": "Pdia_ref",
+    "kind": "parameter",
+    "initial": 80.0,
+    "settable": true
+   },
+   {
+    "id": "bp_systolic",
+    "kind": "parameter",
+    "initial": 120.0,
+    "settable": false
+   },
+   {
+    "id": "bp_diastolic",
+    "kind": "parameter",
+    "initial": 80.0,
+    "settable": false
+   },
+   {
+    "id": "Mr_nacl",
+    "kind": "parameter",
+    "initial": 58.44,
+    "settable": true
+   },
+   {
+    "id": "Mr_na",
+    "kind": "parameter",
+    "initial": 22.99,
+    "settable": true
+   },
+   {
+    "id": "Mr_cl",
+    "kind": "parameter",
+    "initial": 35.45,
+    "settable": true
+   },
+   {
+    "id": "vin_na",
+    "kind": "parameter",
+    "initial": 0.09043955758937204,
+    "settable": false
+   },
+   {
+    "id": "vin_cl",
+    "kind": "parameter",
+    "initial": 0.30625257587360893,
+    "settable": false
+   },
+   {
+    "id": "vin_h2o",
+    "kind": "parameter",
+    "initial": 0.00159722222222222,
+    "settable": true
+   },
+   {
+    "id": "k_na",
+    "kind": "parameter",
+    "initial": 0.000645996839924086,
+    "settable": true
+   },
+   {
+    "id": "k_cl",
+    "kind": "parameter",
+    "initial": 0.00300247623405499,
+    "settable": true
+   },
+   {
+    "id": "k_h2o",
+    "kind": "parameter",
+    "initial": 7.991923637172415e-06,
+    "settable": true
+   },
+   {
+    "id": "h2o_reabsorption",
+    "kind": "parameter",
+    "initial": 0.1982573177777778,
+    "settable": false
+   },
+   {
+    "id": "diuresis",
+    "kind": "parameter",
+    "initial": 0.00159722222222222,
+    "settable": false
+   },
+   {
+    "id": "counter_gamma",
+    "kind": "parameter",
+    "initial": 5.0,
+    "settable": true
+   },
+   {
+    "id": "E50_hctz_nacl",
+    "kind": "parameter",
+    "initial": 0.000157686102092078,
+    "settable": true
+   },
+   {
+    "id": "gamma_hctz_nacl",
+    "kind": "parameter",
+    "initial": 3.13952015458646,
+    "settable": true
+   },
+   {
+    "id": "Emax_hctz_na",
+    "kind": "parameter",
+    "initial": 1.85461290255277,
+    "settable": true
+   },
+   {
+    "id": "Emax_hctz_cl",
+    "kind": "parameter",
+    "initial": 1.00729843318831,
+    "settable": true
+   },
+   {
+    "id": "na_ref",
+    "kind": "parameter",
+    "initial": 140.0,
+    "settable": true
+   },
+   {
+    "id": "cl_ref",
+    "kind": "parameter",
+    "initial": 102.0,
+    "settable": true
+   },
+   {
+    "id": "BW",
+    "kind": "parameter",
+    "initial": 75.0,
+    "settable": true
+   },
+   {
+    "id": "HEIGHT",
+    "kind": "parameter",
+    "initial": 170.0,
+    "settable": true
+   },
+   {
+    "id": "HR",
+    "kind": "parameter",
+    "initial": 70.0,
+    "settable": true
+   },
+   {
+    "id": "map",
+    "kind": "parameter",
+    "initial": 100.0,
+    "settable": true
+   },
+   {
+    "id": "f_renal_function",
+    "kind": "parameter",
+    "initial": 1.0,
+    "settable": true
+   },
+   {
+    "id": "f_GFR_Qki",
+    "kind": "parameter",
+    "initial": 151.0,
+    "settable": true
+   },
+   {
+    "id": "GFR_base",
+    "kind": "parameter",
+    "initial": 199.85454000000001,
+    "settable": false
+   },
+   {
+    "id": "BSA",
+    "kind": "parameter",
+    "initial": 1.8946901421391666,
+    "settable": false
+   },
+   {
+    "id": "f_cardiac_function",
+    "kind": "parameter",
+    "initial": 1.0,
+    "settable": true
+   },
+   {
+    "id": "COBW",
+    "kind": "parameter",
+    "initial": 1.548,
+    "settable": true
+   },
+   {
+    "id": "CO",
+    "kind": "parameter",
+    "initial": 116.10000000000001,
+    "settable": false
+   },
+   {
+    "id": "QC",
+    "kind": "parameter",
+    "initial": 6.966,
+    "settable": false
+   },
+   {
+    "id": "Fblood",
+    "kind": "parameter",
+    "initial": 0.02,
+    "settable": true
+   },
+   {
+    "id": "HCT",
+    "kind": "parameter",
+    "initial": 0.51,
+    "settable": true
+   },
+   {
+    "id": "FVgu",
+    "kind": "parameter",
+    "initial": 0.0171,
+    "settable": true
+   },
+   {
+    "id": "FVki",
+    "kind": "parameter",
+    "initial": 0.0044,
+    "settable": true
+   },
+   {
+    "id": "FVli",
+    "kind": "parameter",
+    "initial": 0.021,
+    "settable": true
+   },
+   {
+    "id": "FVlu",
+    "kind": "parameter",
+    "initial": 0.0076,
+    "settable": true
+   },
+   {
+    "id": "FVre",
+    "kind": "parameter",
+    "initial": 0.8728,
+    "settable": false
+   },
+   {
+    "id": "FVve",
+    "kind": "parameter",
+    "initial": 0.0514,
+    "settable": true
+   },
+   {
+    "id": "FVar",
+    "kind": "parameter",
+    "initial": 0.0257,
+    "settable": true
+   },
+   {
+    "id": "FVpo",
+    "kind": "parameter",
+    "initial": 0.001,
+    "settable": true
+   },
+   {
+    "id": "FVhv",
+    "kind": "parameter",
+    "initial": 0.001,
+    "settable": true
+   },
+   {
+    "id": "FQgu",
+    "kind": "parameter",
+    "initial": 0.18,
+    "settable": true
+   },
+   {
+    "id": "FQki",
+    "kind": "parameter",
+    "initial": 0.19,
+    "settable": true
+   },
+   {
+    "id": "FQh",
+    "kind": "parameter",
+    "initial": 0.215,
+    "settable": true
+   },
+   {
+    "id": "FQlu",
+    "kind": "parameter",
+    "initial": 1.0,
+    "settable": true
+   },
+   {
+    "id": "FQre",
+    "kind": "parameter",
+    "initial": 0.595,
+    "settable": false
+   },
+   {
+    "id": "conversion_min_per_day",
+    "kind": "parameter",
+    "initial": 1440.0,
+    "settable": true
+   },
+   {
+    "id": "f_cirrhosis",
+    "kind": "parameter",
+    "initial": 0.0,
+    "settable": true
+   },
+   {
+    "id": "f_shunts",
+    "kind": "parameter",
+    "initial": 0.0,
+    "settable": false
+   },
+   {
+    "id": "f_tissue_loss",
+    "kind": "parameter",
+    "initial": 0.0,
+    "settable": false
+   },
+   {
+    "id": "Ka_dis_hctz",
+    "kind": "parameter",
+    "initial": 0.351813311553606,
+    "settable": true
+   },
+   {
+    "id": "v_HCTZEX",
+    "kind": "parameter",
+    "initial": 0.0,
+    "settable": false
+   },
+   {
+    "id": "Mr_hctz",
+    "kind": "parameter",
+    "initial": 297.7,
+    "settable": true
+   },
+   {
+    "id": "ftissue_hctz",
+    "kind": "parameter",
+    "initial": 0.246143876877742,
+    "settable": true
+   },
+   {
+    "id": "Kp_hctz",
+    "kind": "parameter",
+    "initial": 0.999728003670081,
+    "settable": true
+   },
+   {
+    "id": "ti_hctz",
+    "kind": "parameter",
+    "initial": 10.0,
+    "settable": true
+   },
+   {
+    "id": "Ki_hctz",
+    "kind": "parameter",
+    "initial": 4.158,
+    "settable": false
+   },
+   {
+    "id": "Ri_hctz",
+    "kind": "parameter",
+    "initial": 0.0,
+    "settable": true
+   },
+   {
+    "id": "GFR",
+    "kind": "parameter",
+    "initial": 199.85454000000001,
+    "settable": false
+   },
+   {
+    "id": "vout_na",
+    "kind": "parameter",
+    "initial": 2.079205428979663,
+    "settable": false
+   },
+   {
+    "id": "vout_cl",
+    "kind": "parameter",
+    "initial": 10.856653814719438,
+    "settable": false
+   },
+   {
+    "id": "H2O_UPTAKE",
+    "kind": "parameter",
+    "initial": 0.00159722222222222,
+    "settable": false
+   },
+   {
+    "id": "Qgu",
+    "kind": "parameter",
+    "initial": 1.2538799999999999,
+    "settable": false
+   },
+   {
+    "id": "Qki",
+    "kind": "parameter",
+    "initial": 1.3235400000000002,
+    "settable": false
+   },
+   {
+    "id": "Qh",
+    "kind": "parameter",
+    "initial": 1.49769,
+    "settable": false
+   },
+   {
+    "id": "Qha",
+    "kind": "parameter",
+    "initial": 0.24381000000000008,
+    "settable": false
+   },
+   {
+    "id": "Qlu",
+    "kind": "parameter",
+    "initial": 6.966,
+    "settable": false
+   },
+   {
+    "id": "Qre",
+    "kind": "parameter",
+    "initial": 4.14477,
+    "settable": false
+   },
+   {
+    "id": "Qpo",
+    "kind": "parameter",
+    "initial": 1.2538799999999999,
+    "settable": false
+   },
+   {
+    "id": "hctz_urine_excretion",
+    "kind": "parameter",
+    "initial": 0.0,
+    "settable": false
+   },
+   {
+    "id": "KI__urine_volume",
+    "kind": "parameter",
+    "initial": 1.0,
+    "settable": true
+   },
+   {
+    "id": "KI__HCTZEX_k",
+    "kind": "parameter",
+    "initial": 0.00371089047925543,
+    "settable": true
+   },
+   {
+    "id": "KI__GFR",
+    "kind": "parameter",
+    "initial": 199.85454000000001,
+    "settable": false
+   },
+   {
+    "id": "GU__F_hctz_abs",
+    "kind": "parameter",
+    "initial": 0.61213115217988,
+    "settable": true
+   },
+   {
+    "id": "GU__HCTZABS_k",
+    "kind": "parameter",
+    "initial": 0.0204137687168812,
+    "settable": true
+   },
+   {
+    "id": "GU__Ka_application_hctz",
+    "kind": "parameter",
+    "initial": 1000.0,
+    "settable": true
+   },
+   {
+    "id": "GU__absorption",
+    "kind": "parameter",
+    "initial": 0.0,
+    "settable": false
+   }
+  ],
+  "selections": [
+   {
+    "id": "ECF",
+    "index": 0
+   },
+   {
+    "id": "Vloop",
+    "index": 1
+   },
+   {
+    "id": "Vre",
+    "index": 2
+   },
+   {
+    "id": "Vgu",
+    "index": 3
+   },
+   {
+    "id": "Vki",
+    "index": 4
+   },
+   {
+    "id": "Vli",
+    "index": 5
+   },
+   {
+    "id": "Vlu",
+    "index": 6
+   },
+   {
+    "id": "Vve",
+    "index": 7
+   },
+   {
+    "id": "Var",
+    "index": 8
+   },
+   {
+    "id": "Vurine",
+    "index": 9
+   },
+   {
+    "id": "Vfeces",
+    "index": 10
+   },
+   {
+    "id": "Vstomach",
+    "index": 11
+   },
+   {
+    "id": "Vpo",
+    "index": 12
+   },
+   {
+    "id": "Vhv",
+    "index": 13
+   },
+   {
+    "id": "Vki_tissue",
+    "index": 14
+   },
+   {
+    "id": "Vki_plasma",
+    "index": 15
+   },
+   {
+    "id": "Vli_tissue",
+    "index": 16
+   },
+   {
+    "id": "Vli_plasma",
+    "index": 17
+   },
+   {
+    "id": "Vlu_tissue",
+    "index": 18
+   },
+   {
+    "id": "Vlu_plasma",
+    "index": 19
+   },
+   {
+    "id": "Vgu_tissue",
+    "index": 20
+   },
+   {
+    "id": "Vgu_plasma",
+    "index": 21
+   },
+   {
+    "id": "Vre_tissue",
+    "index": 22
+   },
+   {
+    "id": "Vre_plasma",
+    "index": 23
+   },
+   {
+    "id": "GU__Vlumen",
+    "index": 24
+   },
+   {
+    "id": "GU__Ventero",
+    "index": 25
+   },
+   {
+    "id": "GU__Vapical",
+    "index": 26
+   },
+   {
+    "id": "GU__Vbaso",
+    "index": 27
+   },
+   {
+    "id": "hctz",
+    "index": 28
+   },
+   {
+    "id": "na",
+    "index": 29
+   },
+   {
+    "id": "na_loop",
+    "index": 30
+   },
+   {
+    "id": "na_urine",
+    "index": 31
+   },
+   {
+    "id": "cl",
+    "index": 32
+   },
+   {
+    "id": "cl_loop",
+    "index": 33
+   },
+   {
+    "id": "cl_urine",
+    "index": 34
+   },
+   {
+    "id": "Cki_plasma_hctz",
+    "index": 35
+   },
+   {
+    "id": "Cli_plasma_hctz",
+    "index": 36
+   },
+   {
+    "id": "Clu_plasma_hctz",
+    "index": 37
+   },
+   {
+    "id": "Cgu_plasma_hctz",
+    "index": 38
+   },
+   {
+    "id": "Cre_plasma_hctz",
+    "index": 39
+   },
+   {
+    "id": "Car_hctz",
+    "index": 40
+   },
+   {
+    "id": "Cve_hctz",
+    "index": 41
+   },
+   {
+    "id": "Cpo_hctz",
+    "index": 42
+   },
+   {
+    "id": "Chv_hctz",
+    "index": 43
+   },
+   {
+    "id": "Cli_hctz",
+    "index": 44
+   },
+   {
+    "id": "Clu_hctz",
+    "index": 45
+   },
+   {
+    "id": "Cre_hctz",
+    "index": 46
+   },
+   {
+    "id": "Aurine_hctz",
+    "index": 47
+   },
+   {
+    "id": "Afeces_hctz",
+    "index": 48
+   },
+   {
+    "id": "Cgu_hctz",
+    "index": 49
+   },
+   {
+    "id": "GU__hctz_stomach",
+    "index": 50
+   },
+   {
+    "id": "[hctz]",
+    "index": 51
+   },
+   {
+    "id": "[na]",
+    "index": 52
+   },
+   {
+    "id": "[na_loop]",
+    "index": 53
+   },
+   {
+    "id": "[na_urine]",
+    "index": 54
+   },
+   {
+    "id": "[cl]",
+    "index": 55
+   },
+   {
+    "id": "[cl_loop]",
+    "index": 56
+   },
+   {
+    "id": "[cl_urine]",
+    "index": 57
+   },
+   {
+    "id": "[Cki_plasma_hctz]",
+    "index": 58
+   },
+   {
+    "id": "[Cli_plasma_hctz]",
+    "index": 59
+   },
+   {
+    "id": "[Clu_plasma_hctz]",
+    "index": 60
+   },
+   {
+    "id": "[Cgu_plasma_hctz]",
+    "index": 61
+   },
+   {
+    "id": "[Cre_plasma_hctz]",
+    "index": 62
+   },
+   {
+    "id": "[Car_hctz]",
+    "index": 63
+   },
+   {
+    "id": "[Cve_hctz]",
+    "index": 64
+   },
+   {
+    "id": "[Cpo_hctz]",
+    "index": 65
+   },
+   {
+    "id": "[Chv_hctz]",
+    "index": 66
+   },
+   {
+    "id": "[Cli_hctz]",
+    "index": 67
+   },
+   {
+    "id": "[Clu_hctz]",
+    "index": 68
+   },
+   {
+    "id": "[Cre_hctz]",
+    "index": 69
+   },
+   {
+    "id": "[Aurine_hctz]",
+    "index": 70
+   },
+   {
+    "id": "[Afeces_hctz]",
+    "index": 71
+   },
+   {
+    "id": "[Cgu_hctz]",
+    "index": 72
+   },
+   {
+    "id": "[GU__hctz_stomach]",
+    "index": 73
+   },
+   {
+    "id": "f_TBW",
+    "index": 74
+   },
+   {
+    "id": "f_ECF",
+    "index": 75
+   },
+   {
+    "id": "ECF_ref",
+    "index": 76
+   },
+   {
+    "id": "Psys_ref",
+    "index": 77
+   },
+   {
+    "id": "Pdia_ref",
+    "index": 78
+   },
+   {
+    "id": "bp_systolic",
+    "index": 79
+   },
+   {
+    "id": "bp_diastolic",
+    "index": 80
+   },
+   {
+    "id": "Mr_nacl",
+    "index": 81
+   },
+   {
+    "id": "Mr_na",
+    "index": 82
+   },
+   {
+    "id": "Mr_cl",
+    "index": 83
+   },
+   {
+    "id": "vin_na",
+    "index": 84
+   },
+   {
+    "id": "vin_cl",
+    "index": 85
+   },
+   {
+    "id": "vin_h2o",
+    "index": 86
+   },
+   {
+    "id": "k_na",
+    "index": 87
+   },
+   {
+    "id": "k_cl",
+    "index": 88
+   },
+   {
+    "id": "k_h2o",
+    "index": 89
+   },
+   {
+    "id": "h2o_reabsorption",
+    "index": 90
+   },
+   {
+    "id": "diuresis",
+    "index": 91
+   },
+   {
+    "id": "counter_gamma",
+    "index": 92
+   },
+   {
+    "id": "E50_hctz_nacl",
+    "index": 93
+   },
+   {
+    "id": "gamma_hctz_nacl",
+    "index": 94
+   },
+   {
+    "id": "Emax_hctz_na",
+    "index": 95
+   },
+   {
+    "id": "Emax_hctz_cl",
+    "index": 96
+   },
+   {
+    "id": "na_ref",
+    "index": 97
+   },
+   {
+    "id": "cl_ref",
+    "index": 98
+   },
+   {
+    "id": "BW",
+    "index": 99
+   },
+   {
+    "id": "HEIGHT",
+    "index": 100
+   },
+   {
+    "id": "HR",
+    "index": 101
+   },
+   {
+    "id": "map",
+    "index": 102
+   },
+   {
+    "id": "f_renal_function",
+    "index": 103
+   },
+   {
+    "id": "f_GFR_Qki",
+    "index": 104
+   },
+   {
+    "id": "GFR_base",
+    "index": 105
+   },
+   {
+    "id": "BSA",
+    "index": 106
+   },
+   {
+    "id": "f_cardiac_function",
+    "index": 107
+   },
+   {
+    "id": "COBW",
+    "index": 108
+   },
+   {
+    "id": "CO",
+    "index": 109
+   },
+   {
+    "id": "QC",
+    "index": 110
+   },
+   {
+    "id": "Fblood",
+    "index": 111
+   },
+   {
+    "id": "HCT",
+    "index": 112
+   },
+   {
+    "id": "FVgu",
+    "index": 113
+   },
+   {
+    "id": "FVki",
+    "index": 114
+   },
+   {
+    "id": "FVli",
+    "index": 115
+   },
+   {
+    "id": "FVlu",
+    "index": 116
+   },
+   {
+    "id": "FVre",
+    "index": 117
+   },
+   {
+    "id": "FVve",
+    "index": 118
+   },
+   {
+    "id": "FVar",
+    "index": 119
+   },
+   {
+    "id": "FVpo",
+    "index": 120
+   },
+   {
+    "id": "FVhv",
+    "index": 121
+   },
+   {
+    "id": "FQgu",
+    "index": 122
+   },
+   {
+    "id": "FQki",
+    "index": 123
+   },
+   {
+    "id": "FQh",
+    "index": 124
+   },
+   {
+    "id": "FQlu",
+    "index": 125
+   },
+   {
+    "id": "FQre",
+    "index": 126
+   },
+   {
+    "id": "conversion_min_per_day",
+    "index": 127
+   },
+   {
+    "id": "f_cirrhosis",
+    "index": 128
+   },
+   {
+    "id": "f_shunts",
+    "index": 129
+   },
+   {
+    "id": "f_tissue_loss",
+    "index": 130
+   },
+   {
+    "id": "PODOSE_hctz",
+    "index": 131
+   },
+   {
+    "id": "Ka_dis_hctz",
+    "index": 132
+   },
+   {
+    "id": "v_HCTZEX",
+    "index": 133
+   },
+   {
+    "id": "Mr_hctz",
+    "index": 134
+   },
+   {
+    "id": "ftissue_hctz",
+    "index": 135
+   },
+   {
+    "id": "Kp_hctz",
+    "index": 136
+   },
+   {
+    "id": "IVDOSE_hctz",
+    "index": 137
+   },
+   {
+    "id": "ti_hctz",
+    "index": 138
+   },
+   {
+    "id": "Ki_hctz",
+    "index": 139
+   },
+   {
+    "id": "Ri_hctz",
+    "index": 140
+   },
+   {
+    "id": "cum_dose_hctz",
+    "index": 141
+   },
+   {
+    "id": "GFR",
+    "index": 142
+   },
+   {
+    "id": "vout_na",
+    "index": 143
+   },
+   {
+    "id": "vout_cl",
+    "index": 144
+   },
+   {
+    "id": "H2O_UPTAKE",
+    "index": 145
+   },
+   {
+    "id": "Qgu",
+    "index": 146
+   },
+   {
+    "id": "Qki",
+    "index": 147
+   },
+   {
+    "id": "Qh",
+    "index": 148
+   },
+   {
+    "id": "Qha",
+    "index": 149
+   },
+   {
+    "id": "Qlu",
+    "index": 150
+   },
+   {
+    "id": "Qre",
+    "index": 151
+   },
+   {
+    "id": "Qpo",
+    "index": 152
+   },
+   {
+    "id": "hctz_urine_excretion",
+    "index": 153
+   },
+   {
+    "id": "KI__urine_volume",
+    "index": 154
+   },
+   {
+    "id": "KI__HCTZEX_k",
+    "index": 155
+   },
+   {
+    "id": "KI__GFR",
+    "index": 156
+   },
+   {
+    "id": "GU__F_hctz_abs",
+    "index": 157
+   },
+   {
+    "id": "GU__HCTZABS_k",
+    "index": 158
+   },
+   {
+    "id": "GU__POSTOMACH_hctz",
+    "index": 159
+   },
+   {
+    "id": "GU__Ka_application_hctz",
+    "index": 160
+   },
+   {
+    "id": "GU__absorption",
+    "index": 161
+   },
+   {
+    "id": "NA_UPTAKE",
+    "index": 162
+   },
+   {
+    "id": "CL_UPTAKE",
+    "index": 163
+   },
+   {
+    "id": "NA_FILTRATION",
+    "index": 164
+   },
+   {
+    "id": "NA_EXCRETION",
+    "index": 165
+   },
+   {
+    "id": "NA_REABSORPTION",
+    "index": 166
+   },
+   {
+    "id": "CL_FILTRATION",
+    "index": 167
+   },
+   {
+    "id": "CL_EXCRETION",
+    "index": 168
+   },
+   {
+    "id": "CL_REABSORPTION",
+    "index": 169
+   },
+   {
+    "id": "transport_li_hctz",
+    "index": 170
+   },
+   {
+    "id": "transport_lu_hctz",
+    "index": 171
+   },
+   {
+    "id": "transport_re_hctz",
+    "index": 172
+   },
+   {
+    "id": "iv_hctz",
+    "index": 173
+   },
+   {
+    "id": "Flow_ar_ki_hctz",
+    "index": 174
+   },
+   {
+    "id": "Flow_ki_ve_hctz",
+    "index": 175
+   },
+   {
+    "id": "Flow_arli_li_hctz",
+    "index": 176
+   },
+   {
+    "id": "Flow_arli_hv_hctz",
+    "index": 177
+   },
+   {
+    "id": "Flow_po_li_hctz",
+    "index": 178
+   },
+   {
+    "id": "Flow_po_hv_hctz",
+    "index": 179
+   },
+   {
+    "id": "Flow_li_hv_hctz",
+    "index": 180
+   },
+   {
+    "id": "Flow_hv_ve_hctz",
+    "index": 181
+   },
+   {
+    "id": "Flow_ve_lu_hctz",
+    "index": 182
+   },
+   {
+    "id": "Flow_lu_ar_hctz",
+    "index": 183
+   },
+   {
+    "id": "Flow_ar_gu_hctz",
+    "index": 184
+   },
+   {
+    "id": "Flow_gu_po_hctz",
+    "index": 185
+   },
+   {
+    "id": "Flow_ar_re_hctz",
+    "index": 186
+   },
+   {
+    "id": "Flow_re_ve_hctz",
+    "index": 187
+   },
+   {
+    "id": "KI__HCTZEX",
+    "index": 188
+   },
+   {
+    "id": "GU__HCTZABS",
+    "index": 189
+   },
+   {
+    "id": "GU__HCTZEXC",
+    "index": 190
+   },
+   {
+    "id": "GU__application_hctz",
+    "index": 191
+   },
+   {
+    "id": "GU__dissolution_hctz",
+    "index": 192
+   }
+  ],
+  "jacobian": {
+   "analytic": {
+    "n": 28,
+    "col_ptr": [
+     0,
+     7,
+     16,
+     16,
+     18,
+     18,
+     20,
+     22,
+     24,
+     32,
+     32,
+     34,
+     37,
+     37,
+     49,
+     52,
+     55,
+     57,
+     60,
+     66,
+     68,
+     71,
+     73,
+     75,
+     77,
+     79,
+     79,
+     79,
+     82
+    ],
+    "row_idx": [
+     0,
+     1,
+     2,
+     7,
+     8,
+     10,
+     11,
+     0,
+     1,
+     2,
+     7,
+     8,
+     9,
+     10,
+     11,
+     12,
+     3,
+     19,
+     5,
+     6,
+     6,
+     27,
+     7,
+     8,
+     0,
+     1,
+     2,
+     7,
+     8,
+     9,
+     10,
+     11,
+     10,
+     11,
+     10,
+     11,
+     12,
+     0,
+     1,
+     2,
+     7,
+     8,
+     9,
+     10,
+     11,
+     12,
+     13,
+     19,
+     25,
+     14,
+     21,
+     22,
+     15,
+     18,
+     23,
+     16,
+     20,
+     17,
+     19,
+     24,
+     13,
+     14,
+     16,
+     17,
+     18,
+     21,
+     15,
+     19,
+     14,
+     20,
+     21,
+     19,
+     21,
+     14,
+     22,
+     15,
+     23,
+     17,
+     24,
+     16,
+     26,
+     27
+    ]
+   }
+  },
+  "jacobian_p": {
+   "rows": 28,
+   "col_ptr": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    7,
+    14,
+    14,
+    14,
+    14,
+    14,
+    14,
+    14,
+    14,
+    14,
+    14,
+    14,
+    15,
+    23,
+    26,
+    33,
+    33,
+    33,
+    40,
+    49,
+    58,
+    66,
+    68,
+    75,
+    76,
+    100,
+    100,
+    100,
+    100,
+    109,
+    118,
+    118,
+    118,
+    135,
+    152,
+    152,
+    152,
+    174,
+    196,
+    203,
+    217,
+    223,
+    229,
+    229,
+    239,
+    249,
+    253,
+    257,
+    262,
+    274,
+    279,
+    282,
+    282,
+    282,
+    287,
+    287,
+    287,
+    289,
+    289,
+    294,
+    300,
+    306,
+    308,
+    308,
+    310,
+    310,
+    310,
+    310,
+    310,
+    310,
+    310,
+    310,
+    310,
+    310,
+    310,
+    310,
+    310,
+    310,
+    312,
+    312,
+    315,
+    318,
+    320,
+    320
+   ],
+   "row_idx": [
+    0,
+    1,
+    2,
+    7,
+    8,
+    10,
+    11,
+    0,
+    1,
+    2,
+    7,
+    8,
+    10,
+    11,
+    0,
+    0,
+    1,
+    2,
+    7,
+    8,
+    9,
+    10,
+    11,
+    10,
+    11,
+    12,
+    0,
+    1,
+    2,
+    7,
+    8,
+    10,
+    11,
+    0,
+    1,
+    2,
+    7,
+    8,
+    10,
+    11,
+    0,
+    1,
+    2,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    0,
+    1,
+    2,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    0,
+    1,
+    2,
+    7,
+    8,
+    9,
+    10,
+    11,
+    11,
+    12,
+    0,
+    1,
+    2,
+    7,
+    8,
+    10,
+    11,
+    10,
+    0,
+    1,
+    2,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23,
+    24,
+    25,
+    26,
+    27,
+    0,
+    1,
+    2,
+    7,
+    8,
+    10,
+    11,
+    13,
+    25,
+    0,
+    1,
+    2,
+    7,
+    8,
+    10,
+    11,
+    13,
+    25,
+    0,
+    1,
+    2,
+    7,
+    8,
+    10,
+    11,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    25,
+    0,
+    1,
+    2,
+    7,
+    8,
+    10,
+    11,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    25,
+    0,
+    1,
+    2,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23,
+    24,
+    25,
+    0,
+    1,
+    2,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23,
+    24,
+    25,
+    16,
+    17,
+    19,
+    20,
+    24,
+    26,
+    27,
+    0,
+    1,
+    2,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    17,
+    19,
+    24,
+    25,
+    14,
+    17,
+    19,
+    21,
+    22,
+    24,
+    15,
+    17,
+    18,
+    19,
+    23,
+    24,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    24,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    24,
+    14,
+    19,
+    20,
+    21,
+    14,
+    19,
+    20,
+    21,
+    14,
+    16,
+    18,
+    20,
+    21,
+    0,
+    1,
+    2,
+    7,
+    8,
+    10,
+    11,
+    13,
+    17,
+    18,
+    19,
+    25,
+    14,
+    17,
+    18,
+    19,
+    21,
+    15,
+    18,
+    19,
+    14,
+    18,
+    20,
+    21,
+    22,
+    6,
+    27,
+    3,
+    5,
+    6,
+    19,
+    27,
+    14,
+    15,
+    17,
+    22,
+    23,
+    24,
+    14,
+    15,
+    17,
+    22,
+    23,
+    24,
+    3,
+    19,
+    3,
+    4,
+    13,
+    25,
+    16,
+    26,
+    27,
+    16,
+    26,
+    27,
+    5,
+    6
+   ]
+  },
+  "events": [],
+  "n_roots": 0,
+  "n_discontinuity_roots": 0,
+  "n_constants": 271,
+  "units": {
+   "Afeces_hctz": "0.001*mole",
+   "Aurine_hctz": "0.001*mole",
+   "BSA": "metre**2",
+   "BW": "1000*gram",
+   "CL_EXCRETION": "(0.001*mole)/(60*second)",
+   "CL_FILTRATION": "(0.001*mole)/(60*second)",
+   "CL_REABSORPTION": "(0.001*mole)/(60*second)",
+   "CL_UPTAKE": "(0.001*mole)/(60*second)",
+   "CO": "0.001*litre*second**-1",
+   "COBW": "0.001*litre*second**-1*(1000*gram)**-1",
+   "Car_hctz": "0.001*mole",
+   "Cgu_hctz": "0.001*mole",
+   "Cgu_plasma_hctz": "0.001*mole",
+   "Chv_hctz": "0.001*mole",
+   "Cki_plasma_hctz": "0.001*mole",
+   "Cli_hctz": "0.001*mole",
+   "Cli_plasma_hctz": "0.001*mole",
+   "Clu_hctz": "0.001*mole",
+   "Clu_plasma_hctz": "0.001*mole",
+   "Cpo_hctz": "0.001*mole",
+   "Cre_hctz": "0.001*mole",
+   "Cre_plasma_hctz": "0.001*mole",
+   "Cve_hctz": "0.001*mole",
+   "E50_hctz_nacl": "0.001*mole*litre**-1",
+   "ECF": "litre",
+   "ECF_ref": "litre",
+   "Emax_hctz_cl": "dimensionless",
+   "Emax_hctz_na": "dimensionless",
+   "FQgu": "dimensionless",
+   "FQh": "dimensionless",
+   "FQki": "dimensionless",
+   "FQlu": "dimensionless",
+   "FQre": "dimensionless",
+   "FVar": "litre*(1000*gram)**-1",
+   "FVgu": "litre*(1000*gram)**-1",
+   "FVhv": "litre*(1000*gram)**-1",
+   "FVki": "litre*(1000*gram)**-1",
+   "FVli": "litre*(1000*gram)**-1",
+   "FVlu": "litre*(1000*gram)**-1",
+   "FVpo": "litre*(1000*gram)**-1",
+   "FVre": "litre*(1000*gram)**-1",
+   "FVve": "litre*(1000*gram)**-1",
+   "Fblood": "dimensionless",
+   "Flow_ar_gu_hctz": "(0.001*mole)/(60*second)",
+   "Flow_ar_ki_hctz": "(0.001*mole)/(60*second)",
+   "Flow_ar_re_hctz": "(0.001*mole)/(60*second)",
+   "Flow_arli_hv_hctz": "(0.001*mole)/(60*second)",
+   "Flow_arli_li_hctz": "(0.001*mole)/(60*second)",
+   "Flow_gu_po_hctz": "(0.001*mole)/(60*second)",
+   "Flow_hv_ve_hctz": "(0.001*mole)/(60*second)",
+   "Flow_ki_ve_hctz": "(0.001*mole)/(60*second)",
+   "Flow_li_hv_hctz": "(0.001*mole)/(60*second)",
+   "Flow_lu_ar_hctz": "(0.001*mole)/(60*second)",
+   "Flow_po_hv_hctz": "(0.001*mole)/(60*second)",
+   "Flow_po_li_hctz": "(0.001*mole)/(60*second)",
+   "Flow_re_ve_hctz": "(0.001*mole)/(60*second)",
+   "Flow_ve_lu_hctz": "(0.001*mole)/(60*second)",
+   "GFR": "0.001*litre*(60*second)**-1",
+   "GFR_base": "0.001*litre*(60*second)**-1",
+   "GU__F_hctz_abs": "dimensionless",
+   "GU__HCTZABS": "(0.001*mole)/(60*second)",
+   "GU__HCTZABS_k": "(60*second)**-1",
+   "GU__HCTZEXC": "(0.001*mole)/(60*second)",
+   "GU__Ka_application_hctz": "(3600*second)**-1",
+   "GU__POSTOMACH_hctz": "0.001*gram",
+   "GU__Vapical": "metre**2",
+   "GU__Vbaso": "metre**2",
+   "GU__Ventero": "litre",
+   "GU__Vlumen": "litre",
+   "GU__absorption": "0.001*mole*(60*second)**-1",
+   "GU__application_hctz": "(0.001*mole)/(60*second)",
+   "GU__dissolution_hctz": "(0.001*mole)/(60*second)",
+   "GU__hctz_stomach": "0.001*mole",
+   "H2O_UPTAKE": "litre*(60*second)**-1",
+   "HCT": "dimensionless",
+   "HEIGHT": "0.01*metre",
+   "HR": "(60*second)**-1",
+   "IVDOSE_hctz": "0.001*gram",
+   "KI__GFR": "0.001*litre*(60*second)**-1",
+   "KI__HCTZEX": "(0.001*mole)/(60*second)",
+   "KI__HCTZEX_k": "(0.001*litre)**-1",
+   "KI__urine_volume": "0.001*litre",
+   "Ka_dis_hctz": "(3600*second)**-1",
+   "Ki_hctz": "(60*second)**-1",
+   "Kp_hctz": "dimensionless",
+   "Mr_cl": "gram*mole**-1",
+   "Mr_hctz": "gram*mole**-1",
+   "Mr_na": "gram*mole**-1",
+   "Mr_nacl": "gram*mole**-1",
+   "NA_EXCRETION": "(0.001*mole)/(60*second)",
+   "NA_FILTRATION": "(0.001*mole)/(60*second)",
+   "NA_REABSORPTION": "(0.001*mole)/(60*second)",
+   "NA_UPTAKE": "(0.001*mole)/(60*second)",
+   "PODOSE_hctz": "0.001*gram",
+   "Pdia_ref": "133.32239*newton*metre**-2",
+   "Psys_ref": "133.32239*newton*metre**-2",
+   "QC": "litre*(60*second)**-1",
+   "Qgu": "litre*(60*second)**-1",
+   "Qh": "litre*(60*second)**-1",
+   "Qha": "litre*(60*second)**-1",
+   "Qki": "litre*(60*second)**-1",
+   "Qlu": "litre*(60*second)**-1",
+   "Qpo": "litre*(60*second)**-1",
+   "Qre": "litre*(60*second)**-1",
+   "Ri_hctz": "0.001*gram*(60*second)**-1",
+   "Var": "litre",
+   "Vfeces": "litre",
+   "Vgu": "litre",
+   "Vgu_plasma": "litre",
+   "Vgu_tissue": "litre",
+   "Vhv": "litre",
+   "Vki": "litre",
+   "Vki_plasma": "litre",
+   "Vki_tissue": "litre",
+   "Vli": "litre",
+   "Vli_plasma": "litre",
+   "Vli_tissue": "litre",
+   "Vloop": "litre",
+   "Vlu": "litre",
+   "Vlu_plasma": "litre",
+   "Vlu_tissue": "litre",
+   "Vpo": "litre",
+   "Vre": "litre",
+   "Vre_plasma": "litre",
+   "Vre_tissue": "litre",
+   "Vstomach": "litre",
+   "Vurine": "litre",
+   "Vve": "litre",
+   "[Afeces_hctz]": "(0.001*mole)/litre",
+   "[Aurine_hctz]": "(0.001*mole)/litre",
+   "[Car_hctz]": "(0.001*mole)/litre",
+   "[Cgu_hctz]": "(0.001*mole)/litre",
+   "[Cgu_plasma_hctz]": "(0.001*mole)/litre",
+   "[Chv_hctz]": "(0.001*mole)/litre",
+   "[Cki_plasma_hctz]": "(0.001*mole)/litre",
+   "[Cli_hctz]": "(0.001*mole)/litre",
+   "[Cli_plasma_hctz]": "(0.001*mole)/litre",
+   "[Clu_hctz]": "(0.001*mole)/litre",
+   "[Clu_plasma_hctz]": "(0.001*mole)/litre",
+   "[Cpo_hctz]": "(0.001*mole)/litre",
+   "[Cre_hctz]": "(0.001*mole)/litre",
+   "[Cre_plasma_hctz]": "(0.001*mole)/litre",
+   "[Cve_hctz]": "(0.001*mole)/litre",
+   "[GU__hctz_stomach]": "(0.001*mole)/litre",
+   "[cl]": "(0.001*mole)/litre",
+   "[cl_loop]": "(0.001*mole)/litre",
+   "[cl_urine]": "(0.001*mole)/litre",
+   "[hctz]": "(0.001*mole)/litre",
+   "[na]": "(0.001*mole)/litre",
+   "[na_loop]": "(0.001*mole)/litre",
+   "[na_urine]": "(0.001*mole)/litre",
+   "bp_diastolic": "133.32239*newton*metre**-2",
+   "bp_systolic": "133.32239*newton*metre**-2",
+   "cl": "0.001*mole",
+   "cl_loop": "0.001*mole",
+   "cl_ref": "0.001*mole*litre**-1",
+   "cl_urine": "0.001*mole",
+   "conversion_min_per_day": "60*second*(86400*second)**-1",
+   "counter_gamma": "dimensionless",
+   "cum_dose_hctz": "0.001*gram",
+   "diuresis": "litre*(60*second)**-1",
+   "f_ECF": "dimensionless",
+   "f_GFR_Qki": "0.001*litre*litre**-1",
+   "f_TBW": "litre*(1000*gram)**-1",
+   "f_cardiac_function": "dimensionless",
+   "f_cirrhosis": "dimensionless",
+   "f_renal_function": "dimensionless",
+   "f_shunts": "dimensionless",
+   "f_tissue_loss": "dimensionless",
+   "ftissue_hctz": "litre*(60*second)**-1",
+   "gamma_hctz_nacl": "dimensionless",
+   "h2o_reabsorption": "litre*(60*second)**-1",
+   "hctz": "0.001*mole",
+   "hctz_urine_excretion": "0.001*mole*litre**-1",
+   "iv_hctz": "(0.001*mole)/(60*second)",
+   "k_cl": "litre*(60*second)**-1",
+   "k_h2o": "litre*(0.001*litre)**-1",
+   "k_na": "litre*(60*second)**-1",
+   "map": "133.32239*newton*metre**-2",
+   "na": "0.001*mole",
+   "na_loop": "0.001*mole",
+   "na_ref": "0.001*mole*litre**-1",
+   "na_urine": "0.001*mole",
+   "ti_hctz": "second",
+   "transport_li_hctz": "(0.001*mole)/(60*second)",
+   "transport_lu_hctz": "(0.001*mole)/(60*second)",
+   "transport_re_hctz": "(0.001*mole)/(60*second)",
+   "v_HCTZEX": "0.001*mole*(60*second)**-1",
+   "vin_cl": "0.001*mole*(60*second)**-1",
+   "vin_h2o": "litre*(60*second)**-1",
+   "vin_na": "0.001*mole*(60*second)**-1",
+   "vout_cl": "0.001*gram*(60*second)**-1",
+   "vout_na": "0.001*gram*(60*second)**-1"
+  }
+ },
+ "request": {
+  "contract": "scan/1",
+  "scan": {
+   "type": "Scan",
+   "simulation": {
+    "type": "Simulation",
+    "time_unit": "hr",
+    "start": 0.0,
+    "end": 12,
+    "preinit_changes": {
+     "BW": {
+      "value": 70000,
+      "unit": "gram"
+     }
+    },
+    "changes": [
+     {
+      "times": [
+       {
+        "value": 0.5,
+        "unit": "hour"
+       }
+      ],
+      "values": {
+       "PODOSE_hctz": {
+        "value": 25000,
+        "unit": "microgram"
+       }
+      }
+     }
+    ],
+    "presimulation": null,
+    "times": [
+     {
+      "value": 0.0,
+      "unit": "minute"
+     },
+     {
+      "value": 30.0,
+      "unit": "minute"
+     },
+     {
+      "value": 60.0,
+      "unit": "minute"
+     },
+     {
+      "value": 120.0,
+      "unit": "minute"
+     },
+     {
+      "value": 240.0,
+      "unit": "minute"
+     },
+     {
+      "value": 480.0,
+      "unit": "minute"
+     },
+     {
+      "value": 720.0,
+      "unit": "minute"
+     }
+    ],
+    "steps": null,
+    "time_shift": 0.0
+   },
+   "dimensions": []
+  },
+  "observables": [],
+  "keep": null,
+  "time": null,
+  "on_error": "raise",
+  "points": null,
+  "settings": {
+   "relative_tolerance": 1e-10,
+   "maximum_num_steps": 20000,
+   "maximum_time_step": 0.0,
+   "initial_time_step": 0.0,
+   "stiff": true,
+   "linear_solver": "auto",
+   "jacobian": "auto",
+   "absolute_tolerance": {
+    "per_state": [
+     1e-10,
+     1e-10,
+     1e-10,
+     1e-10,
+     1e-10,
+     1e-10,
+     1e-10,
+     1.3612500000000002e-09,
+     6.806250000000002e-11,
+     1e-10,
+     1.3612500000000002e-09,
+     6.806250000000002e-11,
+     1e-10,
+     3.2340000000000007e-13,
+     1.5435000000000002e-12,
+     5.586e-13,
+     1.25685e-12,
+     6.415080000000002e-11,
+     1.46605e-10,
+     2.9321e-10,
+     2.8192964601769908e-12,
+     2.8192964601769908e-12,
+     1.5435000000000002e-10,
+     5.586e-11,
+     6.4150800000000006e-09,
+     1e-10,
+     1e-10,
+     1.2825e-10
+    ]
+   }
+  },
+  "selections": [
+   "time",
+   "[Cve_hctz]",
+   "Aurine_hctz",
+   "PODOSE_hctz"
+  ]
+ },
+ "engine_rounds": [
+  [
+   {
+    "contract": "simulation/1",
+    "start": 0.0,
+    "end": 720.0,
+    "output": {
+     "times": [
+      0.0,
+      30.0,
+      60.0,
+      120.0,
+      240.0,
+      480.0,
+      720.0
+     ]
+    },
+    "preinit": [
+     [
+      "BW",
+      70.0
+     ]
+    ],
+    "changes": [
+     {
+      "time": 30.0,
+      "values": [
+       [
+        "PODOSE_hctz",
+        25.0
+       ]
+      ]
+     }
+    ],
+    "steady_state": null,
+    "steady_state_after": null,
+    "selections": [
+     "time",
+     "[Cve_hctz]",
+     "Aurine_hctz",
+     "PODOSE_hctz"
+    ],
+    "settings": {
+     "relative_tolerance": 1e-10,
+     "maximum_num_steps": 20000,
+     "maximum_time_step": 0.0,
+     "initial_time_step": 0.0,
+     "stiff": true,
+     "linear_solver": "auto",
+     "jacobian": "auto",
+     "absolute_tolerance": {
+      "per_state": [
+       1e-10,
+       1e-10,
+       1e-10,
+       1e-10,
+       1e-10,
+       1e-10,
+       1e-10,
+       1.3612500000000002e-09,
+       6.806250000000002e-11,
+       1e-10,
+       1.3612500000000002e-09,
+       6.806250000000002e-11,
+       1e-10,
+       3.2340000000000007e-13,
+       1.5435000000000002e-12,
+       5.586e-13,
+       1.25685e-12,
+       6.415080000000002e-11,
+       1.46605e-10,
+       2.9321e-10,
+       2.8192964601769908e-12,
+       2.8192964601769908e-12,
+       1.5435000000000002e-10,
+       5.586e-11,
+       6.4150800000000006e-09,
+       1e-10,
+       1e-10,
+       1.2825e-10
+      ]
+     }
+    }
+   }
+  ]
+ ],
+ "result": {
+  "sizes": [
+   [
+    "time",
+    8
+   ]
+  ],
+  "dims": [],
+  "coords": {
+   "time": {
+    "dims": [
+     "time"
+    ],
+    "values": [
+     0.0,
+     30.0,
+     30.0,
+     60.0,
+     120.0,
+     240.0,
+     480.0,
+     720.0
+    ],
+    "unit": "min"
+   }
+  },
+  "variables": {
+   "[Cve_hctz]": {
+    "dims": [
+     "time"
+    ],
+    "shape": [
+     8
+    ],
+    "unit": "mmol/litre",
+    "values": [
+     0.0,
+     0.0,
+     0.0,
+     0.00018238423783024826,
+     0.00045736543112372623,
+     0.0004305645313203428,
+     0.00023835555780329725,
+     0.0001454692969985129
+    ]
+   },
+   "Aurine_hctz": {
+    "dims": [
+     "time"
+    ],
+    "shape": [
+     8
+    ],
+    "unit": "mmol",
+    "values": [
+     0.0,
+     0.0,
+     0.0,
+     0.0003973245810176677,
+     0.004134828414918738,
+     0.0141992681026853,
+     0.02810054979908582,
+     0.03611144447200036
+    ]
+   },
+   "PODOSE_hctz": {
+    "dims": [
+     "time"
+    ],
+    "shape": [
+     8
+    ],
+    "unit": "mg",
+    "values": [
+     0.0,
+     0.0,
+     25.0,
+     1.8270344186957435e-21,
+     4.523798896544524e-39,
+     8.07831184774979e-55,
+     -1.4137777486837755e-73,
+     -7.225362409860543e-93
+    ]
+   }
+  },
+  "order": {
+   "coords": [
+    "time"
+   ],
+   "variables": [
+    "[Cve_hctz]",
+    "Aurine_hctz",
+    "PODOSE_hctz"
+   ]
+  },
+  "attrs": {
+   "dims": [],
+   "units": {
+    "time": "min",
+    "[Cve_hctz]": "mmol/litre",
+    "Aurine_hctz": "mmol",
+    "PODOSE_hctz": "mg"
+   },
+   "scan": {
+    "type": "Scan",
+    "simulation": {
+     "type": "Simulation",
+     "time_unit": "hr",
+     "start": 0.0,
+     "end": 12,
+     "preinit_changes": {
+      "BW": {
+       "value": 70000,
+       "unit": "gram"
+      }
+     },
+     "changes": [
+      {
+       "times": [
+        {
+         "value": 0.5,
+         "unit": "hour"
+        }
+       ],
+       "values": {
+        "PODOSE_hctz": {
+         "value": 25000,
+         "unit": "microgram"
+        }
+       }
+      }
+     ],
+     "presimulation": null,
+     "times": [
+      {
+       "value": 0.0,
+       "unit": "minute"
+      },
+      {
+       "value": 30.0,
+       "unit": "minute"
+      },
+      {
+       "value": 60.0,
+       "unit": "minute"
+      },
+      {
+       "value": 120.0,
+       "unit": "minute"
+      },
+      {
+       "value": 240.0,
+       "unit": "minute"
+      },
+      {
+       "value": 480.0,
+       "unit": "minute"
+      },
+      {
+       "value": 720.0,
+       "unit": "minute"
+      }
+     ],
+     "steps": null,
+     "time_shift": 0.0
+    },
+    "dimensions": []
+   },
+   "engine": "core",
+   "integrator_settings": {
+    "absolute_tolerance": {
+     "amount": 1e-10,
+     "concentration": 1e-10,
+     "other": 1e-10,
+     "ids": {},
+     "relative": null,
+     "scales": {}
+    },
+    "relative_tolerance": 1e-10
+   },
+   "changes": [
+    30.0
+   ]
+  }
+ },
+ "error": null,
+ "repr": "ScanResult(time: 8; [Cve_hctz], Aurine_hctz, PODOSE_hctz)"
+}

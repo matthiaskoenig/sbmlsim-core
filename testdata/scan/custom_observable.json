@@ -1,0 +1,546 @@
+{
+ "case": "custom_observable",
+ "model": "scan_fold.xml",
+ "core_version": "0.40.0",
+ "description": {
+  "contract": "model/2",
+  "compiler": "sbmlsim-compiler 0.40.0",
+  "id": "scan_fold",
+  "states": [
+   {
+    "id": "B",
+    "kind": "parameter",
+    "initial": 1.0,
+    "settable": true
+   },
+   {
+    "id": "C",
+    "kind": {
+     "species": {
+      "compartment": "c",
+      "has_only_substance_units": false,
+      "stores_concentration": false
+     }
+    },
+    "initial": 8.0,
+    "settable": true
+   },
+   {
+    "id": "T",
+    "kind": {
+     "species": {
+      "compartment": "c",
+      "has_only_substance_units": false,
+      "stores_concentration": false
+     }
+    },
+    "initial": 0.0,
+    "settable": true
+   }
+  ],
+  "parameters": [
+   {
+    "id": "c",
+    "kind": "compartment",
+    "initial": 2.0,
+    "settable": true
+   },
+   {
+    "id": "k",
+    "kind": "parameter",
+    "initial": 0.2,
+    "settable": true
+   },
+   {
+    "id": "kb",
+    "kind": "parameter",
+    "initial": 0.0,
+    "settable": true
+   },
+   {
+    "id": "r",
+    "kind": "parameter",
+    "initial": 0.8,
+    "settable": false
+   }
+  ],
+  "selections": [
+   {
+    "id": "c",
+    "index": 0
+   },
+   {
+    "id": "C",
+    "index": 1
+   },
+   {
+    "id": "T",
+    "index": 2
+   },
+   {
+    "id": "[C]",
+    "index": 3
+   },
+   {
+    "id": "[T]",
+    "index": 4
+   },
+   {
+    "id": "k",
+    "index": 5
+   },
+   {
+    "id": "kb",
+    "index": 6
+   },
+   {
+    "id": "B",
+    "index": 7
+   },
+   {
+    "id": "r",
+    "index": 8
+   },
+   {
+    "id": "J",
+    "index": 9
+   }
+  ],
+  "jacobian": {
+   "analytic": {
+    "n": 3,
+    "col_ptr": [
+     0,
+     1,
+     3,
+     3
+    ],
+    "row_idx": [
+     0,
+     1,
+     2
+    ]
+   }
+  },
+  "jacobian_p": {
+   "rows": 3,
+   "col_ptr": [
+    0,
+    2,
+    4,
+    5,
+    5
+   ],
+   "row_idx": [
+    1,
+    2,
+    1,
+    2,
+    0
+   ]
+  },
+  "events": [],
+  "n_roots": 0,
+  "n_discontinuity_roots": 0,
+  "n_constants": 3,
+  "units": {}
+ },
+ "request": {
+  "contract": "scan/1",
+  "scan": {
+   "type": "Scan",
+   "simulation": {
+    "type": "Simulation",
+    "time_unit": null,
+    "start": 0.0,
+    "end": 5,
+    "preinit_changes": {},
+    "changes": [],
+    "presimulation": null,
+    "times": null,
+    "steps": 10,
+    "time_shift": 0.0
+   },
+   "dimensions": [
+    {
+     "id": "rate",
+     "kind": "values",
+     "labels": [
+      0,
+      1
+     ],
+     "values": {
+      "k": [
+       0.1,
+       0.3
+      ]
+     },
+     "simulations": {},
+     "models": {},
+     "at": null,
+     "design": null,
+     "coordinates": {}
+    }
+   ]
+  },
+  "observables": [
+   {
+    "type": "Custom",
+    "id": "auc",
+    "function": "scripts.scan_fixtures:auc_of_c",
+    "unit": "dimensionless",
+    "symbols": [
+     "[C]"
+    ],
+    "kind": "scalar"
+   },
+   {
+    "type": "Custom",
+    "id": "twice",
+    "function": "scripts.scan_fixtures:doubled_c",
+    "unit": "dimensionless",
+    "symbols": [
+     "[C]"
+    ],
+    "kind": "timecourse"
+   }
+  ],
+  "keep": null,
+  "time": null,
+  "on_error": "raise",
+  "points": null,
+  "settings": {
+   "relative_tolerance": 1e-10,
+   "maximum_num_steps": 20000,
+   "maximum_time_step": 0.0,
+   "initial_time_step": 0.0,
+   "stiff": true,
+   "linear_solver": "auto",
+   "jacobian": "auto",
+   "absolute_tolerance": {
+    "per_state": [
+     1e-10,
+     2e-10,
+     2e-10
+    ]
+   }
+  },
+  "selections": [
+   "time",
+   "C",
+   "T",
+   "k",
+   "kb",
+   "B",
+   "r",
+   "J",
+   "c",
+   "[C]",
+   "[T]"
+  ]
+ },
+ "engine_rounds": [
+  [
+   {
+    "contract": "simulation/1",
+    "start": 0.0,
+    "end": 5.0,
+    "output": {
+     "times": [
+      0.0,
+      0.5,
+      1.0,
+      1.5,
+      2.0,
+      2.5,
+      3.0,
+      3.5,
+      4.0,
+      4.5,
+      5.0
+     ]
+    },
+    "preinit": [
+     [
+      "k",
+      0.1
+     ]
+    ],
+    "changes": [],
+    "steady_state": null,
+    "steady_state_after": null,
+    "selections": [
+     "time",
+     "[C]"
+    ],
+    "settings": {
+     "relative_tolerance": 1e-10,
+     "maximum_num_steps": 20000,
+     "maximum_time_step": 0.0,
+     "initial_time_step": 0.0,
+     "stiff": true,
+     "linear_solver": "auto",
+     "jacobian": "auto",
+     "absolute_tolerance": {
+      "per_state": [
+       1e-10,
+       2e-10,
+       2e-10
+      ]
+     }
+    }
+   },
+   {
+    "contract": "simulation/1",
+    "start": 0.0,
+    "end": 5.0,
+    "output": {
+     "times": [
+      0.0,
+      0.5,
+      1.0,
+      1.5,
+      2.0,
+      2.5,
+      3.0,
+      3.5,
+      4.0,
+      4.5,
+      5.0
+     ]
+    },
+    "preinit": [
+     [
+      "k",
+      0.3
+     ]
+    ],
+    "changes": [],
+    "steady_state": null,
+    "steady_state_after": null,
+    "selections": [
+     "time",
+     "[C]"
+    ],
+    "settings": {
+     "relative_tolerance": 1e-10,
+     "maximum_num_steps": 20000,
+     "maximum_time_step": 0.0,
+     "initial_time_step": 0.0,
+     "stiff": true,
+     "linear_solver": "auto",
+     "jacobian": "auto",
+     "absolute_tolerance": {
+      "per_state": [
+       1e-10,
+       2e-10,
+       2e-10
+      ]
+     }
+    }
+   }
+  ]
+ ],
+ "result": {
+  "sizes": [
+   [
+    "rate",
+    2
+   ],
+   [
+    "time",
+    11
+   ]
+  ],
+  "dims": [
+   "rate"
+  ],
+  "coords": {
+   "rate": {
+    "dims": [
+     "rate"
+    ],
+    "values": [
+     0,
+     1
+    ],
+    "unit": ""
+   },
+   "k": {
+    "dims": [
+     "rate"
+    ],
+    "values": [
+     0.1,
+     0.3
+    ],
+    "unit": ""
+   },
+   "time": {
+    "dims": [
+     "time"
+    ],
+    "values": [
+     0.0,
+     0.5,
+     1.0,
+     1.5,
+     2.0,
+     2.5,
+     3.0,
+     3.5,
+     4.0,
+     4.5,
+     5.0
+    ],
+    "unit": "second"
+   }
+  },
+  "variables": {
+   "twice": {
+    "dims": [
+     "rate",
+     "time"
+    ],
+    "shape": [
+     2,
+     11
+    ],
+    "unit": "dimensionless",
+    "values": [
+     8.0,
+     7.609835396369535,
+     7.238699343319222,
+     6.885663808057389,
+     6.54984601916515,
+     6.23040625808514,
+     5.926545759425841,
+     5.6375047122838,
+     5.362560364562539,
+     5.101025210486266,
+     4.852245275824614,
+     8.0,
+     6.885663808802655,
+     5.926545761129604,
+     5.1010252094238195,
+     4.390493086919279,
+     3.7789324214284488,
+     3.252557278424413,
+     2.799501994119205,
+     2.409553697045151,
+     2.0739220872742816,
+     1.785041283501001
+    ]
+   },
+   "auc": {
+    "dims": [
+     "rate"
+    ],
+    "shape": [
+     2
+    ],
+    "unit": "dimensionless",
+    "values": [
+     15.742052377416798,
+     10.377678996579341
+    ]
+   }
+  },
+  "order": {
+   "coords": [
+    "rate",
+    "k",
+    "time"
+   ],
+   "variables": [
+    "twice",
+    "auc"
+   ]
+  },
+  "attrs": {
+   "dims": [
+    "rate"
+   ],
+   "units": {
+    "time": "second",
+    "twice": "dimensionless",
+    "auc": "dimensionless",
+    "rate": "",
+    "k": ""
+   },
+   "scan": {
+    "type": "Scan",
+    "simulation": {
+     "type": "Simulation",
+     "time_unit": null,
+     "start": 0.0,
+     "end": 5,
+     "preinit_changes": {},
+     "changes": [],
+     "presimulation": null,
+     "times": null,
+     "steps": 10,
+     "time_shift": 0.0
+    },
+    "dimensions": [
+     {
+      "id": "rate",
+      "kind": "values",
+      "labels": [
+       0,
+       1
+      ],
+      "values": {
+       "k": [
+        0.1,
+        0.3
+       ]
+      },
+      "simulations": {},
+      "models": {},
+      "at": null,
+      "design": null,
+      "coordinates": {}
+     }
+    ]
+   },
+   "engine": "core",
+   "integrator_settings": {
+    "absolute_tolerance": {
+     "amount": 1e-10,
+     "concentration": 1e-10,
+     "other": 1e-10,
+     "ids": {},
+     "relative": null,
+     "scales": {}
+    },
+    "relative_tolerance": 1e-10
+   },
+   "changes": [],
+   "observables": [
+    {
+     "type": "Custom",
+     "id": "auc",
+     "function": "scripts.scan_fixtures:auc_of_c",
+     "unit": "dimensionless",
+     "symbols": [
+      "[C]"
+     ],
+     "kind": "scalar"
+    },
+    {
+     "type": "Custom",
+     "id": "twice",
+     "function": "scripts.scan_fixtures:doubled_c",
+     "unit": "dimensionless",
+     "symbols": [
+      "[C]"
+     ],
+     "kind": "timecourse"
+    }
+   ]
+  }
+ },
+ "error": null,
+ "repr": "ScanResult(rate: 2, time: 11; twice, auc)"
+}

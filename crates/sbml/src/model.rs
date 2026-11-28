@@ -812,12 +812,27 @@ fn read_model(m: X, lv: Level) -> Result<Model, ReadError> {
         if c.attribute("constant").is_none() {
             defaulted.push(id.clone());
         }
+        // a compartment of Level 1 and Level 2 has three dimensions by default
+        let spatial_dimensions = match double(c, "spatialDimensions")? {
+            None if !lv.is_level_3() => Some(3.0),
+            dimensions => dimensions,
+        };
         compartments.push(Compartment {
             id,
-            spatial_dimensions: double(c, "spatialDimensions")?,
+            spatial_dimensions,
             // the size of a compartment of Level 1 is its volume
             size: double(c, if lv.is_level_1() { "volume" } else { "size" })?,
-            units: opt(c, "units"),
+            // a compartment of Level 1 and Level 2 without units has the built in unit of its
+            // dimensions, as the conversion of libsbml to Level 3 states it
+            units: match opt(c, "units") {
+                None if !lv.is_level_3() => match spatial_dimensions.map(|d| d as i64) {
+                    Some(3) => Some("volume".to_string()),
+                    Some(2) => Some("area".to_string()),
+                    Some(1) => Some("length".to_string()),
+                    _ => None,
+                },
+                units => units,
+            },
             // a compartment of Level 1 and Level 2 is constant by default
             constant: flag(c, "constant", !lv.is_level_3())?,
         });
@@ -910,6 +925,8 @@ fn read_model(m: X, lv: Level) -> Result<Model, ReadError> {
                     initial_amount: double(s, "initialAmount")?,
                     initial_concentration: double(s, "initialConcentration")?,
                     // the substance units of a species of Level 1 are its `units`
+                    // a species of Level 1 and Level 2 without them has the built in
+                    // substance units, as the conversion of libsbml to Level 3 states them
                     substance_units: opt(
                         s,
                         if lv.is_level_1() {
@@ -917,7 +934,8 @@ fn read_model(m: X, lv: Level) -> Result<Model, ReadError> {
                         } else {
                             "substanceUnits"
                         },
-                    ),
+                    )
+                    .or_else(|| (!lv.is_level_3()).then(|| "substance".to_string())),
                     has_only_substance_units: flag(s, "hasOnlySubstanceUnits", false)?,
                     boundary_condition: flag(s, "boundaryCondition", false)?,
                     constant: flag(s, "constant", false)?,

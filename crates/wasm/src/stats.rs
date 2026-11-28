@@ -34,7 +34,7 @@ use sbmlsim_stats::fisher::{self, DEFAULT_RANK_TOLERANCE};
 use sbmlsim_stats::testing::{self, MARGIN, Side};
 use sbmlsim_stats::{Scale, StatsError, binding, metrics, posterior, uncertainty};
 
-use crate::give;
+use crate::{bytes, give};
 
 /// The error of a call: the name of the kind of the error (of [`sbmlsim_stats::ErrorKind`], or
 /// `TypeError` of a request the binding cannot read) and its message.
@@ -1123,18 +1123,4 @@ pub unsafe extern "C" fn stats_call(
         give(values, out.add(2));
     }
     status
-}
-
-/// The bytes of a buffer of the caller.
-///
-/// # Safety
-///
-/// `pointer` is a buffer of [`crate::allocate`] of `len` bytes, or null.
-unsafe fn bytes<'a>(pointer: *const u8, len: usize) -> &'a [u8] {
-    if pointer.is_null() || len == 0 {
-        &[]
-    } else {
-        // SAFETY: the caller gives a buffer of `allocate` of exactly this length
-        unsafe { std::slice::from_raw_parts(pointer, len) }
-    }
 }

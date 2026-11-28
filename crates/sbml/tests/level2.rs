@@ -137,6 +137,8 @@ fn the_size_and_the_outside_of_a_compartment_of_level_2() {
     .unwrap();
     assert_eq!(doc.model.compartments[1].size, Some(1.0));
     assert_eq!(doc.model.compartments[1].spatial_dimensions, Some(3.0));
+    // and has three dimensions unless it says otherwise, so its unit is the one of a volume
+    assert_eq!(doc.model.compartments[0].spatial_dimensions, Some(3.0));
     // a compartment of Level 2 is constant unless it says otherwise
     assert!(doc.model.compartments[1].constant);
     // `outside` is a relation without mathematics, the model is the same without it

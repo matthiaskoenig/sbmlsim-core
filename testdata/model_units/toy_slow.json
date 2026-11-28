@@ -1,0 +1,8 @@
+{
+ "time": "min",
+ "Vc": "litre",
+ "A": "mmol",
+ "[A]": "mmol/litre",
+ "k": "1/min",
+ "DECAY": "mmol/min"
+}

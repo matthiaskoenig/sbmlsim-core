@@ -101,6 +101,14 @@
 //! [`SimulationRequest`] (0.12.0) with the `sensitivities` of a [`SimulationResult`], both
 //! absent by default, which an engine before 0.12.0 refuses the same way.
 //!
+//! Additions of `model/2` since its release, which a description of a release before reads as
+//! it did: the [`ModelDescription::time_unit`], the [`ModelDescription::initial_assignments`],
+//! [`ModelDescription::time_dependent`] and [`ModelDescription::unit_definitions`] (0.45.0),
+//! absent by default, which the planner of a scan (`sbmlsim-scan`) reads to plan the requests
+//! of a model from its description alone, and which a reader before 0.45.0 refuses as unknown
+//! fields. Since 0.45.0 the [`ModelDescription::units`] are the units sbmlsim names, not the
+//! factor expressions of the compiler.
+//!
 //! A batched kernel (`kernel/2`, [`KERNEL_CONTRACT`]) is a model of ordinary differential
 //! equations together with the Rosenbrock integrator RODAS4 of the QFunction target of the C
 //! target (`sbmlsim-c`) in one WebAssembly module, which advances any number of points (the
@@ -320,7 +328,14 @@ pub struct ModelDescription {
     /// The number of constants of the model, which `p` holds behind the parameters (see the
     /// crate documentation).
     pub n_constants: u32,
-    /// The unit expression of every entity id.
+    /// The units sbmlsim gives the entities of the model (`UnitsInformation.from_sbml_doc` of
+    /// sbmlsim, which the compiler ports): the key `time` (`second` for a model without a time
+    /// unit), every compartment, species (`S` and `[S]`) and parameter (empty for an entity
+    /// without units, the default units of the model name none), every reaction with a kinetic
+    /// law (the unit libsbml derives for it, named by the first unit definition of the same
+    /// unit) and every kinetic law with an id; a unit definition is written as pint reads it
+    /// (`mmol/min`), else named by its id. Before 0.45.0 the factor expressions of the
+    /// compiler (`0.001*mole*(60*second)**-1`) of the entities with units.
     pub units: BTreeMap<String, String>,
     /// The driven species, in the order they were given to the compiler; empty without.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -329,6 +344,30 @@ pub struct ModelDescription {
     /// with driven species.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub t_ref: Option<u32>,
+    /// The unit definitions [`ModelDescription::units`] name by their id (or `<id>_<n>`)
+    /// because pint has no unit of them, a factor which is no prefix (`(133.322*newton)/m^2`),
+    /// the name to its expression of pint, as sbmlsim defines them in its registry; empty by
+    /// default. A registry reads the units of the model with them
+    /// (`Registry::with_model_units` of `sbmlsim-units`).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub unit_definitions: BTreeMap<String, String>,
+    /// The time unit of the model as sbmlsim names it, `units["time"]`; absent in a description
+    /// before 0.45.0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time_unit: Option<String>,
+    /// The ids of the parameters, compartments and species references whose value as loaded an
+    /// initial assignment of the model computes, in the order of the states and then of the
+    /// parameters; empty by default. Their value as loaded follows the values the assignment
+    /// reads, so a pre-initialization of those values moves it, where the value of an entity
+    /// without one (and without a rule) is the number its SBML states.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub initial_assignments: Vec<String>,
+    /// Whether a math of the model reads the time or a delay, or an event of it has a delay;
+    /// `false` by default. Such a model depends on the absolute time of its clock, so a steady
+    /// state after the end of a simulation continues at the end of its timecourse (as
+    /// libroadrunner does) and not at the time 0.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub time_dependent: bool,
 }
 
 /// A driven species: a species which left the state vector and follows the prescribed path
@@ -1021,6 +1060,10 @@ mod tests {
             units: BTreeMap::new(),
             driven: Vec::new(),
             t_ref: None,
+            unit_definitions: BTreeMap::from([("u".to_string(), "3.7*second".to_string())]),
+            time_unit: Some("60*second".to_string()),
+            initial_assignments: vec!["S".to_string()],
+            time_dependent: true,
         };
         let sizes = ModelSizes::of(&d);
         assert_eq!(sizes.words(), [1, 0, 1, 1, 3, 2, 1]);
@@ -1038,6 +1081,19 @@ mod tests {
         );
         let back: ModelDescription = serde_json::from_str(&json).unwrap();
         assert_eq!(d, back);
+        // the additions of 0.45.0 are absent by default, so a description before them reads
+        let mut value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let object = value.as_object_mut().unwrap();
+        for key in ["time_unit", "initial_assignments", "time_dependent"] {
+            assert!(object.remove(key).is_some(), "{key}");
+        }
+        let before: ModelDescription = serde_json::from_value(value).unwrap();
+        assert_eq!(before.time_unit, None);
+        assert!(before.initial_assignments.is_empty() && !before.time_dependent);
+        let json = serde_json::to_string(&before).unwrap();
+        for key in ["time_unit", "initial_assignments", "time_dependent"] {
+            assert!(!json.contains(key), "{key}");
+        }
 
         let driven = ModelDescription {
             driven: vec![DrivenSpecies {

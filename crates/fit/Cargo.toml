@@ -32,6 +32,9 @@ rayon = { version = "1.10", optional = true }
 # the pool of the batch, which an evaluation of the objective fans out on
 sbmlsim-batch = { path = "../batch", optional = true }
 sbmlsim-abi = { path = "../abi" }
+# the rules of the timecourses of sbmlsim: the interpolation of a measurement between two
+# rows, the samples of a PK analysis and the reductions, one implementation with the scan
+sbmlsim-timecourse = { path = "../timecourse" }
 # the non-compartmental analysis of a curve of a `pk` reduction, the kernel the python package
 # of pkpdutils runs as well, which a fit of a parameter of the analysis is held to; the crate is
 # not on crates.io, so it is a dependency on the tag of a release

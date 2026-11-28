@@ -1,0 +1,1330 @@
+[
+ {
+  "expression": "(0.001*litre)**-1",
+  "factor_to_root": 999999.9999999999,
+  "dimensions": {
+   "[length]": -3.0
+  }
+ },
+ {
+  "expression": "(0.001*mole)/(60*second)",
+  "factor_to_root": 1.6666666666666667e-05,
+  "dimensions": {
+   "[substance]": 1.0,
+   "[time]": -1.0
+  }
+ },
+ {
+  "expression": "(0.001*mole)/litre",
+  "factor_to_root": 0.9999999999999999,
+  "dimensions": {
+   "[length]": -3.0,
+   "[substance]": 1.0
+  }
+ },
+ {
+  "expression": "(3600*second)**-1",
+  "factor_to_root": 0.0002777777777777778,
+  "dimensions": {
+   "[time]": -1.0
+  }
+ },
+ {
+  "expression": "(60*second)**-1",
+  "factor_to_root": 0.016666666666666666,
+  "dimensions": {
+   "[time]": -1.0
+  }
+ },
+ {
+  "expression": "0.000000000000001*litre",
+  "factor_to_root": 1.0000000000000003e-18,
+  "dimensions": {
+   "[length]": 3.0
+  }
+ },
+ {
+  "expression": "0.001*gram",
+  "factor_to_root": 0.001,
+  "dimensions": {
+   "[mass]": 1.0
+  }
+ },
+ {
+  "expression": "0.001*gram*(60*second)**-1",
+  "factor_to_root": 1.6666666666666667e-05,
+  "dimensions": {
+   "[mass]": 1.0,
+   "[time]": -1.0
+  }
+ },
+ {
+  "expression": "0.001*litre",
+  "factor_to_root": 1.0000000000000002e-06,
+  "dimensions": {
+   "[length]": 3.0
+  }
+ },
+ {
+  "expression": "0.001*litre*(60*second)**-1",
+  "factor_to_root": 1.666666666666667e-08,
+  "dimensions": {
+   "[length]": 3.0,
+   "[time]": -1.0
+  }
+ },
+ {
+  "expression": "0.001*litre*litre**-1",
+  "factor_to_root": 0.001,
+  "dimensions": {}
+ },
+ {
+  "expression": "0.001*litre*second**-1",
+  "factor_to_root": 1.0000000000000002e-06,
+  "dimensions": {
+   "[length]": 3.0,
+   "[time]": -1.0
+  }
+ },
+ {
+  "expression": "0.001*litre*second**-1*(1000*gram)**-1",
+  "factor_to_root": 1.0000000000000003e-09,
+  "dimensions": {
+   "[length]": 3.0,
+   "[mass]": -1.0,
+   "[time]": -1.0
+  }
+ },
+ {
+  "expression": "0.001*mole",
+  "factor_to_root": 0.001,
+  "dimensions": {
+   "[substance]": 1.0
+  }
+ },
+ {
+  "expression": "0.001*mole*(60*second)**-1",
+  "factor_to_root": 1.6666666666666667e-05,
+  "dimensions": {
+   "[substance]": 1.0,
+   "[time]": -1.0
+  }
+ },
+ {
+  "expression": "0.001*mole*litre**-1",
+  "factor_to_root": 0.9999999999999999,
+  "dimensions": {
+   "[length]": -3.0,
+   "[substance]": 1.0
+  }
+ },
+ {
+  "expression": "0.01*metre",
+  "factor_to_root": 0.01,
+  "dimensions": {
+   "[length]": 1.0
+  }
+ },
+ {
+  "expression": "1 / minute",
+  "factor_to_root": 0.016666666666666666,
+  "dimensions": {
+   "[time]": -1.0
+  }
+ },
+ {
+  "expression": "1/(kg * min)",
+  "factor_to_root": 1.6666666666666667e-05,
+  "dimensions": {
+   "[mass]": -1.0,
+   "[time]": -1.0
+  }
+ },
+ {
+  "expression": "1/(l * min)",
+  "factor_to_root": 16.666666666666664,
+  "dimensions": {
+   "[length]": -3.0,
+   "[time]": -1.0
+  }
+ },
+ {
+  "expression": "1/hr",
+  "factor_to_root": 0.0002777777777777778,
+  "dimensions": {
+   "[time]": -1.0
+  }
+ },
+ {
+  "expression": "1/item",
+  "factor_to_root": 1.0,
+  "dimensions": {}
+ },
+ {
+  "expression": "1/min",
+  "factor_to_root": 0.016666666666666666,
+  "dimensions": {
+   "[time]": -1.0
+  }
+ },
+ {
+  "expression": "1/minute",
+  "factor_to_root": 0.016666666666666666,
+  "dimensions": {
+   "[time]": -1.0
+  }
+ },
+ {
+  "expression": "1/ml",
+  "factor_to_root": 999999.9999999999,
+  "dimensions": {
+   "[length]": -3.0
+  }
+ },
+ {
+  "expression": "1/s",
+  "factor_to_root": 1.0,
+  "dimensions": {
+   "[time]": -1.0
+  }
+ },
+ {
+  "expression": "1000*gram",
+  "factor_to_root": 1000.0,
+  "dimensions": {
+   "[mass]": 1.0
+  }
+ },
+ {
+  "expression": "133.32239*newton*metre**-2",
+  "factor_to_root": 133322.39,
+  "dimensions": {
+   "[length]": -1.0,
+   "[mass]": 1.0,
+   "[time]": -2.0
+  }
+ },
+ {
+  "expression": "60*second*(86400*second)**-1",
+  "factor_to_root": 0.0006944444444444444,
+  "dimensions": {}
+ },
+ {
+  "expression": "ampere",
+  "factor_to_root": 1.0,
+  "dimensions": {
+   "[current]": 1.0
+  }
+ },
+ {
+  "expression": "becquerel",
+  "factor_to_root": 1.0,
+  "dimensions": {
+   "[time]": -1.0
+  }
+ },
+ {
+  "expression": "candela",
+  "factor_to_root": 1.0,
+  "dimensions": {
+   "[luminosity]": 1.0
+  }
+ },
+ {
+  "expression": "cm",
+  "factor_to_root": 0.01,
+  "dimensions": {
+   "[length]": 1.0
+  }
+ },
+ {
+  "expression": "coulomb",
+  "factor_to_root": 1.0,
+  "dimensions": {
+   "[current]": 1.0,
+   "[time]": 1.0
+  }
+ },
+ {
+  "expression": "count",
+  "factor_to_root": 1.0,
+  "dimensions": {}
+ },
+ {
+  "expression": "day",
+  "factor_to_root": 86400.0,
+  "dimensions": {
+   "[time]": 1.0
+  }
+ },
+ {
+  "expression": "dimensionless",
+  "factor_to_root": 1.0,
+  "dimensions": {}
+ },
+ {
+  "expression": "farad",
+  "factor_to_root": 0.001,
+  "dimensions": {
+   "[current]": 2.0,
+   "[length]": -2.0,
+   "[mass]": -1.0,
+   "[time]": 4.0
+  }
+ },
+ {
+  "expression": "fl",
+  "factor_to_root": 1.0000000000000003e-18,
+  "dimensions": {
+   "[length]": 3.0
+  }
+ },
+ {
+  "expression": "g",
+  "factor_to_root": 1.0,
+  "dimensions": {
+   "[mass]": 1.0
+  }
+ },
+ {
+  "expression": "g/hr",
+  "factor_to_root": 0.0002777777777777778,
+  "dimensions": {
+   "[mass]": 1.0,
+   "[time]": -1.0
+  }
+ },
+ {
+  "expression": "g/l",
+  "factor_to_root": 999.9999999999999,
+  "dimensions": {
+   "[length]": -3.0,
+   "[mass]": 1.0
+  }
+ },
+ {
+  "expression": "g/min",
+  "factor_to_root": 0.016666666666666666,
+  "dimensions": {
+   "[mass]": 1.0,
+   "[time]": -1.0
+  }
+ },
+ {
+  "expression": "g/ml",
+  "factor_to_root": 999999.9999999999,
+  "dimensions": {
+   "[length]": -3.0,
+   "[mass]": 1.0
+  }
+ },
+ {
+  "expression": "g/mol",
+  "factor_to_root": 1.0,
+  "dimensions": {
+   "[mass]": 1.0,
+   "[substance]": -1.0
+  }
+ },
+ {
+  "expression": "gram",
+  "factor_to_root": 1.0,
+  "dimensions": {
+   "[mass]": 1.0
+  }
+ },
+ {
+  "expression": "gram*mole**-1",
+  "factor_to_root": 1.0,
+  "dimensions": {
+   "[mass]": 1.0,
+   "[substance]": -1.0
+  }
+ },
+ {
+  "expression": "gray",
+  "factor_to_root": 1.0,
+  "dimensions": {
+   "[length]": 2.0,
+   "[time]": -2.0
+  }
+ },
+ {
+  "expression": "h",
+  "factor_to_root": 3600.0,
+  "dimensions": {
+   "[time]": 1.0
+  }
+ },
+ {
+  "expression": "henry",
+  "factor_to_root": 1000.0,
+  "dimensions": {
+   "[current]": -2.0,
+   "[length]": 2.0,
+   "[mass]": 1.0,
+   "[time]": -2.0
+  }
+ },
+ {
+  "expression": "hertz",
+  "factor_to_root": 1.0,
+  "dimensions": {
+   "[time]": -1.0
+  }
+ },
+ {
+  "expression": "hour",
+  "factor_to_root": 3600.0,
+  "dimensions": {
+   "[time]": 1.0
+  }
+ },
+ {
+  "expression": "hr",
+  "factor_to_root": 3600.0,
+  "dimensions": {
+   "[time]": 1.0
+  }
+ },
+ {
+  "expression": "item",
+  "factor_to_root": 1.0,
+  "dimensions": {}
+ },
+ {
+  "expression": "item/(0.000000000000001*litre)",
+  "factor_to_root": 9.999999999999997e+17,
+  "dimensions": {
+   "[length]": -3.0
+  }
+ },
+ {
+  "expression": "item/(60*second)",
+  "factor_to_root": 0.016666666666666666,
+  "dimensions": {
+   "[time]": -1.0
+  }
+ },
+ {
+  "expression": "item/fl",
+  "factor_to_root": 9.999999999999997e+17,
+  "dimensions": {
+   "[length]": -3.0
+  }
+ },
+ {
+  "expression": "joule",
+  "factor_to_root": 1000.0,
+  "dimensions": {
+   "[length]": 2.0,
+   "[mass]": 1.0,
+   "[time]": -2.0
+  }
+ },
+ {
+  "expression": "katal",
+  "factor_to_root": 1.0,
+  "dimensions": {
+   "[substance]": 1.0,
+   "[time]": -1.0
+  }
+ },
+ {
+  "expression": "kelvin",
+  "factor_to_root": 1.0,
+  "dimensions": {
+   "[temperature]": 1.0
+  }
+ },
+ {
+  "expression": "kg",
+  "factor_to_root": 1000.0,
+  "dimensions": {
+   "[mass]": 1.0
+  }
+ },
+ {
+  "expression": "kilogram",
+  "factor_to_root": 1000.0,
+  "dimensions": {
+   "[mass]": 1.0
+  }
+ },
+ {
+  "expression": "l",
+  "factor_to_root": 0.0010000000000000002,
+  "dimensions": {
+   "[length]": 3.0
+  }
+ },
+ {
+  "expression": "l/(kg * min)",
+  "factor_to_root": 1.666666666666667e-08,
+  "dimensions": {
+   "[length]": 3.0,
+   "[mass]": -1.0,
+   "[time]": -1.0
+  }
+ },
+ {
+  "expression": "l/(mmol * min)",
+  "factor_to_root": 0.01666666666666667,
+  "dimensions": {
+   "[length]": 3.0,
+   "[substance]": -1.0,
+   "[time]": -1.0
+  }
+ },
+ {
+  "expression": "l/hr",
+  "factor_to_root": 2.7777777777777787e-07,
+  "dimensions": {
+   "[length]": 3.0,
+   "[time]": -1.0
+  }
+ },
+ {
+  "expression": "l/kg",
+  "factor_to_root": 1.0000000000000002e-06,
+  "dimensions": {
+   "[length]": 3.0,
+   "[mass]": -1.0
+  }
+ },
+ {
+  "expression": "l/min",
+  "factor_to_root": 1.666666666666667e-05,
+  "dimensions": {
+   "[length]": 3.0,
+   "[time]": -1.0
+  }
+ },
+ {
+  "expression": "l/ml",
+  "factor_to_root": 1000.0,
+  "dimensions": {}
+ },
+ {
+  "expression": "liter",
+  "factor_to_root": 0.0010000000000000002,
+  "dimensions": {
+   "[length]": 3.0
+  }
+ },
+ {
+  "expression": "liter / hour",
+  "factor_to_root": 2.7777777777777787e-07,
+  "dimensions": {
+   "[length]": 3.0,
+   "[time]": -1.0
+  }
+ },
+ {
+  "expression": "litre",
+  "factor_to_root": 0.0010000000000000002,
+  "dimensions": {
+   "[length]": 3.0
+  }
+ },
+ {
+  "expression": "litre*(0.001*litre)**-1",
+  "factor_to_root": 1000.0,
+  "dimensions": {}
+ },
+ {
+  "expression": "litre*(1000*gram)**-1",
+  "factor_to_root": 1.0000000000000002e-06,
+  "dimensions": {
+   "[length]": 3.0,
+   "[mass]": -1.0
+  }
+ },
+ {
+  "expression": "litre*(60*second)**-1",
+  "factor_to_root": 1.666666666666667e-05,
+  "dimensions": {
+   "[length]": 3.0,
+   "[time]": -1.0
+  }
+ },
+ {
+  "expression": "lumen",
+  "factor_to_root": 1.0,
+  "dimensions": {
+   "[luminosity]": 1.0
+  }
+ },
+ {
+  "expression": "lux",
+  "factor_to_root": 1.0,
+  "dimensions": {
+   "[length]": -2.0,
+   "[luminosity]": 1.0
+  }
+ },
+ {
+  "expression": "m",
+  "factor_to_root": 1.0,
+  "dimensions": {
+   "[length]": 1.0
+  }
+ },
+ {
+  "expression": "mM",
+  "factor_to_root": 0.9999999999999999,
+  "dimensions": {
+   "[length]": -3.0,
+   "[substance]": 1.0
+  }
+ },
+ {
+  "expression": "mM*min",
+  "factor_to_root": 59.99999999999999,
+  "dimensions": {
+   "[length]": -3.0,
+   "[substance]": 1.0,
+   "[time]": 1.0
+  }
+ },
+ {
+  "expression": "m^2",
+  "factor_to_root": 1.0,
+  "dimensions": {
+   "[length]": 2.0
+  }
+ },
+ {
+  "expression": "m^2/kg",
+  "factor_to_root": 0.001,
+  "dimensions": {
+   "[length]": 2.0,
+   "[mass]": -1.0
+  }
+ },
+ {
+  "expression": "m^3",
+  "factor_to_root": 1.0,
+  "dimensions": {
+   "[length]": 3.0
+  }
+ },
+ {
+  "expression": "meter",
+  "factor_to_root": 1.0,
+  "dimensions": {
+   "[length]": 1.0
+  }
+ },
+ {
+  "expression": "meter ** 3 * millimole / liter / mole",
+  "factor_to_root": 0.9999999999999999,
+  "dimensions": {}
+ },
+ {
+  "expression": "meter^2",
+  "factor_to_root": 1.0,
+  "dimensions": {
+   "[length]": 2.0
+  }
+ },
+ {
+  "expression": "metre",
+  "factor_to_root": 1.0,
+  "dimensions": {
+   "[length]": 1.0
+  }
+ },
+ {
+  "expression": "metre**2",
+  "factor_to_root": 1.0,
+  "dimensions": {
+   "[length]": 2.0
+  }
+ },
+ {
+  "expression": "metre**3",
+  "factor_to_root": 1.0,
+  "dimensions": {
+   "[length]": 3.0
+  }
+ },
+ {
+  "expression": "mg",
+  "factor_to_root": 0.001,
+  "dimensions": {
+   "[mass]": 1.0
+  }
+ },
+ {
+  "expression": "mg*hr/l",
+  "factor_to_root": 3599.9999999999995,
+  "dimensions": {
+   "[length]": -3.0,
+   "[mass]": 1.0,
+   "[time]": 1.0
+  }
+ },
+ {
+  "expression": "mg/day",
+  "factor_to_root": 1.1574074074074074e-08,
+  "dimensions": {
+   "[mass]": 1.0,
+   "[time]": -1.0
+  }
+ },
+ {
+  "expression": "mg/g",
+  "factor_to_root": 0.001,
+  "dimensions": {}
+ },
+ {
+  "expression": "mg/hr",
+  "factor_to_root": 2.7777777777777776e-07,
+  "dimensions": {
+   "[mass]": 1.0,
+   "[time]": -1.0
+  }
+ },
+ {
+  "expression": "mg/l",
+  "factor_to_root": 0.9999999999999999,
+  "dimensions": {
+   "[length]": -3.0,
+   "[mass]": 1.0
+  }
+ },
+ {
+  "expression": "mg/litre",
+  "factor_to_root": 0.9999999999999999,
+  "dimensions": {
+   "[length]": -3.0,
+   "[mass]": 1.0
+  }
+ },
+ {
+  "expression": "mg/min",
+  "factor_to_root": 1.6666666666666667e-05,
+  "dimensions": {
+   "[mass]": 1.0,
+   "[time]": -1.0
+  }
+ },
+ {
+  "expression": "mg/min/kg",
+  "factor_to_root": 1.6666666666666667e-08,
+  "dimensions": {
+   "[time]": -1.0
+  }
+ },
+ {
+  "expression": "mg/ml",
+  "factor_to_root": 999.9999999999999,
+  "dimensions": {
+   "[length]": -3.0,
+   "[mass]": 1.0
+  }
+ },
+ {
+  "expression": "microgram",
+  "factor_to_root": 1e-06,
+  "dimensions": {
+   "[mass]": 1.0
+  }
+ },
+ {
+  "expression": "micromol/(0.5*hr)",
+  "factor_to_root": 5.555555555555555e-10,
+  "dimensions": {
+   "[substance]": 1.0,
+   "[time]": -1.0
+  }
+ },
+ {
+  "expression": "micromolar",
+  "factor_to_root": 0.0009999999999999998,
+  "dimensions": {
+   "[length]": -3.0,
+   "[substance]": 1.0
+  }
+ },
+ {
+  "expression": "milligram",
+  "factor_to_root": 0.001,
+  "dimensions": {
+   "[mass]": 1.0
+  }
+ },
+ {
+  "expression": "millimolar",
+  "factor_to_root": 0.9999999999999999,
+  "dimensions": {
+   "[length]": -3.0,
+   "[substance]": 1.0
+  }
+ },
+ {
+  "expression": "millimole",
+  "factor_to_root": 0.001,
+  "dimensions": {
+   "[substance]": 1.0
+  }
+ },
+ {
+  "expression": "millimole * minute / liter",
+  "factor_to_root": 59.99999999999999,
+  "dimensions": {
+   "[length]": -3.0,
+   "[substance]": 1.0,
+   "[time]": 1.0
+  }
+ },
+ {
+  "expression": "millimole / liter",
+  "factor_to_root": 0.9999999999999999,
+  "dimensions": {
+   "[length]": -3.0,
+   "[substance]": 1.0
+  }
+ },
+ {
+  "expression": "min",
+  "factor_to_root": 60.0,
+  "dimensions": {
+   "[time]": 1.0
+  }
+ },
+ {
+  "expression": "min/day",
+  "factor_to_root": 0.0006944444444444444,
+  "dimensions": {}
+ },
+ {
+  "expression": "min/hr",
+  "factor_to_root": 0.016666666666666666,
+  "dimensions": {}
+ },
+ {
+  "expression": "minute",
+  "factor_to_root": 60.0,
+  "dimensions": {
+   "[time]": 1.0
+  }
+ },
+ {
+  "expression": "minute * nanogram / milligram / milliliter",
+  "factor_to_root": 60.0,
+  "dimensions": {
+   "[length]": -3.0,
+   "[time]": 1.0
+  }
+ },
+ {
+  "expression": "minute * nanogram / milliliter",
+  "factor_to_root": 0.060000000000000005,
+  "dimensions": {
+   "[length]": -3.0,
+   "[mass]": 1.0,
+   "[time]": 1.0
+  }
+ },
+ {
+  "expression": "minute ** 2 * nanogram / milliliter",
+  "factor_to_root": 3.6,
+  "dimensions": {
+   "[length]": -3.0,
+   "[mass]": 1.0,
+   "[time]": 2.0
+  }
+ },
+ {
+  "expression": "ml",
+  "factor_to_root": 1.0000000000000002e-06,
+  "dimensions": {
+   "[length]": 3.0
+  }
+ },
+ {
+  "expression": "ml/(kg * s)",
+  "factor_to_root": 1.0000000000000003e-09,
+  "dimensions": {
+   "[length]": 3.0,
+   "[mass]": -1.0,
+   "[time]": -1.0
+  }
+ },
+ {
+  "expression": "ml/hr",
+  "factor_to_root": 2.777777777777778e-10,
+  "dimensions": {
+   "[length]": 3.0,
+   "[time]": -1.0
+  }
+ },
+ {
+  "expression": "ml/l",
+  "factor_to_root": 0.001,
+  "dimensions": {}
+ },
+ {
+  "expression": "ml/min",
+  "factor_to_root": 1.666666666666667e-08,
+  "dimensions": {
+   "[length]": 3.0,
+   "[time]": -1.0
+  }
+ },
+ {
+  "expression": "ml/min/(1.73*m^2)",
+  "factor_to_root": 9.633911368015418e-09,
+  "dimensions": {
+   "[length]": 1.0,
+   "[time]": -1.0
+  }
+ },
+ {
+  "expression": "ml/s",
+  "factor_to_root": 1.0000000000000002e-06,
+  "dimensions": {
+   "[length]": 3.0,
+   "[time]": -1.0
+  }
+ },
+ {
+  "expression": "mmHg",
+  "factor_to_root": 133322.387415,
+  "dimensions": {
+   "[length]": -1.0,
+   "[mass]": 1.0,
+   "[time]": -2.0
+  }
+ },
+ {
+  "expression": "mmol",
+  "factor_to_root": 0.001,
+  "dimensions": {
+   "[substance]": 1.0
+  }
+ },
+ {
+  "expression": "mmol/(kg * min)",
+  "factor_to_root": 1.6666666666666667e-08,
+  "dimensions": {
+   "[mass]": -1.0,
+   "[substance]": 1.0,
+   "[time]": -1.0
+  }
+ },
+ {
+  "expression": "mmol/(l * min)",
+  "factor_to_root": 0.016666666666666663,
+  "dimensions": {
+   "[length]": -3.0,
+   "[substance]": 1.0,
+   "[time]": -1.0
+  }
+ },
+ {
+  "expression": "mmol/(l * ml)",
+  "factor_to_root": 999999.9999999997,
+  "dimensions": {
+   "[length]": -6.0,
+   "[substance]": 1.0
+  }
+ },
+ {
+  "expression": "mmol/(ml * hr)",
+  "factor_to_root": 0.27777777777777773,
+  "dimensions": {
+   "[length]": -3.0,
+   "[substance]": 1.0,
+   "[time]": -1.0
+  }
+ },
+ {
+  "expression": "mmol/hr",
+  "factor_to_root": 2.7777777777777776e-07,
+  "dimensions": {
+   "[substance]": 1.0,
+   "[time]": -1.0
+  }
+ },
+ {
+  "expression": "mmol/l",
+  "factor_to_root": 0.9999999999999999,
+  "dimensions": {
+   "[length]": -3.0,
+   "[substance]": 1.0
+  }
+ },
+ {
+  "expression": "mmol/litre",
+  "factor_to_root": 0.9999999999999999,
+  "dimensions": {
+   "[length]": -3.0,
+   "[substance]": 1.0
+  }
+ },
+ {
+  "expression": "mmol/min",
+  "factor_to_root": 1.6666666666666667e-05,
+  "dimensions": {
+   "[substance]": 1.0,
+   "[time]": -1.0
+  }
+ },
+ {
+  "expression": "mmole",
+  "factor_to_root": 0.001,
+  "dimensions": {
+   "[substance]": 1.0
+  }
+ },
+ {
+  "expression": "mol",
+  "factor_to_root": 1.0,
+  "dimensions": {
+   "[substance]": 1.0
+  }
+ },
+ {
+  "expression": "mol/m^3",
+  "factor_to_root": 1.0,
+  "dimensions": {
+   "[length]": -3.0,
+   "[substance]": 1.0
+  }
+ },
+ {
+  "expression": "mol/s",
+  "factor_to_root": 1.0,
+  "dimensions": {
+   "[substance]": 1.0,
+   "[time]": -1.0
+  }
+ },
+ {
+  "expression": "mole",
+  "factor_to_root": 1.0,
+  "dimensions": {
+   "[substance]": 1.0
+  }
+ },
+ {
+  "expression": "mole / meter ** 3",
+  "factor_to_root": 1.0,
+  "dimensions": {
+   "[length]": -3.0,
+   "[substance]": 1.0
+  }
+ },
+ {
+  "expression": "mole*metre**-3",
+  "factor_to_root": 1.0,
+  "dimensions": {
+   "[length]": -3.0,
+   "[substance]": 1.0
+  }
+ },
+ {
+  "expression": "mole*second**-1",
+  "factor_to_root": 1.0,
+  "dimensions": {
+   "[substance]": 1.0,
+   "[time]": -1.0
+  }
+ },
+ {
+  "expression": "mole/(metre**3)",
+  "factor_to_root": 1.0,
+  "dimensions": {
+   "[length]": -3.0,
+   "[substance]": 1.0
+  }
+ },
+ {
+  "expression": "mole/m^3",
+  "factor_to_root": 1.0,
+  "dimensions": {
+   "[length]": -3.0,
+   "[substance]": 1.0
+  }
+ },
+ {
+  "expression": "mole/second",
+  "factor_to_root": 1.0,
+  "dimensions": {
+   "[substance]": 1.0,
+   "[time]": -1.0
+  }
+ },
+ {
+  "expression": "nM",
+  "factor_to_root": 1e-06,
+  "dimensions": {
+   "[length]": -3.0,
+   "[substance]": 1.0
+  }
+ },
+ {
+  "expression": "nanogram / milligram / milliliter",
+  "factor_to_root": 0.9999999999999999,
+  "dimensions": {
+   "[length]": -3.0
+  }
+ },
+ {
+  "expression": "nanogram / milliliter",
+  "factor_to_root": 0.001,
+  "dimensions": {
+   "[length]": -3.0,
+   "[mass]": 1.0
+  }
+ },
+ {
+  "expression": "newton",
+  "factor_to_root": 1000.0,
+  "dimensions": {
+   "[length]": 1.0,
+   "[mass]": 1.0,
+   "[time]": -2.0
+  }
+ },
+ {
+  "expression": "ng",
+  "factor_to_root": 1e-09,
+  "dimensions": {
+   "[mass]": 1.0
+  }
+ },
+ {
+  "expression": "ng/ml",
+  "factor_to_root": 0.001,
+  "dimensions": {
+   "[length]": -3.0,
+   "[mass]": 1.0
+  }
+ },
+ {
+  "expression": "nmol",
+  "factor_to_root": 1e-09,
+  "dimensions": {
+   "[substance]": 1.0
+  }
+ },
+ {
+  "expression": "none",
+  "factor_to_root": 1.0,
+  "dimensions": {}
+ },
+ {
+  "expression": "ohm",
+  "factor_to_root": 1000.0,
+  "dimensions": {
+   "[current]": -2.0,
+   "[length]": 2.0,
+   "[mass]": 1.0,
+   "[time]": -3.0
+  }
+ },
+ {
+  "expression": "pascal",
+  "factor_to_root": 1000.0,
+  "dimensions": {
+   "[length]": -1.0,
+   "[mass]": 1.0,
+   "[time]": -2.0
+  }
+ },
+ {
+  "expression": "percent",
+  "factor_to_root": 0.01,
+  "dimensions": {}
+ },
+ {
+  "expression": "radian",
+  "factor_to_root": 1.0,
+  "dimensions": {}
+ },
+ {
+  "expression": "s",
+  "factor_to_root": 1.0,
+  "dimensions": {
+   "[time]": 1.0
+  }
+ },
+ {
+  "expression": "s/min",
+  "factor_to_root": 0.016666666666666666,
+  "dimensions": {}
+ },
+ {
+  "expression": "second",
+  "factor_to_root": 1.0,
+  "dimensions": {
+   "[time]": 1.0
+  }
+ },
+ {
+  "expression": "siemens",
+  "factor_to_root": 0.001,
+  "dimensions": {
+   "[current]": 2.0,
+   "[length]": -2.0,
+   "[mass]": -1.0,
+   "[time]": 3.0
+  }
+ },
+ {
+  "expression": "sievert",
+  "factor_to_root": 1.0,
+  "dimensions": {
+   "[length]": 2.0,
+   "[time]": -2.0
+  }
+ },
+ {
+  "expression": "steradian",
+  "factor_to_root": 1.0,
+  "dimensions": {}
+ },
+ {
+  "expression": "tesla",
+  "factor_to_root": 1000.0,
+  "dimensions": {
+   "[current]": -1.0,
+   "[mass]": 1.0,
+   "[time]": -2.0
+  }
+ },
+ {
+  "expression": "uM",
+  "factor_to_root": 0.0009999999999999998,
+  "dimensions": {
+   "[length]": -3.0,
+   "[substance]": 1.0
+  }
+ },
+ {
+  "expression": "ug",
+  "factor_to_root": 1e-06,
+  "dimensions": {
+   "[mass]": 1.0
+  }
+ },
+ {
+  "expression": "ug/l",
+  "factor_to_root": 0.0009999999999999998,
+  "dimensions": {
+   "[length]": -3.0,
+   "[mass]": 1.0
+  }
+ },
+ {
+  "expression": "ug/ml",
+  "factor_to_root": 0.9999999999999999,
+  "dimensions": {
+   "[length]": -3.0,
+   "[mass]": 1.0
+  }
+ },
+ {
+  "expression": "ul/(mg * min)",
+  "factor_to_root": 1.666666666666667e-08,
+  "dimensions": {
+   "[length]": 3.0,
+   "[mass]": -1.0,
+   "[time]": -1.0
+  }
+ },
+ {
+  "expression": "ul/g",
+  "factor_to_root": 1.0000000000000003e-09,
+  "dimensions": {
+   "[length]": 3.0,
+   "[mass]": -1.0
+  }
+ },
+ {
+  "expression": "umol",
+  "factor_to_root": 1e-06,
+  "dimensions": {
+   "[substance]": 1.0
+  }
+ },
+ {
+  "expression": "umol/h",
+  "factor_to_root": 2.7777777777777777e-10,
+  "dimensions": {
+   "[substance]": 1.0,
+   "[time]": -1.0
+  }
+ },
+ {
+  "expression": "volt",
+  "factor_to_root": 1000.0,
+  "dimensions": {
+   "[current]": -1.0,
+   "[length]": 2.0,
+   "[mass]": 1.0,
+   "[time]": -3.0
+  }
+ },
+ {
+  "expression": "watt",
+  "factor_to_root": 1000.0,
+  "dimensions": {
+   "[length]": 2.0,
+   "[mass]": 1.0,
+   "[time]": -3.0
+  }
+ },
+ {
+  "expression": "weber",
+  "factor_to_root": 1000.0,
+  "dimensions": {
+   "[current]": -1.0,
+   "[length]": 2.0,
+   "[mass]": 1.0,
+   "[time]": -2.0
+  }
+ },
+ {
+  "expression": "\u00b5M",
+  "factor_to_root": 0.0009999999999999998,
+  "dimensions": {
+   "[length]": -3.0,
+   "[substance]": 1.0
+  }
+ },
+ {
+  "expression": "\u00b5g",
+  "factor_to_root": 1e-06,
+  "dimensions": {
+   "[mass]": 1.0
+  }
+ },
+ {
+  "expression": "\u00b5g/l",
+  "factor_to_root": 0.0009999999999999998,
+  "dimensions": {
+   "[length]": -3.0,
+   "[mass]": 1.0
+  }
+ },
+ {
+  "expression": "\u00b5g/ml",
+  "factor_to_root": 0.9999999999999999,
+  "dimensions": {
+   "[length]": -3.0,
+   "[mass]": 1.0
+  }
+ },
+ {
+  "expression": "\u00b5mol",
+  "factor_to_root": 1e-06,
+  "dimensions": {
+   "[substance]": 1.0
+  }
+ }
+]

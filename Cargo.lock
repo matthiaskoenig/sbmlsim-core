@@ -2674,7 +2674,9 @@ dependencies = [
  "sbmlsim-codegen",
  "sbmlsim-ir",
  "sbmlsim-sbml",
+ "sbmlsim-units",
  "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2720,6 +2722,7 @@ dependencies = [
  "sbmlsim-batch",
  "sbmlsim-compiler",
  "sbmlsim-host",
+ "sbmlsim-timecourse",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -2745,9 +2748,11 @@ dependencies = [
 name = "sbmlsim-ir"
 version = "0.44.0"
 dependencies = [
+ "libm",
  "sbmlsim-abi",
  "sbmlsim-mathlib",
  "sbmlsim-sbml",
+ "sbmlsim-units",
  "thiserror 2.0.21",
 ]
 
@@ -2832,9 +2837,11 @@ dependencies = [
  "sbmlsim-ode",
  "sbmlsim-petab",
  "sbmlsim-plot",
+ "sbmlsim-scan",
  "sbmlsim-sensitivity",
  "sbmlsim-stats",
  "sbmlsim-thin",
+ "sbmlsim-units",
  "serde",
  "serde_json",
  "serde_path_to_error",
@@ -2855,6 +2862,23 @@ name = "sbmlsim-sbml"
 version = "0.44.0"
 dependencies = [
  "roxmltree 0.20.0",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "sbmlsim-scan"
+version = "0.44.0"
+dependencies = [
+ "pkpdutils-core",
+ "sbmlsim-abi",
+ "sbmlsim-compiler",
+ "sbmlsim-host",
+ "sbmlsim-petab",
+ "sbmlsim-sbml",
+ "sbmlsim-timecourse",
+ "sbmlsim-units",
+ "serde",
+ "serde_json",
  "thiserror 2.0.21",
 ]
 
@@ -2881,6 +2905,19 @@ name = "sbmlsim-thin"
 version = "0.44.0"
 
 [[package]]
+name = "sbmlsim-timecourse"
+version = "0.44.0"
+
+[[package]]
+name = "sbmlsim-units"
+version = "0.44.0"
+dependencies = [
+ "libm",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "sbmlsim-wasm"
 version = "0.44.0"
 dependencies = [
@@ -2889,7 +2926,9 @@ dependencies = [
  "sbmlsim-fit",
  "sbmlsim-ode",
  "sbmlsim-petab",
+ "sbmlsim-scan",
  "sbmlsim-stats",
+ "sbmlsim-units",
  "serde",
  "serde_json",
 ]

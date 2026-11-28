@@ -27,6 +27,20 @@ pyo3::create_exception!(
 
 pyo3::create_exception!(
     sbmlsim_core,
+    UnitError,
+    SbmlsimCoreError,
+    "A unit expression which is no unit, a unit with an offset, two units of other dimensions or a unit defined again with another value."
+);
+
+pyo3::create_exception!(
+    sbmlsim_core,
+    ScanError,
+    SbmlsimCoreError,
+    "A scan which cannot be planned or which failed. `kind` is `request` (a request which does not fit itself or the model, or a call out of turn), `units` (a time or a value which cannot be converted into the units of the model), `unsupported` (a simulation which is not supported) or `point` (a point of a scan of `on_error: raise` which failed), and `point` the flat index of that point, none for the other kinds."
+);
+
+pyo3::create_exception!(
+    sbmlsim_core,
     SimulationError,
     SbmlsimCoreError,
     "The base class of the errors of a simulation."
@@ -76,6 +90,24 @@ pub(crate) fn simulation_error(error: EngineError) -> PyErr {
     }
 }
 
+/// The exception of an error of a scan, with its `kind` and its `point`.
+pub(crate) fn scan_error(error: sbmlsim_scan::ScanError) -> PyErr {
+    let kind = match error.kind {
+        sbmlsim_scan::ScanErrorKind::Request => "request",
+        sbmlsim_scan::ScanErrorKind::Units => "units",
+        sbmlsim_scan::ScanErrorKind::Unsupported => "unsupported",
+        sbmlsim_scan::ScanErrorKind::Point => "point",
+    };
+    let err = ScanError::new_err(error.message);
+    Python::attach(|py| {
+        let value = err.value(py);
+        // setting an attribute of a fresh exception cannot fail
+        let _ = value.setattr("kind", kind);
+        let _ = value.setattr("point", error.point);
+    });
+    err
+}
+
 /// The exception of a batch which cannot run: a number of threads which is none, a batch of
 /// no model, or a pool of threads which does not start.
 pub(crate) fn batch_error(error: BatchError) -> PyErr {
@@ -113,10 +145,10 @@ pub(crate) fn poisoned<T>(_: PoisonError<T>) -> EngineError {
 /// return flag of CVODE and the time it reached of an integration which failed, none otherwise.
 #[pyclass(frozen, module = "sbmlsim_core")]
 pub(crate) struct PointError {
-    kind: &'static str,
-    message: String,
-    flag: Option<i32>,
-    time: Option<f64>,
+    pub(crate) kind: &'static str,
+    pub(crate) message: String,
+    pub(crate) flag: Option<i32>,
+    pub(crate) time: Option<f64>,
 }
 
 impl PointError {

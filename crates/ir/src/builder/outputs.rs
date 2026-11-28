@@ -161,7 +161,6 @@ impl<'m> Builder<'m> {
 
     pub(super) fn selections(&mut self) -> Result<Vec<SelectionDef>, CompileError> {
         let m = self.m;
-        let units = Units::new(m);
         let mut out = Vec::new();
         let entity = |id: &str, kind, unit| SelectionDef {
             id: id.to_string(),
@@ -170,11 +169,7 @@ impl<'m> Builder<'m> {
             unit,
         };
         for c in &m.compartments {
-            out.push(entity(
-                &c.id,
-                SelectionKind::Compartment,
-                units.compartment(c),
-            ));
+            out.push(entity(&c.id, SelectionKind::Compartment, None));
         }
         let mut amounts = Vec::new();
         let mut concentrations = Vec::new();
@@ -188,23 +183,19 @@ impl<'m> Builder<'m> {
                 id: s.id.clone(),
                 kind: SelectionKind::Amount,
                 expr: amount,
-                unit: units.substance(s),
+                unit: None,
             });
             concentrations.push(SelectionDef {
                 id: format!("[{}]", s.id),
                 kind: SelectionKind::Concentration,
                 expr: concentration,
-                unit: units.concentration(s, Some(&m.compartments[info.compartment_index])),
+                unit: None,
             });
         }
         out.extend(amounts);
         out.extend(concentrations);
         for p in &m.parameters {
-            out.push(entity(
-                &p.id,
-                SelectionKind::Parameter,
-                units.parameter(p.units.as_ref()),
-            ));
+            out.push(entity(&p.id, SelectionKind::Parameter, None));
         }
         for r in &self.refs {
             if let Some(id) = &r.reference.id {
@@ -216,7 +207,7 @@ impl<'m> Builder<'m> {
                 id: r.id.clone(),
                 kind: SelectionKind::ReactionRate,
                 expr: self.reaction_rate(j)?,
-                unit: units.reaction(),
+                unit: None,
             });
         }
         Ok(out)

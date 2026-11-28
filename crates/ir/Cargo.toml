@@ -13,4 +13,8 @@ sbmlsim-abi = { path = "../abi" }
 sbmlsim-sbml = { path = "../sbml" }
 # the math functions of a model, for the native evaluation (`eval`) and the constant folding
 sbmlsim-mathlib = { path = "../mathlib" }
+# the units pint has, which name a unit definition with a factor as sbmlsim does
+sbmlsim-units = { path = "../units" }
+# the powers of the units of libsbml, the same bits natively and in wasm
+libm = "0.2"
 thiserror.workspace = true

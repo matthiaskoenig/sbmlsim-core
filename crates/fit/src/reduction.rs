@@ -39,6 +39,7 @@
 //! reduction on the shifted times, and so does the engine.
 
 use pkpdutils_core::pkpdutils_abi::{AnalysisResult, Batch, NcaOptions, TerminalMethod};
+use sbmlsim_timecourse::{Weight, grid_weights, kept_rows, padded_length};
 use serde::{Deserialize, Serialize};
 
 /// The relative size of the move of a column the derivative of a [`Reduction::Pk`] is the
@@ -167,7 +168,7 @@ pub const REDUCTIONS: &[&str] = &["max", "min", "mean", "at", "pk"];
 
 /// The shortest length of the padded sample of a [`Reduction::Pk`], `MIN_PADDED_LENGTH` of
 /// `sbmlsim.simulator.pk`.
-pub const MIN_PADDED_LENGTH: usize = 16;
+pub const MIN_PADDED_LENGTH: usize = sbmlsim_timecourse::MIN_PADDED_LENGTH;
 
 /// The rows of one column of a table, with the time of every row in the time of a reduction.
 pub(crate) struct Column<'a> {
@@ -191,162 +192,6 @@ impl Column<'_> {
     fn rows(&self) -> usize {
         self.times.len()
     }
-}
-
-/// The weights which interpolate a time of a measurement between two rows, see
-/// [`grid_weights`].
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct Weight {
-    /// The row below the time.
-    pub lower: usize,
-    /// The row above it.
-    pub upper: usize,
-    /// The weight of the upper row, the lower one takes `1 - weight`.
-    pub weight: f64,
-    /// Whether the time is within the rows, outside of which it has no value.
-    pub valid: bool,
-}
-
-impl Weight {
-    /// Interpolates values of the rows with the weight: an exact row needs that row only, so
-    /// a `NaN` or an infinity of its neighbour does not reach the value through a product
-    /// with zero, which is `apply_weights` of sbmlsim.
-    fn apply(&self, lower: f64, upper: f64) -> f64 {
-        if !self.valid {
-            return f64::NAN;
-        }
-        if self.weight == 0.0 {
-            return lower;
-        }
-        if self.weight == 1.0 {
-            return upper;
-        }
-        lower * (1.0 - self.weight) + upper * self.weight
-    }
-}
-
-/// The first index of a sorted slice whose value is above `value` (`side="right"`), or at or
-/// above it (`side="left"`), `searchsorted` of numpy.
-fn search_sorted(sorted: &[f64], value: f64, right: bool) -> usize {
-    sorted.partition_point(|x| if right { *x <= value } else { *x < value })
-}
-
-/// The indices and weights which interpolate the rows of a timecourse at the times of a grid,
-/// a port of `grid_weights` of `sbmlsim.result.timecourse`, operation for operation, so that
-/// an interpolated value is the one of sbmlsim to the bit.
-///
-/// `time` is the time of every row, sorted, where a row of a time which is not finite (the
-/// steady state after the end) is no time point; `left` says which time of the grid reads the
-/// state before a jump at it.
-pub(crate) fn grid_weights(
-    time: &[f64],
-    grid: &[f64],
-    tolerance: f64,
-    changes: &[f64],
-    left: &[bool],
-) -> Vec<Weight> {
-    let finite: Vec<usize> = (0..time.len()).filter(|&r| time[r].is_finite()).collect();
-    let t: Vec<f64> = finite.iter().map(|&r| time[r]).collect();
-    let n = t.len();
-    if n == 0 {
-        return grid
-            .iter()
-            .map(|_| Weight {
-                lower: 0,
-                upper: 0,
-                weight: 0.0,
-                valid: false,
-            })
-            .collect();
-    }
-    let is_change = |value: f64| changes.contains(&value);
-    // the jumps: a time point which appears twice, its second point
-    let twice: Vec<bool> = (0..n).map(|i| i > 0 && t[i] == t[i - 1]).collect();
-    // the chains: time points at most the tolerance apart, which start at their first jump
-    let mut split: Vec<bool> = (0..n - 1).map(|i| t[i + 1] - t[i] > tolerance).collect();
-    let mut close = vec![0usize; n];
-    for i in 1..n {
-        close[i] = close[i - 1] + usize::from(split[i - 1]);
-    }
-    let mut first_jump = vec![n; close[n - 1] + 1];
-    for i in 0..n {
-        if twice[i] {
-            first_jump[close[i]] = first_jump[close[i]].min(i - 1);
-        }
-    }
-    for i in 0..n - 1 {
-        split[i] |= i + 1 == first_jump[close[i + 1]];
-    }
-    let mut chain = vec![0usize; n];
-    for i in 1..n {
-        chain[i] = chain[i - 1] + usize::from(split[i - 1]);
-    }
-    let starts: Vec<usize> = (0..n).filter(|&i| i == 0 || split[i - 1]).collect();
-    let ends: Vec<usize> = (0..n).filter(|&i| i == n - 1 || split[i]).collect();
-    let first: Vec<usize> = (0..n).map(|i| starts[chain[i]]).collect();
-    let last: Vec<usize> = (0..n).map(|i| ends[chain[i]]).collect();
-    // the state after the last jump of a chain
-    let mut last_jump: Vec<isize> = vec![-1; chain[n - 1] + 1];
-    for i in 0..n {
-        if twice[i] {
-            last_jump[chain[i]] = last_jump[chain[i]].max(i as isize);
-        }
-    }
-    let end: Vec<usize> = (0..n)
-        .map(|i| {
-            let jump = last_jump[chain[i]];
-            if jump >= 0 { jump as usize } else { last[i] }
-        })
-        .collect();
-    grid.iter()
-        .zip(left)
-        .map(|(&g, &left)| {
-            let valid = g >= t[0] && g <= t[n - 1];
-            let i = search_sorted(&t, g, true).saturating_sub(1).min(n - 1);
-            let upper = (i + 1).min(n - 1);
-            let span = t[upper] - t[i];
-            let weight = if span > 0.0 { (g - t[i]) / span } else { 0.0 };
-            let at = t[i] == g;
-            let own = at && (twice[i] || is_change(t[i]));
-            let inside = !own && end[i] > i;
-            let following = upper;
-            let ahead = !own
-                && !inside
-                && following > i
-                && first[following] == following
-                && last[following] > following
-                && t[following] - g <= tolerance
-                && !is_change(t[following]);
-            let at_own = if last_jump[chain[i]] >= 0 {
-                end[i].max(i)
-            } else {
-                i
-            };
-            let mut to = if own {
-                at_own
-            } else if inside {
-                end[i]
-            } else {
-                end[following]
-            };
-            let after = !left && (own || inside || ahead);
-            let before = left && ((at && twice[i]) || inside);
-            if before {
-                to = if at && twice[i] {
-                    search_sorted(&t, g, false)
-                } else {
-                    first[i]
-                };
-            }
-            let fixed = after || before;
-            Weight {
-                lower: finite[if fixed { to } else { i }],
-                upper: finite[if fixed { to } else { upper }],
-                weight: if fixed { 0.0 } else { weight },
-                valid,
-            }
-        })
-        .collect()
 }
 
 impl Reduction {
@@ -536,58 +381,8 @@ impl Reduction {
             return Vec::new();
         };
         let left = before.clone().unwrap_or_else(|| vec![false; grid.len()]);
-        grid_weights(&column.times, grid, *tolerance, changes, &left)
+        grid_weights(&column.times, grid, *tolerance, changes, Some(&left))
     }
-}
-
-/// The largest or the smallest value of a column over its rows of a finite time and the first
-/// row it is at, `NaN` and no row for a column of no such value; `fmax` and `fmin` of numpy,
-/// which ignore `NaN`.
-fn extreme(column: &Column<'_>, max: bool) -> (f64, Option<usize>) {
-    let mut best: (f64, Option<usize>) = (f64::NAN, None);
-    for row in 0..column.rows() {
-        if !column.times[row].is_finite() {
-            continue;
-        }
-        let value = column.at(row);
-        if value.is_nan() {
-            continue;
-        }
-        let better = match best.1 {
-            None => true,
-            Some(_) if max => value > best.0,
-            Some(_) => value < best.0,
-        };
-        if better {
-            best = (value, Some(row));
-        }
-    }
-    best
-}
-
-/// The trapezoid mean of the values of the rows of a finite time, `_mean` of
-/// `sbmlsim.simulator.formula` operation for operation: the area is summed in the order of the
-/// rows, an interval of a row which is not finite adds zero, and a simulation of one time
-/// point is the value of its last row.
-fn mean(column: &Column<'_>, value: impl Fn(usize) -> f64) -> f64 {
-    let times = &column.times;
-    let mut area = 0.0;
-    for row in 1..column.rows() {
-        let (t0, t1) = (times[row - 1], times[row]);
-        let piece = if t0.is_finite() && t1.is_finite() {
-            0.5 * (value(row) + value(row - 1)) * (t1 - t0)
-        } else {
-            0.0
-        };
-        area += piece;
-    }
-    let finite = || (0..column.rows()).filter(|&row| times[row].is_finite());
-    let Some(last) = finite().next_back() else {
-        return f64::NAN;
-    };
-    let span = finite().map(|row| times[row]).fold(f64::NAN, f64::max)
-        - finite().map(|row| times[row]).fold(f64::NAN, f64::min);
-    if span > 0.0 { area / span } else { value(last) }
 }
 
 impl PkReduction {
@@ -658,7 +453,11 @@ impl PkReduction {
             return Ok(None);
         }
         let manual = self.options.terminal.method == TerminalMethod::Manual;
-        let length = if manual { points } else { padded(points) };
+        let length = if manual {
+            points
+        } else {
+            padded_length(points)
+        };
         let mut batch = self.batch.clone();
         batch.n_time = length;
         batch.times = times;
@@ -674,88 +473,47 @@ impl PkReduction {
     /// without the state before a change at the time of one of the changes, which is the first
     /// of two rows of the same time (`without_states_before` of sbmlsim).
     fn sample(&self, times: &[f64], value: impl Fn(usize) -> f64) -> (Vec<f64>, Vec<f64>) {
-        let n = times.len();
-        let mut out = (Vec::with_capacity(n), Vec::with_capacity(n));
-        for row in 0..n {
-            let time = times[row];
-            if !time.is_finite() {
-                continue;
-            }
-            let first = row == 0 || times[row] != times[row - 1];
-            let twice = row + 1 < n && times[row] == times[row + 1];
-            if first && twice && self.changes.contains(&time) {
-                continue;
-            }
-            out.0.push(time);
-            out.1.push(value(row));
-        }
-        out
+        let rows = kept_rows(times, &self.changes);
+        (
+            rows.iter().map(|&row| times[row]).collect(),
+            rows.iter().map(|&row| value(row)).collect(),
+        )
     }
 }
 
-/// The length a sample of a number of time points is padded to: the next power of two, at
-/// least [`MIN_PADDED_LENGTH`], `_padded` of `sbmlsim.simulator.pk`.
-fn padded(points: usize) -> usize {
-    MIN_PADDED_LENGTH.max(points.max(1).next_power_of_two())
+/// The largest or the smallest value of a column over its rows of a finite time and the first
+/// row it is at, see [`sbmlsim_timecourse::extreme`].
+fn extreme(column: &Column<'_>, max: bool) -> (f64, Option<usize>) {
+    sbmlsim_timecourse::extreme(&column.times, max, |row| column.at(row))
+}
+
+/// The trapezoid mean of the values of the rows of a column, see [`sbmlsim_timecourse::mean`].
+fn mean(column: &Column<'_>, value: impl Fn(usize) -> f64) -> f64 {
+    sbmlsim_timecourse::mean(&column.times, value)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn column(times: &[f64], values: &[f64]) -> (Vec<f64>, Vec<f64>) {
-        (times.to_vec(), values.to_vec())
-    }
-
-    fn of<'a>(times: &[f64], values: &'a [f64]) -> Column<'a> {
-        Column {
-            times: times.to_vec(),
-            values,
+    #[test]
+    fn an_extreme_and_a_mean_of_a_column_ignore_the_rows_of_no_finite_time() {
+        let values = [1.0, f64::NAN, 3.0, 9.0];
+        let column = Column {
+            times: vec![0.0, 1.0, 2.0, f64::INFINITY],
+            values: &values,
             columns: 1,
             column: 0,
-        }
-    }
-
-    #[test]
-    fn the_padded_length_is_the_next_power_of_two_and_at_least_sixteen() {
-        assert_eq!(padded(1), 16);
-        assert_eq!(padded(16), 16);
-        assert_eq!(padded(17), 32);
-        assert_eq!(padded(100), 128);
-    }
-
-    #[test]
-    fn an_extreme_ignores_nan_and_the_rows_of_no_finite_time() {
-        let (times, values) = column(&[0.0, 1.0, 2.0, f64::INFINITY], &[1.0, f64::NAN, 3.0, 9.0]);
-        let column = of(&times, &values);
+        };
         assert_eq!(extreme(&column, true), (3.0, Some(2)));
         assert_eq!(extreme(&column, false), (1.0, Some(0)));
-    }
-
-    #[test]
-    fn the_mean_of_one_time_point_is_its_value_and_a_jump_adds_nothing() {
-        let (times, values) = column(&[2.0], &[5.0]);
-        assert_eq!(mean(&of(&times, &values), |row| values[row]), 5.0);
-        // a step from 1 to 3 at t = 1: the area is 1 * 1 + 1 * 3 over 2
-        let (times, values) = column(&[0.0, 1.0, 1.0, 2.0], &[1.0, 1.0, 3.0, 3.0]);
-        assert_eq!(mean(&of(&times, &values), |row| values[row]), 2.0);
-    }
-
-    #[test]
-    fn a_time_at_a_change_sees_the_state_after_it_unless_it_reads_the_state_before() {
-        let times = [0.0, 1.0, 1.0, 2.0];
-        let after = grid_weights(&times, &[1.0, 0.5], 0.0, &[1.0], &[false, false]);
-        assert_eq!(
-            (after[0].lower, after[0].upper, after[0].weight),
-            (2, 2, 0.0)
-        );
-        assert_eq!(
-            (after[1].lower, after[1].upper, after[1].weight),
-            (0, 1, 0.5)
-        );
-        let before = grid_weights(&times, &[1.0], 0.0, &[1.0], &[true]);
-        assert_eq!((before[0].lower, before[0].upper), (1, 1));
-        let outside = grid_weights(&times, &[3.0], 0.0, &[1.0], &[false]);
-        assert!(!outside[0].valid);
+        let values = [1.0, 1.0, 3.0, 3.0];
+        let column = Column {
+            times: vec![0.0, 1.0, 1.0, 2.0],
+            values: &values,
+            columns: 1,
+            column: 0,
+        };
+        assert_eq!(mean(&column, |row| values[row]), 2.0);
     }
 }

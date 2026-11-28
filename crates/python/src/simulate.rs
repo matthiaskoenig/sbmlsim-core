@@ -10,7 +10,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use sbmlsim_abi::EngineError;
 use sbmlsim_abi::{SimulationRequest, SimulationResult, SimulationStats};
-use sbmlsim_batch::{Plan, WorkerPool, Workers, thread_count};
+use sbmlsim_batch::{Outcome, Plan, WorkerPool, Workers, thread_count};
 use sbmlsim_host::NativeInstance;
 
 use crate::errors::{InternalError, PointError, batch_error, poisoned, simulation_error};
@@ -109,8 +109,8 @@ impl PreparedSimulation {
 /// The table of a simulation.
 #[pyclass(frozen, module = "sbmlsim_core")]
 pub(crate) struct SimulationOutput {
-    columns: Vec<String>,
-    values: Py<PyArray2<f64>>,
+    pub(crate) columns: Vec<String>,
+    pub(crate) values: Py<PyArray2<f64>>,
     sensitivities: Option<Py<OutputSensitivities>>,
     local_errors: Option<Py<OutputLocalErrors>>,
 }
@@ -449,6 +449,37 @@ impl BatchExecutor {
             return Err(PyRuntimeError::new_err("batch executor is closed"));
         }
         Ok(state)
+    }
+}
+
+impl BatchExecutor {
+    /// Simulates the requests of a batch which are already Rust (the rounds of a scan) on the
+    /// retained workers and gives one outcome per request, in their order; the thread of the
+    /// caller checks the signals of python while the pool simulates, as `simulate_many` does.
+    pub(crate) fn simulate_requests(
+        &self,
+        py: Python<'_>,
+        requests: &[SimulationRequest],
+    ) -> PyResult<Vec<Outcome<SimulationResult>>> {
+        let mut state = self.state()?;
+        if requests.is_empty() {
+            return Ok(Vec::new());
+        }
+        let state = &mut *state;
+        py.detach(|| state.pool.ensure(requests.len()))
+            .map_err(batch_error)?;
+        let workers = state.pool.workers().expect("the pool of a batch which ran");
+        py.detach(|| {
+            workers.map_fed(
+                requests.len(),
+                |range| Ok::<_, PyErr>(requests[range].to_vec()),
+                |instance: &mut NativeInstance, request: &SimulationRequest| {
+                    instance.simulate(request)
+                },
+                SIGNALS,
+                || Python::attach(|py| py.check_signals()),
+            )
+        })
     }
 }
 

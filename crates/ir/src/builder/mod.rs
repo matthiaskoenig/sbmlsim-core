@@ -16,7 +16,6 @@ use sbmlsim_sbml::{
 
 use crate::expr::{self, Context, Scope};
 use crate::order::order;
-use crate::units::Units;
 use crate::{
     Assignment, CompileError, Entity, EntityKind, Event, EventAssignment, Expr, Model, Op,
     SelectionDef, SelectionKind, SpeciesValue, Symbol, index,
@@ -170,7 +169,7 @@ fn build_with_history(m: &Sbml, prehistory: bool) -> Result<Model, CompileError>
     let mut b = Builder::new(m)?;
     b.prehistory = prehistory;
     b.classify()?;
-    let (states, parameters) = b.entities();
+    let (mut states, mut parameters) = b.entities();
 
     let mut rates = (0..b.sources.len())
         .map(|k| b.state_rate(k))
@@ -219,9 +218,28 @@ fn build_with_history(m: &Sbml, prehistory: bool) -> Result<Model, CompileError>
     let events = events_with_trigger(m)
         .map(|(k, e, trigger, math)| b.event(k, e, trigger, math))
         .collect::<Result<_, _>>()?;
-    let selections = b.selections()?;
+    let mut selections = b.selections()?;
     if b.delay_seen && b.rate_of_seen && !prehistory {
         return build_with_history(m, true);
+    }
+    // the units are derived from the maths once the build accepted them (their depth and the
+    // size of their inlined function definitions), see `crate::units`
+    let (units, unit_definitions) = crate::units::units_of(m);
+    for e in states.iter_mut().chain(parameters.iter_mut()) {
+        let id = match e.kind {
+            EntityKind::Species {
+                value: SpeciesValue::Concentration,
+                ..
+            } => format!("[{}]", e.id),
+            EntityKind::SpeciesReference => continue,
+            _ => e.id.clone(),
+        };
+        e.unit = units.get(&id).cloned();
+    }
+    for s in &mut selections {
+        if s.kind != SelectionKind::SpeciesReference {
+            s.unit = units.get(&s.id).cloned();
+        }
     }
     Ok(Model {
         id: m.id.clone(),
@@ -242,6 +260,8 @@ fn build_with_history(m: &Sbml, prehistory: bool) -> Result<Model, CompileError>
         rate_of: b.rate_of,
         driven: Vec::new(),
         t_ref: None,
-        time_unit: Units::new(m).time(),
+        time_unit: units.get("time").cloned(),
+        units,
+        unit_definitions,
     })
 }

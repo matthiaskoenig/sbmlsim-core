@@ -425,6 +425,8 @@ fn input_cache_is_bounded_and_keeps_lazy_inputs_in_their_branches() {
             .collect(),
         events: vec![],
         selections: vec![],
+        unit_definitions: Default::default(),
+        units: Default::default(),
     };
     let optimized = plan(&model, &jacobian(&model), None, &[], true);
     let cached_inputs = lets(&optimized.rhs)
@@ -509,6 +511,8 @@ fn unread_rules_are_not_computed() {
                 unit: None,
             })
             .collect(),
+        unit_definitions: Default::default(),
+        units: Default::default(),
     };
     let plan = plan(
         &model,
@@ -577,6 +581,8 @@ fn subtrees_of_the_parameters_alone_are_constants() {
         rates: vec![rate],
         events: vec![],
         selections: vec![],
+        unit_definitions: Default::default(),
+        units: Default::default(),
     };
     // without the common subexpressions, which would share `k * V * b` in the constants
     let plan = plan(&model, &jacobian(&model), None, &[], false);
@@ -648,6 +654,8 @@ fn a_parameter_of_a_rule_of_the_time_is_no_constant() {
         )],
         events: vec![],
         selections: vec![],
+        unit_definitions: Default::default(),
+        units: Default::default(),
     };
     let plan = plan(&model, &jacobian(&model), None, &[], true);
     assert_eq!(plan.n_constants(), 0, "{:?}", plan.constants);
@@ -710,6 +718,8 @@ fn the_derivative_of_a_rule_of_one_column_is_no_value_of_the_column_before_it() 
         rates: vec![ap(Op::Minus, vec![p(2)])],
         events: vec![],
         selections: vec![],
+        unit_definitions: Default::default(),
+        units: Default::default(),
     };
     let parameters = sbmlsim_ir::derive::parameter_jacobian(&model).expect("the columns");
     let plan = plan(&model, &jacobian(&model), Some(&parameters), &[], false);

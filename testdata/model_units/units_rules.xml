@@ -1,0 +1,2120 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2">
+  <model id="units_rules" name="The units sbmlsim gives the entities, the rules of libsbml" substanceUnits="mmol" timeUnits="min_u" volumeUnits="litre" lengthUnits="metre" extentUnits="mmol">
+    <notes>
+      <body xmlns="http://www.w3.org/1999/xhtml">
+        <p>The rules by which libsbml derives the unit of a kinetic law and sbmlsim names units (UnitsInformation.from_sbml_doc): a kinetic law per rule, parameters of unit definitions of every form sbmlsim writes. The model units of scripts/scan_fixtures.py pin them for sbmlsim-core; the model is no model of biology and its units are inconsistent on purpose.</p>
+      </body>
+    </notes>
+    <listOfFunctionDefinitions>
+      <functionDefinition id="f">
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+          <lambda>
+            <bvar>
+              <ci> a </ci>
+            </bvar>
+            <bvar>
+              <ci> b </ci>
+            </bvar>
+            <apply>
+              <times/>
+              <ci> a </ci>
+              <ci> b </ci>
+            </apply>
+          </lambda>
+        </math>
+      </functionDefinition>
+      <functionDefinition id="g">
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+          <lambda>
+            <bvar>
+              <ci> x </ci>
+            </bvar>
+            <ci> x </ci>
+          </lambda>
+        </math>
+      </functionDefinition>
+      <functionDefinition id="h">
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+          <lambda>
+            <apply>
+              <times/>
+              <ci> t2 </ci>
+              <cn type="integer"> 2 </cn>
+            </apply>
+          </lambda>
+        </math>
+      </functionDefinition>
+      <functionDefinition id="fk">
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+          <lambda>
+            <bvar>
+              <ci> a </ci>
+            </bvar>
+            <apply>
+              <times/>
+              <ci> k </ci>
+              <ci> a </ci>
+            </apply>
+          </lambda>
+        </math>
+      </functionDefinition>
+    </listOfFunctionDefinitions>
+    <listOfUnitDefinitions>
+      <unitDefinition id="mmol">
+        <listOfUnits>
+          <unit kind="mole" exponent="1" scale="-3" multiplier="1"/>
+        </listOfUnits>
+      </unitDefinition>
+      <unitDefinition id="mM">
+        <listOfUnits>
+          <unit kind="mole" exponent="1" scale="-3" multiplier="1"/>
+          <unit kind="litre" exponent="-1" scale="0" multiplier="1"/>
+        </listOfUnits>
+      </unitDefinition>
+      <unitDefinition id="per_min">
+        <listOfUnits>
+          <unit kind="second" exponent="-1" scale="0" multiplier="60"/>
+        </listOfUnits>
+      </unitDefinition>
+      <unitDefinition id="min_u">
+        <listOfUnits>
+          <unit kind="second" exponent="1" scale="0" multiplier="60"/>
+        </listOfUnits>
+      </unitDefinition>
+      <unitDefinition id="hr_u">
+        <listOfUnits>
+          <unit kind="second" exponent="1" scale="0" multiplier="3600"/>
+        </listOfUnits>
+      </unitDefinition>
+      <unitDefinition id="day_u">
+        <listOfUnits>
+          <unit kind="second" exponent="1" scale="0" multiplier="86400"/>
+        </listOfUnits>
+      </unitDefinition>
+      <unitDefinition id="week_u">
+        <listOfUnits>
+          <unit kind="second" exponent="1" scale="0" multiplier="604800"/>
+        </listOfUnits>
+      </unitDefinition>
+      <unitDefinition id="per_hr">
+        <listOfUnits>
+          <unit kind="second" exponent="-1" scale="0" multiplier="3600"/>
+        </listOfUnits>
+      </unitDefinition>
+      <unitDefinition id="mmol_per_min">
+        <listOfUnits>
+          <unit kind="mole" exponent="1" scale="-3" multiplier="1"/>
+          <unit kind="second" exponent="-1" scale="0" multiplier="60"/>
+        </listOfUnits>
+      </unitDefinition>
+      <unitDefinition id="mmol_per_min2">
+        <listOfUnits>
+          <unit kind="second" exponent="-1" scale="0" multiplier="60"/>
+          <unit kind="mole" exponent="1" scale="-3" multiplier="1"/>
+        </listOfUnits>
+      </unitDefinition>
+      <unitDefinition id="kg_u">
+        <listOfUnits>
+          <unit kind="gram" exponent="1" scale="3" multiplier="1"/>
+        </listOfUnits>
+      </unitDefinition>
+      <unitDefinition id="g_u">
+        <listOfUnits>
+          <unit kind="kilogram" exponent="1" scale="-3" multiplier="1"/>
+        </listOfUnits>
+      </unitDefinition>
+      <unitDefinition id="mg_u">
+        <listOfUnits>
+          <unit kind="gram" exponent="1" scale="-3" multiplier="1"/>
+        </listOfUnits>
+      </unitDefinition>
+      <unitDefinition id="mg2_u">
+        <listOfUnits>
+          <unit kind="kilogram" exponent="1" scale="-6" multiplier="1"/>
+        </listOfUnits>
+      </unitDefinition>
+      <unitDefinition id="ug_per_ml">
+        <listOfUnits>
+          <unit kind="gram" exponent="1" scale="-6" multiplier="1"/>
+          <unit kind="litre" exponent="-1" scale="-3" multiplier="1"/>
+        </listOfUnits>
+      </unitDefinition>
+      <unitDefinition id="odd">
+        <listOfUnits>
+          <unit kind="second" exponent="1" scale="0" multiplier="2.5"/>
+        </listOfUnits>
+      </unitDefinition>
+      <unitDefinition id="mmHg">
+        <listOfUnits>
+          <unit kind="newton" exponent="1" scale="0" multiplier="133.322"/>
+          <unit kind="metre" exponent="-2" scale="0" multiplier="1"/>
+        </listOfUnits>
+      </unitDefinition>
+      <unitDefinition id="hr">
+        <listOfUnits>
+          <unit kind="second" exponent="1" scale="0" multiplier="3000"/>
+        </listOfUnits>
+      </unitDefinition>
+      <unitDefinition id="m4">
+        <listOfUnits>
+          <unit kind="metre" exponent="1" scale="4" multiplier="1"/>
+        </listOfUnits>
+      </unitDefinition>
+      <unitDefinition id="sqrt_m">
+        <listOfUnits>
+          <unit kind="metre" exponent="0.5" scale="0" multiplier="1"/>
+        </listOfUnits>
+      </unitDefinition>
+      <unitDefinition id="per_ml">
+        <listOfUnits>
+          <unit kind="litre" exponent="-1" scale="-3" multiplier="1"/>
+        </listOfUnits>
+      </unitDefinition>
+      <unitDefinition id="kat_u">
+        <listOfUnits>
+          <unit kind="katal" exponent="1" scale="0" multiplier="1"/>
+        </listOfUnits>
+      </unitDefinition>
+      <unitDefinition id="item_u">
+        <listOfUnits>
+          <unit kind="item" exponent="1" scale="0" multiplier="1"/>
+        </listOfUnits>
+      </unitDefinition>
+      <unitDefinition id="dimless">
+        <listOfUnits>
+          <unit kind="dimensionless" exponent="1" scale="0" multiplier="1"/>
+        </listOfUnits>
+      </unitDefinition>
+      <unitDefinition id="mult_scale">
+        <listOfUnits>
+          <unit kind="second" exponent="1" scale="-3" multiplier="60"/>
+        </listOfUnits>
+      </unitDefinition>
+      <unitDefinition id="dl_u">
+        <listOfUnits>
+          <unit kind="litre" exponent="1" scale="-1" multiplier="1"/>
+        </listOfUnits>
+      </unitDefinition>
+      <unitDefinition id="cm2">
+        <listOfUnits>
+          <unit kind="metre" exponent="2" scale="-2" multiplier="1"/>
+        </listOfUnits>
+      </unitDefinition>
+      <unitDefinition id="gmol">
+        <listOfUnits>
+          <unit kind="mole" exponent="1" scale="9" multiplier="1"/>
+        </listOfUnits>
+      </unitDefinition>
+      <unitDefinition id="tmol">
+        <listOfUnits>
+          <unit kind="mole" exponent="1" scale="12" multiplier="1"/>
+        </listOfUnits>
+      </unitDefinition>
+      <unitDefinition id="complex_u">
+        <listOfUnits>
+          <unit kind="mole" exponent="1" scale="-3" multiplier="1"/>
+          <unit kind="litre" exponent="-1" scale="0" multiplier="1"/>
+          <unit kind="second" exponent="-1" scale="0" multiplier="60"/>
+          <unit kind="gram" exponent="-1" scale="-3" multiplier="1"/>
+        </listOfUnits>
+      </unitDefinition>
+      <unitDefinition id="per_mmol_sq">
+        <listOfUnits>
+          <unit kind="mole" exponent="-2" scale="-3" multiplier="1"/>
+        </listOfUnits>
+      </unitDefinition>
+      <unitDefinition id="milli_mult">
+        <listOfUnits>
+          <unit kind="mole" exponent="1" scale="0" multiplier="0.001"/>
+        </listOfUnits>
+      </unitDefinition>
+      <unitDefinition id="hour_scale">
+        <listOfUnits>
+          <unit kind="second" exponent="1" scale="2" multiplier="36"/>
+        </listOfUnits>
+      </unitDefinition>
+      <unitDefinition id="ampere_u">
+        <listOfUnits>
+          <unit kind="ampere" exponent="1" scale="0" multiplier="1"/>
+          <unit kind="volt" exponent="1" scale="0" multiplier="1"/>
+        </listOfUnits>
+      </unitDefinition>
+    </listOfUnitDefinitions>
+    <listOfCompartments>
+      <compartment id="V" spatialDimensions="3" size="1" units="litre" constant="true"/>
+      <compartment id="W" spatialDimensions="3" size="1" constant="true"/>
+      <compartment id="A2" spatialDimensions="2" size="1" constant="true"/>
+      <compartment id="Z" spatialDimensions="0" constant="true"/>
+    </listOfCompartments>
+    <listOfSpecies>
+      <species id="S" compartment="V" initialAmount="1" substanceUnits="mmol" hasOnlySubstanceUnits="false" boundaryCondition="true" constant="false"/>
+      <species id="N" compartment="V" initialAmount="1" hasOnlySubstanceUnits="false" boundaryCondition="true" constant="false"/>
+      <species id="H" compartment="V" initialAmount="1" substanceUnits="mole" hasOnlySubstanceUnits="true" boundaryCondition="true" constant="false"/>
+      <species id="SW" compartment="W" initialAmount="1" substanceUnits="mole" hasOnlySubstanceUnits="false" boundaryCondition="true" constant="false"/>
+      <species id="SA" compartment="A2" initialAmount="1" substanceUnits="mole" hasOnlySubstanceUnits="false" boundaryCondition="true" constant="false"/>
+      <species id="SZ" compartment="Z" initialAmount="1" substanceUnits="mole" hasOnlySubstanceUnits="false" boundaryCondition="true" constant="false"/>
+      <species id="Sk" compartment="V" initialAmount="1" substanceUnits="mole" hasOnlySubstanceUnits="false" boundaryCondition="true" constant="false"/>
+    </listOfSpecies>
+    <listOfParameters>
+      <parameter id="k" value="2" units="per_min" constant="true"/>
+      <parameter id="kk" value="2" units="per_hr" constant="true"/>
+      <parameter id="q" value="2" constant="true"/>
+      <parameter id="c" value="1" units="mM" constant="true"/>
+      <parameter id="t2" value="2" units="second" constant="true"/>
+      <parameter id="d" value="2" units="dimensionless" constant="true"/>
+      <parameter id="e2" value="2" units="dimensionless" constant="true"/>
+      <parameter id="p_odd" value="1" units="odd" constant="true"/>
+      <parameter id="p_mmHg" value="1" units="mmHg" constant="true"/>
+      <parameter id="p_hr" value="1" units="hr" constant="true"/>
+      <parameter id="p_m4" value="1" units="m4" constant="true"/>
+      <parameter id="p_sqrt" value="1" units="sqrt_m" constant="true"/>
+      <parameter id="p_kat" value="1" units="kat_u" constant="true"/>
+      <parameter id="p_item" value="1" units="item_u" constant="true"/>
+      <parameter id="p_dimless" value="1" units="dimless" constant="true"/>
+      <parameter id="p_ms" value="1" units="mult_scale" constant="true"/>
+      <parameter id="p_dl" value="1" units="dl_u" constant="true"/>
+      <parameter id="p_cm2" value="1" units="cm2" constant="true"/>
+      <parameter id="p_gmol" value="1" units="gmol" constant="true"/>
+      <parameter id="p_tmol" value="1" units="tmol" constant="true"/>
+      <parameter id="p_complex" value="1" units="complex_u" constant="true"/>
+      <parameter id="p_pmsq" value="1" units="per_mmol_sq" constant="true"/>
+      <parameter id="p_milli" value="1" units="milli_mult" constant="true"/>
+      <parameter id="p_hour" value="1" units="hour_scale" constant="true"/>
+      <parameter id="p_kg" value="1" units="kg_u" constant="true"/>
+      <parameter id="p_g" value="1" units="g_u" constant="true"/>
+      <parameter id="p_mg" value="1" units="mg_u" constant="true"/>
+      <parameter id="p_mg2" value="1" units="mg2_u" constant="true"/>
+      <parameter id="p_ugml" value="1" units="ug_per_ml" constant="true"/>
+      <parameter id="p_perml" value="1" units="per_ml" constant="true"/>
+      <parameter id="p_day" value="1" units="day_u" constant="true"/>
+      <parameter id="p_week" value="1" units="week_u" constant="true"/>
+      <parameter id="p_hru" value="1" units="hr_u" constant="true"/>
+      <parameter id="p_amp" value="1" units="ampere_u" constant="true"/>
+      <parameter id="p_kind" value="1" units="litre" constant="true"/>
+      <parameter id="p_kind2" value="1" units="item" constant="true"/>
+      <parameter id="p_mole" value="1" units="mole" constant="true"/>
+    </listOfParameters>
+    <listOfReactions>
+      <reaction id="R_ref" reversible="false">
+        <listOfProducts>
+          <speciesReference id="sr1" species="Sk" stoichiometry="1" constant="true"/>
+        </listOfProducts>
+        <kineticLaw id="kl_ref">
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <times/>
+              <ci> k </ci>
+              <ci> S </ci>
+              <ci> V </ci>
+            </apply>
+          </math>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R0" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <times/>
+              <ci> k </ci>
+              <ci> S </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R1" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <times/>
+              <ci> k </ci>
+              <ci> S </ci>
+              <ci> V </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R2" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <times/>
+              <ci> k </ci>
+              <ci> H </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R3" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <times/>
+              <ci> q </ci>
+              <ci> S </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R4" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <ci> S </ci>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R5" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <ci> q </ci>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R6" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <ci> N </ci>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R7" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <times/>
+              <ci> k </ci>
+              <ci> N </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R8" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <divide/>
+              <ci> S </ci>
+              <ci> V </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R9" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <times/>
+              <ci> S </ci>
+              <ci> S </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R10" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <power/>
+              <ci> S </ci>
+              <cn type="integer"> 2 </cn>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R11" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <power/>
+              <ci> S </ci>
+              <ci> q </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R12" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <times/>
+              <ci> k </ci>
+              <ci> k </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R13" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <times/>
+              <cn type="integer"> 2 </cn>
+              <ci> k </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R14" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <cn type="integer"> 2 </cn>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R15" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <plus/>
+              <ci> k </ci>
+              <ci> S </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R16" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <plus/>
+              <ci> S </ci>
+              <ci> k </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R17" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <plus/>
+              <ci> q </ci>
+              <ci> k </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R18" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <plus/>
+              <ci> S </ci>
+              <ci> q </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R19" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <plus/>
+              <ci> q </ci>
+              <ci> S </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R20" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <plus/>
+              <ci> q </ci>
+              <ci> q </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R21" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <plus/>
+              <ci> q </ci>
+              <cn type="integer"> 2 </cn>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R22" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <plus/>
+              <ci> k </ci>
+              <ci> kk </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R23" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <max/>
+              <ci> k </ci>
+              <ci> kk </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R24" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <root/>
+              <degree>
+                <cn type="integer"> 2 </cn>
+              </degree>
+              <ci> S </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R25" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <exp/>
+              <ci> k </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R26" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <times/>
+              <ci> k </ci>
+              <apply>
+                <exp/>
+                <ci> q </ci>
+              </apply>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R27" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <csymbol encoding="text" definitionURL="http://www.sbml.org/sbml/symbols/time"> time </csymbol>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R28" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <csymbol encoding="text" definitionURL="http://www.sbml.org/sbml/symbols/avogadro"> avogadro </csymbol>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R29" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <times/>
+              <ci> lk </ci>
+              <ci> S </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R30" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <ci> SW </ci>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R31" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <ci> SA </ci>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R32" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <ci> SZ </ci>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R33" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <piecewise>
+              <piece>
+                <ci> k </ci>
+                <apply>
+                  <gt/>
+                  <ci> q </ci>
+                  <cn type="integer"> 1 </cn>
+                </apply>
+              </piece>
+              <otherwise>
+                <ci> S </ci>
+              </otherwise>
+            </piecewise>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R34" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <piecewise>
+              <piece>
+                <ci> q </ci>
+                <apply>
+                  <gt/>
+                  <ci> q </ci>
+                  <cn type="integer"> 1 </cn>
+                </apply>
+              </piece>
+              <otherwise>
+                <ci> k </ci>
+              </otherwise>
+            </piecewise>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R35" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <piecewise>
+              <piece>
+                <ci> S </ci>
+                <apply>
+                  <gt/>
+                  <ci> q </ci>
+                  <cn type="integer"> 1 </cn>
+                </apply>
+              </piece>
+              <piece>
+                <ci> k </ci>
+                <apply>
+                  <lt/>
+                  <ci> q </ci>
+                  <cn type="integer"> 0 </cn>
+                </apply>
+              </piece>
+              <otherwise>
+                <ci> q </ci>
+              </otherwise>
+            </piecewise>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R36" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <piecewise>
+              <piece>
+                <ci> S </ci>
+                <apply>
+                  <gt/>
+                  <ci> k </ci>
+                  <ci> q </ci>
+                </apply>
+              </piece>
+            </piecewise>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R37" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <times/>
+              <ci> c </ci>
+              <ci> V </ci>
+              <ci> k </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R38" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <abs/>
+              <ci> S </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R39" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <minus/>
+              <ci> S </ci>
+              <ci> S </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R40" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <minus/>
+              <ci> S </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R41" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <minus/>
+              <ci> q </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R42" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <divide/>
+              <ci> k </ci>
+              <ci> k </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R43" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <times/>
+              <ci> t2 </ci>
+              <ci> k </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R44" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <divide/>
+              <cn type="integer"> 1 </cn>
+              <ci> t2 </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R45" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <times/>
+              <ci> d </ci>
+              <ci> k </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R46" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <times/>
+              <ci> q </ci>
+              <ci> k </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R47" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <times/>
+              <ci> k </ci>
+              <ci> q </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R48" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <ci> W </ci>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R49" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <times/>
+              <ci> SW </ci>
+              <ci> W </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R50" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <root/>
+              <degree>
+                <cn type="integer"> 3 </cn>
+              </degree>
+              <ci> S </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R51" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <root/>
+              <degree>
+                <ci> q </ci>
+              </degree>
+              <ci> S </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R52" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <root/>
+              <degree>
+                <ci> d </ci>
+              </degree>
+              <ci> S </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R53" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <root/>
+              <degree>
+                <cn type="integer"> 2 </cn>
+              </degree>
+              <apply>
+                <root/>
+                <degree>
+                  <cn type="integer"> 2 </cn>
+                </degree>
+                <ci> S </ci>
+              </apply>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R54" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <power/>
+              <ci> S </ci>
+              <cn type="rational"> 1 <sep/> 2 </cn>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R55" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <power/>
+              <ci> S </ci>
+              <cn> 0.5 </cn>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R56" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <power/>
+              <ci> S </ci>
+              <cn> 2.5 </cn>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R57" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <power/>
+              <ci> S </ci>
+              <ci> d </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R58" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <power/>
+              <ci> S </ci>
+              <ci> e2 </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R59" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <power/>
+              <ci> S </ci>
+              <ci> t2 </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R60" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <power/>
+              <ci> S </ci>
+              <cn type="integer"> 0 </cn>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R61" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <csymbol encoding="text" definitionURL="http://www.sbml.org/sbml/symbols/rateOf"> rateOf </csymbol>
+              <ci> S </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R62" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <floor/>
+              <ci> k </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R63" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <ceiling/>
+              <ci> k </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R64" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <power/>
+              <ci> k </ci>
+              <cn type="integer"> 2 </cn>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R65" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <power/>
+              <ci> k </ci>
+              <apply>
+                <minus/>
+                <cn type="integer"> 1 </cn>
+              </apply>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R66" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <power/>
+              <apply>
+                <times/>
+                <ci> S </ci>
+                <ci> k </ci>
+              </apply>
+              <cn type="integer"> 2 </cn>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R67" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <power/>
+              <ci> q </ci>
+              <cn type="integer"> 2 </cn>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R68" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <max/>
+              <ci> S </ci>
+              <ci> k </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R69" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <max/>
+              <ci> q </ci>
+              <ci> k </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R70" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <min/>
+              <ci> k </ci>
+              <ci> k </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R71" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <max/>
+              <ci> S </ci>
+              <ci> S </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R72" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <factorial/>
+              <ci> q </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R73" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML" xmlns:sbml="http://www.sbml.org/sbml/level3/version2/core">
+            <apply>
+              <divide/>
+              <cn sbml:units="mole" type="integer"> 1 </cn>
+              <cn sbml:units="second" type="integer"> 2 </cn>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R74" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML" xmlns:sbml="http://www.sbml.org/sbml/level3/version2/core">
+            <apply>
+              <times/>
+              <cn sbml:units="second" type="integer"> 3 </cn>
+              <ci> S </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R75" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML" xmlns:sbml="http://www.sbml.org/sbml/level3/version2/core">
+            <apply>
+              <times/>
+              <cn sbml:units="per_min" type="integer"> 3 </cn>
+              <ci> S </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R76" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML" xmlns:sbml="http://www.sbml.org/sbml/level3/version2/core">
+            <apply>
+              <times/>
+              <cn sbml:units="mmHg" type="integer"> 2 </cn>
+              <ci> V </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R77" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML" xmlns:sbml="http://www.sbml.org/sbml/level3/version2/core">
+            <apply>
+              <times/>
+              <cn sbml:units="dimensionless" type="integer"> 2 </cn>
+              <ci> k </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R78" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <ci> f </ci>
+              <ci> k </ci>
+              <ci> S </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R79" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <ci> g </ci>
+              <ci> S </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R80" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <ci> g </ci>
+              <ci> q </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R81" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <ci> h </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R82" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <ci> fk </ci>
+              <ci> S </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R83" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <rem/>
+              <ci> S </ci>
+              <ci> k </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R84" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <quotient/>
+              <ci> S </ci>
+              <ci> k </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R85" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <times/>
+              <ci> t2 </ci>
+              <ci> k </ci>
+              <ci> S </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R86" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <times/>
+              <ci> S </ci>
+              <ci> t2 </ci>
+              <ci> k </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R87" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <times/>
+              <ci> k </ci>
+              <ci> t2 </ci>
+              <ci> S </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R88" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <times/>
+              <ci> p_odd </ci>
+              <ci> S </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R89" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <times/>
+              <ci> p_hr </ci>
+              <ci> S </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R90" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <times/>
+              <ci> p_kg </ci>
+              <ci> S </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R91" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <divide/>
+              <ci> p_g </ci>
+              <ci> p_mg </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R92" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <times/>
+              <ci> p_mg2 </ci>
+              <ci> k </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R93" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <times/>
+              <ci> p_ugml </ci>
+              <ci> V </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R94" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <times/>
+              <ci> p_perml </ci>
+              <ci> p_ugml </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R95" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <times/>
+              <ci> p_milli </ci>
+              <ci> k </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R96" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <times/>
+              <ci> p_hour </ci>
+              <ci> S </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R97" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <times/>
+              <ci> p_ms </ci>
+              <ci> k </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R98" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <times/>
+              <ci> p_dl </ci>
+              <ci> S </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R99" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <times/>
+              <ci> p_m4 </ci>
+              <ci> p_cm2 </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R100" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <times/>
+              <ci> p_sqrt </ci>
+              <ci> p_sqrt </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R101" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <times/>
+              <ci> p_kat </ci>
+              <ci> t2 </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R102" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <times/>
+              <ci> p_item </ci>
+              <ci> k </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R103" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <times/>
+              <ci> p_dimless </ci>
+              <ci> k </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R104" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <divide/>
+              <ci> p_gmol </ci>
+              <ci> p_tmol </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R105" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <times/>
+              <ci> p_complex </ci>
+              <ci> p_pmsq </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R106" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <times/>
+              <ci> p_day </ci>
+              <ci> kk </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R107" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <divide/>
+              <ci> p_week </ci>
+              <ci> p_hru </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R108" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <times/>
+              <ci> p_amp </ci>
+              <ci> t2 </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R109" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <times/>
+              <ci> p_kind </ci>
+              <ci> p_kind2 </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R110" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <divide/>
+              <ci> p_mole </ci>
+              <ci> p_kind </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R111" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <times/>
+              <ci> sr1 </ci>
+              <ci> k </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R112" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <times/>
+              <ci> R_ref </ci>
+              <ci> t2 </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R113" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <ci> R_ref </ci>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R114" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <log/>
+              <logbase>
+                <cn type="integer"> 10 </cn>
+              </logbase>
+              <ci> k </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R115" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <log/>
+              <logbase>
+                <cn type="integer"> 10 </cn>
+              </logbase>
+              <ci> q </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R116" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <ln/>
+              <ci> q </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R117" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <sin/>
+              <ci> S </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R118" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <divide/>
+              <apply>
+                <times/>
+                <ci> k </ci>
+                <ci> N </ci>
+              </apply>
+              <ci> N </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R119" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <divide/>
+              <apply>
+                <times/>
+                <ci> S </ci>
+                <ci> p_mg </ci>
+              </apply>
+              <ci> p_mg </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R120" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <times/>
+              <ci> p_mole </ci>
+              <ci> p_mole </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R121" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <divide/>
+              <apply>
+                <divide/>
+                <ci> p_kind </ci>
+                <ci> p_mole </ci>
+              </apply>
+              <ci> p_kind </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R122" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML" xmlns:sbml="http://www.sbml.org/sbml/level3/version2/core">
+            <apply>
+              <divide/>
+              <cn sbml:units="mmol" type="integer"> 1 </cn>
+              <cn sbml:units="mmol" type="integer"> 1 </cn>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R123" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <divide/>
+              <ci> p_odd </ci>
+              <ci> p_odd </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R124" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <times/>
+              <ci> p_odd </ci>
+              <ci> k </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R125" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <times/>
+              <ci> k </ci>
+              <ci> p_odd </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R126" reversible="false">
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <times/>
+              <ci> S </ci>
+              <ci> p_odd </ci>
+              <ci> k </ci>
+            </apply>
+          </math>
+          <listOfLocalParameters>
+            <localParameter id="lk" value="1" units="per_min"/>
+          </listOfLocalParameters>
+        </kineticLaw>
+      </reaction>
+    </listOfReactions>
+  </model>
+</sbml>

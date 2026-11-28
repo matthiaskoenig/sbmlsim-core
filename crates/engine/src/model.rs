@@ -178,6 +178,10 @@ mod test_models {
             units: BTreeMap::new(),
             driven: Vec::new(),
             t_ref: None,
+            unit_definitions: Default::default(),
+            time_unit: None,
+            initial_assignments: Vec::new(),
+            time_dependent: false,
         }
     }
 
@@ -720,6 +724,10 @@ mod test_models {
                 units: BTreeMap::new(),
                 driven: Vec::new(),
                 t_ref: None,
+                unit_definitions: Default::default(),
+                time_unit: None,
+                initial_assignments: Vec::new(),
+                time_dependent: false,
             }
         }
     }

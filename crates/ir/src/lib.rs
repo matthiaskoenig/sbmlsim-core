@@ -79,6 +79,8 @@ pub mod optimize;
 mod order;
 mod units;
 
+use std::collections::BTreeMap;
+
 pub use expr::{AVOGADRO, Expr, Op, Symbol};
 pub use sbmlsim_abi::DrivenSpecies;
 
@@ -369,8 +371,15 @@ pub struct Model {
     pub driven: Vec<DrivenSpecies>,
     /// The parameter `driven__t_ref` of the driven species, `None` without.
     pub t_ref: Option<u32>,
-    /// The unit expression of the time of the model, when SBML gives one.
+    /// The unit expression of the time of the model as sbmlsim names it, `units["time"]`.
     pub time_unit: Option<String>,
+    /// The units sbmlsim gives the entities of the model (`UnitsInformation.from_sbml_doc`):
+    /// the time, every compartment, species (`S` and `[S]`) and parameter (empty without
+    /// units), every reaction with a kinetic law and every kinetic law with an id.
+    pub units: BTreeMap<String, String>,
+    /// The unit definitions the units name by their id because pint has no unit of them (a
+    /// factor which is no prefix), the name to its expression of pint.
+    pub unit_definitions: BTreeMap<String, String>,
 }
 
 impl Model {

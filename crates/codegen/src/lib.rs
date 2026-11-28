@@ -62,8 +62,6 @@ mod probes;
 mod split;
 mod wasm;
 
-use std::collections::BTreeMap;
-
 use sbmlsim_abi::{
     self as abi, Entity, EventInfo, JacobianChoice, JacobianKind, MODEL_CONTRACT, ModelDescription,
     ModelSizes, Selection,
@@ -1248,14 +1246,69 @@ pub fn description(
         n_roots,
         n_discontinuity_roots,
         n_constants,
-        units: model
-            .selections
-            .iter()
-            .filter_map(|s| Some((s.id.clone(), s.unit.clone()?)))
-            .collect::<BTreeMap<_, _>>(),
+        units: model.units.clone(),
         driven: model.driven.clone(),
         t_ref: model.t_ref,
+        unit_definitions: model.unit_definitions.clone(),
+        time_unit: model.time_unit.clone(),
+        initial_assignments: initial_assignments(model),
+        time_dependent: time_dependent(model),
     }
+}
+
+/// The parameters, compartments and species references (no species) whose value as loaded an
+/// initial assignment computes: the targets of the initial evaluations which no assignment rule
+/// assigns, since the other initial evaluations of the model are those of the assignment rules
+/// and the other quantity of a species ([`Model::initial`]). In the order of the states and then
+/// of the parameters.
+fn initial_assignments(model: &Model) -> Vec<String> {
+    let ruled: Vec<Symbol> = model.assignment_rules.iter().map(|a| a.target).collect();
+    let assigned = |symbol: Symbol| {
+        model.initial.iter().any(|a| a.target == symbol) && !ruled.contains(&symbol)
+    };
+    let entities = model
+        .states
+        .iter()
+        .enumerate()
+        .map(|(i, e)| (Symbol::State(i as u32), e))
+        .chain(
+            model
+                .parameters
+                .iter()
+                .enumerate()
+                .map(|(i, e)| (Symbol::Param(i as u32), e)),
+        );
+    entities
+        .filter(|(symbol, e)| !matches!(e.kind, EntityKind::Species { .. }) && assigned(*symbol))
+        .map(|(_, e)| e.id.clone())
+        .collect()
+}
+
+/// Whether a math of the model reads the time or a delay, or an event has a delay (sbmlsim's
+/// `ModelSymbols.time_dependent`).
+fn time_dependent(model: &Model) -> bool {
+    fn reads_time(e: &Expr) -> bool {
+        match e {
+            Expr::Number(_) | Expr::Bool(_) => false,
+            Expr::Symbol(s) => *s == Symbol::Time,
+            Expr::Apply { op, args } => *op == Op::Delay || args.iter().any(reads_time),
+            Expr::Piecewise { pieces, otherwise } => {
+                pieces.iter().any(|(v, c)| reads_time(v) || reads_time(c))
+                    || otherwise.as_deref().is_some_and(reads_time)
+            }
+        }
+    }
+    let events = model.events.iter().any(|e| {
+        e.delay.is_some()
+            || reads_time(&e.trigger)
+            || e.priority.as_ref().is_some_and(reads_time)
+            || e.assignments.iter().any(|a| reads_time(&a.value))
+    });
+    events
+        || model.initial.iter().any(|a| reads_time(&a.expr))
+        || model.assignment_rules.iter().any(|a| reads_time(&a.expr))
+        || model.rates.iter().any(reads_time)
+        || model.selections.iter().any(|s| reads_time(&s.expr))
 }
 
 #[cfg(test)]

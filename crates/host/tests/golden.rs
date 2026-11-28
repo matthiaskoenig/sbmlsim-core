@@ -51,6 +51,9 @@ fn the_golden_description_is_the_one_the_compiler_writes_and_roundtrips() {
     assert!(desc.events[0].has_delay && desc.events[0].has_priority);
     assert_eq!(desc.n_discontinuity_roots, 1);
     assert!(!desc.units.is_empty());
+    // its time unit, and its event with a delay makes it depend on the time of its clock
+    assert_eq!(desc.time_unit.as_deref(), Some("second"));
+    assert!(desc.time_dependent);
 }
 
 #[test]

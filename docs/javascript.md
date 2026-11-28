@@ -8,6 +8,8 @@
 | `compile.mjs` | `./compile` | compiles an SBML document into `model.wasm` and its description with `compiler.wasm` |
 | `petab.mjs` (since 0.39.0) | `./petab` | a problem of [PEtab v2](petab.md) read, simulated, evaluated and (since 0.40.0) fitted in a page |
 | `stats.mjs` (since 0.43.0) | `./stats` | the [statistics of the analyses](stats.md), every function of `sbmlsim_core.stats` with the bits of python, see [The statistics](#the-statistics) |
+| `units.mjs` (since 0.45.0) | `./units` | the units of pint, see [Units](units.md) |
+| `scan.mjs` (since 0.45.0) | `./scan` | a scan of sbmlsim planned in `compiler.wasm`, simulated with the loader or a pool, see [Scans](scan.md) |
 | `kernel.mjs` (since 0.41.0) | `./kernel` | instantiates the [batched kernel](#the-batched-kernel) of a model, which advances many instances of it per call |
 | `pool.mjs` (with `worker.mjs`) | `./pool` | a pool of workers which run the loader off the main thread |
 | `panels.mjs` | `./panels` | the routes of the panel service of sbmlsim, answered inside a page from a bundle |

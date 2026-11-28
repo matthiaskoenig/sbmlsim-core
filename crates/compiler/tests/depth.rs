@@ -25,6 +25,19 @@ fn model(body: &str, functions: &str) -> String {
     )
 }
 
+/// The model of [`model`] with `body` as the kinetic law of a reaction instead, whose units the
+/// compiler derives for the description (`crate::units` of `sbmlsim-ir`), recursing over the
+/// math as libsbml does.
+fn law(xml: &str) -> String {
+    let (head, rest) = xml
+        .split_once("<listOfRules><rateRule variable=\"x\">")
+        .unwrap();
+    let (math, tail) = rest.split_once("</rateRule></listOfRules>").unwrap();
+    format!(
+        r#"{head}<listOfReactions><reaction id="J" reversible="false"><kineticLaw>{math}</kineticLaw></reaction></listOfReactions>{tail}"#
+    )
+}
+
 /// `x + (x + (... + 1))`, `n` applies: the deepest elements (`<plus/>`, `<ci>`, `<cn>` of the
 /// innermost apply) are at the depth `n + 1` below `<math>`.
 fn sums(n: usize) -> String {
@@ -115,6 +128,30 @@ fn a_math_at_the_limit_compiles_and_one_level_deeper_is_refused() {
     let n = MAX_MATH_DEPTH / 2 - 1;
     compile_on_a_small_stack(piecewise(n)).unwrap();
     assert_too_deep(compile_on_a_small_stack(piecewise(n + 1)), "piecewise");
+}
+
+#[test]
+fn a_kinetic_law_at_the_limit_compiles_with_its_units() {
+    let n = MAX_MATH_DEPTH - 1;
+    compile_on_a_small_stack(law(&sums(n))).unwrap();
+    compile_on_a_small_stack(law(&sines(n))).unwrap();
+    compile_on_a_small_stack(law(&piecewise(MAX_MATH_DEPTH / 2 - 1))).unwrap();
+    compile_on_a_small_stack(law(&calls(MAX_MATH_DEPTH / 2 - 1))).unwrap();
+    // a kinetic law the build refuses is refused before its units are derived
+    assert_too_deep(compile_on_a_small_stack(law(&sums(n + 1))), "sums");
+    let dup = format!(
+        r#"<functionDefinition id="dup"><math {MATH}><lambda><bvar><ci>a</ci></bvar><apply><plus/><ci>a</ci><ci>a</ci></apply></lambda></math></functionDefinition>"#
+    );
+    let body = format!(
+        "{}<ci>x</ci>{}",
+        "<apply><ci>dup</ci>".repeat(20),
+        "</apply>".repeat(20)
+    );
+    let result = compile_on_a_small_stack(law(&model(&body, &dup)));
+    assert!(
+        matches!(result, Err(CompileError::Invalid(ref message)) if message.contains("expansion budget")),
+        "{result:?}"
+    );
 }
 
 #[test]

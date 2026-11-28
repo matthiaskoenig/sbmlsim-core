@@ -1,0 +1,16 @@
+{
+ "time": "min",
+ "default": "l",
+ "prey": "mol",
+ "[prey]": "mol/l",
+ "predator": "mol",
+ "[predator]": "mol/l",
+ "alpha": "",
+ "beta": "",
+ "gamma": "",
+ "delta": "",
+ "v1": "mol",
+ "v2": "mol",
+ "v3": "mol^2",
+ "v4": ""
+}

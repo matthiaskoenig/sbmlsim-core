@@ -181,6 +181,56 @@ mod tests {
     }
 
     #[test]
+    fn the_description_has_the_time_unit_the_initial_assignments_and_the_time_dependence() {
+        let math = r#"xmlns="http://www.w3.org/1998/Math/MathML""#;
+        let sbml = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2">
+  <model id="m" timeUnits="min">
+    <listOfUnitDefinitions>
+      <unitDefinition id="min"><listOfUnits><unit kind="second" exponent="1" scale="0" multiplier="60"/></listOfUnits></unitDefinition>
+    </listOfUnitDefinitions>
+    <listOfCompartments><compartment id="c" size="1" constant="true"/></listOfCompartments>
+    <listOfSpecies><species id="S" compartment="c" hasOnlySubstanceUnits="false" boundaryCondition="false" constant="false"/></listOfSpecies>
+    <listOfParameters>
+      <parameter id="k" value="1" constant="true"/>
+      <parameter id="k2" constant="true"/>
+      <parameter id="r" constant="false"/>
+    </listOfParameters>
+    <listOfInitialAssignments>
+      <initialAssignment symbol="k2"><math {math}><apply><times/><cn>2</cn><ci>k</ci></apply></math></initialAssignment>
+      <initialAssignment symbol="S"><math {math}><ci>k</ci></math></initialAssignment>
+    </listOfInitialAssignments>
+    <listOfRules><assignmentRule variable="r"><math {math}><apply><times/><ci>k</ci><ci>S</ci></apply></math></assignmentRule></listOfRules>
+  </model>
+</sbml>"#
+        );
+        let d = compile(&sbml, &CompileOptions::default())
+            .unwrap()
+            .description;
+        // the time unit as sbmlsim names it, the unit definition of 60 seconds `min`
+        assert_eq!(d.time_unit.as_deref(), Some("min"));
+        assert_eq!(d.units["time"], "min");
+        // the rule and the species are no initial assignment of a parameter
+        assert_eq!(d.initial_assignments, ["k2"]);
+        assert!(!d.time_dependent);
+        let timed = sbml.replace(
+            "<ci>k</ci><ci>S</ci>",
+            r#"<ci>k</ci><csymbol encoding="text" definitionURL="http://www.sbml.org/sbml/symbols/time">t</csymbol>"#,
+        );
+        let d = compile(&timed, &CompileOptions::default())
+            .unwrap()
+            .description;
+        assert!(d.time_dependent);
+        let d = compile(DECAY, &CompileOptions::default())
+            .unwrap()
+            .description;
+        // a model without a time unit has the one sbmlsim falls back to
+        assert_eq!(d.time_unit.as_deref(), Some("second"));
+        assert!(d.initial_assignments.is_empty() && !d.time_dependent);
+    }
+
+    #[test]
     fn a_refusal_of_the_model_representation_has_its_message() {
         // (code generation refuses only functions above the limits of WebAssembly engines,
         // `sbmlsim-codegen`'s `a_function_above_the_limits_is_an_error`)
@@ -293,7 +343,7 @@ mod tests {
     fn uptake() -> String {
         let math = r#"xmlns="http://www.w3.org/1998/Math/MathML""#;
         format!(
-            r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2"><model id="m" timeUnits="second" substanceUnits="mole"><listOfCompartments><compartment id="blood" size="2" units="litre" constant="true"/><compartment id="cell" size="1" units="litre" constant="true"/></listOfCompartments><listOfSpecies><species id="X" compartment="blood" initialConcentration="3" hasOnlySubstanceUnits="false" boundaryCondition="false" constant="false"/><species id="C" compartment="cell" initialConcentration="0" hasOnlySubstanceUnits="false" boundaryCondition="false" constant="false"/></listOfSpecies><listOfParameters><parameter id="k" value="0.5" constant="true"/></listOfParameters><listOfReactions><reaction id="R" reversible="false"><listOfReactants><speciesReference species="X" stoichiometry="1" constant="true"/></listOfReactants><listOfProducts><speciesReference species="C" stoichiometry="1" constant="true"/></listOfProducts><kineticLaw><math {math}><apply><times/><ci>k</ci><ci>X</ci></apply></math></kineticLaw></reaction></listOfReactions></model></sbml>"#
+            r#"<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2"><model id="m" timeUnits="second" substanceUnits="mole"><listOfCompartments><compartment id="blood" size="2" units="litre" constant="true"/><compartment id="cell" size="1" units="litre" constant="true"/></listOfCompartments><listOfSpecies><species id="X" compartment="blood" substanceUnits="mole" initialConcentration="3" hasOnlySubstanceUnits="false" boundaryCondition="false" constant="false"/><species id="C" compartment="cell" substanceUnits="mole" initialConcentration="0" hasOnlySubstanceUnits="false" boundaryCondition="false" constant="false"/></listOfSpecies><listOfParameters><parameter id="k" value="0.5" constant="true"/></listOfParameters><listOfReactions><reaction id="R" reversible="false"><listOfReactants><speciesReference species="X" stoichiometry="1" constant="true"/></listOfReactants><listOfProducts><speciesReference species="C" stoichiometry="1" constant="true"/></listOfProducts><kineticLaw><math {math}><apply><times/><ci>k</ci><ci>X</ci></apply></math></kineticLaw></reaction></listOfReactions></model></sbml>"#
         )
     }
 
@@ -334,6 +384,17 @@ mod tests {
                 assert_eq!(desc.units[id], unit, "{id}");
             }
         }
+        // a species without units (the default units of the model name none, as in sbmlsim)
+        // drives a path without units and a slope without a unit
+        let unitless = uptake().replace(r#" substanceUnits="mole" initial"#, " initial");
+        let options = CompileOptions {
+            driven: vec!["X".to_string()],
+            ..CompileOptions::default()
+        };
+        let desc = compile(&unitless, &options).unwrap().description;
+        assert_eq!(desc.units["X__value"], "");
+        assert!(!desc.units.contains_key("X__slope"));
+        assert_eq!(desc.units["driven__t_ref"], "second");
         // the document entry point drives them too
         let doc = sbmlsim_sbml::read(&uptake()).unwrap();
         let options = CompileOptions {
