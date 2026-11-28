@@ -29,6 +29,7 @@
 // engine of the page, on the workers of a pool next to each other, and tells their results.
 // The optimizer and its evaluations are the ones of `sbmlsim-core petab --fit`.
 
+import { withBuffers } from "./compile.mjs";
 import { EngineError } from "./loader.mjs";
 
 /** The exports of `compiler.wasm` a problem needs. */
@@ -122,40 +123,18 @@ class Interface {
     this.exports = exports;
   }
 
-  /** Copies bytes into a new buffer of the module: `[pointer, length]`, `[0, 0]` for none. */
-  put(bytes) {
-    if (bytes.length === 0) return [0, 0];
-    const pointer = this.exports.allocate(bytes.length);
-    new Uint8Array(this.exports.memory.buffer, pointer, bytes.length).set(bytes);
-    return [pointer, bytes.length];
-  }
-
-  /** The bytes of a buffer the module gave, copied, and the buffer freed. */
-  take(pointer, length) {
-    if (pointer === 0 || length === 0) return new Uint8Array(0);
-    const bytes = new Uint8Array(this.exports.memory.buffer, pointer, length).slice();
-    this.exports.deallocate(pointer, length);
-    return bytes;
-  }
-
   /**
    * Calls a function of the module which writes `words` words of buffers to `out`, with the
-   * arguments `head` and the buffers of `inputs`; gives the status and the buffers it wrote.
+   * arguments `head` and the buffers of `inputs`; gives the status and the bytes of the buffers
+   * it wrote. Every buffer of the call is freed, whatever the call throws.
    */
   call(name, head, inputs, words) {
-    const { allocate, deallocate } = this.exports;
-    const buffers = inputs.map((bytes) => this.put(bytes));
-    const out = allocate(4 * words);
-    try {
-      const status = this.exports[name](...head, ...buffers.flat(), out);
-      const header = Array.from(new Uint32Array(this.exports.memory.buffer, out, words));
-      const answers = [];
-      for (let k = 0; k < words; k += 2) answers.push(this.take(header[k], header[k + 1]));
-      return { status, answers };
-    } finally {
-      deallocate(out, 4 * words);
-      for (const [pointer, length] of buffers) if (pointer !== 0) deallocate(pointer, length);
-    }
+    return withBuffers(this.exports, "compiler.wasm", (buffers) => {
+      const pointers = inputs.map((bytes) => buffers.put(bytes));
+      const out = buffers.allocate(4 * words);
+      const status = this.exports[name](...head, ...pointers.flat(), out);
+      return { status, answers: buffers.results(out, words / 2) };
+    });
   }
 
   /** A call of a JSON answer: the parsed answer, or the message as a `PetabError`. */
