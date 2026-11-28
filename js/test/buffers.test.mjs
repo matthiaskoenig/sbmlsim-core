@@ -1,4 +1,5 @@
-// The buffers of the calls into `compiler.wasm` (`withBuffers` of `compile.mjs`, `petab.mjs`):
+// The buffers of the calls into `compiler.wasm` (`withBuffers` of `compile.mjs`, `petab.mjs`,
+// `stats.mjs`):
 // every buffer a call allocates or gets as a result is freed, also when the call throws; a
 // failed allocation (0) throws before anything is written; and the words of a result are read
 // little-endian at any address, since a buffer of `allocate` has the alignment of bytes.
@@ -12,6 +13,7 @@ import { test } from "node:test";
 
 import { Buffers, CompileError, createCompiler, withBuffers } from "../compile.mjs";
 import { PetabError, openPetab } from "../petab.mjs";
+import { StatsError, createStats } from "../stats.mjs";
 import { DECAY_SBML, compilerWasm, countedExports, loaderRuntime } from "./helpers.mjs";
 
 /** A compiler of its own, whose exports count the buffers. */
@@ -290,4 +292,31 @@ test("a problem of PEtab frees every buffer of its calls, also of calls which th
   };
   await assert.rejects(openPetab({ compiler: trapping, runtime, files: petabFiles() }), WebAssembly.RuntimeError);
   assertBalanced(counted, "a trap of petab_model");
+});
+
+test("a function of the statistics frees every buffer, of a result, of a refusal and of a throw", async () => {
+  for (const oddWords of [false, true]) {
+    const { counted } = await countedCompiler({ oddWords });
+    const stats = createStats({ compiler: counted });
+    const [mean, , n] = stats.meanSe([1, 2, 3]);
+    assert.equal(mean, 2);
+    assert.equal(n, 3);
+    assert.throws(() => stats.unitPoints(2, 4, { seed: -1 }), StatsError);
+    assertBalanced(counted, `the statistics, odd words ${oddWords}`);
+    for (const k of [1, 2, 3]) {
+      counted.failAt(k);
+      assert.throws(() => stats.meanSe([1, 2, 3]), /compiler\.wasm could not allocate/);
+      assertBalanced(counted, `the allocation ${k} fails`);
+    }
+  }
+  const { counted } = await countedCompiler();
+  // the statistics call the module when they are created, so the export traps afterwards
+  const exports = { ...counted.exports };
+  const stats = createStats({ compiler: { exports } });
+  assert.ok(stats.sse([1, 2]) > 0);
+  exports.stats_call = () => {
+    throw new WebAssembly.RuntimeError("unreachable");
+  };
+  assert.throws(() => stats.sse([1, 2]), WebAssembly.RuntimeError);
+  assertBalanced(counted, "a trap of stats_call");
 });

@@ -26,9 +26,9 @@
 // `kernel.json`), which `kernel.mjs` instantiates.
 
 // The buffers of a call into `compiler.wasm` (`Buffers`, `withBuffers`), which this module,
-// `petab.mjs` and every other host of an export of the module use: the arguments copied into the
-// memory of the module, the words of the result read out of it, and every buffer freed again,
-// whatever the call throws.
+// `petab.mjs`, `stats.mjs` and every other host of an export of the module use: the arguments
+// copied into the memory of the module, the words of the result read out of it, and every buffer
+// freed again, whatever the call throws.
 //
 // - Every buffer of a call (the arguments, the words of the result and the buffers the words
 //   point at) is freed when the call ends, also when the module traps or a result does not

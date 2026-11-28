@@ -3845,51 +3845,18 @@ var sbmlsimCore = (() => {
       }
       this.exports = exports;
     }
-    /** A new buffer of the module of `length` bytes; an `Error` when the module has no memory left. */
-    allocate(length) {
-      const pointer = this.exports.allocate(length);
-      if (pointer === 0) throw new Error(`compiler.wasm could not allocate ${length} bytes`);
-      return pointer;
-    }
-    /** Copies bytes into a new buffer of the module: `[pointer, length]`, `[0, 0]` for none. */
-    put(bytes) {
-      if (bytes.length === 0) return [0, 0];
-      const pointer = this.allocate(bytes.length);
-      new Uint8Array(this.exports.memory.buffer, pointer, bytes.length).set(bytes);
-      return [pointer, bytes.length];
-    }
-    /** The bytes of a buffer the module gave, copied, and the buffer freed. */
-    take(pointer, length) {
-      if (pointer === 0 || length === 0) return new Uint8Array(0);
-      const bytes = new Uint8Array(this.exports.memory.buffer, pointer, length).slice();
-      this.exports.deallocate(pointer, length);
-      return bytes;
-    }
     /** Runs `stats_call` of a request: the decoded answer, or the error thrown. */
     call(request, json2) {
       const text = new TextEncoder().encode(JSON.stringify(json2));
       const bytes = request.bytes();
-      const buffers = [];
-      let status;
-      let answer;
-      let doubles;
-      try {
-        const input = this.put(text);
-        buffers.push(input);
-        const values = this.put(bytes);
-        buffers.push(values);
-        const out = this.allocate(16);
-        buffers.push([out, 16]);
-        status = this.exports.stats_call(...input, ...values, out);
-        const view = new DataView(this.exports.memory.buffer, out, 16);
-        const [answerPointer, answerLength, valuesPointer, valuesLength] = [0, 4, 8, 12].map(
-          (at) => view.getUint32(at, true)
-        );
-        answer = this.take(answerPointer, answerLength);
-        doubles = this.take(valuesPointer, valuesLength);
-      } finally {
-        for (const [pointer, length] of buffers) if (pointer !== 0) this.exports.deallocate(pointer, length);
-      }
+      const { status, answer, doubles } = withBuffers(this.exports, "compiler.wasm", (buffers) => {
+        const input = buffers.put(text);
+        const values = buffers.put(bytes);
+        const out = buffers.allocate(16);
+        const status2 = this.exports.stats_call(...input, ...values, out);
+        const [answer2, doubles2] = buffers.results(out, 2);
+        return { status: status2, answer: answer2, doubles: doubles2 };
+      });
       const parsed = JSON.parse(new TextDecoder().decode(answer));
       if (status !== 1) {
         if (parsed.kind === "TypeError") throw new TypeError(parsed.message);
