@@ -2582,7 +2582,7 @@ dependencies = [
 
 [[package]]
 name = "sbmlsim-abi"
-version = "0.44.0"
+version = "0.45.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2591,7 +2591,7 @@ dependencies = [
 
 [[package]]
 name = "sbmlsim-batch"
-version = "0.44.0"
+version = "0.45.0"
 dependencies = [
  "anyhow",
  "rayon",
@@ -2605,7 +2605,7 @@ dependencies = [
 
 [[package]]
 name = "sbmlsim-c"
-version = "0.44.0"
+version = "0.45.0"
 dependencies = [
  "libloading",
  "sbmlsim-abi",
@@ -2623,14 +2623,14 @@ dependencies = [
 
 [[package]]
 name = "sbmlsim-chaos"
-version = "0.44.0"
+version = "0.45.0"
 dependencies = [
  "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "sbmlsim-cli"
-version = "0.44.0"
+version = "0.45.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2652,7 +2652,7 @@ dependencies = [
 
 [[package]]
 name = "sbmlsim-codegen"
-version = "0.44.0"
+version = "0.45.0"
 dependencies = [
  "sbmlsim-abi",
  "sbmlsim-c",
@@ -2668,7 +2668,7 @@ dependencies = [
 
 [[package]]
 name = "sbmlsim-compiler"
-version = "0.44.0"
+version = "0.45.0"
 dependencies = [
  "sbmlsim-abi",
  "sbmlsim-codegen",
@@ -2681,14 +2681,14 @@ dependencies = [
 
 [[package]]
 name = "sbmlsim-csolvers"
-version = "0.44.0"
+version = "0.45.0"
 dependencies = [
  "cc",
 ]
 
 [[package]]
 name = "sbmlsim-document"
-version = "0.44.0"
+version = "0.45.0"
 dependencies = [
  "serde_json",
  "thiserror 2.0.21",
@@ -2696,7 +2696,7 @@ dependencies = [
 
 [[package]]
 name = "sbmlsim-engine"
-version = "0.44.0"
+version = "0.45.0"
 dependencies = [
  "rand_pcg",
  "sbmlsim-abi",
@@ -2712,7 +2712,7 @@ dependencies = [
 
 [[package]]
 name = "sbmlsim-fit"
-version = "0.44.0"
+version = "0.45.0"
 dependencies = [
  "basin",
  "libm",
@@ -2731,7 +2731,7 @@ dependencies = [
 
 [[package]]
 name = "sbmlsim-host"
-version = "0.44.0"
+version = "0.45.0"
 dependencies = [
  "anyhow",
  "sbmlsim-abi",
@@ -2746,7 +2746,7 @@ dependencies = [
 
 [[package]]
 name = "sbmlsim-ir"
-version = "0.44.0"
+version = "0.45.0"
 dependencies = [
  "libm",
  "sbmlsim-abi",
@@ -2758,7 +2758,7 @@ dependencies = [
 
 [[package]]
 name = "sbmlsim-mathlib"
-version = "0.44.0"
+version = "0.45.0"
 dependencies = [
  "libm",
  "wasmparser 0.230.0",
@@ -2766,7 +2766,7 @@ dependencies = [
 
 [[package]]
 name = "sbmlsim-ode"
-version = "0.44.0"
+version = "0.45.0"
 dependencies = [
  "indexmap",
  "minijinja",
@@ -2781,7 +2781,7 @@ dependencies = [
 
 [[package]]
 name = "sbmlsim-petab"
-version = "0.44.0"
+version = "0.45.0"
 dependencies = [
  "libm",
  "rayon",
@@ -2799,7 +2799,7 @@ dependencies = [
 
 [[package]]
 name = "sbmlsim-plot"
-version = "0.44.0"
+version = "0.45.0"
 dependencies = [
  "charton",
  "libm",
@@ -2813,7 +2813,7 @@ dependencies = [
 
 [[package]]
 name = "sbmlsim-plot-wasm"
-version = "0.44.0"
+version = "0.45.0"
 dependencies = [
  "sbmlsim-plot",
  "serde",
@@ -2822,7 +2822,7 @@ dependencies = [
 
 [[package]]
 name = "sbmlsim-python"
-version = "0.44.0"
+version = "0.45.0"
 dependencies = [
  "mimalloc",
  "numpy",
@@ -2849,7 +2849,7 @@ dependencies = [
 
 [[package]]
 name = "sbmlsim-reader"
-version = "0.44.0"
+version = "0.45.0"
 dependencies = [
  "roxmltree 0.21.2",
  "sbmlsim-document",
@@ -2859,7 +2859,7 @@ dependencies = [
 
 [[package]]
 name = "sbmlsim-sbml"
-version = "0.44.0"
+version = "0.45.0"
 dependencies = [
  "roxmltree 0.20.0",
  "thiserror 2.0.21",
@@ -2867,7 +2867,7 @@ dependencies = [
 
 [[package]]
 name = "sbmlsim-scan"
-version = "0.44.0"
+version = "0.45.0"
 dependencies = [
  "pkpdutils-core",
  "sbmlsim-abi",
@@ -2884,7 +2884,7 @@ dependencies = [
 
 [[package]]
 name = "sbmlsim-sensitivity"
-version = "0.44.0"
+version = "0.45.0"
 dependencies = [
  "libm",
  "thiserror 2.0.21",
@@ -2892,7 +2892,7 @@ dependencies = [
 
 [[package]]
 name = "sbmlsim-stats"
-version = "0.44.0"
+version = "0.45.0"
 dependencies = [
  "libm",
  "sbmlsim-sensitivity",
@@ -2902,15 +2902,15 @@ dependencies = [
 
 [[package]]
 name = "sbmlsim-thin"
-version = "0.44.0"
+version = "0.45.0"
 
 [[package]]
 name = "sbmlsim-timecourse"
-version = "0.44.0"
+version = "0.45.0"
 
 [[package]]
 name = "sbmlsim-units"
-version = "0.44.0"
+version = "0.45.0"
 dependencies = [
  "libm",
  "serde_json",
@@ -2919,7 +2919,7 @@ dependencies = [
 
 [[package]]
 name = "sbmlsim-wasm"
-version = "0.44.0"
+version = "0.45.0"
 dependencies = [
  "sbmlsim-abi",
  "sbmlsim-compiler",
