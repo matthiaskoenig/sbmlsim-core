@@ -6,9 +6,9 @@
 //! ([`sbmlsim_ir::driven::apply`]) and emits the module and its description
 //! ([`sbmlsim_codegen::emit_optimized`], [`sbmlsim_codegen::emit_with`] without the optimizer),
 //! so a refusal of the reader, of the builder, of the driven species or of the code generation
-//! surfaces with its own message. [`compile_kernel`] emits the batched kernel of the model instead (`kernel/1`,
-//! [`sbmlsim_codegen::emit_kernel`]): the model with its RODAS4 integrator in one module, which
-//! advances many points per call.
+//! surfaces with its own message. [`compile_kernel`] emits the batched kernel of the model
+//! instead (`kernel/1`, [`sbmlsim_codegen::emit_kernel`]): the model with its RODAS4 integrator
+//! in one module, which advances many points per call.
 //!
 //! The crate does no file system or OS access, so it builds for `wasm32-unknown-unknown`.
 
