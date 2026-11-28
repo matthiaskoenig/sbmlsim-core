@@ -113,7 +113,7 @@ from pathlib import Path
 import sbmlsim_core
 
 runtime = sbmlsim_core.Runtime(cache_dir=Path(sys.argv[1]))
-compiled = sbmlsim_core.compile_sbml(Path(sys.argv[2]).read_text())
+compiled = sbmlsim_core.compile_sbml(Path(sys.argv[2]).read_text(encoding="utf-8"))
 model = runtime.load(compiled.wasm, compiled.description)
 print(json.dumps([str(runtime.cache_dir), model.initial_values()]))
 """

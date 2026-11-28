@@ -364,7 +364,7 @@ def test_benchmark_time() -> None:
     run) does not fail the test, where the median of the wall clock went above
     the limit under load.
     """
-    spec = (PLOT / "specs" / "benchmark.json").read_text()
+    spec = (PLOT / "specs" / "benchmark.json").read_text(encoding="utf-8")
     times = []
     for _ in range(50):
         start = time.process_time()

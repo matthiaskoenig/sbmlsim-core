@@ -37,7 +37,7 @@ def decode(value: Any) -> Any:
 
 def cases(module: str, prefix: str) -> dict[str, dict[str, Any]]:
     """The cases of the fixture of `module` whose names start with `prefix`."""
-    fixture = json.loads((ORACLES / f"{module}.json").read_text())
+    fixture = json.loads((ORACLES / f"{module}.json").read_text(encoding="utf-8"))
     found = {
         name: decode(case) for name, case in fixture.items() if name.startswith(prefix)
     }

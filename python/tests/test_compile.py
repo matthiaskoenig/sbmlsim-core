@@ -113,7 +113,9 @@ def test_the_stub_names_what_the_module_exposes() -> None:
 
     from sbmlsim_core import _core
 
-    stub = ast.parse((ROOT / "python/sbmlsim_core/_core.pyi").read_text())
+    stub = ast.parse(
+        (ROOT / "python/sbmlsim_core/_core.pyi").read_text(encoding="utf-8")
+    )
     names = set()
     for node in stub.body:
         if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
