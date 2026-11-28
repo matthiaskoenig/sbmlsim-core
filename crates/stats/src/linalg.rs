@@ -12,6 +12,7 @@
 //! a column of the matrix of the vectors, normalized, its largest component positive (the
 //! first of the largest ones); LAPACK chooses the sign of numpy's by its own rounding.
 
+use crate::size::{array_len, filled};
 use crate::{Result, StatsError};
 
 /// The largest number of sweeps of the Jacobi method; a symmetric matrix converges
@@ -77,7 +78,7 @@ pub fn eigvalsh(a: &[f64], k: usize) -> Result<Vec<f64>> {
 /// `None` of a matrix which is not positive definite (a pivot not positive), of a value of the
 /// lower triangle which is not finite and of a slice which is not of `k * k` values.
 pub fn cholesky(a: &[f64], k: usize) -> Option<Vec<f64>> {
-    if a.len() != k * k {
+    if k.checked_mul(k) != Some(a.len()) {
         return None;
     }
     let mut l = vec![0.0; k * k];
@@ -137,23 +138,24 @@ pub fn factor(r: &[f64], k: usize) -> Result<Vec<f64>> {
 /// As [`eigh`].
 pub fn pinv_symmetric(a: &[f64], k: usize) -> Result<Vec<f64>> {
     let (values, vectors) = eigh(a, k)?;
-    Ok(pinv_of_eigh(&values, &vectors, k))
+    pinv_of_eigh(&values, &vectors, k)
 }
 
 /// The pseudo-inverse of [`pinv_symmetric`] from the eigendecomposition of [`eigh`] (the
 /// eigenvalues and the row-major matrix of the eigenvectors of a `k x k` matrix), for a caller
 /// which needs the eigenvalues as well: the same cut, the same bits.
 ///
-/// # Panics
+/// # Errors
 ///
-/// Not `k` eigenvalues and `k * k` values of the eigenvectors.
-pub fn pinv_of_eigh(values: &[f64], vectors: &[f64], k: usize) -> Vec<f64> {
-    assert!(
-        values.len() == k && vectors.len() == k * k,
-        "an eigendecomposition of a {k} x {k} matrix has {k} eigenvalues and {} values of the \
-         eigenvectors",
-        k * k
-    );
+/// Not `k` eigenvalues or not `k * k` values of the eigenvectors.
+pub fn pinv_of_eigh(values: &[f64], vectors: &[f64], k: usize) -> Result<Vec<f64>> {
+    if values.len() != k {
+        return Err(StatsError::value(format!(
+            "An eigendecomposition of a {k} x {k} matrix has {k} eigenvalues, not {}.",
+            values.len()
+        )));
+    }
+    check_square(vectors, k)?;
     let cut = PINV_RCOND * values.iter().fold(0.0_f64, |m, v| m.max(v.abs()));
     let inverse: Vec<f64> = values
         .iter()
@@ -172,24 +174,27 @@ pub fn pinv_of_eigh(values: &[f64], vectors: &[f64], k: usize) -> Vec<f64> {
             p[l * k + i] = sum;
         }
     }
-    p
+    Ok(p)
 }
 
 /// `JᵀJ` of the row-major `n x k` matrix `j` (a jacobian of `n` residuals and `k`
 /// parameters), the `k x k` Gram matrix, exactly symmetric; a value which is not a number
 /// gives not a number in its row and column, as numpy.
 ///
-/// # Panics
+/// # Errors
 ///
-/// A slice which is not of `n * k` values.
-pub fn gram(j: &[f64], n: usize, k: usize) -> Vec<f64> {
-    assert_eq!(
-        j.len(),
-        n * k,
-        "a jacobian of {n} x {k} has {} values",
-        n * k
-    );
-    let mut g = vec![0.0; k * k];
+/// A slice which is not of `n * k` values, and a Gram matrix past what an array holds (numpy's
+/// `array is too big`, counted without a wrap), which a jacobian of no residuals and many
+/// parameters asks for.
+pub fn gram(j: &[f64], n: usize, k: usize) -> Result<Vec<f64>> {
+    let values = array_len::<f64>(&[n, k])?;
+    if j.len() != values {
+        return Err(StatsError::value(format!(
+            "A jacobian of {n} x {k} needs {values} values, not {}.",
+            j.len()
+        )));
+    }
+    let mut g = filled(array_len::<f64>(&[k, k])?, 0.0)?;
     for row in j.chunks(k.max(1)).take(n) {
         for a in 0..k {
             for b in a..k {
@@ -202,19 +207,33 @@ pub fn gram(j: &[f64], n: usize, k: usize) -> Vec<f64> {
             g[a * k + b] = g[b * k + a];
         }
     }
-    g
+    Ok(g)
+}
+
+/// The error of a slice `a` which is not of the `k * k` values of a `k x k` matrix.
+pub(crate) fn check_square(a: &[f64], k: usize) -> Result<()> {
+    let values = array_len::<f64>(&[k, k])?;
+    if a.len() != values {
+        return Err(StatsError::value(format!(
+            "A matrix of {k} x {k} needs {values} values, not {}.",
+            a.len()
+        )));
+    }
+    Ok(())
+}
+
+/// The symmetric part `(a + aᵀ) / 2` of the row-major `k x k` matrix `a`, every element
+/// `(a[i, j] + a[j, i]) / 2`.
+pub(crate) fn symmetric_part(a: &[f64], k: usize) -> Vec<f64> {
+    (0..k * k)
+        .map(|index| (a[index] + a[(index % k) * k + index / k]) / 2.0)
+        .collect()
 }
 
 /// The matrix `a` checked, of `k * k` finite values and symmetric, the mean of `a[i, j]` and
 /// `a[j, i]`.
 fn symmetric(a: &[f64], k: usize) -> Result<Vec<f64>> {
-    if a.len() != k * k {
-        return Err(StatsError::value(format!(
-            "A matrix of {k} x {k} needs {} values, not {}.",
-            k * k,
-            a.len()
-        )));
-    }
+    check_square(a, k)?;
     if let Some(index) = a.iter().position(|v| !v.is_finite()) {
         return Err(StatsError::value(format!(
             "The matrix is not finite: a[{}, {}] = {}.",

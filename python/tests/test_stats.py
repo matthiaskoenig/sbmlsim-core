@@ -8,6 +8,7 @@ import builtins
 import enum
 import json
 import math
+import time
 from pathlib import Path
 from typing import Any
 
@@ -1432,9 +1433,78 @@ def test_a_seed_gives_the_same_groups_and_the_groups_refuse_as_numpy() -> None:
     )
 
 
+#: the ValueError of numpy of an array whose bytes exceed the largest intp
+ARRAY_TOO_BIG = (
+    "array is too big; `arr.size * arr.dtype.itemsize` is larger than the maximum "
+    "possible size."
+)
+
+
 def test_groups_too_many_to_hold_raise_a_value_error() -> None:
-    """numpy raises a ValueError or a MemoryError there, the binding a ValueError."""
+    """The ValueError of numpy of the members or the statistics, raised before any memory is
+    asked for."""
     values = predictions(4, 2)
     for size, groups in [(2, 2**62), (0, 2**62), (2, 2**63 - 1)]:
-        with pytest.raises(ValueError, match="too many"):
+        with pytest.raises(ValueError) as raised:
             stats.group_means(values, size, groups, seed=1)
+        assert str(raised.value) == ARRAY_TOO_BIG
+
+
+# The sizes below are arrays no memory holds or loops no time ends: a binding which
+# allocated or looped would fail these tests by running out of memory or time, so they run
+# under a cap of the memory (the continuous integration's runner, `systemd-run -p MemoryMax`
+# locally). numpy makes the empty inputs without memory.
+
+
+def test_points_too_many_to_hold_raise_a_value_error() -> None:
+    for design, d, n in [
+        ("random", 2**33, 2**31),
+        ("lhs", 2**33, 2**33),
+        ("sobol", 2**33, 2**31),
+        ("random", 0, 2**62),
+    ]:
+        with pytest.raises(ValueError) as raised:
+            stats.unit_points(d, n, design=design, seed=0)
+        assert str(raised.value) == ARRAY_TOO_BIG, design
+
+
+def test_random_points_jump_to_a_far_start() -> None:
+    """The stream jumps ahead in a time logarithmic in the start, so the points of a far
+    start come at once, and are the tail of the points of an earlier start."""
+    begin = time.perf_counter()
+    far = stats.unit_points(1, 1, design="random", seed=0, start=2**62)
+    earlier = stats.unit_points(1, 3, design="random", seed=0, start=2**62 - 2)
+    assert time.perf_counter() - begin < 5.0
+    assert far.shape == (1, 1)
+    numpy.testing.assert_array_equal(far, earlier[2:])
+    long = stats.unit_points(3, 10**6 + 5, design="random", seed=4)
+    tail = stats.unit_points(3, 5, design="random", seed=4, start=10**6)
+    numpy.testing.assert_array_equal(tail, long[10**6 :])
+
+
+def test_a_gram_matrix_too_big_to_hold_raises_a_value_error() -> None:
+    """A jacobian of no residuals of 2^32 + 1 parameters asks for a Gram matrix whose number
+    of values wraps a 64 bit integer."""
+    with pytest.raises(ValueError) as raised:
+        stats.gram(numpy.empty((0, 2**32 + 1)))
+    assert str(raised.value) == ARRAY_TOO_BIG
+
+
+def test_groups_at_no_data_point_draw_nothing() -> None:
+    """No statistic and no draw: the rows at once for any number of groups and subjects."""
+    begin = time.perf_counter()
+    assert stats.group_means(numpy.empty((3, 0)), 2, 2**40, seed=0).shape == (2**40, 0)
+    assert stats.group_means(numpy.empty((2**40, 0)), 2, 3, seed=0).shape == (3, 0)
+    assert stats.group_means(numpy.empty((2**40, 0)), 1, 3, seed=0).shape == (2**40, 0)
+    assert time.perf_counter() - begin < 5.0
+    # members past what an array holds, as numpy refuses `rng.integers(size=(groups, size))`
+    with pytest.raises(ValueError) as raised:
+        stats.group_means(numpy.empty((3, 0)), 2, 2**62, seed=0)
+    assert str(raised.value) == ARRAY_TOO_BIG
+
+
+def test_bands_too_many_to_hold_raise_a_value_error() -> None:
+    with pytest.raises(ValueError) as raised:
+        stats.bands(numpy.empty((0, 2**59)), [0.05, 0.95])
+    assert str(raised.value) == ARRAY_TOO_BIG
+

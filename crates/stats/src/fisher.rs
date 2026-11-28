@@ -82,7 +82,7 @@ pub fn statistics(
     }
     // one decomposition for the eigenvalues and the pseudo-inverse, numpy's of both
     let (spectrum, vectors) = linalg::eigh(information, k)?;
-    let inverse = linalg::pinv_of_eigh(&spectrum, &vectors, k);
+    let inverse = linalg::pinv_of_eigh(&spectrum, &vectors, k)?;
     let (first, last) = (spectrum[0], spectrum[k - 1]);
     let condition = if last <= 0.0 {
         f64::INFINITY
@@ -143,7 +143,7 @@ pub fn statistics(
 /// distribution is also the one of the credible interval of the Laplace approximation,
 /// `ParameterPosterior.intervals` (with the standard deviations of the posterior).
 ///
-/// # Panics
+/// # Errors
 ///
 /// Values, standard errors and scales of different lengths.
 pub fn intervals(
@@ -152,15 +152,15 @@ pub fn intervals(
     scales: &[Scale],
     level: f64,
     dof: Option<f64>,
-) -> Vec<(f64, f64)> {
-    check_lengths(values, se, scales);
+) -> Result<Vec<(f64, f64)>> {
+    check_lengths(values, se, scales)?;
     let p = 0.5 + level / 2.0;
     let quantile = match dof {
         None => normal_ppf(p),
         Some(dof) if dof > 0.0 => t_ppf(p, dof),
-        Some(_) => return vec![(f64::NAN, f64::NAN); values.len()],
+        Some(_) => return Ok(vec![(f64::NAN, f64::NAN); values.len()]),
     };
-    values
+    Ok(values
         .iter()
         .zip(se)
         .zip(scales)
@@ -171,19 +171,19 @@ pub fn intervals(
                 scale.from_scale(scaled + delta),
             )
         })
-        .collect()
+        .collect())
 }
 
 /// The standard error of every parameter relative to its value, `FisherInformation.
 /// relative_errors`: the coefficient of variation of the value to first order, `|se / value|`
 /// on the linear scale, `se` on the natural and `ln(10) se` on the decadic logarithm.
 ///
-/// # Panics
+/// # Errors
 ///
 /// Values, standard errors and scales of different lengths.
-pub fn relative_errors(values: &[f64], se: &[f64], scales: &[Scale]) -> Vec<f64> {
-    check_lengths(values, se, scales);
-    values
+pub fn relative_errors(values: &[f64], se: &[f64], scales: &[Scale]) -> Result<Vec<f64>> {
+    check_lengths(values, se, scales)?;
+    Ok(values
         .iter()
         .zip(se)
         .zip(scales)
@@ -192,16 +192,18 @@ pub fn relative_errors(values: &[f64], se: &[f64], scales: &[Scale]) -> Vec<f64>
             Scale::Log => se,
             Scale::Linear => (se / value).abs(),
         })
-        .collect()
+        .collect())
 }
 
-/// Panics unless there is a standard error and a scale per value.
-fn check_lengths(values: &[f64], se: &[f64], scales: &[Scale]) {
-    assert!(
-        values.len() == se.len() && values.len() == scales.len(),
-        "{} values, {} standard errors and {} scales",
-        values.len(),
-        se.len(),
-        scales.len()
-    );
+/// The error unless there is a standard error and a scale per value.
+fn check_lengths(values: &[f64], se: &[f64], scales: &[Scale]) -> Result<()> {
+    if values.len() != se.len() || values.len() != scales.len() {
+        return Err(StatsError::value(format!(
+            "{} values, {} standard errors and {} scales",
+            values.len(),
+            se.len(),
+            scales.len()
+        )));
+    }
+    Ok(())
 }

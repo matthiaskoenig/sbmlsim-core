@@ -40,16 +40,26 @@
 //!
 //! The tests hold every function to the values of numpy and scipy, and the metrics to the
 //! functions of sbmlsim, computed once by `oracles/make_oracles.py` and stored next to it as
-//! JSON (`tests/oracle.rs`): the deterministic kernels (the metrics, the Fisher statistics, the
-//! posterior, the statistics of the draws, the logarithm of the beta function, the p-values and
-//! the confidence sequence) to 1e-12 relative, the normal distribution to 1e-13, the incomplete
-//! beta function and the t and binomial distributions to 1e-10, the binomial quantiles to the
-//! same integers and the linear algebra of up to 200 parameters to 1e-10 of the largest value
-//! of the matrix (LAPACK sums in another order). Where the crate and scipy differ beyond the
+//! JSON (`tests/oracle.rs`): the deterministic kernels (the metrics, the Fisher
+//! statistics, the posterior, the statistics of the draws, the logarithm of the beta function,
+//! the p-values and the confidence sequence) to 1e-12 relative, the normal distribution to
+//! 1e-13, the incomplete beta function and the t and binomial distributions to 1e-10, the
+//! binomial quantiles to the same integers and the linear algebra of up to 200 parameters to
+//! 1e-10 of the largest value of the matrix (LAPACK sums in another order). Where the crate and scipy differ beyond the
 //! rounding, the crate is the more accurate: [`special::ln_beta`] keeps its digits at a large
 //! and a small parameter, where `scipy.special.betaln` loses them (1.5e-10 relative at 0.5 and
 //! 1e6), so the largest difference of the p-values of [`testing`] to the python is the error
 //! of scipy's `betaln`.
+//!
+//! # Errors and sizes
+//!
+//! An error is a [`StatsError`]: the message of the exception the python raised and its
+//! [`ErrorKind`], the class of that exception (a `ValueError` mostly), set where the error is
+//! made. A size of an array a function makes is counted without a wrap, on every target (a
+//! `usize` of 32 bits in wasm): one past what an array holds, its bytes past the largest
+//! `isize`, is numpy's `ValueError` (`array is too big`) before any memory is asked for. A
+//! size below is reserved with `try_reserve_exact`, which is no check of the memory where the
+//! system overcommits: there, as with numpy, the memory is the caller's.
 //!
 //! # Determinism
 //!
@@ -73,6 +83,8 @@ pub mod metrics;
 mod numpy;
 pub mod posterior;
 mod python;
+pub use python::shape_text;
+mod size;
 pub mod special;
 pub mod testing;
 pub mod uncertainty;

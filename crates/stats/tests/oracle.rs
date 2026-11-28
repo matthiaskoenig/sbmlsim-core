@@ -1026,7 +1026,7 @@ fn gram_is_the_product_of_numpy_and_its_pinv_cuts_the_null_space() {
             case.input_usize("k"),
             case.input("j"),
         );
-        let found = linalg::gram(&j, n, k);
+        let found = linalg::gram(&j, n, k).unwrap();
         assert_eq!(found, transpose(&found, k, k), "{name}");
         // relative to sqrt(G_aa G_bb), the bound of |G_ab| (Cauchy-Schwarz)
         let expected = case.required("gram");
@@ -1056,10 +1056,10 @@ fn gram_is_the_product_of_numpy_and_its_pinv_cuts_the_null_space() {
 fn gram_propagates_a_not_a_number_into_its_row_and_column() {
     // J of 3 x 2 with a not a number in the second column, as J.T @ J of numpy
     let j = [1.0, 2.0, 3.0, f64::NAN, 5.0, 6.0];
-    let g = linalg::gram(&j, 3, 2);
+    let g = linalg::gram(&j, 3, 2).unwrap();
     assert_eq!(g[0], 35.0);
     assert!(g[1].is_nan() && g[2].is_nan() && g[3].is_nan());
-    assert_eq!(linalg::gram(&[], 0, 2), vec![0.0; 4]);
+    assert_eq!(linalg::gram(&[], 0, 2).unwrap(), vec![0.0; 4]);
 }
 
 #[test]
@@ -1145,7 +1145,7 @@ fn the_linear_algebra_gives_the_same_bits_on_every_target() {
             case.input_usize("k"),
             case.input("j"),
         );
-        let gram = linalg::gram(&j, n, k);
+        let gram = linalg::gram(&j, n, k).unwrap();
         values.extend(linalg::pinv_symmetric(&gram, k).unwrap());
         values.extend(gram);
     }
@@ -1701,7 +1701,7 @@ fn large_jacobian(rows: usize, k: usize) -> Vec<f64> {
 /// The statistics of the case `fisher_large/200` from its jacobian.
 fn large_statistics(case: &Case<'_>) -> fisher::FisherStatistics {
     let (rows, k) = (case.input_usize("rows"), case.input_usize("k"));
-    let information = linalg::gram(&large_jacobian(rows, k), rows, k);
+    let information = linalg::gram(&large_jacobian(rows, k), rows, k).unwrap();
     fisher::statistics(
         &information,
         k,
@@ -1785,7 +1785,8 @@ fn the_intervals_and_relative_errors_are_the_ones_of_sbmlsim() {
             &scales,
             case.input_f64("alpha"),
             case.input_option("dof"),
-        );
+        )
+        .unwrap();
         let (lower, upper): (Vec<f64>, Vec<f64>) = intervals.into_iter().unzip();
         assert_close(
             &format!("{name} lower"),
@@ -1797,7 +1798,7 @@ fn the_intervals_and_relative_errors_are_the_ones_of_sbmlsim() {
             KERNEL,
             rows(&name, &upper, &case.required("upper")),
         );
-        let relative = fisher::relative_errors(&values, &se, &scales);
+        let relative = fisher::relative_errors(&values, &se, &scales).unwrap();
         assert_close(
             &format!("{name} relative errors"),
             KERNEL,
@@ -1856,17 +1857,17 @@ fn the_intervals_without_degrees_of_freedom_are_not_a_number() {
     let values = [1.0, 2.0, 3.0];
     let se = [0.1, 0.2, 0.3];
     for dof in [0.0, -3.0] {
-        let intervals = fisher::intervals(&values, &se, &scales, 0.95, Some(dof));
+        let intervals = fisher::intervals(&values, &se, &scales, 0.95, Some(dof)).unwrap();
         assert!(intervals.iter().all(|(l, u)| l.is_nan() && u.is_nan()));
     }
     // of the normal distribution for a likelihood, the t distribution otherwise
-    let normal = fisher::intervals(&values, &se, &scales, 0.95, None);
-    let t = fisher::intervals(&values, &se, &scales, 0.95, Some(1e30));
+    let normal = fisher::intervals(&values, &se, &scales, 0.95, None).unwrap();
+    let t = fisher::intervals(&values, &se, &scales, 0.95, Some(1e30)).unwrap();
     assert_eq!(normal, t);
     let z = special::normal_ppf(0.975);
     assert_eq!(normal[0], (1.0 - z * 0.1, 1.0 + z * 0.1));
     assert_eq!(
-        fisher::relative_errors(&values, &se, &scales)[2],
+        fisher::relative_errors(&values, &se, &scales).unwrap()[2],
         std::f64::consts::LN_10 * 0.3
     );
 }
@@ -1921,14 +1922,14 @@ fn the_laplace_approximation_is_the_one_of_sbmlsim_and_names_its_weak_directions
             &format!("{name} rank correlation"),
             KERNEL,
             1.0,
-            &posterior::rank_correlation(&r, k),
+            &posterior::rank_correlation(&r, k).unwrap(),
             &case.required("rank_correlation"),
         );
         assert_close_to(
             &format!("{name} normal correlation"),
             KERNEL,
             1.0,
-            &posterior::normal_correlation(&r, k),
+            &posterior::normal_correlation(&r, k).unwrap(),
             &case.required("normal_correlation"),
         );
         let sd = case.required("standard_deviations");
@@ -1963,6 +1964,7 @@ fn the_laplace_approximation_is_the_one_of_sbmlsim_and_names_its_weak_directions
         for (level, label) in [(0.95, "95"), (0.5, "50")] {
             let (lower, upper): (Vec<f64>, Vec<f64>) =
                 fisher::intervals(&values, &sd, &scales, level, None)
+                    .unwrap()
                     .into_iter()
                     .unzip();
             assert_close(
@@ -2010,7 +2012,7 @@ fn the_rank_correlation_clips_and_propagates_not_a_number_as_sbmlsim() {
     let fixture = Fixture::load("fisher");
     for name in fixture.cases("rank_correlation/") {
         let case = fixture.case(&name);
-        let found = posterior::rank_correlation(&case.input("r"), case.input_usize("k"));
+        let found = posterior::rank_correlation(&case.input("r"), case.input_usize("k")).unwrap();
         assert_close(&name, KERNEL, rows(&name, &found, &case.expected()));
     }
     assert_eq!(posterior::lognormal_cv(0.0), 0.0);
@@ -2039,10 +2041,12 @@ fn the_fisher_statistics_and_the_posterior_give_the_same_bits_on_every_target() 
             &scales,
             0.95,
             case.input_option("dof"),
-        ) {
+        )
+        .unwrap()
+        {
             values.extend([l, u]);
         }
-        values.extend(fisher::relative_errors(&v, &s.standard_errors, &scales));
+        values.extend(fisher::relative_errors(&v, &s.standard_errors, &scales).unwrap());
         values.extend(s.standard_errors);
     }
     for name in fixture.cases("posterior/") {
@@ -2051,8 +2055,8 @@ fn the_fisher_statistics_and_the_posterior_give_the_same_bits_on_every_target() 
         if let Ok(covariance) = posterior::laplace(&case.input("precision"), k, 1e-8) {
             values.extend(covariance);
             let r = case.required("correlation");
-            values.extend(posterior::rank_correlation(&r, k));
-            values.extend(posterior::normal_correlation(&r, k));
+            values.extend(posterior::rank_correlation(&r, k).unwrap());
+            values.extend(posterior::normal_correlation(&r, k).unwrap());
         }
     }
     for sigma in [0.0, 1e-8, 0.3, 1.0, 2.5] {

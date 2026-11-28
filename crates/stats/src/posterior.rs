@@ -30,6 +30,10 @@ const DIRECTION_COMPONENT: f64 = 0.1;
 /// As [`laplace_of`] without an id of the problem, the parameters named by their indices
 /// (`of [[1, 3]]`).
 pub fn laplace(precision: &[f64], k: usize, rank_tolerance: f64) -> Result<Vec<f64>> {
+    if k > 0 {
+        // the size before a name per parameter is written, in the order of `laplace_of`
+        linalg::check_square(precision, k)?;
+    }
     let names: Vec<String> = (0..k).map(|i| i.to_string()).collect();
     laplace_of(precision, k, rank_tolerance, None, &names)
 }
@@ -72,20 +76,9 @@ pub fn laplace_of(
             "zero-size array to reduction operation maximum which has no identity".to_string(),
         ));
     }
-    if precision.len() != k * k {
-        // as the check of the matrix, before the symmetric part is formed
-        return Err(StatsError::value(format!(
-            "A matrix of {k} x {k} needs {} values, not {}.",
-            k * k,
-            precision.len()
-        )));
-    }
-    let mut symmetric = vec![0.0; k * k];
-    for i in 0..k {
-        for j in 0..k {
-            symmetric[i * k + j] = (precision[i * k + j] + precision[j * k + i]) / 2.0;
-        }
-    }
+    // as the check of the matrix, before the symmetric part is formed
+    linalg::check_square(precision, k)?;
+    let symmetric = linalg::symmetric_part(precision, k);
     let (eigenvalues, vectors) = linalg::eigh(&symmetric, k)?;
     let largest = eigenvalues[0];
     let mut weak: Vec<usize> = (0..k)
@@ -132,18 +125,18 @@ pub fn laplace_of(
             covariance[i * k + l] = sum;
         }
     }
-    Ok(symmetrized(&covariance, k))
+    Ok(linalg::symmetric_part(&covariance, k))
 }
 
 /// The Spearman rank correlation of the normal of the correlation `r` (row-major `k x k`),
 /// `ParameterPosterior.rank_correlation`: `6 / π asin(clip(r, -1, 1) / 2)` (Pearson 1907),
 /// the diagonal 1, symmetrized; not a number where `r` is.
 ///
-/// # Panics
+/// # Errors
 ///
 /// A slice which is not of `k * k` values.
-pub fn rank_correlation(r: &[f64], k: usize) -> Vec<f64> {
-    check_square(r, k);
+pub fn rank_correlation(r: &[f64], k: usize) -> Result<Vec<f64>> {
+    linalg::check_square(r, k)?;
     let factor = 6.0 / core::f64::consts::PI;
     let mut rank: Vec<f64> = r
         .iter()
@@ -152,22 +145,22 @@ pub fn rank_correlation(r: &[f64], k: usize) -> Vec<f64> {
     for i in 0..k {
         rank[i * k + i] = 1.0;
     }
-    symmetrized(&rank, k)
+    Ok(linalg::symmetric_part(&rank, k))
 }
 
 /// The correlation of the normal scores of the posterior of its correlation `r` (row-major
 /// `k x k`), `ParameterPosterior.normal_correlation`: the symmetric part, the diagonal 1.
 ///
-/// # Panics
+/// # Errors
 ///
 /// A slice which is not of `k * k` values.
-pub fn normal_correlation(r: &[f64], k: usize) -> Vec<f64> {
-    check_square(r, k);
-    let mut matrix = symmetrized(r, k);
+pub fn normal_correlation(r: &[f64], k: usize) -> Result<Vec<f64>> {
+    linalg::check_square(r, k)?;
+    let mut matrix = linalg::symmetric_part(r, k);
     for i in 0..k {
         matrix[i * k + i] = 1.0;
     }
-    matrix
+    Ok(matrix)
 }
 
 /// The standard deviation of the natural logarithm of a standard deviation `sd` on the scale
@@ -185,16 +178,4 @@ pub fn log_sd(scale: Scale, sd: f64) -> f64 {
 /// scale of `ParameterPosterior.distributions`.
 pub fn lognormal_cv(sigma: f64) -> f64 {
     libm::sqrt(libm::expm1(sigma * sigma))
-}
-
-/// `(a + aᵀ) / 2` of the row-major `k x k` matrix `a`.
-fn symmetrized(a: &[f64], k: usize) -> Vec<f64> {
-    (0..k * k)
-        .map(|index| (a[index] + a[(index % k) * k + index / k]) / 2.0)
-        .collect()
-}
-
-/// Panics unless `a` holds `k * k` values.
-fn check_square(a: &[f64], k: usize) {
-    assert_eq!(a.len(), k * k, "a matrix of {k} x {k} has {} values", k * k);
 }

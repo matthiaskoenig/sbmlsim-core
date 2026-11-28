@@ -4,6 +4,8 @@ The statistics of the analyses of sbmlsim run here (0.42.0): the special functio
 
 The crate knows no simulation, no problem and no table: a function takes numbers and returns numbers, and the caller keeps the flow. An array of any shape and of any type numpy converts to doubles is read as its values in the order numpy ravels it, strided and integer arrays included.
 
+A size is counted without a wrap, also where a `usize` has 32 bits (WebAssembly): an array a function would make past what an array holds, its bytes past the largest `intp`, raises numpy's `ValueError` (`array is too big`) before any memory is asked for, as numpy raises it for the same shape. That is no check of the memory: a size which can be counted is reserved, and where the system overcommits (Linux by default) it runs out of memory when it is filled, as with numpy, so the memory is the caller's.
+
 ```python
 import numpy
 from sbmlsim_core import stats
@@ -46,7 +48,7 @@ The statistics of `sbmlsim.uncertainty.statistics` drop the draws which are `NaN
 
 ## The draws and their correlations
 
-`unit_points(d, n, design=..., seed=..., start=0)` gives the points of the unit cube of the designs of `sbmlsim.uncertainty.draws.unit_points`: `"sobol"` (the scrambled Sobol' sequence, which continues from the point `start`), `"lhs"` (a Latin hypercube, every column a random permutation of the strata with a uniform point in its stratum, without a continuation) and `"random"` (which continues from `start`). `copula` is the Gaussian copula of `draw`, `Φ(Φ⁻¹(u) Fᵀ)` with the factor `F` of the correlation and the points clipped to `EPS` from the ends, and `normal_score_rho` the coefficient of the normal scores of a covariance of two normal or log-normal marginals. The correlations of `sbmlsim.uncertainty.covariance`: `nearest_correlation` (the nearest correlation matrix in the Frobenius norm, Higham 2002), `is_psd` (at the tolerance `PSD_RTOL`) and `validate_covariance` (`Covariance._validate`, with its messages).
+`unit_points(d, n, design=..., seed=..., start=0)` gives the points of the unit cube of the designs of `sbmlsim.uncertainty.draws.unit_points`: `"sobol"` (the scrambled Sobol' sequence, which continues from the point `start`), `"lhs"` (a Latin hypercube, every column a random permutation of the strata with a uniform point in its stratum, without a continuation) and `"random"` (which continues from `start`: the stream jumps ahead to it in a time logarithmic in `start * d`, so any start costs about the same). `copula` is the Gaussian copula of `draw`, `Φ(Φ⁻¹(u) Fᵀ)` with the factor `F` of the correlation and the points clipped to `EPS` from the ends, and `normal_score_rho` the coefficient of the normal scores of a covariance of two normal or log-normal marginals. The correlations of `sbmlsim.uncertainty.covariance`: `nearest_correlation` (the nearest correlation matrix in the Frobenius norm, Higham 2002), `is_psd` (at the tolerance `PSD_RTOL`) and `validate_covariance` (`Covariance._validate`, with its messages).
 
 ## The probability statements
 
@@ -54,7 +56,7 @@ The statements about predictions of `sbmlsim.uncertainty.testing`, robust to the
 
 ## The visual predictive check
 
-The kernels of `predictive_check` of `sbmlsim.fit.variability`: `group_means` (`_group_means`, the mean or the geometric mean of virtual groups of subjects resampled with replacement, the subjects which are not finite at every data point removed first) and `bands` (numpy's linear quantiles of the finite values of every data point). Groups whose statistics no memory holds raise a `ValueError`, where numpy raises a `ValueError` or a `MemoryError`.
+The kernels of `predictive_check` of `sbmlsim.fit.variability`: `group_means` (`_group_means`, the mean or the geometric mean of virtual groups of subjects resampled with replacement, the subjects which are not finite at every data point removed first) and `bands` (numpy's linear quantiles of the finite values of every data point). Predictions at no data point give the rows of the groups without a draw.
 
 ## Accuracy
 

@@ -11,7 +11,7 @@
 //! Numer Anal 22:329-343.
 
 use crate::linalg;
-use crate::python::{python_div, python_format_g, python_repr, python_str_list};
+use crate::python::{python_div, python_format_g, python_repr, python_str_list, shape_text};
 use crate::{Result, StatsError};
 
 /// The relative tolerance of the smallest eigenvalue of a positive semi-definite matrix,
@@ -99,18 +99,6 @@ pub fn normal_score_rho(m_ab: f64, a: Marginal, b: Marginal) -> Result<f64> {
     }
 }
 
-/// The matrix of `k * k` values, or the error of a slice of another size.
-fn check_size(m: &[f64], k: usize) -> Result<()> {
-    if m.len() != k * k {
-        return Err(StatsError::value(format!(
-            "A matrix of {k} x {k} needs {} values, not {}.",
-            k * k,
-            m.len()
-        )));
-    }
-    Ok(())
-}
-
 /// The Frobenius norm of a matrix.
 fn frobenius(m: &[f64]) -> f64 {
     libm::sqrt(m.iter().map(|v| v * v).sum())
@@ -119,12 +107,7 @@ fn frobenius(m: &[f64]) -> f64 {
 /// The projection of the symmetric part of `r` onto the positive semi-definite matrices,
 /// `V clip(values, 0) Vᵀ` of the eigendecomposition of `(r + rᵀ) / 2`.
 fn psd_projection(r: &[f64], k: usize) -> Result<Vec<f64>> {
-    let mut symmetric = vec![0.0; k * k];
-    for i in 0..k {
-        for j in 0..k {
-            symmetric[i * k + j] = (r[i * k + j] + r[j * k + i]) / 2.0;
-        }
-    }
+    let symmetric = linalg::symmetric_part(r, k);
     let (values, vectors) = linalg::eigh(&symmetric, k)?;
     let clipped: Vec<f64> = values.iter().map(|&v| v.max(0.0)).collect();
     let mut x = vec![0.0; k * k];
@@ -159,7 +142,7 @@ pub fn nearest_correlation(
     max_iterations: usize,
     tol: f64,
 ) -> Result<Vec<f64>> {
-    check_size(m, k)?;
+    linalg::check_square(m, k)?;
     if m.iter().any(|v| !v.is_finite()) {
         let mut nan = vec![f64::NAN; k * k];
         for i in 0..k {
@@ -194,13 +177,7 @@ pub fn nearest_correlation(
         }
         y[i * k + i] = 1.0;
     }
-    let mut out = vec![0.0; k * k];
-    for i in 0..k {
-        for j in 0..k {
-            out[i * k + j] = (y[i * k + j] + y[j * k + i]) / 2.0;
-        }
-    }
-    Ok(out)
+    Ok(linalg::symmetric_part(&y, k))
 }
 
 /// Whether the `k x k` matrix `m` is positive semi-definite, `_is_psd` of
@@ -214,7 +191,7 @@ pub fn nearest_correlation(
 /// value of an empty array.
 #[must_use]
 pub fn is_psd(m: &[f64], k: usize, rtol: f64) -> bool {
-    if check_size(m, k).is_err() {
+    if linalg::check_square(m, k).is_err() {
         return false;
     }
     match linalg::eigvalsh(&lower_symmetric(m, k), k) {
@@ -235,21 +212,6 @@ fn lower_symmetric(m: &[f64], k: usize) -> Vec<f64> {
         }
     }
     lower
-}
-
-/// The text python writes a shape with, its tuple: `(3,)` of one dimension, `()` of none.
-fn shape_text(shape: &[usize]) -> String {
-    match shape {
-        [n] => format!("({n},)"),
-        _ => format!(
-            "({})",
-            shape
-                .iter()
-                .map(usize::to_string)
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-    }
 }
 
 /// Checks a covariance or a correlation (`is_correlation`) of the targets, `Covariance._validate`
@@ -294,7 +256,7 @@ pub fn validate(
             shape_text(shape)
         )));
     }
-    check_size(m, k)?;
+    linalg::check_square(m, k)?;
     if m.iter().any(|v| !v.is_finite()) {
         return Err(StatsError::value(format!(
             "The matrix of {names} is not finite."

@@ -11,6 +11,7 @@
 use sbmlsim_sensitivity::random::Stream;
 
 use crate::numpy::numpy_quantile_sorted;
+use crate::size::{array_len, buffer, filled};
 use crate::uncertainty::QUANTILES_RANGE;
 use crate::{Result, StatsError};
 
@@ -33,9 +34,11 @@ use crate::{Result, StatsError};
 ///
 /// # Errors
 ///
-/// For `values` which are not `subjects x points` values, and for `groups` whose members
-/// (`groups x size`) a `usize` does not count or whose statistics (`groups x points`) no memory
-/// holds: numpy raises a `ValueError` or a `MemoryError` there, the binding a `ValueError`.
+/// For `values` which are not `subjects x points` values, and the `ValueError` of numpy
+/// (`array is too big`) for `groups` whose members (`groups x size`) or statistics (`groups x
+/// points`) are past what an array holds, their bytes past the largest `isize`, counted without
+/// a wrap. That is no check of the memory: a size which can be counted is reserved, and where
+/// the system overcommits it runs out of memory as numpy would.
 pub fn group_means(
     values: &[f64],
     subjects: usize,
@@ -52,8 +55,23 @@ pub fn group_means(
             values.len()
         )));
     }
-    let finite: Vec<&[f64]> = (0..subjects)
-        .map(|s| &values[s * points..(s + 1) * points])
+    if points == 0 {
+        // no data point: no statistic and no draw, only the number of the rows, which numpy
+        // counts as it counts the rows of the members and of the statistics
+        let rows = if size == 1 {
+            subjects
+        } else if subjects == 0 || groups == 0 {
+            0
+        } else {
+            array_len::<i64>(&[groups, size])?;
+            groups
+        };
+        array_len::<f64>(&[rows, points])?;
+        return Ok((Vec::new(), rows));
+    }
+    // a row per finite subject, at most one per row of the values
+    let finite: Vec<&[f64]> = values
+        .chunks(points)
         .filter(|row| row.iter().all(|v| v.is_finite()))
         .collect();
     if size == 1 {
@@ -62,18 +80,10 @@ pub fn group_means(
     if finite.is_empty() || groups == 0 {
         return Ok((Vec::new(), 0));
     }
-    if groups.checked_mul(size).is_none() {
-        return Err(StatsError::value(format!(
-            "{groups} groups of {size} subjects are too many members to draw."
-        )));
-    }
-    let statistics_count = groups
-        .checked_mul(points)
-        .ok_or_else(|| too_many(groups, points))?;
-    let mut statistics = Vec::new();
-    statistics
-        .try_reserve_exact(statistics_count)
-        .map_err(|_| too_many(groups, points))?;
+    // the members, `rng.integers(0, n, size=(groups, size))` of the python, and the statistics
+    array_len::<i64>(&[groups, size])?;
+    let statistics_count = array_len::<f64>(&[groups, points])?;
+    let mut statistics = buffer(statistics_count)?;
     if size == 0 {
         // the mean of numpy of no member
         statistics.resize(statistics_count, f64::NAN);
@@ -99,14 +109,6 @@ pub fn group_means(
     Ok((statistics, groups))
 }
 
-/// The error of statistics of `groups` groups at `points` data points which no memory holds,
-/// where numpy raises its `ValueError` (`array is too big`) or its `MemoryError`.
-fn too_many(groups: usize, points: usize) -> StatsError {
-    StatsError::value(format!(
-        "The statistics of {groups} groups at {points} data points are too many values to hold."
-    ))
-}
-
 /// The bands of a distribution at every data point, the quantiles of `predictive_check`.
 ///
 /// `distribution` is the statistic of `rows` groups at `cols` data points, a row per group
@@ -116,9 +118,10 @@ fn too_many(groups: usize, points: usize) -> StatsError {
 ///
 /// # Errors
 ///
-/// For a distribution which is not `rows x cols` values, and the ValueError of numpy
+/// For a distribution which is not `rows x cols` values, the ValueError of numpy
 /// (`Quantiles must be in the range [0, 1]`) of a quantile outside `[0, 1]` or not a number,
-/// where a column has a finite value (numpy is called for those only).
+/// where a column has a finite value (numpy is called for those only), and numpy's `array is
+/// too big` for bands (`cols x qs.len()`) past what an array holds.
 pub fn bands(distribution: &[f64], rows: usize, cols: usize, qs: &[f64]) -> Result<Vec<f64>> {
     if rows.checked_mul(cols) != Some(distribution.len()) {
         return Err(StatsError::value(format!(
@@ -127,7 +130,7 @@ pub fn bands(distribution: &[f64], rows: usize, cols: usize, qs: &[f64]) -> Resu
             distribution.len()
         )));
     }
-    let mut bands = vec![f64::NAN; cols * qs.len()];
+    let mut bands = filled(array_len::<f64>(&[cols, qs.len()])?, f64::NAN)?;
     for j in 0..cols {
         let mut column: Vec<f64> = (0..rows)
             .map(|i| distribution[i * cols + j])

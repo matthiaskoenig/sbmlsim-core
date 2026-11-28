@@ -102,6 +102,22 @@ pub(crate) fn python_str_list<S: AsRef<str>>(items: &[S]) -> String {
     format!("[{}]", items.join(", "))
 }
 
+/// The text python writes a shape with, its tuple: `(3,)` of one dimension, `()` of none,
+/// `(2, 3)` of two.
+pub fn shape_text(shape: &[usize]) -> String {
+    match shape {
+        [n] => format!("({n},)"),
+        _ => format!(
+            "({})",
+            shape
+                .iter()
+                .map(usize::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    }
+}
+
 /// The message of the OverflowError of a power of python past the largest double
 /// (`OverflowError(34, 'Numerical result out of range')`, of the errno `ERANGE`).
 pub(crate) const POWER_OVERFLOW: &str = "(34, 'Numerical result out of range')";

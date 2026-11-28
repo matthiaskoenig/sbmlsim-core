@@ -777,7 +777,9 @@ do not constrain, 1e-8 (since 0.42.0)."""
 def stats_gram(jacobian: numpy.typing.ArrayLike) -> numpy.typing.NDArray[numpy.float64]:
     """The Fisher information `J' J` of a jacobian of the residuals by the parameters (since 0.42.0).
 
-    Raises `ValueError` for a jacobian which is not a matrix.
+    Raises `ValueError` for a jacobian which is not a matrix and numpy's (`array is too
+    big`) for an information past what an array holds, of a jacobian of no residuals of
+    more parameters than a 64 bit integer squares.
     """
 
 def stats_fisher_statistics(
@@ -966,10 +968,11 @@ def stats_unit_points(
 
     `unit_points` of `sbmlsim.uncertainty.draws` on the streams of sbmlsim-core: `sobol`
     (the scrambled Sobol' sequence, from the point `start`), `lhs` (a Latin hypercube) or
-    `random` (xoshiro256++, from the point `start`). Raises `ValueError` for another design,
-    a Latin hypercube after `start`, a negative seed, `d` or `n` with the messages of scipy
-    and numpy and a negative `start` of random points, `OverflowError` for a negative
-    `start` of the Sobol' sequence, as scipy does.
+    `random` (xoshiro256++, from the point `start`, which the stream jumps to in a time
+    logarithmic in it). Raises `ValueError` for another design, a Latin hypercube after
+    `start`, a negative seed, `d` or `n` with the messages of scipy and numpy, a negative
+    `start` of random points and numpy's (`array is too big`) for points past what an array
+    holds, `OverflowError` for a negative `start` of the Sobol' sequence, as scipy does.
     """
 
 def stats_copula(
@@ -1099,9 +1102,11 @@ def stats_group_means(
     `_group_means` of `sbmlsim.fit.variability` on the stream xoshiro256++ of sbmlsim-core:
     the subjects which are not finite at every data point are removed, groups of one are
     the subjects themselves, else `groups` groups of `size` subjects drawn with replacement,
-    a row per group, their mean or their geometric mean. Raises `ValueError` for predictions
-    which are not a matrix, numpy's for a negative size or number of groups and for groups
-    whose statistics no memory holds (where numpy raises a `ValueError` or a `MemoryError`).
+    a row per group, their mean or their geometric mean; predictions at no data point give
+    the rows without a draw. Raises `ValueError` for predictions which are not a matrix,
+    numpy's for a negative size or number of groups and numpy's (`array is too big`) for
+    groups whose members or statistics are past what an array holds. That is no check of the
+    memory: as with numpy, the memory of a size which can be counted is the caller's.
     """
 
 def stats_bands(
@@ -1111,8 +1116,8 @@ def stats_bands(
 
     The quantiles of `predictive_check` of `sbmlsim.fit.variability`: numpy's linear
     quantiles `qs` of the finite values of every column, `nan` of a column without one.
-    Raises `ValueError` for a distribution which is not a matrix and numpy's for a quantile
-    outside `[0, 1]`.
+    Raises `ValueError` for a distribution which is not a matrix, numpy's for a quantile
+    outside `[0, 1]` and numpy's (`array is too big`) for bands past what an array holds.
     """
 
 ODE_CONTRACT: str

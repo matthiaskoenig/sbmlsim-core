@@ -21,7 +21,7 @@ use sbmlsim_stats::draws::{self, Design};
 use sbmlsim_stats::testing::{self, Decision, Side};
 use sbmlsim_stats::uncertainty;
 use sbmlsim_stats::{
-    ErrorKind, Scale, StatsError, fisher, linalg, metrics, posterior, variability,
+    ErrorKind, Scale, StatsError, fisher, linalg, metrics, posterior, shape_text, variability,
 };
 
 /// The array of values of numpy the functions take, of any shape.
@@ -290,21 +290,6 @@ pub(crate) fn stats_subset_agreement(
     metrics::subset_agreement(&values(&y_observed), &values(&y_predicted)).map_err(stats_error)
 }
 
-/// The shape of an array as python writes the tuple, `(3,)` of one dimension.
-fn shape_text(shape: &[usize]) -> String {
-    match shape {
-        [n] => format!("({n},)"),
-        _ => format!(
-            "({})",
-            shape
-                .iter()
-                .map(usize::to_string)
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-    }
-}
-
 /// The values of a square matrix, row-major, and its number of rows; an error which names the
 /// matrix `what` of another shape.
 fn square<'a>(array: &'a Values<'_>, what: &str) -> PyResult<(Cow<'a, [f64]>, usize)> {
@@ -352,26 +337,19 @@ impl<'a, 'py> FromPyObject<'a, 'py> for ScaleArg {
     }
 }
 
-/// The values, the standard errors and the scales of the parameters, checked to be as many.
+/// The values, the standard errors and the scales of the parameters, which the crate checks
+/// to be as many.
 fn parameters(
     values: &Values<'_>,
     standard_errors: &Values<'_>,
     scales: Vec<ScaleArg>,
-) -> PyResult<(Vec<f64>, Vec<f64>, Vec<Scale>)> {
+) -> (Vec<f64>, Vec<f64>, Vec<Scale>) {
     let (values, se) = (
         self::values(values).into_owned(),
         self::values(standard_errors).into_owned(),
     );
     let scales: Vec<Scale> = scales.into_iter().map(|ScaleArg(scale)| scale).collect();
-    if values.len() != se.len() || values.len() != scales.len() {
-        return Err(PyValueError::new_err(format!(
-            "{} values, {} standard errors and {} scales",
-            values.len(),
-            se.len(),
-            scales.len()
-        )));
-    }
-    Ok((values, se, scales))
+    (values, se, scales)
 }
 
 /// The Fisher information `JᵀJ` of a jacobian of the residuals by the parameters.
@@ -387,7 +365,8 @@ pub(crate) fn stats_gram<'py>(
             shape_text(jacobian.shape())
         )));
     };
-    Ok(matrix(py, linalg::gram(&values(&jacobian), n, k), k))
+    let gram = linalg::gram(&values(&jacobian), n, k).map_err(stats_error)?;
+    Ok(matrix(py, gram, k))
 }
 
 /// The statistics of a Fisher information as `FisherInformation`: the variance of the
@@ -432,8 +411,9 @@ pub(crate) fn stats_fisher_intervals<'py>(
     level: f64,
     dof: Option<f64>,
 ) -> PyResult<Bounds<'py>> {
-    let (values, se, scales) = parameters(&values, &standard_errors, scales)?;
+    let (values, se, scales) = parameters(&values, &standard_errors, scales);
     let (lower, upper): (Vec<f64>, Vec<f64>) = fisher::intervals(&values, &se, &scales, level, dof)
+        .map_err(stats_error)?
         .into_iter()
         .unzip();
     Ok((PyArray1::from_vec(py, lower), PyArray1::from_vec(py, upper)))
@@ -447,11 +427,9 @@ pub(crate) fn stats_fisher_relative_errors<'py>(
     standard_errors: Values<'py>,
     scales: Vec<ScaleArg>,
 ) -> PyResult<Bound<'py, PyArray1<f64>>> {
-    let (values, se, scales) = parameters(&values, &standard_errors, scales)?;
-    Ok(PyArray1::from_vec(
-        py,
-        fisher::relative_errors(&values, &se, &scales),
-    ))
+    let (values, se, scales) = parameters(&values, &standard_errors, scales);
+    let relative = fisher::relative_errors(&values, &se, &scales).map_err(stats_error)?;
+    Ok(PyArray1::from_vec(py, relative))
 }
 
 /// The covariance of the Laplace approximation of the posterior of a precision; the error of
@@ -487,7 +465,8 @@ pub(crate) fn stats_rank_correlation<'py>(
     r: Values<'py>,
 ) -> PyResult<Bound<'py, PyArray2<f64>>> {
     let (r, k) = square(&r, "correlation")?;
-    Ok(matrix(py, posterior::rank_correlation(&r, k), k))
+    let rank = posterior::rank_correlation(&r, k).map_err(stats_error)?;
+    Ok(matrix(py, rank, k))
 }
 
 /// The correlation of the normal scores of a posterior: the symmetric part, the diagonal 1.
@@ -497,7 +476,8 @@ pub(crate) fn stats_normal_correlation<'py>(
     r: Values<'py>,
 ) -> PyResult<Bound<'py, PyArray2<f64>>> {
     let (r, k) = square(&r, "correlation")?;
-    Ok(matrix(py, posterior::normal_correlation(&r, k), k))
+    let normal = posterior::normal_correlation(&r, k).map_err(stats_error)?;
+    Ok(matrix(py, normal, k))
 }
 
 /// The standard deviation of the natural logarithm of a standard deviation on a scale.

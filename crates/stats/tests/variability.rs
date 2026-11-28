@@ -237,26 +237,51 @@ fn the_edges_of_the_groups() {
     assert!(variability::group_means(&values, 3, 2, 2, 3, false, 1).is_err());
 }
 
+/// The ValueError of numpy of an array whose bytes exceed the largest `isize`.
+const ARRAY_TOO_BIG: &str =
+    "array is too big; `arr.size * arr.dtype.itemsize` is larger than the maximum possible size.";
+
 #[test]
 fn groups_too_many_to_hold_are_refused_not_wrapped() {
     let values = predictions(4, 2);
-    // more members than a usize counts
-    let error = variability::group_means(&values, 4, 2, 2, usize::MAX / 2 + 1, false, 1)
-        .unwrap_err()
-        .message;
-    assert!(error.contains("too many"), "{error}");
-    // more statistics than a usize counts, the means and the groups of no subject
-    for size in [0, 3] {
-        let error = variability::group_means(&values, 4, 2, size, usize::MAX / 2 + 1, false, 1)
-            .unwrap_err()
-            .message;
-        assert!(error.contains("too many"), "{error}");
+    let half = 1usize << (usize::BITS / 2);
+    // more members than a usize counts, members and statistics whose bytes exceed the largest
+    // isize, for the means and the groups of no subject
+    for (size, groups) in [
+        (2, usize::MAX / 2 + 1),
+        (0, usize::MAX / 2 + 1),
+        (3, usize::MAX / 2 + 1),
+        (0, usize::MAX / 4 + 1),
+        (2, usize::MAX / 4 + 1),
+        (half, half),
+    ] {
+        let error = variability::group_means(&values, 4, 2, size, groups, false, 1).unwrap_err();
+        assert_eq!(error.message, ARRAY_TOO_BIG, "{size} {groups}");
     }
-    // statistics which a usize counts but whose bytes exceed the address space
-    for size in [0, 2] {
-        let error = variability::group_means(&values, 4, 2, size, usize::MAX / 4 + 1, false, 1)
-            .unwrap_err()
-            .message;
-        assert!(error.contains("too many"), "{error}");
+}
+
+#[test]
+fn groups_at_no_data_point_draw_nothing() {
+    // no statistic and no draw, only the number of the rows, at once for any number of groups
+    let groups = 1 << (usize::BITS - 6);
+    for (subjects, size, rows) in [(3, 2, groups), (3, 1, 3), (3, 0, groups), (0, 2, 0)] {
+        let found = variability::group_means(&[], subjects, 0, size, groups, false, 1);
+        assert_eq!(found, Ok((Vec::new(), rows)), "{subjects} {size}");
     }
+    assert_eq!(
+        variability::group_means(&[], 3, 0, 2, 0, false, 1),
+        Ok((Vec::new(), 0))
+    );
+    // rows whose bytes exceed the largest isize, and members past what an array holds
+    for (size, groups) in [(2, usize::MAX / 4), (usize::MAX / 2, 3)] {
+        let error = variability::group_means(&[], 3, 0, size, groups, false, 1).unwrap_err();
+        assert_eq!(error.message, ARRAY_TOO_BIG, "{size} {groups}");
+    }
+}
+
+#[test]
+fn bands_too_many_to_hold_are_refused_not_wrapped() {
+    // two quantiles at data points whose bytes exceed the largest isize, of no group
+    let error = variability::bands(&[], 0, usize::MAX / 8, &[0.05, 0.95]).unwrap_err();
+    assert_eq!(error.message, ARRAY_TOO_BIG);
 }

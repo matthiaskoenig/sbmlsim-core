@@ -15,6 +15,7 @@
 use sbmlsim_sensitivity::random::Stream;
 use sbmlsim_sensitivity::sobol_sequence;
 
+use crate::size::{array_len, buffer};
 use crate::special::{normal_cdf, normal_ppf};
 use crate::{Result, StatsError, linalg};
 
@@ -52,8 +53,10 @@ pub enum Design {
 ///
 /// # Errors
 ///
-/// A Latin hypercube after `start`, with the message of the python, and the errors of the
-/// Sobol' sequence: more than its 2048 dimensions or `start + n` past its `2^30` points.
+/// A Latin hypercube after `start`, with the message of the python, `n x d` points past what
+/// an array holds (numpy's `array is too big`: their bytes past the largest `isize`, counted
+/// without a wrap), and the errors of the Sobol' sequence: more than its 2048 dimensions or
+/// `start + n` past its `2^30` points.
 pub fn unit_points(d: usize, n: usize, design: Design, seed: u64, start: u64) -> Result<Vec<f64>> {
     if design == Design::Lhs && start > 0 {
         return Err(StatsError::value(
@@ -62,30 +65,34 @@ pub fn unit_points(d: usize, n: usize, design: Design, seed: u64, start: u64) ->
                 .to_owned(),
         ));
     }
-    if d == 0 || n == 0 {
+    let len = array_len::<f64>(&[n, d])?;
+    if len == 0 {
         return Ok(Vec::new());
     }
     match design {
         Design::Sobol => sobol_sequence(d, n, Some(seed), start)
             .map(|points| points.data)
             .map_err(|error| StatsError::value(error.0)),
-        Design::Lhs => Ok(latin_hypercube(d, n, seed)),
+        Design::Lhs => latin_hypercube(d, n, len, seed),
         Design::Random => {
             let mut stream = Stream::new(seed);
             stream.advance(u128::from(start) * d as u128);
-            Ok((0..n * d).map(|_| stream.uniform()).collect())
+            let mut points = buffer(len)?;
+            points.extend((0..len).map(|_| stream.uniform()));
+            Ok(points)
         }
     }
 }
 
-/// A Latin hypercube of `n` points of `d` dimensions of the stream of `seed`: the point of the
-/// stratum `p` of a column is `(p + u) / n`, kept below the end of its stratum, `(p + 1) / n`,
-/// which the rounding of the sum could reach.
-fn latin_hypercube(d: usize, n: usize, seed: u64) -> Vec<f64> {
+/// A Latin hypercube of `n` points of `d` dimensions (`len` values) of the stream of `seed`:
+/// the point of the stratum `p` of a column is `(p + u) / n`, kept below the end of its
+/// stratum, `(p + 1) / n`, which the rounding of the sum could reach.
+fn latin_hypercube(d: usize, n: usize, len: usize, seed: u64) -> Result<Vec<f64>> {
     let mut stream = Stream::new(seed);
-    let mut points: Vec<f64> = (0..n * d).map(|_| stream.uniform()).collect();
+    let mut points = buffer(len)?;
+    points.extend((0..len).map(|_| stream.uniform()));
     let size = n as f64;
-    let mut strata: Vec<usize> = Vec::with_capacity(n);
+    let mut strata: Vec<usize> = buffer(n)?;
     for j in 0..d {
         strata.clear();
         strata.extend(0..n);
@@ -97,7 +104,7 @@ fn latin_hypercube(d: usize, n: usize, seed: u64) -> Vec<f64> {
             *point = if x < end { x } else { previous(end) };
         }
     }
-    points
+    Ok(points)
 }
 
 /// The largest double below the positive double `x`.
@@ -126,20 +133,21 @@ fn is_identity(r: &[f64], d: usize) -> bool {
 ///
 /// # Errors
 ///
-/// A slice of points which is not of `n * d` values or a correlation which is not of `d * d`,
-/// and the errors of [`linalg::factor`] of a correlation which is not finite or not symmetric.
+/// A slice of points which is not of `n * d` values or a correlation which is not of `d * d`
+/// (numpy's `array is too big` of a product past what an array holds), and the errors of
+/// [`linalg::factor`] of a correlation which is not finite or not symmetric.
 pub fn copula(u: &mut [f64], n: usize, d: usize, r: &[f64]) -> Result<()> {
-    if u.len() != n * d {
+    let points = array_len::<f64>(&[n, d])?;
+    if u.len() != points {
         return Err(StatsError::value(format!(
-            "{n} points of {d} dimensions need {} values, not {}.",
-            n * d,
+            "{n} points of {d} dimensions need {points} values, not {}.",
             u.len()
         )));
     }
-    if r.len() != d * d {
+    let correlations = array_len::<f64>(&[d, d])?;
+    if r.len() != correlations {
         return Err(StatsError::value(format!(
-            "The correlation of {d} dimensions needs {} values, not {}.",
-            d * d,
+            "The correlation of {d} dimensions needs {correlations} values, not {}.",
             r.len()
         )));
     }
