@@ -369,6 +369,8 @@ pub struct Model {
     pub driven: Vec<DrivenSpecies>,
     /// The parameter `driven__t_ref` of the driven species, `None` without.
     pub t_ref: Option<u32>,
+    /// The unit expression of the time of the model, when SBML gives one.
+    pub time_unit: Option<String>,
 }
 
 impl Model {

@@ -29,6 +29,7 @@
 //! taken.
 
 use crate::expr::MAX_EXPR_DEPTH;
+use crate::units::quotient;
 use crate::{
     Assignment, CompileError, DrivenSpecies, Entity, EntityKind, Expr, Model, Op, SelectionDef,
     SelectionKind, SpeciesValue, Symbol, index,
@@ -463,15 +464,22 @@ pub fn apply(model: Model, driven: &[String]) -> Result<Model, CompileError> {
             None => x.unit.clone(),
             Some(_) => m.selection(&format!("[{id}]")).and_then(|s| s.unit.clone()),
         };
+        // the slope in the unit of the value per time
+        let slope_unit = unit
+            .as_deref()
+            .zip(m.time_unit.as_deref())
+            .map(|(value, time)| quotient(value, time));
         let default = defaults[j].expect("a default of every driven species");
         m.parameters
             .push(parameter(value_id(id), default, unit.clone()));
-        m.parameters.push(parameter(slope_id(id), 0.0, None));
+        m.parameters
+            .push(parameter(slope_id(id), 0.0, slope_unit.clone()));
         selected.push((value_id(id), Symbol::Param(value(j)), unit));
-        selected.push((slope_id(id), Symbol::Param(slope(j)), None));
+        selected.push((slope_id(id), Symbol::Param(slope(j)), slope_unit));
     }
-    m.parameters.push(parameter(T_REF.to_string(), 0.0, None));
-    selected.push((T_REF.to_string(), Symbol::Param(t_ref), None));
+    m.parameters
+        .push(parameter(T_REF.to_string(), 0.0, m.time_unit.clone()));
+    selected.push((T_REF.to_string(), Symbol::Param(t_ref), m.time_unit.clone()));
     for (j, t) in targets.iter().enumerate() {
         selected.push((
             exchange_id(&driven[j]),

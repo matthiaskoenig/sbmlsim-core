@@ -242,5 +242,6 @@ fn build_with_history(m: &Sbml, prehistory: bool) -> Result<Model, CompileError>
         rate_of: b.rate_of,
         driven: Vec::new(),
         t_ref: None,
+        time_unit: Units::new(m).time(),
     })
 }

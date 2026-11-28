@@ -65,16 +65,20 @@ impl<'m> Units<'m> {
 
     /// The unit of the rate of a reaction, extent per time.
     pub fn reaction(&self) -> Option<String> {
-        let m = self.model;
         Some(quotient(
-            &self.resolve(m.extent_units.as_ref()?),
-            &self.resolve(m.time_units.as_ref()?),
+            &self.resolve(self.model.extent_units.as_ref()?),
+            &self.time()?,
         ))
+    }
+
+    /// The unit of the time of the model.
+    pub fn time(&self) -> Option<String> {
+        Some(self.resolve(self.model.time_units.as_ref()?))
     }
 }
 
 /// `a/b`, a part which is more than a name in parentheses.
-fn quotient(a: &str, b: &str) -> String {
+pub(crate) fn quotient(a: &str, b: &str) -> String {
     let part = |u: &str| {
         if u.chars().all(|c| c.is_alphanumeric() || c == '_') {
             u.to_string()

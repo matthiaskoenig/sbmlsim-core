@@ -583,6 +583,7 @@ fn a_statement_above_the_limits_is_an_error() {
         rate_of: vec![],
         driven: vec![],
         t_ref: None,
+        time_unit: None,
         selections: vec![sbmlsim_ir::SelectionDef {
             id: "sum".to_string(),
             kind: sbmlsim_ir::SelectionKind::Parameter,
@@ -635,6 +636,7 @@ fn locals_are_reused_after_their_last_use() {
         rate_of: vec![],
         driven: vec![],
         t_ref: None,
+        time_unit: None,
         selections: vec![sbmlsim_ir::SelectionDef {
             id: "last".to_string(),
             kind: sbmlsim_ir::SelectionKind::Parameter,
