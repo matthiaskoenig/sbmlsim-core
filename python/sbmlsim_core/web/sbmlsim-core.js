@@ -2870,13 +2870,25 @@ var sbmlsimCore = (() => {
     /**
      * Copies bytes into a new buffer, freed with the others.
      *
-     * @param {Uint8Array} bytes the bytes
+     * @param {ArrayBufferView|ArrayBuffer} bytes the bytes: of a typed array its bytes, not its
+     *   elements (a `Float64Array` of 2 values is 16 bytes)
      * @returns {[number, number]} the address and the length of the buffer, `[0, 0]` for no bytes
      */
     put(bytes) {
-      const pointer = this.allocate(bytes.length);
-      if (bytes.length > 0) new Uint8Array(this.#memory(), pointer, bytes.length).set(bytes);
-      return [pointer, bytes.length];
+      const source = ArrayBuffer.isView(bytes) ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength) : new Uint8Array(bytes);
+      const pointer = this.allocate(source.length);
+      if (source.length > 0) new Uint8Array(this.#memory(), pointer, source.length).set(source);
+      return [pointer, source.length];
+    }
+    /**
+     * Takes a buffer the module gave to the caller, so it is freed with the others; the null
+     * pointer and a length of 0 are no buffer.
+     *
+     * @param {number} pointer the address of the buffer
+     * @param {number} length its length in bytes
+     */
+    adopt(pointer, length) {
+      if (pointer !== 0 && length !== 0) this.#owned.push([pointer >>> 0, length]);
     }
     /**
      * The buffers of a result, which a call wrote as pairs of words (the address and the length of
@@ -2889,11 +2901,8 @@ var sbmlsimCore = (() => {
     results(out, pairs) {
       const words = this.words(out, 2 * pairs);
       const buffers = [];
-      for (let k = 0; k < words.length; k += 2) {
-        const [pointer, length] = [words[k], words[k + 1]];
-        if (pointer !== 0 && length !== 0) this.#owned.push([pointer, length]);
-        buffers.push([pointer, length]);
-      }
+      for (let k = 0; k < words.length; k += 2) buffers.push([words[k], words[k + 1]]);
+      for (const [pointer, length] of buffers) this.adopt(pointer, length);
       return buffers.map(
         ([pointer, length]) => pointer === 0 || length === 0 ? new Uint8Array(0) : new Uint8Array(this.#memory(), pointer, length).slice()
       );

@@ -210,6 +210,7 @@ const RESULT_PAIRS = {
   petab_fit_open: 1,
   petab_fit_ask: 1,
   petab_fit_tell: 1,
+  stats_call: 2,
 };
 
 /**
@@ -218,6 +219,8 @@ const RESULT_PAIRS = {
  *
  * - `live` is the buffers the host holds by their address: those of `allocate` and those of the
  *   results of the calls (the buffers at the words `out` of a call which returned);
+ * - `results` counts the buffers of results the host was given, so a check that they are freed
+ *   is not vacuous (a call missing from `RESULT_PAIRS` gives none);
  * - `misfreed` is the frees of a buffer the host does not hold, or of another length (a free
  *   of the null pointer or of no bytes is none);
  * - `failAt(k)` makes the `k`-th allocation from now on (1 the next) give 0, a failed one;
@@ -228,6 +231,7 @@ const RESULT_PAIRS = {
 export function countedExports(exports, { oddWords = false, ...overrides } = {}) {
   const live = new Map();
   const misfreed = [];
+  const tally = { results: 0 };
   let failing = 0;
   const counted = { ...exports };
   counted.allocate = (length) => {
@@ -255,7 +259,10 @@ export function countedExports(exports, { oddWords = false, ...overrides } = {})
       const view = new DataView(exports.memory.buffer, args.at(-1) >>> 0, 8 * pairs);
       for (let k = 0; k < pairs; k += 1) {
         const [pointer, length] = [view.getUint32(8 * k, true), view.getUint32(8 * k + 4, true)];
-        if (pointer !== 0 && length !== 0) live.set(pointer, { length, raw: pointer, shift: 0 });
+        if (pointer !== 0 && length !== 0) {
+          live.set(pointer, { length, raw: pointer, shift: 0 });
+          tally.results += 1;
+        }
       }
       return status;
     };
@@ -265,6 +272,9 @@ export function countedExports(exports, { oddWords = false, ...overrides } = {})
     exports: counted,
     live,
     misfreed,
+    get results() {
+      return tally.results;
+    },
     failAt(k) {
       failing = k;
     },

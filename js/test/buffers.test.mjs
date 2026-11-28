@@ -24,6 +24,7 @@ async function countedCompiler(options) {
 
 /** Asserts that the host holds no buffer and freed none it did not hold. */
 function assertBalanced(counted, what) {
+  assert.ok(counted.results > 0, `${what}: the host was given buffers of results`);
   assert.deepEqual([...counted.live.entries()], [], `${what}: every buffer is freed`);
   assert.deepEqual(counted.misfreed, [], `${what}: every free is of a buffer the host held`);
 }
@@ -117,6 +118,17 @@ test("the buffers of a call are freed, the last first, whatever the call throws"
   ]);
 });
 
+test("a typed array is copied as its bytes", () => {
+  const { exports } = fakeExports();
+  withBuffers(exports, "test.wasm", (buffers) => {
+    const values = Float64Array.of(1.5, -0);
+    const [pointer, length] = buffers.put(values.subarray(1));
+    assert.equal(length, 8);
+    const view = new DataView(exports.memory.buffer, pointer, length);
+    assert.ok(Object.is(view.getFloat64(0, true), -0));
+  });
+});
+
 test("a buffer of no bytes is no allocation", () => {
   const { exports, freed } = fakeExports();
   const buffers = new Buffers(exports, "test.wasm");
@@ -202,6 +214,7 @@ test("a compilation frees every buffer: of a model, of a refusal and of a call w
 
 test("a failed allocation of a compilation throws and writes nothing to the address 0", async () => {
   const { compiler, counted } = await countedCompiler();
+  assert.ok(compiler.compile(SBML).wasm.length > 0);
   const before = low(counted.exports);
   for (const k of [1, 2]) {
     counted.failAt(k);
