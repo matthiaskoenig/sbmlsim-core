@@ -62,6 +62,7 @@ pub(crate) fn compile_sbml(
         optimize,
         jacobian: jacobian_choice(jacobian)?,
         parameter_jacobian,
+        ..CompileOptions::default()
     };
     let compiled = py
         .detach(|| sbmlsim_compiler::compile(sbml, &options))

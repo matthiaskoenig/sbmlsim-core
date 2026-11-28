@@ -166,6 +166,64 @@ fn compile_writes_a_kernel() {
 }
 
 #[test]
+fn compile_drives_species() {
+    let sbml =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/models/spt_liver_cell.xml");
+    let out = Path::new(env!("CARGO_TARGET_TMPDIR")).join("compiled-spt-driven");
+    let _ = std::fs::remove_dir_all(&out);
+    let output = run(&[
+        "compile".as_ref(),
+        sbml.as_os_str(),
+        "--driven".as_ref(),
+        "S_ext".as_ref(),
+        "P_ext".as_ref(),
+        "-o".as_ref(),
+        out.as_os_str(),
+    ]);
+    assert!(output.status.success(), "{output:?}");
+    let description: ModelDescription =
+        serde_json::from_slice(&std::fs::read(out.join("model.json")).unwrap()).unwrap();
+    let options = sbmlsim_compiler::CompileOptions {
+        driven: vec!["S_ext".into(), "P_ext".into()],
+        ..sbmlsim_compiler::CompileOptions::default()
+    };
+    let compiled =
+        sbmlsim_compiler::compile(&std::fs::read_to_string(&sbml).unwrap(), &options).unwrap();
+    assert_eq!(description, compiled.description);
+    assert_eq!(
+        std::fs::read(out.join("model.wasm")).unwrap(),
+        compiled.wasm
+    );
+    let driven: Vec<&str> = description.driven.iter().map(|d| d.id.as_str()).collect();
+    assert_eq!(driven, ["S_ext", "P_ext"]);
+    // an unknown species is the error of the compiler, not of the command line
+    let output = run(&[
+        "compile".as_ref(),
+        sbml.as_os_str(),
+        "--driven".as_ref(),
+        "Q".as_ref(),
+        "-o".as_ref(),
+        out.as_os_str(),
+    ]);
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains('Q'),
+        "{output:?}"
+    );
+    // the kernel takes no driven species yet
+    let output = run(&[
+        "compile".as_ref(),
+        sbml.as_os_str(),
+        "--kernel".as_ref(),
+        "--driven".as_ref(),
+        "S_ext".as_ref(),
+        "-o".as_ref(),
+        out.as_os_str(),
+    ]);
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+}
+
+#[test]
 fn compile_can_omit_parameter_derivatives_without_changing_simulation() {
     let sbml = Path::new(env!("CARGO_MANIFEST_DIR")).join("../host/tests/decay.xml");
     let out = Path::new(env!("CARGO_TARGET_TMPDIR")).join("compiled-decay-ordinary");

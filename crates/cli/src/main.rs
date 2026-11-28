@@ -3,7 +3,9 @@
 //! `sbmlsim-core compile <model.xml> -o <dir>` compiles an SBML file into the directory `dir`
 //! (created when missing): `model.wasm` and `model.json`, the description of the model. With
 //! `--kernel` it compiles the batched kernel of the model instead (`kernel/1`, the model with its
-//! RODAS4 integrator in one module): `kernel.wasm` and `kernel.json`.
+//! RODAS4 integrator in one module): `kernel.wasm` and `kernel.json`. `--driven ID...` drives
+//! the species of the ids (`sbmlsim_ir::driven`): each follows the path of its parameters
+//! `ID__value`, `ID__slope` and `driven__t_ref`, with the accumulator state `ID__exchange`.
 //!
 //! `sbmlsim-core simulate <model-dir> <request.json> [-o out.csv]` simulates a compiled model
 //! (the directory holds `model.wasm` and `model.json`) with a request of the contract
@@ -68,9 +70,14 @@ enum Command {
         /// Omit analytic parameter derivatives and their cached constants.
         #[arg(long)]
         no_parameter_jacobian: bool,
+        /// Drive these species: each follows the path `ID__value + ID__slope * (time -
+        /// driven__t_ref)` of three parameters instead of its rate, and the state
+        /// `ID__exchange` accumulates the amount the model exchanged with it.
+        #[arg(long, num_args = 1.., value_name = "ID")]
+        driven: Vec<String>,
         /// Write the batched kernel instead: the model with its RODAS4 integrator in one
         /// module, `kernel.wasm` and `kernel.json` (`kernel/1`).
-        #[arg(long, conflicts_with_all = ["no_optimize", "no_parameter_jacobian"])]
+        #[arg(long, conflicts_with_all = ["no_optimize", "no_parameter_jacobian", "driven"])]
         kernel: bool,
     },
     /// Export standalone Python, Diffrax, Julia, R, Markdown, LaTeX or Typst from SBML.
@@ -168,8 +175,17 @@ fn main() -> ExitCode {
             output,
             no_optimize,
             no_parameter_jacobian,
+            driven,
             kernel: false,
-        } => compile(&model, &output, !no_optimize, !no_parameter_jacobian).map(|()| true),
+        } => {
+            let options = CompileOptions {
+                optimize: !no_optimize,
+                parameter_jacobian: !no_parameter_jacobian,
+                driven,
+                ..CompileOptions::default()
+            };
+            compile(&model, &output, &options).map(|()| true)
+        }
         Command::Export {
             model,
             format,
@@ -235,13 +251,8 @@ fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> anyhow::Result<T> {
     serde_json::from_slice(&bytes).with_context(|| format!("cannot read {}", path.display()))
 }
 
-/// The command `compile`, with the optimizer when `optimize`.
-fn compile(
-    model: &Path,
-    output: &Path,
-    optimize: bool,
-    parameter_jacobian: bool,
-) -> anyhow::Result<()> {
+/// The command `compile`, with `options`.
+fn compile(model: &Path, output: &Path, options: &CompileOptions) -> anyhow::Result<()> {
     let sbml =
         fs::read_to_string(model).with_context(|| format!("cannot read {}", model.display()))?;
     // a composed model reads the documents of its external model definitions beside it
@@ -251,12 +262,7 @@ fn compile(
     };
     let sbml = sbmlsim_sbml::flatten_comp(&sbml, &sources)
         .with_context(|| format!("cannot compile {}", model.display()))?;
-    let options = CompileOptions {
-        optimize,
-        parameter_jacobian,
-        ..CompileOptions::default()
-    };
-    let compiled = sbmlsim_compiler::compile(&sbml, &options)
+    let compiled = sbmlsim_compiler::compile(&sbml, options)
         .with_context(|| format!("cannot compile {}", model.display()))?;
     fs::create_dir_all(output).with_context(|| format!("cannot create {}", output.display()))?;
     let write = |name: &str, bytes: &[u8]| {

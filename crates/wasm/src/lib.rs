@@ -100,6 +100,7 @@ pub fn compile_model_with_options(
         optimize,
         jacobian: jacobian_of(jacobian),
         parameter_jacobian,
+        ..CompileOptions::default()
     };
     let compiled = sbmlsim_compiler::compile(sbml, &options).map_err(|err| err.to_string())?;
     let description = serde_json::to_string(&compiled.description)
