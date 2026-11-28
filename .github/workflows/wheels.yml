@@ -48,7 +48,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: true
           persist-credentials: false
@@ -65,14 +65,14 @@ jobs:
         run: |
           cargo build --release --locked -p sbmlsim-cli
           target/release/sbmlsim-core runtime -o runtime
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: runtime
           path: runtime/
           if-no-files-found: error
           retention-days: ${{ github.event_name == 'pull_request' && 7 || 90 }}
       # the command line compiles the fixtures of the tests of the JavaScript host
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: cli
           path: target/release/sbmlsim-core
@@ -92,17 +92,19 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: true
           persist-credentials: false
       - name: Install the toolchain of rust-toolchain.toml
         run: rustup show active-toolchain || rustup toolchain install
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: runtime
           path: runtime
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v10.4.0
+        with:
+          save-cache: ${{ github.ref == 'refs/heads/develop' }}
       - uses: Swatinem/rust-cache@v2
         with:
           key: wheel-${{ matrix.name }}
@@ -138,7 +140,7 @@ jobs:
             # ty would resolve instead of the installed wheel
             (cd "$RUNNER_TEMP/typecheck" && "$venv/$bin/ty" check --error-on-warning --python "$venv" usage.py)
           done
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: wheel-${{ matrix.name }}
           path: dist/*.whl

@@ -39,7 +39,7 @@ jobs:
       sha: ${{ steps.version.outputs.sha }}
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.SHA }}
           fetch-depth: 0
@@ -120,7 +120,7 @@ jobs:
     permissions:
       actions: read # the artifacts of the run of ci
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: wheel-*
           path: dist
@@ -137,7 +137,7 @@ jobs:
             # shellcheck disable=SC2086 # the glob of the platform
             ls dist/sbmlsim_core-"${VERSION}"-cp312-abi3-$platform.whl
           done
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dist
           path: dist/*.whl
@@ -152,23 +152,23 @@ jobs:
       contents: read
       actions: read # the artifacts of the run of ci
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.check.outputs.sha }}
           persist-credentials: false
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: runtime
           path: js/runtime
           run-id: ${{ needs.tested.outputs.run-id }}
           github-token: ${{ github.token }}
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: cli
           path: cli
           run-id: ${{ needs.tested.outputs.run-id }}
           github-token: ${{ github.token }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
       - name: The tests of the JavaScript host
@@ -192,16 +192,16 @@ jobs:
       actions: read # the artifacts of the run of ci
       id-token: write # trusted publishing and provenance of npm
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: runtime
           path: js/runtime
           run-id: ${{ needs.tested.outputs.run-id }}
           github-token: ${{ github.token }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
           registry-url: https://registry.npmjs.org
@@ -235,7 +235,7 @@ jobs:
       id-token: write # trusted publishing and the attestations of PyPI
     steps:
       # the wheels of the run of develop, which the job wheels checked
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: dist
           path: dist
@@ -257,7 +257,7 @@ jobs:
     permissions:
       contents: write # the release of the tag
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: The release of the tag, whose body is the release notes of its version

@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: true
           persist-credentials: false
@@ -54,7 +54,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: true
           persist-credentials: false
@@ -74,10 +74,12 @@ jobs:
       - run: python3 scripts/petab_testsuite.py download
       # the problems of the PEtab benchmark collection, downloaded and converted to PEtab v2 by
       # sbmlsim, which the test of crates/petab runs against its baseline (it skips without them)
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v10.4.0
+        with:
+          save-cache: ${{ github.ref == 'refs/heads/develop' }}
       - name: Cache the PEtab benchmark collection
         id: petab-benchmark
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/sbmlsim/petab-benchmark
           key: petab-benchmark-${{ hashFiles('scripts/petab_benchmark.py') }}
@@ -95,7 +97,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install the toolchain of rust-toolchain.toml
         run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
@@ -128,7 +130,7 @@ jobs:
       - run: cargo test -p sbmlsim-wasm
       - run: cargo test -p sbmlsim-wasm --no-default-features --features petab
       - run: cargo test -p sbmlsim-wasm --no-default-features
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
       - name: The import-free source generator matches native export fixtures
@@ -142,13 +144,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install the toolchain of rust-toolchain.toml
         run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/develop' }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
       - run: cargo clippy -p sbmlsim-plot-wasm --all-targets --target wasm32-wasip1 -- -D warnings
@@ -165,7 +167,7 @@ jobs:
       # the tests over the prepared cases fail without them instead of skipping
       SBMLSIM_CORE_REQUIRE_CASES: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: true
       - name: Install the toolchain of rust-toolchain.toml
@@ -177,12 +179,14 @@ jobs:
           # testsuite-c-target and the job runtime of the wheels restore
           shared-key: release-cli
           save-if: ${{ github.ref == 'refs/heads/develop' }}
-      - uses: astral-sh/setup-uv@v5
-      - uses: actions/setup-node@v4
+      - uses: astral-sh/setup-uv@v10.4.0
+        with:
+          save-cache: ${{ github.ref == 'refs/heads/develop' }}
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
       - name: Cache the prepared cases
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: testdata/cases
           key: testsuite-cases-${{ hashFiles('scripts/prepare_testsuite.py', 'testdata/testsuite_baseline.json') }}
@@ -217,7 +221,7 @@ jobs:
     env:
       SBMLSIM_CORE_REQUIRE_CASES: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: true
       - name: Install the toolchain of rust-toolchain.toml
@@ -227,9 +231,11 @@ jobs:
         with:
           shared-key: release-cli
           save-if: false
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v10.4.0
+        with:
+          save-cache: ${{ github.ref == 'refs/heads/develop' }}
       - name: Cache the prepared cases
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: testdata/cases
           key: testsuite-cases-${{ hashFiles('scripts/prepare_testsuite.py', 'testdata/testsuite_baseline.json') }}
@@ -255,7 +261,7 @@ jobs:
     env:
       SBMLSIM_CORE_REQUIRE_CASES: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: true
       - name: Install the toolchain of rust-toolchain.toml
@@ -265,9 +271,11 @@ jobs:
         with:
           shared-key: release-cli
           save-if: false
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v10.4.0
+        with:
+          save-cache: ${{ github.ref == 'refs/heads/develop' }}
       - name: Cache the prepared cases
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: testdata/cases
           key: testsuite-cases-${{ hashFiles('scripts/prepare_testsuite.py', 'testdata/testsuite_baseline.json') }}
@@ -291,7 +299,7 @@ jobs:
     env:
       SBMLSIM_CORE_REQUIRE_CASES: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: true
       - name: Install the toolchain of rust-toolchain.toml
@@ -301,10 +309,12 @@ jobs:
         with:
           shared-key: dev
           save-if: false
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v10.4.0
+        with:
+          save-cache: ${{ github.ref == 'refs/heads/develop' }}
       - name: Cache the prepared cases
         # the script refuses a suite commit other than the baseline's, so the baseline keys the cases
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: testdata/cases
           key: testsuite-cases-${{ hashFiles('scripts/prepare_testsuite.py', 'testdata/testsuite_baseline.json') }}
@@ -322,7 +332,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: true
       - name: Install the toolchain of rust-toolchain.toml
@@ -332,7 +342,9 @@ jobs:
         with:
           shared-key: dev
           save-if: false
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v10.4.0
+        with:
+          save-cache: ${{ github.ref == 'refs/heads/develop' }}
       - name: Editable install
         run: |
           uv venv --python 3.14 .venv

@@ -23,7 +23,7 @@ runs:
         } >> "$GITHUB_ENV"
     - name: Restore wasi-sdk
       id: wasi-sdk
-      uses: actions/cache/restore@v4
+      uses: actions/cache/restore@v6
       with:
         path: ~/tools/wasi-sdk
         key: wasi-sdk-${{ runner.os }}-${{ runner.arch }}-${{ env.WASI_SDK_SHA256 }}
@@ -39,14 +39,14 @@ runs:
         mv "${sdk}" wasi-sdk
     - name: Save wasi-sdk
       if: steps.wasi-sdk.outputs.cache-hit != 'true' && github.ref == 'refs/heads/develop'
-      uses: actions/cache/save@v4
+      uses: actions/cache/save@v6
       with:
         path: ~/tools/wasi-sdk
         key: ${{ steps.wasi-sdk.outputs.cache-primary-key }}
     - name: Restore wasmtime
       id: wasmtime
       if: inputs.wasmtime == 'true'
-      uses: actions/cache/restore@v4
+      uses: actions/cache/restore@v6
       with:
         path: ~/tools/wasmtime
         key: wasmtime-${{ runner.os }}-${{ runner.arch }}-${{ env.WASMTIME_SHA256 }}
@@ -62,7 +62,7 @@ runs:
         mv "${wasmtime}" wasmtime
     - name: Save wasmtime
       if: inputs.wasmtime == 'true' && steps.wasmtime.outputs.cache-hit != 'true' && github.ref == 'refs/heads/develop'
-      uses: actions/cache/save@v4
+      uses: actions/cache/save@v6
       with:
         path: ~/tools/wasmtime
         key: ${{ steps.wasmtime.outputs.cache-primary-key }}
