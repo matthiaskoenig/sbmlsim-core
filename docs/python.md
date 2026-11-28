@@ -156,7 +156,7 @@ Errors derive from `SbmlsimCoreError`: `CompileError`, `LoadError` (a runtime wh
 
 ## Release
 
-A tag `vX.Y.Z` publishes the wheels to PyPI together with the npm package (`.github/workflows/publish.yml`, trusted publishing): the runtime is built once, every wheel is built with it (`SBMLSIM_CORE_WASM_DIR`, `.github/workflows/wheels.yml`, the linux wheels linked with zig against glibc 2.28), installed in a fresh environment and tested on python 3.14 and 3.15, and nothing is published unless every wheel and the JavaScript host passed. The same workflow of the wheels runs for every pull request. A wheel of a checkout is built so:
+A tag `vX.Y.Z` publishes the wheels to PyPI together with the npm package (`.github/workflows/publish.yml`, trusted publishing): the runtime is built once, every wheel is built with it (`SBMLSIM_CORE_WASM_DIR`, `.github/workflows/wheels.yml`, the linux wheels linked with zig against glibc 2.28), installed in a fresh environment and tested on python 3.14 and 3.15, and nothing is published unless every wheel and the JavaScript host passed. The wheels are built and tested by every push to develop, and the tag publishes the wheels of the run of its commit; a pull request builds and tests every wheel but the one of macOS x86_64 (see [Continuous integration](development.md#continuous-integration)). A wheel of a checkout is built so:
 
 ```bash
 export SBMLSIM_CORE_WASM_DIR=$PWD/runtime   # from `sbmlsim-core runtime -o runtime`, or set WASI_SDK_PATH
